@@ -78,6 +78,13 @@ pub trait VideoEncoder: Send {
     fn accepts_textures(&self) -> bool {
         false
     }
+
+    /// Attende (al massimo `timeout`) che l'encoder possa ricevere subito un frame.
+    /// Chi chiama può così scegliere l'immagine più recente solo quando serve,
+    /// invece di farla invecchiare dentro `encode`. `true` se è pronto.
+    fn wait_ready(&mut self, _timeout: std::time::Duration) -> anyhow::Result<bool> {
+        Ok(true)
+    }
 }
 
 pub trait VideoDecoder: Send {

@@ -11,7 +11,9 @@
 # Variabili: NEXO_REMOTE (utente@pc), NEXO_REMOTE_DIR, NEXO_AGENT_IP, NEXO_SSH_KEY,
 # NEXO_VIEWER_LOG (RUST_LOG del viewer, es. info,nexo_viewer=trace),
 # NEXO_AGENT_EXE (agent da provare al posto di target/release, per confronti A/B),
-# NEXO_AGENT_LOG (RUST_LOG dell'agent).
+# NEXO_AGENT_LOG (RUST_LOG dell'agent), NEXO_ANIMATE=1 (animazione a schermo intero
+# su questo PC durante il test, per misurare la cattura dello schermo vero;
+# richiede cargo build --release --examples).
 
 set -euo pipefail
 
@@ -35,6 +37,13 @@ echo "== copia del viewer su $REMOTE"
 "${SSH[@]}" "del /q \"$REMOTE_DIR\\stats.json\" \"$REMOTE_DIR\\viewer.log\" \"$REMOTE_DIR\\snapshot.png\" 2>nul" >/dev/null || true
 "${SCP[@]}" "$ROOT/target/release/nexo-viewer.exe" "$REMOTE:$REMOTE_DIR_SCP/nexo-viewer.exe"
 
+if [ -n "${NEXO_ANIMATE:-}" ]; then
+    echo "== animazione a schermo intero su questo PC"
+    "$ROOT/target/release/examples/animate.exe" $((DURATION + 15)) >/dev/null 2>&1 &
+    ANIM_PID=$!
+    sleep 1
+fi
+
 echo "== avvio dell'agent ($*)"
 # La regola del firewall di Windows vale per dist/nexo-agent.exe: si lancia quella copia.
 mkdir -p "$ROOT/dist"
@@ -42,7 +51,7 @@ cp "${NEXO_AGENT_EXE:-$ROOT/target/release/nexo-agent.exe}" "$ROOT/dist/nexo-age
 RUST_LOG="${NEXO_AGENT_LOG:-info}" "$ROOT/dist/nexo-agent.exe" --once --view-only --fingerprint-file "$OUT/fingerprint.txt" "$@" \
     >"$OUT/agent.log" 2>&1 &
 AGENT_PID=$!
-trap 'kill $AGENT_PID 2>/dev/null || true' EXIT
+trap 'kill $AGENT_PID ${ANIM_PID:-} 2>/dev/null || true' EXIT
 for _ in $(seq 50); do
     [ -s "$OUT/fingerprint.txt" ] && break
     sleep 0.1

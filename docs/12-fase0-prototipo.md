@@ -17,8 +17,12 @@ Obiettivo della fase ([08-roadmap.md](08-roadmap.md)): cattura, compressione con
 | Trasporto QUIC con impronta del certificato | `client/transport` | ✅ |
 | Mouse e tastiera (SendInput, tasti W3C) | `client/input` | ✅ compila; da provare a schermo sbloccato |
 | Viewer wgpu (Direct3D 12, YUV → RGB nello shader) | `client/viewer` | ✅ |
+| Viewer con disegno su CPU per schede solo OpenGL | `client/viewer` | ✅ 6 ms a 1080p su HD 2500 |
+| Cattura e compressione su due thread | `client/agent` | ✅ |
+| Immagine sempre sulla GPU: cattura → Video Processor (NV12) → Quick Sync | `client/capture`, `client/codec` | ✅ conversione ~1 ms |
+| Scelta automatica dell'encoder (prova all'avvio) | `client/codec` | ✅ |
+| Test automatici tra due PC | `tools/lan-test.sh` | ✅ |
 | Decodifica hardware nel viewer | — | da fare |
-| Percorso senza copie: texture GPU → encoder | — | da fare |
 
 ## Come provarlo
 
@@ -58,7 +62,23 @@ NEXO_VIEWER_LOG="info,nexo_viewer::render=trace" tools/lan-test.sh 10
 
 Opzioni usate dallo script: viewer `--duration`, `--stats-file`; agent `--once`, `--fingerprint-file`. Prerequisiti: server OpenSSH sul PC remoto con la chiave `~/.ssh/nexo_test`, regola del firewall per `dist/nexo-agent.exe` (UDP 21500, solo LAN).
 
-## Misure in LAN (2026-10-26)
+## Misure in LAN con lo schermo vero (2026-10-26, sera)
+
+Agent su PC-STUDIO-NUC, viewer su PC-LABORATORIO (disegno su CPU), schermo del NUC 1920x1080 con un'animazione a schermo intero (`NEXO_ANIMATE=1`), Supremo chiuso.
+
+| Encoder | fps | Latenza p50 | p95 | Compressione | Banda |
+|---|---|---|---|---|---|
+| Hardware, immagine sempre sulla GPU | 32 | **38 ms** | 46 ms | 16 ms | 3,3 Mbit/s |
+| Software (OpenH264 + NASM) | 40 | 55 ms | 70 ms | 25 ms | 1,2 Mbit/s |
+
+Problemi trovati e corretti in questa serie:
+- **Lock del device condiviso**: `AcquireNextFrame` teneva il lock del device D3D11 per tutta l'attesa (fino a 100 ms), bloccando conversione e compressione (fino a 360 ms per frame). In modalità GPU la cattura interroga senza attendere, ogni millisecondo.
+- **Limitatore di fps**: la pausa di 16,7 ms partiva dalla fine della compressione invece che dall'inizio.
+- **Immagine invecchiata in attesa dell'encoder**: ora si attende che Quick Sync sia pronto e solo dopo si prende l'immagine più recente (latenza da 53 a 38 ms).
+
+Limite attuale con l'hardware: Quick Sync comprime un frame in ~13 ms ma ne chiede uno nuovo solo ~30 ms dopo il precedente, quindi ~32 fps. Con Chrome aperto sul NUC (30% del motore 3D) i tempi peggiorano.
+
+## Misure in LAN, sorgente sintetica (2026-10-26)
 
 Agent su PC-STUDIO-NUC (i7-10710U, Intel UHD), viewer su PC-LABORATORIO (Intel HD Graphics 2500, OpenGL perché senza Direct3D 12), rete cablata, sorgente sintetica 1920x1080@60, 15 s.
 
@@ -108,9 +128,10 @@ Osservazioni:
 - OpenH264 senza NASM: 19 ms per frame nel banco di prova; con NASM: 9 ms.
 - **QUIC e GSO su Windows**: inviando più datagrammi con una sola chiamata (segmentation offload) i pacchetti in loopback andavano persi e la connessione smetteva di ricevere (circa 4 sessioni su 10 senza video). GSO è disattivato in `client/transport`; da riprovare tra due PC in LAN.
 
-## Prossimi passi per arrivare a 60 fps
+## Prossimi passi
 
-1. **Cattura e compressione su thread separati**, così la cattura del frame successivo avviene mentre il precedente viene compresso.
-2. **Percorso senza copie sull'agent**: la texture D3D11 della cattura viene convertita in NV12 dalla GPU (D3D11 Video Processor) e passata all'encoder tramite `IMFDXGIDeviceManager`. Questo elimina la conversione sulla CPU e il caricamento in memoria video.
-3. **Decodifica hardware nel viewer** (Media Foundation / D3D11), con il passaggio a wgpu.
-4. Misura tra **due PC diversi** in LAN e a schermo sbloccato, con la cattura reale.
+Fatti: thread separati, percorso senza copie, misure tra due PC con lo schermo vero.
+
+1. **Ritmo di Quick Sync** (~30 ms tra un frame e l'altro): provare più frame in volo nell'MFT, oppure l'API Intel diretta (oneVPL) o un encoder D3D12 Video.
+2. **Decodifica hardware nel viewer** (Media Foundation / D3D11), utile sui PC con Direct3D 12.
+3. Codifica solo delle zone cambiate e qualità adattiva alla banda (fase 1, insieme al trasporto via Internet).

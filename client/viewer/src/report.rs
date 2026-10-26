@@ -57,6 +57,7 @@ fn json_opt<T: std::fmt::Display>(v: Option<T>) -> String {
 impl Report {
     pub fn to_json(&self, started: Instant) -> String {
         let secs = started.elapsed().as_secs_f64();
+        let streaming_secs = secs - self.first_frame_ms.map_or(secs, |ms| ms as f64 / 1000.0);
         let mut lat = self.latencies_us.clone();
         lat.sort_unstable();
         let mut rtt = self.rtt_us.clone();
@@ -72,7 +73,8 @@ impl Report {
             ("seconds", format!("{secs:.2}")),
             ("first_frame_ms", json_opt(self.first_frame_ms)),
             ("frames", self.frames.to_string()),
-            ("fps", format!("{:.1}", self.frames as f64 / secs.max(0.001))),
+            // Dal primo frame in poi: l'avvio della sessione non conta.
+            ("fps", format!("{:.1}", self.frames as f64 / streaming_secs.max(0.001))),
             ("mbit_s", format!("{:.2}", self.bytes as f64 * 8.0 / secs.max(0.001) / 1e6)),
             ("latency_ms_p50", json_opt(percentile(&lat, 0.5))),
             ("latency_ms_p95", json_opt(percentile(&lat, 0.95))),

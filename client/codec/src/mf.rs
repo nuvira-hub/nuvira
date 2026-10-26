@@ -533,6 +533,20 @@ impl VideoEncoder for MfEncoder {
     fn accepts_textures(&self) -> bool {
         self.device.is_some()
     }
+
+    fn wait_ready(&mut self, timeout: Duration) -> Result<bool> {
+        // Prima del primo frame la sessione non esiste ancora: si crea in `encode`.
+        let Some(session) = self.session.as_mut() else { return Ok(true) };
+        let deadline = Instant::now() + timeout;
+        while session.need_input == 0 {
+            match session.events.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(event) => session.handle(event, &mut self.outputs)?,
+                Err(RecvTimeoutError::Timeout) => return Ok(false),
+                Err(RecvTimeoutError::Disconnected) => bail!("encoder chiuso"),
+            }
+        }
+        Ok(true)
+    }
 }
 
 #[cfg(test)]

@@ -168,11 +168,25 @@ fn encode_loop(
 
     while !shared.stop.load(Ordering::Relaxed) {
         // Limite di frame al secondo: nel frattempo lo slot si aggiorna con l'immagine più recente.
+        let t_loop = Instant::now();
         let wait = min_interval.saturating_sub(last_encoded.elapsed());
         if !wait.is_zero() && !keyframe.load(Ordering::Relaxed) {
             std::thread::sleep(wait);
         }
 
+        let slept = t_loop.elapsed();
+        // L'immagine si prende solo quando l'encoder può riceverla: così è la più fresca.
+        let t_ready = Instant::now();
+        match encoder.wait_ready(Duration::from_millis(100)) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(e) => {
+                warn!("encoder non disponibile: {e:#}");
+                break;
+            }
+        }
+        let waited_ready = t_ready.elapsed();
+        let t_slot = Instant::now();
         let fresh = {
             let slot = shared.slot.lock().expect("slot");
             let (mut slot, _) = shared
@@ -183,6 +197,7 @@ fn encode_loop(
                 .expect("slot");
             slot.take()
         };
+        let waited_slot = t_slot.elapsed();
         let force_key = keyframe.load(Ordering::Relaxed);
         if let Some(fresh) = fresh {
             if let Some(old) = last.replace(fresh) {
@@ -218,7 +233,8 @@ fn encode_loop(
                 continue;
             }
         };
-        last_encoded = Instant::now();
+        // Il ritmo si misura dall'inizio della compressione, non dalla fine.
+        last_encoded = t;
         if encoded.keyframe {
             keyframe.store(false, Ordering::Relaxed);
         }
@@ -233,7 +249,10 @@ fn encode_loop(
             data: encoded.data,
         };
         // Coda da un solo frame: se la rete è lenta si salta la cattura invece di accumulare ritardo.
-        if frames.blocking_send(msg).is_err() {
+        let t_send = Instant::now();
+        let sent = frames.blocking_send(msg);
+        tracing::trace!(?slept, ?waited_ready, ?waited_slot, encode = ?t.elapsed().saturating_sub(t_send.elapsed()), send = ?t_send.elapsed(), "ciclo");
+        if sent.is_err() {
             break;
         }
         stats.report(shared);
