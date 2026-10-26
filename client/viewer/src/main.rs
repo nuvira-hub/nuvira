@@ -128,6 +128,7 @@ fn main() -> Result<()> {
         connect: Some((target, args.password.clone())),
         proxy: event_loop.create_proxy(),
         input: None,
+        net_thread: None,
         view_only: args.view_only,
         window: None,
         renderer: None,
@@ -140,6 +141,15 @@ fn main() -> Result<()> {
         exit_reason: None,
     };
     event_loop.run_app(&mut app)?;
+    // Chiudere il canale dell'input termina la sessione: si attende (poco) che la
+    // chiusura raggiunga l'agent.
+    app.input = None;
+    if let Some(thread) = app.net_thread.take() {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !thread.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     if let Some(reason) = &app.exit_reason {
         println!("{reason}");
     }
@@ -166,6 +176,7 @@ struct App {
     connect: Option<(net::Target, Option<String>)>,
     proxy: EventLoopProxy<NetEvent>,
     input: Option<UnboundedSender<InputEvent>>,
+    net_thread: Option<std::thread::JoinHandle<()>>,
     view_only: bool,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
@@ -247,7 +258,9 @@ impl ApplicationHandler<NetEvent> for App {
         // La connessione parte solo a finestra e rendering pronti: se la rete
         // arrivava prima, il canale video a volte non veniva mai accettato.
         if let Some((target, password)) = self.connect.take() {
-            self.input = Some(net::start(target, password, self.proxy.clone(), self.slot.clone()));
+            let (input, thread) = net::start(target, password, self.proxy.clone(), self.slot.clone());
+            self.input = Some(input);
+            self.net_thread = Some(thread);
         }
     }
 

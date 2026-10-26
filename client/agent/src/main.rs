@@ -194,7 +194,11 @@ async fn serve(args: Args, plan: EncoderPlan) -> Result<()> {
         };
         let peer = conn.remote_address();
         info!("viewer collegato da {peer}");
-        match session(conn.clone(), &args, plan, None).await {
+        let result = match conn.accept_bi().await.context("canale di controllo") {
+            Ok(streams) => session(conn.clone(), streams, &args, plan, None).await,
+            Err(e) => Err(e),
+        };
+        match result {
             Ok(()) => info!("sessione con {peer} terminata"),
             Err(e) => warn!("sessione con {peer} terminata: {e:#}"),
         }
@@ -328,14 +332,34 @@ async fn relayed_session(
     password: &str,
 ) -> Result<()> {
     let endpoint = nexo_transport::p2p::agent_endpoint(identity, route).await?;
-    let incoming = tokio::time::timeout(std::time::Duration::from_secs(20), endpoint.accept())
+    // Il viewer può aprire due connessioni (diretta e attraverso il relay): vale quella
+    // su cui apre il canale di controllo; l'altra la chiude lui.
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    let acceptor = {
+        let endpoint = endpoint.clone();
+        tokio::spawn(async move {
+            while let Some(incoming) = endpoint.accept().await {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let Ok(conn) = incoming.await else { return };
+                    if let Ok(streams) = conn.accept_bi().await {
+                        let _ = tx.send((conn, streams)).await;
+                    }
+                });
+            }
+        })
+    };
+    let (conn, streams) = tokio::time::timeout(std::time::Duration::from_secs(20), rx.recv())
         .await
         .context("il viewer non si è collegato entro 20 s")?
         .context("endpoint chiuso")?;
-    let conn = incoming.await.context("handshake con il viewer")?;
-    info!("viewer collegato attraverso il relay");
-    let result = session(conn.clone(), args, plan, Some(password)).await;
-    conn.close(0u32.into(), b"fine sessione");
+    acceptor.abort();
+    let via = if conn.remote_address() == route.relay { "attraverso il relay" } else { "in diretta" };
+    info!("viewer collegato {via} ({})", conn.remote_address());
+    let result = session(conn.clone(), streams, args, plan, Some(password)).await;
+    // Si chiude l'endpoint intero: anche l'eventuale connessione rimasta via relay,
+    // che altrimenti terrebbe l'agent "occupato" fino al suo timeout.
+    endpoint.close(0u32.into(), b"fine sessione");
     endpoint.wait_idle().await;
     if result.is_ok() {
         info!("sessione terminata");
@@ -345,8 +369,13 @@ async fn relayed_session(
 
 /// Una sessione con un viewer già collegato. Con `password` il viewer deve
 /// autenticarsi prima di ricevere qualunque immagine.
-async fn session(conn: Connection, args: &Args, plan: EncoderPlan, password: Option<&str>) -> Result<()> {
-    let (send, recv) = conn.accept_bi().await.context("canale di controllo")?;
+async fn session(
+    conn: Connection,
+    (send, recv): (quinn::SendStream, quinn::RecvStream),
+    args: &Args,
+    plan: EncoderPlan,
+    password: Option<&str>,
+) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
 

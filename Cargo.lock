@@ -1360,6 +1360,7 @@ dependencies = [
  "nexo-proto",
  "nexo-transport",
  "nu-ansi-term",
+ "quinn",
  "ring",
  "tokio",
  "tracing",

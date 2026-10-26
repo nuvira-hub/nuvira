@@ -32,8 +32,13 @@ func TestBindAndForward(t *testing.T) {
 	if dst := r.Destination(viewer, 10); dst != nil {
 		t.Fatal("inoltro prima che entrambi i lati siano collegati")
 	}
-	if reply := r.HandleControl(bind(token, 2), agent); reply == nil || reply[len(reply)-1] != 1 {
+	reply := r.HandleControl(bind(token, 2), agent)
+	if len(reply) != 5+tokenLen+1+7 || reply[5+tokenLen] != 1 {
 		t.Fatalf("secondo lato: risposta %v", reply)
+	}
+	// L'agent riceve l'indirizzo del viewer: 10.0.0.1:1000.
+	if got := reply[5+tokenLen+1:]; got[0] != 4 || got[1] != 10 || got[4] != 1 || int(got[5])<<8|int(got[6]) != 1000 {
+		t.Fatalf("indirizzo dell'altro lato: %v", got)
 	}
 	if dst := r.Destination(viewer, 10); dst.String() != agent.String() {
 		t.Fatalf("viewer → %v", dst)

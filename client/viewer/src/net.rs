@@ -90,15 +90,16 @@ pub enum Target {
     },
 }
 
-/// Avvia la sessione su un thread dedicato. Restituisce il canale per l'input.
+/// Avvia la sessione su un thread dedicato. Restituisce il canale per l'input
+/// (chiuderlo termina la sessione) e il thread, da attendere prima di uscire.
 pub fn start(
     target: Target,
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
-) -> mpsc::UnboundedSender<InputEvent> {
+) -> (mpsc::UnboundedSender<InputEvent>, std::thread::JoinHandle<()>) {
     let (input_tx, input_rx) = mpsc::unbounded_channel();
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("rete".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
@@ -109,7 +110,7 @@ pub fn start(
             let _ = proxy.send_event(NetEvent::Disconnected(reason));
         })
         .expect("thread di rete");
-    input_tx
+    (input_tx, thread)
 }
 
 fn control(msg: Msg) -> ControlMessage {
@@ -150,7 +151,9 @@ async fn open_connection(target: Target) -> Result<nexo_transport::Connection> {
                     .context("chiave dell'agent non valida")?,
                 role: p2p::Role::Viewer,
             };
-            p2p::viewer_connect(&identity, &route).await
+            let (conn, path) = p2p::viewer_connect(&identity, &route).await?;
+            info!(?path, remote = %conn.remote_address(), "percorso");
+            Ok(conn)
         }
     }
 }
@@ -259,6 +262,9 @@ async fn session(
         r = control_loop => r.context("canale di controllo"),
     };
     conn.close(0u32.into(), b"fine sessione");
+    // Si dà il tempo al messaggio di chiusura di partire: senza, l'agent se ne
+    // accorgerebbe solo al timeout e resterebbe "occupato" nel frattempo.
+    let _ = tokio::time::timeout(Duration::from_millis(500), conn.closed()).await;
     result
 }
 

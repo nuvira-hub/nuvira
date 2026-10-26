@@ -7,6 +7,10 @@
 //
 //	bind:  00 'N' 'X' 'R' 01 | gettone (16 byte) | ruolo (1 byte)
 //	bound: 00 'N' 'X' 'R' 02 | gettone (16 byte) | pronto (1 byte: 1 se anche l'altro lato è collegato)
+//	       [se pronto: indirizzo dell'altro lato come lo vede il relay:
+//	        famiglia (4 o 6) | IP (4 o 16 byte) | porta (2 byte, big endian)]
+//
+// L'indirizzo dell'altro lato serve per tentare la connessione diretta (hole punching).
 package relay
 
 import (
@@ -107,12 +111,22 @@ func (r *Relay) HandleControl(p []byte, from *net.UDPAddr) []byte {
 	reply = append(reply, magic...)
 	reply = append(reply, typeBound)
 	reply = append(reply, token[:]...)
-	if s.ready() {
-		reply = append(reply, 1)
-	} else {
-		reply = append(reply, 0)
+	if !s.ready() {
+		return append(reply, 0)
 	}
-	return reply
+	reply = append(reply, 1)
+	return appendAddr(reply, s.peers[1-i])
+}
+
+func appendAddr(b []byte, a *net.UDPAddr) []byte {
+	if ip4 := a.IP.To4(); ip4 != nil {
+		b = append(b, 4)
+		b = append(b, ip4...)
+	} else {
+		b = append(b, 6)
+		b = append(b, a.IP.To16()...)
+	}
+	return append(b, byte(a.Port>>8), byte(a.Port))
 }
 
 // Destination restituisce dove inoltrare un datagramma ricevuto da `from`,

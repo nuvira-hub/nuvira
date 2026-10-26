@@ -18,6 +18,7 @@ nexo-codec.workspace = true
 nexo-input.workspace = true
 nexo-proto.workspace = true
 nexo-transport.workspace = true
+quinn.workspace = true
 ring = "0.17"
 tokio.workspace = true
 tracing.workspace = true

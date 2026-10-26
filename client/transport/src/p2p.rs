@@ -42,25 +42,39 @@ const RELAY_MAGIC: [u8; 4] = [0x00, b'N', b'X', b'R'];
 const RELAY_BIND: u8 = 0x01;
 const RELAY_BOUND: u8 = 0x02;
 
-/// Aggancia `socket` al relay: invia il bind finché il relay non conferma.
-fn bind_relay(socket: &UdpSocket, route: &Route) -> Result<()> {
+/// Aggancia `socket` al relay e attende che anche l'altro lato sia collegato.
+/// Restituisce l'indirizzo dell'altro lato come lo vede il relay (per la via diretta).
+fn bind_relay(socket: &UdpSocket, route: &Route) -> Result<Option<SocketAddr>> {
     let mut bind = Vec::with_capacity(22);
     bind.extend_from_slice(&RELAY_MAGIC);
     bind.push(RELAY_BIND);
     bind.extend_from_slice(&route.token);
     bind.push(route.role as u8);
 
-    socket.set_read_timeout(Some(Duration::from_millis(300)))?;
-    let mut buf = [0u8; 64];
-    for _ in 0..20 {
+    socket.set_read_timeout(Some(Duration::from_millis(250)))?;
+    // Grande quanto un datagramma QUIC: se l'altro lato è già partito, i suoi pacchetti
+    // arrivano qui prima della fine dell'aggancio (e su Windows un buffer piccolo
+    // non tronca, ma fa fallire recv_from con WSAEMSGSIZE).
+    let mut buf = [0u8; 2048];
+    let mut acked = false;
+    // ~15 s: l'altro lato può arrivare qualche secondo dopo.
+    for _ in 0..60 {
         socket.send_to(&bind, route.relay)?;
         loop {
             match socket.recv_from(&mut buf) {
-                Ok((n, from)) if from == route.relay && n == 22 && buf[..4] == RELAY_MAGIC => {
-                    if buf[4] == RELAY_BOUND && buf[5..21] == route.token {
-                        debug!(pronto = buf[21] == 1, "agganciato al relay");
+                Ok((n, from))
+                    if from == route.relay && n >= 22 && buf[..5] == [0, b'N', b'X', b'R', RELAY_BOUND] =>
+                {
+                    if buf[5..21] != route.token {
+                        continue;
+                    }
+                    if !acked {
+                        debug!("agganciato al relay, in attesa dell'altro lato");
+                        acked = true;
+                    }
+                    if buf[21] == 1 {
                         socket.set_read_timeout(None)?;
-                        return Ok(());
+                        return Ok(parse_addr(&buf[22..n]));
                     }
                 }
                 Ok(_) => {}
@@ -73,24 +87,56 @@ fn bind_relay(socket: &UdpSocket, route: &Route) -> Result<()> {
             }
         }
     }
-    bail!("il relay {} non risponde", route.relay)
+    if acked {
+        bail!("l'altro dispositivo non si è agganciato al relay")
+    } else {
+        bail!("il relay {} non risponde", route.relay)
+    }
 }
 
-async fn relay_socket(route: &Route) -> Result<UdpSocket> {
+/// Indirizzo nel formato del relay: famiglia (4/6) | IP | porta big endian.
+fn parse_addr(b: &[u8]) -> Option<SocketAddr> {
+    let (ip, rest): (std::net::IpAddr, &[u8]) = match b.first()? {
+        4 if b.len() >= 7 => (<[u8; 4]>::try_from(&b[1..5]).ok()?.into(), &b[5..]),
+        6 if b.len() >= 19 => (<[u8; 16]>::try_from(&b[1..17]).ok()?.into(), &b[17..]),
+        _ => return None,
+    };
+    Some(SocketAddr::new(ip, u16::from_be_bytes([rest[0], rest[1]])))
+}
+
+/// Pacchetti di apertura verso l'altro lato: aprono la mappatura del NAT e lo stato
+/// del firewall locale, così i pacchetti QUIC diretti dell'altro lato possono entrare.
+/// QUIC li scarta (primo byte senza il bit 0x40).
+fn punch(socket: &UdpSocket, peer: SocketAddr, token: &[u8; 16]) {
+    let mut packet = vec![0x00, b'N', b'X', b'P'];
+    packet.extend_from_slice(token);
+    for _ in 0..3 {
+        let _ = socket.send_to(&packet, peer);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Socket della sessione: agganciato al relay e con la via diretta già aperta verso l'altro lato.
+async fn session_socket(route: &Route) -> Result<(UdpSocket, Option<SocketAddr>)> {
     let bind: SocketAddr = if route.relay.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
     let socket = UdpSocket::bind(bind)?;
     let route = route.clone();
     tokio::task::spawn_blocking(move || {
-        bind_relay(&socket, &route)?;
+        let peer = bind_relay(&socket, &route)?;
+        if let Some(peer) = peer {
+            debug!(%peer, "indirizzo dell'altro lato");
+            punch(&socket, peer, &route.token);
+        }
         socket.set_nonblocking(true)?;
-        Ok(socket)
+        Ok((socket, peer))
     })
     .await?
 }
 
-/// Lato agent: endpoint QUIC agganciato al relay che accetta solo il viewer atteso.
+/// Lato agent: endpoint QUIC che accetta solo il viewer atteso, sia attraverso il
+/// relay sia in diretta.
 pub async fn agent_endpoint(identity: &Identity, route: &Route) -> Result<Endpoint> {
-    let socket = relay_socket(route).await?;
+    let (socket, _peer) = session_socket(route).await?;
     let (certs, key) = identity.tls_cert();
     let verifier = PeerKey { expected: route.peer_public_key, provider: provider() };
     let mut tls = rustls::ServerConfig::builder_with_provider(provider())
@@ -103,9 +149,19 @@ pub async fn agent_endpoint(identity: &Identity, route: &Route) -> Result<Endpoi
     Ok(Endpoint::new(EndpointConfig::default(), Some(config), socket, Arc::new(TokioRuntime))?)
 }
 
-/// Lato viewer: connessione QUIC all'agent attraverso il relay.
-pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<Connection> {
-    let socket = relay_socket(route).await?;
+/// Come è stata raggiunta l'altra parte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Path {
+    Direct,
+    Relay,
+}
+
+/// Quanto attendere la via diretta dopo che il relay è già pronto.
+const DIRECT_GRACE: Duration = Duration::from_millis(1500);
+
+/// Lato viewer: prova insieme la via diretta e il relay e preferisce la diretta.
+pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Connection, Path)> {
+    let (socket, peer) = session_socket(route).await?;
     let (certs, key) = identity.tls_cert();
     let verifier = PeerKey { expected: route.peer_public_key, provider: provider() };
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
@@ -118,10 +174,47 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<Connec
     config.transport_config(transport_config());
     let mut endpoint = Endpoint::new(EndpointConfig::default(), None, socket, Arc::new(TokioRuntime))?;
     endpoint.set_default_client_config(config);
-    endpoint
-        .connect(route.relay, "nexo-device")?
-        .await
-        .context("collegamento al dispositivo attraverso il relay")
+
+    let relay = endpoint.connect(route.relay, "nexo-device")?;
+    let Some(peer) = peer.filter(|p| *p != route.relay) else {
+        let conn = relay.await.context("collegamento attraverso il relay")?;
+        return Ok((conn, Path::Relay));
+    };
+    let direct = endpoint.connect(peer, "nexo-device")?;
+    let (mut relay, mut direct) = (Box::pin(relay), Box::pin(direct));
+
+    // Si attende la prima delle due; se è il relay si concede ancora un po' di tempo alla diretta.
+    let (conn, path, loser) = tokio::select! {
+        r = &mut direct => match r {
+            Ok(conn) => (conn, Path::Direct, Some(relay)),
+            Err(e) => {
+                debug!("via diretta non riuscita: {e}");
+                (relay.await.context("collegamento attraverso il relay")?, Path::Relay, None)
+            }
+        },
+        r = &mut relay => {
+            let relayed = r.context("collegamento attraverso il relay");
+            match tokio::time::timeout(DIRECT_GRACE, &mut direct).await {
+                Ok(Ok(conn)) => {
+                    if let Ok(c) = relayed {
+                        c.close(0u32.into(), b"percorso diretto");
+                    }
+                    (conn, Path::Direct, None)
+                }
+                _ => (relayed?, Path::Relay, None),
+            }
+        }
+    };
+    // La connessione perdente, se arriva, viene chiusa: l'agent usa quella su cui si apre la sessione.
+    if let Some(loser) = loser {
+        tokio::spawn(async move {
+            if let Ok(c) = loser.await {
+                c.close(0u32.into(), b"percorso diretto");
+            }
+        });
+    }
+    debug!(?path, remote = %conn.remote_address(), "collegato");
+    Ok((conn, path))
 }
 
 /// Il certificato usa questa chiave pubblica Ed25519?
@@ -236,5 +329,21 @@ impl ClientCertVerifier for PeerKey {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.provider.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_relay_addresses() {
+        assert_eq!(parse_addr(&[4, 10, 0, 0, 1, 0x03, 0xe8]), Some("10.0.0.1:1000".parse().unwrap()));
+        let mut v6 = vec![6];
+        v6.extend_from_slice(&std::net::Ipv6Addr::LOCALHOST.octets());
+        v6.extend_from_slice(&[0, 80]);
+        assert_eq!(parse_addr(&v6), Some("[::1]:80".parse().unwrap()));
+        assert_eq!(parse_addr(&[4, 1, 2]), None);
+        assert_eq!(parse_addr(&[]), None);
     }
 }
