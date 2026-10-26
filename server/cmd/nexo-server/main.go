@@ -5,6 +5,8 @@
 //	NEXO_LISTEN    indirizzo UDP (predefinito ":21116")
 //	NEXO_DATA_DIR  cartella per database e certificato (predefinito "./data")
 //	NEXO_LOG       debug | info (predefinito) | warn
+//
+// `nexo-server healthcheck` verifica che il server risponda (usato da Docker).
 package main
 
 import (
@@ -44,6 +46,13 @@ func env(key, def string) string {
 func main() {
 	// I buffer UDP sono impostati da noi sul socket condiviso con il relay.
 	_ = os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := healthcheck(); err != nil {
+			fmt.Fprintln(os.Stderr, "non risponde:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "errore:", err)
 		os.Exit(1)
@@ -106,4 +115,20 @@ func run() error {
 	}
 	log.Info("nexo-server fermato")
 	return nil
+}
+
+// healthcheck completa un handshake QUIC con il server locale.
+func healthcheck() error {
+	_, port, err := net.SplitHostPort(env("NEXO_LISTEN", ":21116"))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, err := quic.DialAddr(ctx, net.JoinHostPort("127.0.0.1", port),
+		&tls.Config{InsecureSkipVerify: true, NextProtos: []string{alpn}}, nil)
+	if err != nil {
+		return err
+	}
+	return conn.CloseWithError(0, "")
 }

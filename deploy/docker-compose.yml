@@ -1,0 +1,15 @@
+# nexo-server: segnalazione e relay. Aprire/inoltrare la porta UDP 21116.
+services:
+  nexo-server:
+    image: ghcr.io/alexbn71/nexo-server:latest
+    container_name: nexo-server
+    restart: unless-stopped
+    ports:
+      - "21116:21116/udp"
+    environment:
+      NEXO_LOG: info
+    volumes:
+      - nexo-data:/data
+
+volumes:
+  nexo-data:
