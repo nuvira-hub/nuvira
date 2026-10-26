@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = [
+    "client/proto",
+    "client/capture",
+    "client/codec",
+    "client/transport",
+    "client/input",
+    "client/host",
+    "client/viewer",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+authors = ["Alessandro Blason"]
+repository = "https://github.com/alexbn71/Nexo"
+
+[workspace.dependencies]
+nexo-proto = { path = "client/proto" }
+nexo-transport = { path = "client/transport" }
+nexo-capture = { path = "client/capture" }
+nexo-codec = { path = "client/codec" }
+nexo-input = { path = "client/input" }
+
+anyhow = "1"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+prost = "0.14"
+prost-build = "0.14"
+protoc-bin-vendored = "3"
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.14"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+openh264 = "0.9"
+wgpu = "30"
+winit = "0.30"
+pollster = "1"
+bytemuck = { version = "1", features = ["derive"] }
+windows = "0.62"

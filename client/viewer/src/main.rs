@@ -1,0 +1,335 @@
+//! Nexo viewer — la finestra della sessione remota.
+//!
+//! Prototipo della fase 0: si collega direttamente a un host in LAN, mostra lo
+//! schermo con wgpu e invia mouse e tastiera. Nel titolo della finestra:
+//! frame al secondo, latenza cattura→visualizzazione, RTT e banda.
+
+mod net;
+mod render;
+
+use std::collections::HashSet;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::sync::Arc;
+use std::time::Instant;
+
+use anyhow::{Context, Result};
+use clap::Parser;
+use nexo_proto::v1::{
+    Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, input_event::Event,
+};
+use tokio::sync::mpsc::UnboundedSender;
+use tracing::{debug, error, info};
+use winit::application::ApplicationHandler;
+use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::PhysicalKey;
+use winit::window::{Window, WindowId};
+
+use crate::net::NetEvent;
+use crate::render::Renderer;
+
+const COPYRIGHT: &str = "Nexo © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/Nexo";
+
+#[derive(Parser, Debug)]
+#[command(version, about = "Nexo viewer: controlla un PC con Nexo host (prototipo in LAN)", after_help = COPYRIGHT)]
+struct Args {
+    /// Indirizzo dell'host, es. 192.168.1.20 oppure 192.168.1.20:21500.
+    host: String,
+
+    /// Impronta del certificato mostrata dall'host (consigliata).
+    #[arg(long)]
+    fingerprint: Option<String>,
+
+    /// Solo visualizzazione: non invia mouse e tastiera.
+    #[arg(long)]
+    view_only: bool,
+}
+
+/// Indirizzo dell'host; senza porta si usa quella predefinita.
+fn resolve(host: &str) -> Result<SocketAddr> {
+    if let Ok(addr) = host.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok((ip, nexo_transport::DEFAULT_PORT).into());
+    }
+    let mut addrs = if host.contains(':') {
+        host.to_socket_addrs()?
+    } else {
+        (host, nexo_transport::DEFAULT_PORT).to_socket_addrs()?
+    };
+    addrs.next().with_context(|| format!("indirizzo non valido: {host}"))
+}
+
+fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+    let args = Args::parse();
+    let addr = resolve(&args.host)?;
+    let fingerprint = args.fingerprint.as_deref().map(nexo_transport::parse_fingerprint).transpose()?;
+    println!("{COPYRIGHT}");
+
+    let event_loop = EventLoop::<NetEvent>::with_user_event().build()?;
+    let input = net::start(addr, fingerprint, event_loop.create_proxy());
+    let mut app = App {
+        input,
+        view_only: args.view_only,
+        window: None,
+        renderer: None,
+        host: addr.to_string(),
+        stats: Stats::new(),
+        clock_offset_us: None,
+        best_rtt_us: u64::MAX,
+        rtt_us: 0,
+        pressed_keys: HashSet::new(),
+        exit_reason: None,
+    };
+    event_loop.run_app(&mut app)?;
+    if let Some(reason) = app.exit_reason {
+        println!("{reason}");
+    }
+    Ok(())
+}
+
+struct App {
+    input: UnboundedSender<InputEvent>,
+    view_only: bool,
+    window: Option<Arc<Window>>,
+    renderer: Option<Renderer>,
+    host: String,
+    stats: Stats,
+    /// Orologio dell'host meno il nostro (dalla misura con RTT minore).
+    clock_offset_us: Option<i64>,
+    best_rtt_us: u64,
+    rtt_us: u64,
+    pressed_keys: HashSet<String>,
+    exit_reason: Option<String>,
+}
+
+impl App {
+    fn send(&self, event: Event) {
+        if !self.view_only {
+            let _ = self.input.send(InputEvent { event: Some(event) });
+        }
+    }
+
+    fn release_keys(&mut self) {
+        for code in std::mem::take(&mut self.pressed_keys) {
+            self.send(Event::Key(Key { code, down: false }));
+        }
+    }
+
+    fn update_title(&self) {
+        let Some(window) = &self.window else { return };
+        let s = &self.stats;
+        let latency = if self.clock_offset_us.is_some() && s.frames > 0 {
+            format!("{:.0} ms", s.latency_us as f64 / s.frames as f64 / 1000.0)
+        } else {
+            "…".into()
+        };
+        let title = format!(
+            "Nexo — {} · {:.0} fps · latenza {latency} · RTT {:.1} ms · {:.1} Mbit/s · comp. {:.1} ms · decomp. {:.1} ms",
+            self.host,
+            s.fps(),
+            self.rtt_us as f64 / 1000.0,
+            s.mbps(),
+            s.encode_us as f64 / s.frames.max(1) as f64 / 1000.0,
+            s.decode_us as f64 / s.frames.max(1) as f64 / 1000.0,
+        );
+        debug!("{title}");
+        window.set_title(&title);
+    }
+}
+
+impl ApplicationHandler<NetEvent> for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        let attrs = Window::default_attributes()
+            .with_title(format!("Nexo — connessione a {}…", self.host))
+            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                error!("finestra non creata: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
+        match Renderer::new(window.clone()) {
+            Ok(r) => {
+                info!("rendering con {}", r.adapter_info);
+                self.renderer = Some(r);
+            }
+            Err(e) => {
+                error!("rendering non disponibile: {e:#}");
+                event_loop.exit();
+                return;
+            }
+        }
+        self.window = Some(window);
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
+        match event {
+            NetEvent::Connected { host, width, height } => {
+                info!("schermo remoto {width}x{height}");
+                if !host.is_empty() {
+                    self.host = host;
+                }
+                self.update_title();
+            }
+            NetEvent::Frame(frame) => {
+                let Some(renderer) = self.renderer.as_mut() else { return };
+                let t = Instant::now();
+                renderer.upload(&frame.yuv);
+                renderer.render();
+                tracing::trace!("frame mostrato in {:?}", t.elapsed());
+                if let Some(offset) = self.clock_offset_us {
+                    // Momento della cattura riportato sul nostro orologio.
+                    let captured_here = frame.capture_us as i64 - offset;
+                    let latency = nexo_proto::now_us() as i64 - captured_here;
+                    self.stats.latency_us += latency.max(0) as u64;
+                }
+                self.stats.frames += 1;
+                self.stats.bytes += frame.bytes;
+                self.stats.encode_us += frame.encode_us as u64;
+                self.stats.decode_us += frame.decode_us as u64;
+                if self.stats.since.elapsed().as_secs_f64() >= 1.0 {
+                    self.update_title();
+                    self.stats = Stats::new();
+                }
+            }
+            NetEvent::Clock { rtt_us, offset_us } => {
+                self.rtt_us = rtt_us;
+                // La misura con RTT minore è la meno disturbata dalle code di rete.
+                if rtt_us <= self.best_rtt_us {
+                    self.best_rtt_us = rtt_us;
+                    self.clock_offset_us = Some(offset_us);
+                }
+            }
+            NetEvent::Disconnected(reason) => {
+                info!("disconnesso: {reason}");
+                self.exit_reason = Some(format!("Sessione chiusa: {reason}"));
+                event_loop.exit();
+            }
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        match event {
+            WindowEvent::CloseRequested => {
+                self.release_keys();
+                event_loop.exit();
+            }
+            WindowEvent::Resized(size) => {
+                if let Some(r) = self.renderer.as_mut() {
+                    r.resize(size.width, size.height);
+                    r.render();
+                }
+            }
+            WindowEvent::RedrawRequested => {
+                if let Some(r) = self.renderer.as_mut() {
+                    r.render();
+                }
+            }
+            WindowEvent::Focused(false) => self.release_keys(),
+            WindowEvent::CursorMoved { position, .. } => {
+                let Some(r) = &self.renderer else { return };
+                if let Some((x, y)) = r.viewport().normalize(position.x, position.y) {
+                    self.send(Event::MouseMove(MouseMove { x, y }));
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let button = match button {
+                    winit::event::MouseButton::Left => Button::Left,
+                    winit::event::MouseButton::Right => Button::Right,
+                    winit::event::MouseButton::Middle => Button::Middle,
+                    winit::event::MouseButton::Back => Button::Back,
+                    winit::event::MouseButton::Forward => Button::Forward,
+                    winit::event::MouseButton::Other(_) => return,
+                };
+                self.send(Event::MouseButton(MouseButton {
+                    button: button as i32,
+                    down: state == ElementState::Pressed,
+                }));
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                // Unità di Windows: 120 per scatto. I touchpad danno pixel: ~40 px per scatto.
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x * 120.0, y * 120.0),
+                    MouseScrollDelta::PixelDelta(p) => (p.x as f32 * 3.0, p.y as f32 * 3.0),
+                };
+                self.send(Event::MouseWheel(MouseWheel { dx: dx as i32, dy: dy as i32 }));
+            }
+            WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
+                let PhysicalKey::Code(code) = event.physical_key else { return };
+                let code = w3c_code(code);
+                let down = event.state == ElementState::Pressed;
+                if down {
+                    self.pressed_keys.insert(code.clone());
+                } else {
+                    self.pressed_keys.remove(&code);
+                }
+                self.send(Event::Key(Key { code, down }));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Nome W3C (`KeyboardEvent.code`) di un tasto winit. I nomi coincidono tranne
+/// per il tasto Windows/Cmd, che winit chiama "Super".
+fn w3c_code(code: winit::keyboard::KeyCode) -> String {
+    match format!("{code:?}").as_str() {
+        "SuperLeft" => "MetaLeft".into(),
+        "SuperRight" => "MetaRight".into(),
+        other => other.into(),
+    }
+}
+
+struct Stats {
+    since: Instant,
+    frames: u32,
+    bytes: usize,
+    latency_us: u64,
+    encode_us: u64,
+    decode_us: u64,
+}
+
+impl Stats {
+    fn new() -> Self {
+        Self { since: Instant::now(), frames: 0, bytes: 0, latency_us: 0, encode_us: 0, decode_us: 0 }
+    }
+
+    fn fps(&self) -> f64 {
+        self.frames as f64 / self.since.elapsed().as_secs_f64().max(0.001)
+    }
+
+    fn mbps(&self) -> f64 {
+        self.bytes as f64 * 8.0 / self.since.elapsed().as_secs_f64().max(0.001) / 1e6
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_adds_default_port() {
+        assert_eq!(resolve("127.0.0.1").unwrap().port(), nexo_transport::DEFAULT_PORT);
+        assert_eq!(resolve("127.0.0.1:9000").unwrap().port(), 9000);
+        assert_eq!(resolve("[::1]:9000").unwrap().port(), 9000);
+        assert_eq!(resolve("::1").unwrap().port(), nexo_transport::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn super_becomes_meta() {
+        assert_eq!(w3c_code(winit::keyboard::KeyCode::SuperLeft), "MetaLeft");
+        assert_eq!(w3c_code(winit::keyboard::KeyCode::KeyA), "KeyA");
+    }
+}

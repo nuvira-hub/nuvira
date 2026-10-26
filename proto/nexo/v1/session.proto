@@ -1,0 +1,113 @@
+// Messaggi scambiati dentro una sessione tra il dispositivo che controlla
+// (viewer) e quello controllato (host). Vedi docs/11-protocollo.md.
+//
+// Regole: i campi si aggiungono e non si riutilizzano mai; i messaggi
+// sconosciuti vengono ignorati.
+
+syntax = "proto3";
+
+package nexo.v1;
+
+// La versione negoziata è la più alta comune ai due lati.
+enum ProtocolVersion {
+  PROTOCOL_VERSION_UNSPECIFIED = 0;
+  // Prototipo della fase 0: solo LAN, nessuna autenticazione.
+  PROTOCOL_VERSION_0 = 1;
+}
+
+enum Codec {
+  CODEC_UNSPECIFIED = 0;
+  CODEC_H264 = 1;
+}
+
+// Canale `control` (stream bidirezionale aperto dal viewer).
+message ControlMessage {
+  oneof msg {
+    Hello hello = 1;
+    VideoFormat video_format = 2;
+    Ping ping = 3;
+    Pong pong = 4;
+    RequestKeyframe request_keyframe = 5;
+  }
+}
+
+message Hello {
+  uint32 protocol_version = 1;
+  string device_name = 2;
+  string os = 3;
+  string app_version = 4;
+}
+
+// Inviato dall'host quando inizia (o cambia) il flusso video.
+message VideoFormat {
+  Codec codec = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+}
+
+// Stima di RTT e differenza tra gli orologi dei due dispositivi.
+message Ping {
+  uint64 sent_us = 1;
+}
+
+message Pong {
+  uint64 ping_sent_us = 1;
+  // Orologio dell'host (microsecondi dal 1970) quando ha ricevuto il Ping.
+  uint64 host_us = 2;
+}
+
+message RequestKeyframe {}
+
+// Canale `video` (stream unidirezionale host -> viewer).
+message VideoFrame {
+  uint64 seq = 1;
+  // Orologio dell'host (microsecondi dal 1970) al momento della cattura.
+  uint64 capture_us = 2;
+  uint32 encode_us = 3;
+  bool keyframe = 4;
+  bytes data = 5;
+}
+
+// Canale `input` (stream unidirezionale viewer -> host).
+message InputEvent {
+  oneof event {
+    MouseMove mouse_move = 1;
+    MouseButton mouse_button = 2;
+    MouseWheel mouse_wheel = 3;
+    Key key = 4;
+  }
+}
+
+// Posizione normalizzata 0..1 rispetto allo schermo trasmesso.
+message MouseMove {
+  float x = 1;
+  float y = 2;
+}
+
+enum Button {
+  BUTTON_UNSPECIFIED = 0;
+  BUTTON_LEFT = 1;
+  BUTTON_RIGHT = 2;
+  BUTTON_MIDDLE = 3;
+  BUTTON_BACK = 4;
+  BUTTON_FORWARD = 5;
+}
+
+message MouseButton {
+  Button button = 1;
+  bool down = 2;
+}
+
+// Rotella in unità da 120 per scatto (come WHEEL_DELTA di Windows).
+message MouseWheel {
+  int32 dx = 1;
+  int32 dy = 2;
+}
+
+// Tasto fisico, identificato con il nome W3C di KeyboardEvent.code
+// (es. "KeyA", "Enter", "ControlLeft", "MetaLeft"): indipendente dal
+// layout di tastiera e uguale a quello che userà il client web.
+message Key {
+  string code = 1;
+  bool down = 2;
+}

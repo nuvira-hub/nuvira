@@ -1,0 +1,15 @@
+[package]
+name = "nexo-proto"
+description = "Messaggi del protocollo Nexo e framing, senza dipendenze dal sistema operativo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+bytes.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true
+protoc-bin-vendored.workspace = true
