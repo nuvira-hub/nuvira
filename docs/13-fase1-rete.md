@@ -83,7 +83,7 @@ Test: `NEXO_RELAY_FAKE_REFLEXIVE=1` sul server sostituisce l'indirizzo visto dal
 | 4 | Immagine Docker (`ghcr.io/alexbn71/nexo-server`, GitHub Actions) | ✅ immagine; pubblicazione su Internet rimandata |
 | 5 | Hole punching e scelta del percorso (diretta preferita, relay come ripiego) | ✅ |
 | 5b | Indirizzi locali come candidati (dispositivi dietro lo stesso router, hairpin) | ✅ |
-| 6 | Ripiego su TCP/WebSocket per le reti che bloccano UDP | da fare |
+| 6 | Ripiego su WebSocket per le reti che bloccano UDP | ✅ provato in locale; da provare tra i due PC (serve la regola TCP del firewall) |
 
 ## Uso
 
@@ -103,6 +103,26 @@ NUC (agent + nexo-server) → PC-LABORATORIO (viewer), schermo vero con animazio
 |---|---|---|---|---|
 | Diretta | 32 | 37 ms | 46 ms | 1,3 ms |
 | Relay (forzato) | 33 | 43 ms | 52 ms | 1,7 ms |
+
+## Ripiego WebSocket (reti che bloccano UDP)
+
+Invece di un secondo protocollo di sessione su TCP (come `hbbr` di RustDesk, che inoltra connessioni TCP/WebSocket), Nexo fa passare **gli stessi datagrammi QUIC dentro un WebSocket**:
+
+- **client** (`client/transport/src/ws.rs`): un socket per quinn che invia e riceve i datagrammi attraverso il WebSocket. QUIC, crittografia end-to-end, verifica delle chiavi e relay restano identici. I tentativi di via diretta vengono scartati (su queste reti UDP non passa).
+- **server** (`server/internal/relay/websocket.go`): ogni connessione WebSocket diventa un indirizzo virtuale nello stesso smistamento della porta UDP; il relay collega senza differenze un lato UDP con un lato WebSocket.
+- **Scelta**: `--transport auto` (predefinito) prova UDP per 4 s e poi passa a `ws://<server>:21116/nexo`; `--transport udp|websocket` forza; `--server-ws wss://…` indica l'URL pubblicato dietro un reverse proxy. La sessione usa lo stesso trasporto della segnalazione.
+- Server: `NEXO_WS_LISTEN` (predefinito `:21116` in TCP, `off` per disattivarlo), percorso `/nexo`.
+
+Prove in locale (agent e viewer sullo stesso PC, 1280x720 a 30 fps):
+
+| Agent → viewer | Primo frame | Latenza p50 | p95 |
+|---|---|---|---|
+| UDP → UDP | 0,8 s | 13 ms | 41 ms |
+| UDP → WebSocket | 1,4 s | 14 ms | 42 ms |
+| WebSocket → WebSocket | 0,6 s | 18 ms | 44 ms |
+| UDP bloccato, scelta automatica | 5,5 s | 25 ms | 44 ms |
+
+Correzioni emerse: il messaggio di chiusura di QUIC passa per una coda svuotata da un task e il viewer usciva prima che partisse (l'agent restava occupato fino al timeout); chiusura del viewer in ordine (wgpu, finestra, thread di rete e di decodifica) dopo crash sporadici in uscita. 30 sessioni consecutive alternando UDP e WebSocket senza errori.
 
 ## Rete degradata: bitrate adattivo e BBR (2026-10-26)
 
@@ -128,7 +148,7 @@ La configurazione di OPNsense (inoltro della porta UDP del server) serve solo a 
 
 - **NAT simmetrici e CGNAT** (reti mobili): la via diretta può fallire e si resta sul relay; da misurare quanto spesso.
 - **Hairpin**: due dispositivi dietro lo stesso NAT che raggiungono il server con l'IP pubblico. Risolto con i candidati locali (sotto); verificato in LAN simulando un indirizzo pubblico irraggiungibile.
-- **Reti che bloccano UDP** (aziende, alberghi): serve il passo 6.
+- **Reti che bloccano UDP** (aziende, alberghi): ripiego WebSocket (sotto). Per attraversare proxy e firewall aziendali va pubblicato come `wss://` sulla 443 dietro il reverse proxy.
 - **Perdita di pacchetti, jitter, RTT di 30-100 ms**: affrontati con bitrate adattivo e BBR (sezione sopra), verificati in simulazione; resta la prova reale.
 - **MTU** più piccole (VPN, PPPoE): QUIC lo gestisce, da verificare.
 

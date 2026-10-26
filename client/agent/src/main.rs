@@ -86,6 +86,15 @@ struct Args {
     #[arg(long, value_name = "IMPRONTA")]
     server_key: Option<String>,
 
+    /// Trasporto verso il server: auto (UDP, poi WebSocket se UDP è bloccato), udp, websocket.
+    #[arg(long, value_enum, default_value_t = TransportArg::Auto)]
+    transport: TransportArg,
+
+    /// URL WebSocket del server per il ripiego (predefinito: ws://<server>:<porta>/nexo),
+    /// es. wss://nexo.example.it/nexo dietro un reverse proxy.
+    #[arg(long, value_name = "URL")]
+    server_ws: Option<String>,
+
     /// Password di sessione (con --server). Senza, ne viene generata una a ogni avvio.
     #[arg(long)]
     password: Option<String>,
@@ -93,6 +102,23 @@ struct Args {
     /// File con la chiave del dispositivo (predefinito: device.key nella cartella dati).
     #[arg(long, value_name = "FILE")]
     identity: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum TransportArg {
+    Auto,
+    Udp,
+    Websocket,
+}
+
+impl From<TransportArg> for nexo_transport::signal::TransportMode {
+    fn from(arg: TransportArg) -> Self {
+        match arg {
+            TransportArg::Auto => Self::Auto,
+            TransportArg::Udp => Self::Udp,
+            TransportArg::Websocket => Self::WebSocket,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -275,7 +301,20 @@ async fn signal_loop(
 ) -> Result<()> {
     use nexo_proto::v1::{Accept, Reject, client_message, server_message};
     let device_name = std::env::var("COMPUTERNAME").unwrap_or_default();
-    let mut signal = nexo_transport::signal::connect(server, expected, identity, &device_name).await?;
+    let ws_url =
+        args.server_ws.clone().unwrap_or_else(|| nexo_transport::ws::default_url(server_name, server));
+    let mut signal = nexo_transport::signal::connect_auto(
+        server,
+        &ws_url,
+        args.transport.into(),
+        expected,
+        identity,
+        &device_name,
+    )
+    .await?;
+    if let nexo_transport::ServerTransport::WebSocket(url) = &signal.transport {
+        info!("collegato a nexo-server attraverso il WebSocket {url}");
+    }
     if expected.is_none() {
         nexo_transport::signal::known_server::remember(server_name, &signal.server_fingerprint)?;
         info!(
@@ -308,6 +347,7 @@ async fn signal_loop(
             Some(server_message::Msg::Route(route)) => {
                 let route = nexo_transport::p2p::Route {
                     relay: server,
+                    transport: signal.transport.clone(),
                     token: route.relay_token.as_slice().try_into().context("gettone del relay non valido")?,
                     peer_public_key: route
                         .peer_public_key

@@ -33,6 +33,8 @@ pub enum Role {
 #[derive(Debug, Clone)]
 pub struct Route {
     pub relay: SocketAddr,
+    /// Come si raggiunge il relay (lo stesso trasporto della segnalazione).
+    pub transport: crate::ServerTransport,
     pub token: [u8; 16],
     pub peer_public_key: PublicKey,
     pub role: Role,
@@ -44,7 +46,7 @@ const RELAY_BOUND: u8 = 0x02;
 
 /// Aggancia `socket` al relay e attende che anche l'altro lato sia collegato.
 /// Restituisce l'indirizzo dell'altro lato come lo vede il relay (per la via diretta).
-fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Result<Candidates> {
+fn bind_message(route: &Route, locals: &[SocketAddr]) -> Vec<u8> {
     let mut bind = Vec::with_capacity(64);
     bind.extend_from_slice(&RELAY_MAGIC);
     bind.push(RELAY_BIND);
@@ -54,6 +56,34 @@ fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Resul
     for addr in locals {
         push_addr(&mut bind, *addr);
     }
+    bind
+}
+
+/// Risposta del relay al bind per questo gettone: `Some(true)` se anche l'altro lato è agganciato.
+fn bound_state(data: &[u8], token: &[u8; 16]) -> Option<bool> {
+    (data.len() >= 22 && data[..5] == [0, b'N', b'X', b'R', RELAY_BOUND] && data[5..21] == token[..])
+        .then(|| data[21] == 1)
+}
+
+/// Aggancio al relay attraverso il tunnel WebSocket (niente via diretta).
+async fn bind_relay_ws(socket: &crate::ws::WsSocket, route: &Route) -> Result<()> {
+    let bind = bind_message(route, &[]);
+    for _ in 0..60 {
+        socket.send_raw(&bind)?;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+        while let Some(data) =
+            socket.recv_raw(deadline.saturating_duration_since(tokio::time::Instant::now())).await?
+        {
+            if bound_state(&data, &route.token) == Some(true) {
+                return Ok(());
+            }
+        }
+    }
+    bail!("l'altro dispositivo non si è agganciato al relay")
+}
+
+fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Result<Candidates> {
+    let bind = bind_message(route, locals);
 
     socket.set_read_timeout(Some(Duration::from_millis(250)))?;
     // Grande quanto un datagramma QUIC: se l'altro lato è già partito, i suoi pacchetti
@@ -66,21 +96,17 @@ fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Resul
         socket.send_to(&bind, route.relay)?;
         loop {
             match socket.recv_from(&mut buf) {
-                Ok((n, from))
-                    if from == route.relay && n >= 22 && buf[..5] == [0, b'N', b'X', b'R', RELAY_BOUND] =>
-                {
-                    if buf[5..21] != route.token {
-                        continue;
-                    }
-                    if !acked {
-                        debug!("agganciato al relay, in attesa dell'altro lato");
-                        acked = true;
-                    }
-                    if buf[21] == 1 {
+                Ok((n, from)) if from == route.relay => match bound_state(&buf[..n], &route.token) {
+                    Some(true) => {
                         socket.set_read_timeout(None)?;
                         return Ok(parse_candidates(&buf[22..n]));
                     }
-                }
+                    Some(false) if !acked => {
+                        debug!("agganciato al relay, in attesa dell'altro lato");
+                        acked = true;
+                    }
+                    _ => {}
+                },
                 Ok(_) => {}
                 Err(e)
                     if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) =>
@@ -189,6 +215,33 @@ fn punch(socket: &UdpSocket, peer: SocketAddr, token: &[u8; 16]) {
 }
 
 /// Socket della sessione: agganciato al relay e con la via diretta già aperta verso l'altro lato.
+/// Endpoint QUIC della sessione, agganciato al relay, e indirizzi diretti dell'altro lato.
+async fn session_endpoint(
+    route: &Route,
+    server_config: Option<ServerConfig>,
+) -> Result<(Endpoint, Vec<SocketAddr>)> {
+    match &route.transport {
+        crate::ServerTransport::Udp => {
+            let (socket, peers) = session_socket(route).await?;
+            Ok((
+                crate::endpoint_for(&route.transport, route.relay, Some(socket), server_config).await?,
+                peers,
+            ))
+        }
+        crate::ServerTransport::WebSocket(url) => {
+            let socket = crate::ws::WsSocket::connect(url, route.relay).await?;
+            bind_relay_ws(&socket, route).await?;
+            let endpoint = Endpoint::new_with_abstract_socket(
+                EndpointConfig::default(),
+                server_config,
+                socket,
+                Arc::new(TokioRuntime),
+            )?;
+            Ok((endpoint, Vec::new()))
+        }
+    }
+}
+
 async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
     let bind: SocketAddr = if route.relay.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
     let socket = UdpSocket::bind(bind)?;
@@ -210,7 +263,6 @@ async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
 /// Lato agent: endpoint QUIC che accetta solo il viewer atteso, sia attraverso il
 /// relay sia in diretta.
 pub async fn agent_endpoint(identity: &Identity, route: &Route) -> Result<Endpoint> {
-    let (socket, _peers) = session_socket(route).await?;
     let (certs, key) = identity.tls_cert();
     let verifier = PeerKey { expected: route.peer_public_key, provider: provider() };
     let mut tls = rustls::ServerConfig::builder_with_provider(provider())
@@ -220,7 +272,7 @@ pub async fn agent_endpoint(identity: &Identity, route: &Route) -> Result<Endpoi
     tls.alpn_protocols = vec![ALPN.to_vec()];
     let mut config = ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
     config.transport_config(transport_config());
-    Ok(Endpoint::new(EndpointConfig::default(), Some(config), socket, Arc::new(TokioRuntime))?)
+    Ok(session_endpoint(route, Some(config)).await?.0)
 }
 
 /// Come è stata raggiunta l'altra parte.
@@ -235,7 +287,6 @@ const DIRECT_GRACE: Duration = Duration::from_millis(1500);
 
 /// Lato viewer: prova insieme la via diretta e il relay e preferisce la diretta.
 pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Connection, Path)> {
-    let (socket, peers) = session_socket(route).await?;
     let (certs, key) = identity.tls_cert();
     let verifier = PeerKey { expected: route.peer_public_key, provider: provider() };
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
@@ -246,7 +297,7 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     tls.alpn_protocols = vec![ALPN.to_vec()];
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
     config.transport_config(transport_config());
-    let mut endpoint = Endpoint::new(EndpointConfig::default(), None, socket, Arc::new(TokioRuntime))?;
+    let (mut endpoint, peers) = session_endpoint(route, None).await?;
     endpoint.set_default_client_config(config);
 
     let mut relay = Box::pin(endpoint.connect(route.relay, "nexo-device")?);

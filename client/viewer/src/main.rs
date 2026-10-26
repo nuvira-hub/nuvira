@@ -31,6 +31,23 @@ use crate::report::Report;
 
 const COPYRIGHT: &str = "Nexo © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/Nexo";
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum TransportArg {
+    Auto,
+    Udp,
+    Websocket,
+}
+
+impl From<TransportArg> for nexo_transport::signal::TransportMode {
+    fn from(arg: TransportArg) -> Self {
+        match arg {
+            TransportArg::Auto => Self::Auto,
+            TransportArg::Udp => Self::Udp,
+            TransportArg::Websocket => Self::WebSocket,
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about = "Nexo viewer: controlla un PC con Nexo agent (prototipo in LAN)", after_help = COPYRIGHT)]
 struct Args {
@@ -44,6 +61,15 @@ struct Args {
     /// Impronta del certificato del server. Senza, si memorizza quella vista al primo collegamento.
     #[arg(long, value_name = "IMPRONTA")]
     server_key: Option<String>,
+
+    /// Trasporto verso il server: auto (UDP, poi WebSocket se UDP è bloccato), udp, websocket.
+    #[arg(long, value_enum, default_value_t = TransportArg::Auto)]
+    transport: TransportArg,
+
+    /// URL WebSocket del server per il ripiego (predefinito: ws://<server>:<porta>/nexo),
+    /// es. wss://nexo.example.it/nexo dietro un reverse proxy.
+    #[arg(long, value_name = "URL")]
+    server_ws: Option<String>,
 
     /// Password di sessione mostrata dall'agent.
     #[arg(long)]
@@ -97,6 +123,8 @@ fn main() -> Result<()> {
             server: nexo_transport::resolve_addr(server_name, nexo_transport::signal::DEFAULT_PORT)?,
             server_name: server_name.clone(),
             server_key: args.server_key.as_deref().map(nexo_transport::parse_fingerprint).transpose()?,
+            transport: args.transport.into(),
+            server_ws: args.server_ws.clone(),
             device_id: args.agent.chars().filter(|c| c.is_ascii_digit()).collect(),
             identity: args
                 .identity
@@ -164,6 +192,11 @@ fn main() -> Result<()> {
     if let (Some(path), Some(frame)) = (&args.snapshot, &app.last_frame) {
         cpu::write_png(frame, path).with_context(|| format!("scrittura di {}", path.display()))?;
     }
+    // Chiusura in ordine: prima la superficie wgpu, poi la finestra, poi il resto.
+    // Lasciata all'ordine implicito, il viewer andava talvolta in crash in uscita.
+    drop(app.renderer.take());
+    drop(app.window.take());
+    drop(app);
     Ok(())
 }
 

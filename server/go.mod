@@ -3,6 +3,7 @@ module github.com/alexbn71/Nexo/server
 go 1.27.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/quic-go/quic-go v0.64.1
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.61.0

@@ -28,7 +28,7 @@ func TestImpairerDelayAndRate(t *testing.T) {
 	var mu sync.Mutex
 	var arrivals []time.Time
 	p := newImpairer(&Impairment{Delay: 30 * time.Millisecond, Rate: 1e6, Queue: time.Second},
-		func([]byte, *net.UDPAddr) {
+		func([]byte, net.Addr) {
 			mu.Lock()
 			arrivals = append(arrivals, time.Now())
 			mu.Unlock()

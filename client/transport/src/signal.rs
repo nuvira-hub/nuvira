@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use nexo_proto::v1::{ClientMessage, Proof, Register, ServerMessage, client_message, server_message};
+use quinn::ClientConfig;
 use quinn::crypto::rustls::QuicClientConfig;
-use quinn::{ClientConfig, Endpoint};
 
 use crate::identity::Identity;
-use crate::{Fingerprint, FramedRecv, FramedSend, PinnedCert, provider, transport_config};
+use crate::{Fingerprint, FramedRecv, FramedSend, PinnedCert, ServerTransport, provider, transport_config};
 
 /// ALPN della segnalazione (deve coincidere con quello del server).
 const ALPN: &[u8] = b"nexo-signal/1";
@@ -27,6 +27,8 @@ pub struct Signal {
     pub server: SocketAddr,
     /// Impronta del certificato del server vista in questa connessione.
     pub server_fingerprint: Fingerprint,
+    /// Trasporto con cui il server è stato raggiunto: le sessioni useranno lo stesso.
+    pub transport: ServerTransport,
     pub tx: SignalSender,
     pub rx: SignalReceiver,
 }
@@ -50,8 +52,71 @@ impl SignalReceiver {
 /// Si collega a nexo-server e registra il dispositivo. Con `expected` il certificato
 /// del server deve avere quell'impronta; senza, qualunque impronta viene accettata
 /// e restituita in `server_fingerprint` (da memorizzare: vedi [`known_server`]).
+/// Quale trasporto usare verso il server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TransportMode {
+    /// UDP; se non risponde entro pochi secondi, WebSocket.
+    #[default]
+    Auto,
+    Udp,
+    WebSocket,
+}
+
+/// Tempo concesso a UDP prima di provare il WebSocket.
+const UDP_ATTEMPT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Come [`connect`], scegliendo il trasporto: con `Auto` prova UDP e, se il
+/// server non risponde (rete che blocca UDP), passa al WebSocket `ws_url`.
+pub async fn connect_auto(
+    server: SocketAddr,
+    ws_url: &str,
+    mode: TransportMode,
+    expected: Option<Fingerprint>,
+    identity: &Identity,
+    device_name: &str,
+) -> Result<Signal> {
+    let ws = ServerTransport::WebSocket(ws_url.to_string());
+    match mode {
+        TransportMode::Udp => connect(server, &ServerTransport::Udp, expected, identity, device_name).await,
+        TransportMode::WebSocket => connect(server, &ws, expected, identity, device_name).await,
+        TransportMode::Auto => {
+            let udp = tokio::time::timeout(
+                UDP_ATTEMPT,
+                connect(server, &ServerTransport::Udp, expected, identity, device_name),
+            )
+            .await;
+            match udp {
+                Ok(Ok(signal)) => Ok(signal),
+                // Il server ha risposto ma rifiuta (impronta, registrazione): il WebSocket non cambierebbe nulla.
+                Ok(Err(e)) if !is_unreachable(&e) => Err(e),
+                other => {
+                    let why = match other {
+                        Ok(Err(e)) => format!("{e:#}"),
+                        _ => "nessuna risposta".into(),
+                    };
+                    tracing::info!(
+                        "nexo-server non raggiungibile via UDP ({why}): provo il WebSocket {ws_url}"
+                    );
+                    connect(server, &ws, expected, identity, device_name).await
+                }
+            }
+        }
+    }
+}
+
+/// L'errore indica che il server non è stato raggiunto (e non un rifiuto)?
+fn is_unreachable(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        matches!(
+            c.downcast_ref::<quinn::ConnectionError>(),
+            Some(quinn::ConnectionError::TimedOut | quinn::ConnectionError::Reset)
+        ) || c.downcast_ref::<std::io::Error>().is_some()
+    })
+}
+
 pub async fn connect(
     server: SocketAddr,
+    transport: &ServerTransport,
     expected: Option<Fingerprint>,
     identity: &Identity,
     device_name: &str,
@@ -67,8 +132,7 @@ pub async fn connect(
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
     config.transport_config(transport_config());
 
-    let bind: SocketAddr = if server.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
-    let mut endpoint = Endpoint::client(bind)?;
+    let mut endpoint = crate::endpoint_for(transport, server, None, None).await?;
     endpoint.set_default_client_config(config);
     let conn = endpoint
         .connect(server, "nexo-server")?
@@ -99,7 +163,7 @@ pub async fn connect(
         Some(server_message::Msg::Error(e)) => bail!("il server rifiuta la registrazione: {}", e.message),
         other => bail!("risposta inattesa alla registrazione: {other:?}"),
     };
-    Ok(Signal { device_id, server, server_fingerprint, tx, rx })
+    Ok(Signal { device_id, server, server_fingerprint, transport: transport.clone(), tx, rx })
 }
 
 /// Impronte dei server già visti (`servers.txt` nella cartella dati): al primo

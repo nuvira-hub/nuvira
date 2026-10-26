@@ -79,7 +79,7 @@ func (im *Impairment) String() string {
 
 type delayed struct {
 	data []byte
-	to   *net.UDPAddr
+	to   net.Addr
 	at   time.Time
 }
 
@@ -87,7 +87,7 @@ type delayed struct {
 // verso di una sessione ha la sua coda, come due link distinti).
 type impairer struct {
 	im    *Impairment
-	write func([]byte, *net.UDPAddr)
+	write func([]byte, net.Addr)
 
 	mu    sync.Mutex
 	links map[string]*impairedLink
@@ -99,11 +99,11 @@ type impairedLink struct {
 	lastAt   time.Time // consegna dell'ultimo pacchetto: il jitter non riordina
 }
 
-func newImpairer(im *Impairment, write func([]byte, *net.UDPAddr)) *impairer {
+func newImpairer(im *Impairment, write func([]byte, net.Addr)) *impairer {
 	return &impairer{im: im, write: write, links: map[string]*impairedLink{}}
 }
 
-func (p *impairer) send(data []byte, to *net.UDPAddr) {
+func (p *impairer) send(data []byte, to net.Addr) {
 	if p.im.Loss > 0 && rand.Float64() < p.im.Loss {
 		return
 	}

@@ -23,11 +23,50 @@ use tracing::warn;
 pub mod identity;
 pub mod p2p;
 pub mod signal;
+pub mod ws;
 
 pub use quinn::{Connection, Endpoint};
 
 /// Identificativo del protocollo negoziato in TLS (ALPN).
 pub(crate) const ALPN: &[u8] = b"nexo/0";
+
+/// Come si raggiunge nexo-server (e il suo relay).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerTransport {
+    /// QUIC su UDP, il percorso normale.
+    Udp,
+    /// QUIC dentro un WebSocket (ws:// o wss://) per le reti che bloccano UDP.
+    WebSocket(String),
+}
+
+/// Endpoint QUIC verso `server` con il trasporto indicato. Con UDP il socket è
+/// già pronto (anche agganciato al relay); con WebSocket si apre il tunnel.
+pub(crate) async fn endpoint_for(
+    transport: &ServerTransport,
+    server: SocketAddr,
+    udp: Option<std::net::UdpSocket>,
+    server_config: Option<ServerConfig>,
+) -> Result<quinn::Endpoint> {
+    let runtime = Arc::new(quinn::TokioRuntime);
+    match transport {
+        ServerTransport::Udp => {
+            let socket = match udp {
+                Some(s) => s,
+                None => std::net::UdpSocket::bind(if server.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" })?,
+            };
+            Ok(quinn::Endpoint::new(quinn::EndpointConfig::default(), server_config, socket, runtime)?)
+        }
+        ServerTransport::WebSocket(url) => {
+            let socket = ws::WsSocket::connect(url, server).await?;
+            Ok(quinn::Endpoint::new_with_abstract_socket(
+                quinn::EndpointConfig::default(),
+                server_config,
+                socket,
+                runtime,
+            )?)
+        }
+    }
+}
 
 /// Dati non ancora confermati per connessione (vedi `transport_config`).
 const SEND_WINDOW: u64 = 256 * 1024;

@@ -3,6 +3,9 @@
 // Configurazione da variabili d'ambiente:
 //
 //	NEXO_LISTEN    indirizzo UDP (predefinito ":21116")
+//	NEXO_WS_LISTEN indirizzo TCP per il ripiego WebSocket, percorso /nexo
+//	               (predefinito ":21116"; "off" per disattivarlo). Da pubblicare
+//	               anche come wss:// su 443 dietro un reverse proxy.
 //	NEXO_DATA_DIR  cartella per database e certificato (predefinito "./data")
 //	NEXO_LOG       debug | info (predefinito) | warn
 //	NEXO_RELAY_FAKE_REFLEXIVE  solo test: comunica indirizzi pubblici irraggiungibili
@@ -19,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -110,6 +114,20 @@ func run() error {
 		log.Warn("simulazione di rete attiva sul relay (solo test)", "condizioni", impairment.String())
 	}
 	tr := &quic.Transport{Conn: conn}
+
+	if wsListen := env("NEXO_WS_LISTEN", ":21116"); wsListen != "off" {
+		conn.WebSockets().SetLogger(log)
+		mux := http.NewServeMux()
+		mux.Handle("/nexo", conn.WebSockets())
+		wsServer := &http.Server{Addr: wsListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			if err := wsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("ripiego WebSocket non disponibile", "err", err)
+			}
+		}()
+		defer wsServer.Close()
+		log.Info("ripiego WebSocket attivo", "tcp", wsListen, "percorso", "/nexo")
+	}
 	ln, err := tr.Listen(
 		&tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{alpn}, MinVersion: tls.VersionTLS13},
 		&quic.Config{KeepAlivePeriod: 10 * time.Second, MaxIdleTimeout: 30 * time.Second},

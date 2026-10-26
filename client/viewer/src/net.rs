@@ -85,6 +85,8 @@ pub enum Target {
         server: SocketAddr,
         server_name: String,
         server_key: Option<Fingerprint>,
+        transport: nexo_transport::signal::TransportMode,
+        server_ws: Option<String>,
         device_id: String,
         identity: std::path::PathBuf,
     },
@@ -125,11 +127,16 @@ async fn open_connection(target: Target) -> Result<nexo_transport::Connection> {
     use nexo_transport::{identity::Identity, p2p, signal};
     match target {
         Target::Direct { addr, fingerprint } => nexo_transport::connect(addr, fingerprint).await,
-        Target::Server { server, server_name, server_key, device_id, identity } => {
+        Target::Server { server, server_name, server_key, transport, server_ws, device_id, identity } => {
             let identity = Identity::load_or_create(&identity)?;
             let expected = server_key.or_else(|| signal::known_server::get(&server_name));
             let name = std::env::var("COMPUTERNAME").unwrap_or_default();
-            let mut sig = signal::connect(server, expected, &identity, &name).await?;
+            let ws_url = server_ws.unwrap_or_else(|| nexo_transport::ws::default_url(&server_name, server));
+            let mut sig =
+                signal::connect_auto(server, &ws_url, transport, expected, &identity, &name).await?;
+            if let nexo_transport::ServerTransport::WebSocket(url) = &sig.transport {
+                info!("collegato a nexo-server attraverso il WebSocket {url}");
+            }
             if expected.is_none() {
                 signal::known_server::remember(&server_name, &sig.server_fingerprint)?;
             }
@@ -145,6 +152,7 @@ async fn open_connection(target: Target) -> Result<nexo_transport::Connection> {
             };
             let route = p2p::Route {
                 relay: server,
+                transport: sig.transport.clone(),
                 token: route.relay_token.as_slice().try_into().context("gettone del relay non valido")?,
                 peer_public_key: route
                     .peer_public_key
@@ -213,7 +221,7 @@ async fn session(
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<()>();
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<(VideoFrame, Instant)>(4);
     let decoder_proxy = proxy.clone();
-    std::thread::Builder::new()
+    let decoder = std::thread::Builder::new()
         .name("decodifica".into())
         .spawn(move || decode_loop(frame_rx, decoder_proxy, slot, key_tx))?;
 
@@ -271,6 +279,14 @@ async fn session(
     // Si dà il tempo al messaggio di chiusura di partire: senza, l'agent se ne
     // accorgerebbe solo al timeout e resterebbe "occupato" nel frattempo.
     let _ = tokio::time::timeout(Duration::from_millis(500), conn.closed()).await;
+    // Con il tunnel WebSocket i datagrammi passano da una coda svuotata da un task:
+    // un attimo di tempo perché il messaggio di chiusura parta davvero.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Il decoder termina quando si chiude il suo canale: lo si attende, così
+    // all'uscita del programma nessun nostro thread è ancora al lavoro.
+    drop(frame_tx);
+    let _ = tokio::time::timeout(Duration::from_secs(1), tokio::task::spawn_blocking(move || decoder.join()))
+        .await;
     result
 }
 

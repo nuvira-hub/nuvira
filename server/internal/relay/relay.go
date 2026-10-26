@@ -11,7 +11,8 @@
 //	       [se pronto: indirizzo dell'altro lato come lo vede il relay
 //	        | n (1 byte) | n indirizzi locali dell'altro lato]
 //
-// Indirizzo: famiglia (4 o 6) | IP (4 o 16 byte) | porta (2 byte, big endian).
+// Indirizzo: famiglia (4 o 6) | IP (4 o 16 byte) | porta (2 byte, big endian);
+// famiglia 0 (un solo byte) se l'altro lato è collegato via WebSocket.
 //
 // Gli indirizzi dell'altro lato servono a tentare la connessione diretta:
 // quello visto dal relay attraverso i NAT (hole punching) e quelli locali,
@@ -44,7 +45,7 @@ const (
 
 type session struct {
 	token   [tokenLen]byte
-	peers   [2]*net.UDPAddr // [0] viewer, [1] agent
+	peers   [2]net.Addr // [0] viewer, [1] agent (UDP o WebSocket)
 	locals  [2][]*net.UDPAddr
 	created time.Time
 	last    time.Time
@@ -65,7 +66,7 @@ type Relay struct {
 }
 
 type link struct {
-	to      *net.UDPAddr
+	to      net.Addr
 	session *session
 }
 
@@ -87,7 +88,7 @@ func (r *Relay) Allow(token [tokenLen]byte) {
 func IsControl(p []byte) bool { return len(p) >= 5 && bytes.Equal(p[:4], magic) }
 
 // HandleControl gestisce un bind e restituisce la risposta da inviare (o nil).
-func (r *Relay) HandleControl(p []byte, from *net.UDPAddr) []byte {
+func (r *Relay) HandleControl(p []byte, from net.Addr) []byte {
 	if len(p) < 5+tokenLen+1 || p[4] != typeBind {
 		return nil
 	}
@@ -143,9 +144,9 @@ func (r *Relay) HandleControl(p []byte, from *net.UDPAddr) []byte {
 // reflexive è l'indirizzo dell'altro lato come lo vede il relay. Con
 // FakeReflexive (solo test) è sostituito da uno irraggiungibile: così si
 // simula in LAN il caso hairpin, dove riesce solo l'indirizzo locale.
-func (r *Relay) reflexive(a *net.UDPAddr) *net.UDPAddr {
-	if r.FakeReflexive {
-		return &net.UDPAddr{IP: net.IPv4(203, 0, 113, 1), Port: a.Port} // TEST-NET-3, mai instradato
+func (r *Relay) reflexive(a net.Addr) net.Addr {
+	if _, udp := a.(*net.UDPAddr); r.FakeReflexive && udp {
+		return &net.UDPAddr{IP: net.IPv4(203, 0, 113, 1), Port: a.(*net.UDPAddr).Port} // TEST-NET-3, mai instradato
 	}
 	return a
 }
@@ -182,7 +183,12 @@ func parseAddrs(b []byte) ([]*net.UDPAddr, bool) {
 	return addrs, len(b) == 0
 }
 
-func appendAddr(b []byte, a *net.UDPAddr) []byte {
+func appendAddr(b []byte, addr net.Addr) []byte {
+	a, ok := addr.(*net.UDPAddr)
+	if !ok {
+		// Lato collegato via WebSocket: non ha un indirizzo UDP raggiungibile.
+		return append(b, 0)
+	}
 	if ip4 := a.IP.To4(); ip4 != nil {
 		b = append(b, 4)
 		b = append(b, ip4...)
@@ -195,7 +201,7 @@ func appendAddr(b []byte, a *net.UDPAddr) []byte {
 
 // Destination restituisce dove inoltrare un datagramma ricevuto da `from`,
 // o nil se `from` non appartiene a nessuna sessione attiva.
-func (r *Relay) Destination(from *net.UDPAddr, n int) *net.UDPAddr {
+func (r *Relay) Destination(from net.Addr, n int) net.Addr {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	l := r.links[from.String()]
