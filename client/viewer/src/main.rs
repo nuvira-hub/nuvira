@@ -6,11 +6,13 @@
 
 mod net;
 mod render;
+mod report;
 
 use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -23,8 +25,9 @@ use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
-use crate::net::NetEvent;
+use crate::net::{FrameSlot, NetEvent};
 use crate::render::Renderer;
+use crate::report::Report;
 
 const COPYRIGHT: &str = "Nexo © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/Nexo";
 
@@ -41,6 +44,14 @@ struct Args {
     /// Solo visualizzazione: non invia mouse e tastiera.
     #[arg(long)]
     view_only: bool,
+
+    /// Chiude la sessione dopo questi secondi (test automatici).
+    #[arg(long, value_name = "SECONDI")]
+    duration: Option<u64>,
+
+    /// Scrive i risultati della sessione in JSON all'uscita (test automatici).
+    #[arg(long, value_name = "FILE")]
+    stats_file: Option<PathBuf>,
 }
 
 /// Indirizzo dell'agent; senza porta si usa quella predefinita.
@@ -81,8 +92,19 @@ fn main() -> Result<()> {
     let fingerprint = args.fingerprint.as_deref().map(nexo_transport::parse_fingerprint).transpose()?;
     println!("{COPYRIGHT}");
 
+    let started = Instant::now();
     let event_loop = EventLoop::<NetEvent>::with_user_event().build()?;
+    if let Some(secs) = args.duration {
+        let proxy = event_loop.create_proxy();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(secs));
+            let _ = proxy.send_event(NetEvent::TestFinished);
+        });
+    }
     let mut app = App {
+        slot: Arc::new(FrameSlot::default()),
+        started,
+        report: Report::default(),
         connect: Some((addr, fingerprint)),
         proxy: event_loop.create_proxy(),
         input: None,
@@ -98,13 +120,22 @@ fn main() -> Result<()> {
         exit_reason: None,
     };
     event_loop.run_app(&mut app)?;
-    if let Some(reason) = app.exit_reason {
+    if let Some(reason) = &app.exit_reason {
         println!("{reason}");
+    }
+    if let Some(path) = &args.stats_file {
+        app.report.exit_reason = app.exit_reason.clone();
+        app.report.dropped = app.slot.dropped();
+        std::fs::write(path, app.report.to_json(app.started))
+            .with_context(|| format!("scrittura di {}", path.display()))?;
     }
     Ok(())
 }
 
 struct App {
+    slot: Arc<FrameSlot>,
+    started: Instant,
+    report: Report,
     /// Agent a cui collegarsi appena la finestra è pronta.
     connect: Option<(SocketAddr, Option<nexo_transport::Fingerprint>)>,
     proxy: EventLoopProxy<NetEvent>,
@@ -176,10 +207,12 @@ impl ApplicationHandler<NetEvent> for App {
         match Renderer::new(window.clone()) {
             Ok(r) => {
                 info!("rendering con {}", r.adapter_info);
+                self.report.renderer = Some(r.adapter_info.clone());
                 self.renderer = Some(r);
             }
             Err(e) => {
                 error!("rendering non disponibile: {e:#}");
+                self.exit_reason = Some(format!("rendering non disponibile: {e:#}"));
                 event_loop.exit();
                 return;
             }
@@ -188,7 +221,7 @@ impl ApplicationHandler<NetEvent> for App {
         // La connessione parte solo a finestra e rendering pronti: se la rete
         // arrivava prima, il canale video a volte non veniva mai accettato.
         if let Some((addr, fingerprint)) = self.connect.take() {
-            self.input = Some(net::start(addr, fingerprint, self.proxy.clone()));
+            self.input = Some(net::start(addr, fingerprint, self.proxy.clone(), self.slot.clone()));
         }
     }
 
@@ -196,23 +229,35 @@ impl ApplicationHandler<NetEvent> for App {
         match event {
             NetEvent::Connected { agent, width, height } => {
                 info!("schermo remoto {width}x{height}");
+                self.report.agent = Some(agent.clone());
+                self.report.resolution = Some((width, height));
                 if !agent.is_empty() {
                     self.agent = agent;
                 }
                 self.update_title();
             }
-            NetEvent::Frame(frame) => {
+            NetEvent::FrameReady => {
+                let Some(frame) = self.slot.take() else { return };
                 let Some(renderer) = self.renderer.as_mut() else { return };
                 let t = Instant::now();
                 renderer.upload(&frame.yuv);
                 renderer.render();
-                tracing::trace!("frame mostrato in {:?}", t.elapsed());
+                let render_us = t.elapsed().as_micros() as u64;
+                tracing::trace!("frame mostrato in {render_us} µs");
+                self.report.render_us += render_us;
                 if let Some(offset) = self.clock_offset_us {
                     // Momento della cattura riportato sul nostro orologio.
                     let captured_here = frame.capture_us as i64 - offset;
                     let latency = nexo_proto::now_us() as i64 - captured_here;
                     self.stats.latency_us += latency.max(0) as u64;
+                    self.report.latencies_us.push(latency.clamp(0, u32::MAX as i64) as u32);
                 }
+                let r = &mut self.report;
+                r.first_frame_ms.get_or_insert(self.started.elapsed().as_millis() as u64);
+                r.frames += 1;
+                r.bytes += frame.bytes as u64;
+                r.encode_us += frame.encode_us as u64;
+                r.decode_us += frame.decode_us as u64;
                 self.stats.frames += 1;
                 self.stats.bytes += frame.bytes;
                 self.stats.encode_us += frame.encode_us as u64;
@@ -224,11 +269,19 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::Clock { rtt_us, offset_us } => {
                 self.rtt_us = rtt_us;
+                self.report.rtt_us.push(rtt_us.min(u32::MAX as u64) as u32);
                 // La misura con RTT minore è la meno disturbata dalle code di rete.
                 if rtt_us <= self.best_rtt_us {
                     self.best_rtt_us = rtt_us;
                     self.clock_offset_us = Some(offset_us);
                 }
+            }
+            NetEvent::TestFinished => {
+                info!("durata del test terminata");
+                self.report.completed = true;
+                self.exit_reason = Some("durata del test terminata".into());
+                self.release_keys();
+                event_loop.exit();
             }
             NetEvent::Disconnected(reason) => {
                 info!("disconnesso: {reason}");

@@ -67,6 +67,15 @@ impl Viewport {
     }
 }
 
+/// Registra a livello trace quanto dura il blocco in cui vive.
+struct TraceTime(&'static str, std::time::Instant);
+
+impl Drop for TraceTime {
+    fn drop(&mut self) {
+        tracing::trace!(elapsed = ?self.1.elapsed(), "{}", self.0);
+    }
+}
+
 /// API grafica nativa di ogni sistema, con OpenGL come ripiego dove esiste.
 /// Su Windows Vulkan è escluso: alcuni driver Intel vanno in crash già all'enumerazione.
 /// `WGPU_BACKEND` (es. `vulkan`, `gl`) permette comunque di forzarne uno.
@@ -131,12 +140,14 @@ impl Renderer {
         // Lo shader produce valori già in gamma sRGB: serve un formato non-sRGB,
         // altrimenti la GPU li convertirebbe una seconda volta (immagine slavata).
         let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
-        // Mailbox: nessuno strappo e nessuna coda di frame vecchi. Altrimenti Fifo (sempre presente).
-        let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
-            wgpu::PresentMode::Mailbox
-        } else {
-            wgpu::PresentMode::Fifo
-        };
+        // Mailbox: nessuno strappo e nessuna coda di frame vecchi. Senza Mailbox (es. OpenGL)
+        // Immediate: qualche strappo, ma Fifo aspetterebbe il vsync prima e dopo ogni frame
+        // (misurati ~40 ms per frame su una Intel HD 2500).
+        let present_mode = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
+            .into_iter()
+            .find(|m| caps.present_modes.contains(m))
+            .unwrap_or(wgpu::PresentMode::Fifo);
+        tracing::debug!(?present_mode, available = ?caps.present_modes, "presentazione");
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .context("configurazione superficie")?;
@@ -249,6 +260,7 @@ impl Renderer {
 
     /// Carica un frame decompresso sulla GPU.
     pub fn upload(&mut self, frame: &YuvFrame) {
+        let _t = TraceTime("upload", std::time::Instant::now());
         let fits = self.planes.as_ref().is_some_and(|p| p.width == frame.width && p.height == frame.height);
         if !fits {
             self.planes = Some(self.create_planes(frame.width, frame.height));
@@ -279,6 +291,7 @@ impl Renderer {
     }
 
     pub fn render(&mut self) {
+        let t = std::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -312,6 +325,8 @@ impl Renderer {
             }
         }
         self.queue.submit([encoder.finish()]);
+        let t_present = std::time::Instant::now();
         self.queue.present(frame);
+        tracing::trace!(acquire_submit = ?(t_present - t), present = ?t_present.elapsed(), "render");
     }
 }

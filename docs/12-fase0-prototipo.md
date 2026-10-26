@@ -47,7 +47,32 @@ Il titolo della finestra mostra fps, latenza cattura→visualizzazione, RTT, ban
 
 > Prototipo: nessuna autenticazione oltre all'impronta, una sessione alla volta. Solo per reti fidate.
 
-## Misure (2026-10-26)
+## Test automatico tra due PC
+
+`tools/lan-test.sh [secondi] [opzioni dell'agent]` avvia l'agent su questo PC e il viewer su un altro PC via SSH (nella sessione Windows dell'utente, tramite un'attività pianificata), poi raccoglie log e risultati JSON in `target/lan-test/`. Esempio:
+
+```bash
+tools/lan-test.sh 15 --synthetic 1920x1080@60 --encoder software
+NEXO_VIEWER_LOG="info,nexo_viewer::render=trace" tools/lan-test.sh 10
+```
+
+Opzioni usate dallo script: viewer `--duration`, `--stats-file`; agent `--once`, `--fingerprint-file`. Prerequisiti: server OpenSSH sul PC remoto con la chiave `~/.ssh/nexo_test`, regola del firewall per `dist/nexo-agent.exe` (UDP 21500, solo LAN).
+
+## Misure in LAN (2026-10-26)
+
+Agent su PC-STUDIO-NUC (i7-10710U, Intel UHD), viewer su PC-LABORATORIO (Intel HD Graphics 2500, OpenGL perché senza Direct3D 12), rete cablata, sorgente sintetica 1920x1080@60, 15 s.
+
+| Encoder | fps | Latenza p50 | p95 | Compressione | Decompressione | Disegno | Banda |
+|---|---|---|---|---|---|---|---|
+| Hardware (Quick Sync) | 21 | 51 ms | 62 ms | 18 ms | 13 ms | 24 ms | 2,4 Mbit/s |
+| Software (OpenH264 + NASM) | 27 | **39 ms** | 51 ms | 11 ms | 5 ms | 24 ms | 0,3 Mbit/s |
+
+Problemi emersi solo tra due PC e corretti:
+- **Latenza in crescita** (fino a 2,5 s): il viewer mostrava tutti i frame in coda anche quando era più lento dell'agent. Ora mostra sempre l'ultimo frame decompresso e scarta quelli superati.
+- **Disegno lento su OpenGL** (47 ms per frame): con `Fifo` si aspettava il vsync prima e dopo ogni frame. Senza `Mailbox` si usa `Immediate` (24 ms, qualche strappo possibile).
+- Schede senza compute shader: il viewer chiede solo i limiti minimi (WebGL2).
+
+## Misure in locale (2026-10-26)
 
 PC di prova: Intel Core i7-10710U, Intel UHD Graphics, Windows 11. Agent e viewer **sullo stesso PC** (localhost), quindi in competizione per CPU e GPU.
 

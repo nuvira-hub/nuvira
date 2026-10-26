@@ -37,6 +37,14 @@ struct Args {
     #[arg(long)]
     list_displays: bool,
 
+    /// Scrive l'impronta del certificato in questo file (test automatici).
+    #[arg(long, value_name = "FILE")]
+    fingerprint_file: Option<std::path::PathBuf>,
+
+    /// Esce al termine della prima sessione (test automatici).
+    #[arg(long)]
+    once: bool,
+
     /// Trasmette un'immagine sintetica invece dello schermo, es. 1920x1080@60.
     #[arg(long, value_name = "LxA@FPS")]
     synthetic: Option<String>,
@@ -138,7 +146,11 @@ async fn serve(args: Args) -> Result<()> {
     let bind: SocketAddr = ([0, 0, 0, 0], args.port).into();
     let (endpoint, fingerprint) = nexo_transport::server_endpoint(bind)?;
     info!("in attesa del viewer su UDP {bind}");
-    info!("impronta dell'agent: {}", nexo_transport::fingerprint_hex(&fingerprint));
+    let fingerprint = nexo_transport::fingerprint_hex(&fingerprint);
+    info!("impronta dell'agent: {fingerprint}");
+    if let Some(path) = &args.fingerprint_file {
+        std::fs::write(path, &fingerprint).with_context(|| format!("scrittura di {}", path.display()))?;
+    }
 
     // Una sessione alla volta: le connessioni successive attendono in coda.
     while let Some(incoming) = endpoint.accept().await {
@@ -156,7 +168,11 @@ async fn serve(args: Args) -> Result<()> {
             Err(e) => warn!("sessione con {peer} terminata: {e:#}"),
         }
         conn.close(0u32.into(), b"fine sessione");
+        if args.once {
+            break;
+        }
     }
+    endpoint.wait_idle().await;
     Ok(())
 }
 

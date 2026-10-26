@@ -2,6 +2,8 @@
 //! video, invio dell'input e misura di RTT e differenza tra gli orologi.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -16,10 +18,20 @@ use winit::event_loop::EventLoopProxy;
 
 /// Eventi dalla rete verso la finestra.
 pub enum NetEvent {
-    Connected { agent: String, width: u32, height: u32 },
-    Frame(Box<DecodedFrame>),
-    Clock { rtt_us: u64, offset_us: i64 },
+    Connected {
+        agent: String,
+        width: u32,
+        height: u32,
+    },
+    /// Nello [`FrameSlot`] c'è un frame nuovo da mostrare.
+    FrameReady,
+    Clock {
+        rtt_us: u64,
+        offset_us: i64,
+    },
     Disconnected(String),
+    /// Scaduta la durata impostata con `--duration`.
+    TestFinished,
 }
 
 pub struct DecodedFrame {
@@ -31,18 +43,51 @@ pub struct DecodedFrame {
     pub bytes: usize,
 }
 
+/// Ultimo frame decompresso, in attesa di essere mostrato.
+///
+/// Se la finestra è più lenta della decompressione (scheda video modesta, vsync),
+/// il frame non ancora mostrato viene sostituito dal nuovo invece di finire in
+/// coda: si salta un frame ma la latenza non cresce.
+#[derive(Default)]
+pub struct FrameSlot {
+    frame: Mutex<Option<Box<DecodedFrame>>>,
+    notified: AtomicBool,
+    dropped: AtomicU64,
+}
+
+impl FrameSlot {
+    /// Deposita un frame; `true` se la finestra va avvisata.
+    fn put(&self, frame: Box<DecodedFrame>) -> bool {
+        if self.frame.lock().expect("slot").replace(frame).is_some() {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        !self.notified.swap(true, Ordering::AcqRel)
+    }
+
+    pub fn take(&self) -> Option<Box<DecodedFrame>> {
+        self.notified.store(false, Ordering::Release);
+        self.frame.lock().expect("slot").take()
+    }
+
+    /// Frame decompressi ma mai mostrati perché superati da uno più recente.
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+}
+
 /// Avvia la sessione su un thread dedicato. Restituisce il canale per l'input.
 pub fn start(
     addr: SocketAddr,
     fingerprint: Option<Fingerprint>,
     proxy: EventLoopProxy<NetEvent>,
+    slot: Arc<FrameSlot>,
 ) -> mpsc::UnboundedSender<InputEvent> {
     let (input_tx, input_rx) = mpsc::unbounded_channel();
     std::thread::Builder::new()
         .name("rete".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
-            let reason = match rt.block_on(session(addr, fingerprint, proxy.clone(), input_rx)) {
+            let reason = match rt.block_on(session(addr, fingerprint, proxy.clone(), slot, input_rx)) {
                 Ok(()) => "sessione terminata".to_string(),
                 Err(e) => format!("{e:#}"),
             };
@@ -60,6 +105,7 @@ async fn session(
     addr: SocketAddr,
     fingerprint: Option<Fingerprint>,
     proxy: EventLoopProxy<NetEvent>,
+    slot: Arc<FrameSlot>,
     mut input_rx: mpsc::UnboundedReceiver<InputEvent>,
 ) -> Result<()> {
     let conn = nexo_transport::connect(addr, fingerprint).await?;
@@ -99,7 +145,7 @@ async fn session(
     let decoder_proxy = proxy.clone();
     std::thread::Builder::new()
         .name("decodifica".into())
-        .spawn(move || decode_loop(frame_rx, decoder_proxy, key_tx))?;
+        .spawn(move || decode_loop(frame_rx, decoder_proxy, slot, key_tx))?;
 
     let video = async {
         while let Some(frame) = video_rx.recv::<VideoFrame>().await? {
@@ -155,6 +201,7 @@ async fn session(
 fn decode_loop(
     frames: std::sync::mpsc::Receiver<(VideoFrame, Instant)>,
     proxy: EventLoopProxy<NetEvent>,
+    slot: Arc<FrameSlot>,
     request_keyframe: mpsc::UnboundedSender<()>,
 ) {
     let mut decoder = match nexo_codec::best_decoder() {
@@ -189,7 +236,7 @@ fn decode_loop(
                     decode_us: t.elapsed().as_micros() as u32,
                     bytes: frame.data.len(),
                 };
-                if proxy.send_event(NetEvent::Frame(Box::new(decoded))).is_err() {
+                if slot.put(Box::new(decoded)) && proxy.send_event(NetEvent::FrameReady).is_err() {
                     return;
                 }
             }
