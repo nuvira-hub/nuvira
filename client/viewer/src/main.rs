@@ -71,11 +71,13 @@ struct Args {
     #[arg(long, value_name = "URL")]
     server_ws: Option<String>,
 
-    /// Password di sessione mostrata dall'agent.
-    #[arg(long)]
+    /// Password di sessione mostrata dall'agent (anche dalla variabile NEXO_PASSWORD,
+    /// che a differenza della riga di comando non è visibile agli altri programmi).
+    #[arg(long, env = "NEXO_PASSWORD", hide_env_values = true)]
     password: Option<String>,
 
-    /// File con la chiave del dispositivo (predefinito: device.key nella cartella dati).
+    /// File con la chiave del dispositivo (predefinito: viewer.key nella cartella dati;
+    /// diversa da quella dell'agent, che altrimenti il server scollegherebbe).
     #[arg(long, value_name = "FILE")]
     identity: Option<PathBuf>,
 
@@ -129,7 +131,7 @@ fn main() -> Result<()> {
             identity: args
                 .identity
                 .clone()
-                .unwrap_or_else(|| nexo_transport::identity::data_dir().join("device.key")),
+                .unwrap_or_else(|| nexo_transport::identity::data_dir().join("viewer.key")),
         },
         None => net::Target::Direct {
             addr: nexo_transport::resolve_addr(&args.agent, nexo_transport::DEFAULT_PORT)?,

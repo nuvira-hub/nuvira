@@ -8,6 +8,7 @@ members = [
     "client/input",
     "client/agent",
     "client/viewer",
+    "client/app",
 ]
 
 [workspace.package]
@@ -26,7 +27,7 @@ nexo-input = { path = "client/input" }
 
 anyhow = "1"
 bytes = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 prost = "0.14"
 prost-build = "0.14"
 protoc-bin-vendored = "3"

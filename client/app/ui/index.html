@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nexo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <img src="logo.svg" alt="" class="logo">
+    <h1>Nexo</h1>
+  </header>
+
+  <main>
+    <section id="session" class="banner hidden">
+      <div>
+        <strong>Sessione attiva</strong>
+        <span id="session-text"></span>
+      </div>
+      <button id="end-session" class="danger">Termina</button>
+    </section>
+
+    <section class="card">
+      <h2>Questo dispositivo</h2>
+      <p class="status"><span id="status-dot" class="dot"></span><span id="status-text">…</span></p>
+      <div class="field">
+        <label>ID</label>
+        <div class="value-row">
+          <span id="device-id" class="big mono">— — —</span>
+          <button id="copy-id" class="ghost" title="Copia l'ID">Copia</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <div class="value-row">
+          <span id="password" class="big mono"></span>
+          <button id="copy-password" class="ghost" title="Copia la password">Copia</button>
+          <button id="new-password" class="ghost" title="Genera una nuova password">Nuova</button>
+        </div>
+      </div>
+      <p class="hint">Comunica ID e password a chi deve assisterti: ti verrà chiesto di confermare il collegamento.</p>
+    </section>
+
+    <section class="card">
+      <h2>Controlla un altro dispositivo</h2>
+      <form id="connect-form">
+        <input id="remote-id" class="mono" inputmode="numeric" autocomplete="off" placeholder="ID (9 cifre)">
+        <input id="remote-password" type="password" autocomplete="off" placeholder="Password">
+        <button type="submit" class="primary">Collega</button>
+      </form>
+      <p id="connect-message" class="message hidden"></p>
+    </section>
+
+    <details class="card" id="settings">
+      <summary>Impostazioni</summary>
+      <form id="server-form">
+        <label for="server">Server Nexo</label>
+        <div class="value-row">
+          <input id="server" class="mono" autocomplete="off" placeholder="es. 192.168.1.10 o nexo.esempio.it">
+          <button type="submit">Salva</button>
+        </div>
+      </form>
+    </details>
+  </main>
+
+  <footer>
+    Nexo © 2026 Alessandro Blason · AGPL-3.0 · <a href="#" id="source">Codice sorgente</a>
+  </footer>
+
+  <div id="incoming" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="incoming-title">
+    <div class="dialog">
+      <h2 id="incoming-title">Richiesta di collegamento</h2>
+      <p><strong id="incoming-name"></strong> <span id="incoming-id" class="mono"></span><br>
+        vuole vedere e controllare questo computer.</p>
+      <p class="hint">Accetta solo se conosci chi ti sta assistendo.</p>
+      <p id="incoming-countdown" class="hint"></p>
+      <div class="actions">
+        <button id="reject" class="danger">Rifiuta</button>
+        <button id="accept" class="primary">Accetta</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
