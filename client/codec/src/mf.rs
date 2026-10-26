@@ -112,6 +112,7 @@ fn has_sps(data: &[u8]) -> bool {
 }
 
 struct Session {
+    activate: IMFActivate,
     transform: IMFTransform,
     codec_api: Option<ICodecAPI>,
     events: Receiver<TransformEvent>,
@@ -250,6 +251,7 @@ impl Session {
         }
 
         Ok(Self {
+            activate: activate.clone(),
             transform,
             codec_api,
             events,
@@ -386,21 +388,37 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        let t = Instant::now();
         unsafe {
             let _ = self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
             let _ = self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
+            // Gli MFT hardware creati da un IMFActivate si chiudono con ShutdownObject;
+            // senza, GetEvent nel thread degli eventi non ritorna mai.
             if let Ok(shutdown) = self.transform.cast::<IMFShutdown>() {
                 let _ = shutdown.Shutdown();
             }
+            let _ = self.activate.ShutdownObject();
         }
         if let Some(thread) = self.event_thread.take() {
-            let _ = thread.join();
+            // Per sicurezza non si attende all'infinito: un thread bloccato si abbandona.
+            while !thread.is_finished() && t.elapsed() < Duration::from_secs(1) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if thread.is_finished() {
+                let _ = thread.join();
+            } else {
+                warn!("il thread degli eventi dell'encoder non si è chiuso");
+            }
         }
+        debug!("encoder hardware chiuso in {:?}", t.elapsed());
     }
 }
 
 pub struct MfEncoder {
     activate: IMFActivate,
+    /// Bitrate con cui è stata avviata la sessione corrente e quando.
+    session_bitrate: u32,
+    session_started: Instant,
     name: String,
     settings: EncoderSettings,
     /// Presente se l'encoder riceve texture GPU invece di immagini in RAM.
@@ -423,6 +441,8 @@ impl MfEncoder {
             name,
             settings,
             device: None,
+            session_bitrate: settings.bitrate_bps,
+            session_started: Instant::now(),
             session: None,
             outputs: VecDeque::new(),
             started: Instant::now(),
@@ -440,6 +460,15 @@ impl MfEncoder {
         &self.name
     }
 
+    /// Il bitrate richiesto si discosta abbastanza da quello della sessione da
+    /// valere un riavvio (~0,3 s e un keyframe)? Le discese (rete congestionata)
+    /// sono più urgenti delle salite.
+    fn bitrate_restart_due(&self) -> bool {
+        let ratio = self.settings.bitrate_bps as f64 / self.session_bitrate.max(1) as f64;
+        let age = self.session_started.elapsed();
+        (ratio < 0.85 && age > Duration::from_secs(1)) || (ratio > 1.25 && age > Duration::from_secs(3))
+    }
+
     /// Comprime un frame preparato da `make_sample` (immagine in RAM o texture GPU).
     fn encode_sample(
         &mut self,
@@ -449,11 +478,21 @@ impl MfEncoder {
         make_sample: impl FnOnce(&mut Session, i64) -> Result<IMFSample>,
     ) -> Result<Option<EncodedFrame>> {
         let (w, h) = (width & !1, height & !1);
+        if self.session.is_some() && self.bitrate_restart_due() {
+            info!(
+                "riavvio dell'encoder hardware: bitrate da {} a {} kbit/s",
+                self.session_bitrate / 1000,
+                self.settings.bitrate_bps / 1000
+            );
+            self.session = None;
+        }
         if self.session.as_ref().is_none_or(|s| s.width != w || s.height != h) {
             self.session = None;
             self.outputs.clear();
             let session = Session::new(&self.activate, w, h, self.settings, self.device.as_ref())
                 .with_context(|| format!("avvio di {}", self.name))?;
+            self.session_bitrate = self.settings.bitrate_bps;
+            self.session_started = Instant::now();
             let input = if self.device.is_some() { "texture GPU" } else { "RAM" };
             info!("encoder hardware {} avviato a {w}x{h}, ingresso da {input}", self.name);
             self.session = Some(session);
@@ -532,6 +571,13 @@ impl VideoEncoder for MfEncoder {
 
     fn accepts_textures(&self) -> bool {
         self.device.is_some()
+    }
+
+    fn set_bitrate(&mut self, bps: u32) {
+        // Quick Sync via Media Foundation ignora i cambi di CODECAPI_AVEncCommonMeanBitRate
+        // a sessione avviata (misurato: chiesti 1 Mbit/s, prodotti 6): il nuovo valore
+        // si applica riavviando l'encoder in `encode_sample`, con isteresi.
+        self.settings.bitrate_bps = bps;
     }
 
     fn wait_ready(&mut self, timeout: Duration) -> Result<bool> {

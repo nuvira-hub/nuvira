@@ -5,7 +5,7 @@
 //! della cattura le immagini intermedie vengono saltate: i fps dipendono dalla
 //! fase più lenta e non dalla somma delle due, e non si accumula ritardo.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -65,6 +65,7 @@ impl Pipeline {
         max_fps: u32,
         frames: mpsc::Sender<VideoFrame>,
         keyframe: Arc<AtomicBool>,
+        bitrate: Arc<AtomicU32>,
     ) -> Result<(Display, Self)> {
         let shared = Arc::new(Shared::default());
         let mut pipeline = Self { shared: shared.clone(), threads: Vec::new() };
@@ -93,7 +94,7 @@ impl Pipeline {
                     return;
                 }
             };
-            encode_loop(&s, encoder, max_fps, &frames, &keyframe);
+            encode_loop(&s, encoder, max_fps, &frames, &keyframe, &bitrate);
         })?);
 
         let s = shared.clone();
@@ -158,7 +159,9 @@ fn encode_loop(
     max_fps: u32,
     frames: &mpsc::Sender<VideoFrame>,
     keyframe: &AtomicBool,
+    bitrate: &AtomicU32,
 ) {
+    let mut applied_bitrate = bitrate.load(Ordering::Relaxed);
     let min_interval = Duration::from_secs(1) / max_fps.max(1);
     let mut last_encoded = Instant::now() - min_interval;
     // Ultima immagine compressa: serve a rifare un keyframe a schermo fermo.
@@ -199,6 +202,11 @@ fn encode_loop(
         };
         let waited_slot = t_slot.elapsed();
         let force_key = keyframe.load(Ordering::Relaxed);
+        let target = bitrate.load(Ordering::Relaxed);
+        if target != applied_bitrate {
+            encoder.set_bitrate(target);
+            applied_bitrate = target;
+        }
         if let Some(fresh) = fresh {
             if let Some(old) = last.replace(fresh) {
                 shared.recycle(old.data);
@@ -324,6 +332,7 @@ mod tests {
             60,
             tx,
             keyframe,
+            Arc::new(AtomicU32::new(1_000_000)),
         )
         .context("avvio")
         .unwrap();

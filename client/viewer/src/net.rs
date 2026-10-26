@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use nexo_codec::YuvFrame;
 use nexo_proto::v1::{
-    ControlMessage, Hello, InputEvent, Ping, RequestKeyframe, VideoFrame, control_message::Msg,
+    ControlMessage, Feedback, Hello, InputEvent, Ping, RequestKeyframe, VideoFrame, control_message::Msg,
 };
 use nexo_transport::{Fingerprint, FramedRecv, FramedSend};
 use tokio::sync::mpsc;
@@ -97,20 +97,22 @@ pub fn start(
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
-) -> (mpsc::UnboundedSender<InputEvent>, std::thread::JoinHandle<()>) {
+) -> (mpsc::UnboundedSender<InputEvent>, mpsc::UnboundedSender<Feedback>, std::thread::JoinHandle<()>) {
     let (input_tx, input_rx) = mpsc::unbounded_channel();
+    let (feedback_tx, feedback_rx) = mpsc::unbounded_channel();
     let thread = std::thread::Builder::new()
         .name("rete".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
-            let reason = match rt.block_on(session(target, password, proxy.clone(), slot, input_rx)) {
-                Ok(()) => "sessione terminata".to_string(),
-                Err(e) => format!("{e:#}"),
-            };
+            let reason =
+                match rt.block_on(session(target, password, proxy.clone(), slot, input_rx, feedback_rx)) {
+                    Ok(()) => "sessione terminata".to_string(),
+                    Err(e) => format!("{e:#}"),
+                };
             let _ = proxy.send_event(NetEvent::Disconnected(reason));
         })
         .expect("thread di rete");
-    (input_tx, thread)
+    (input_tx, feedback_tx, thread)
 }
 
 fn control(msg: Msg) -> ControlMessage {
@@ -164,6 +166,7 @@ async fn session(
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
     mut input_rx: mpsc::UnboundedReceiver<InputEvent>,
+    mut feedback_rx: mpsc::UnboundedReceiver<Feedback>,
 ) -> Result<()> {
     let conn = open_connection(target).await?;
     let (send, recv) = conn.open_bi().await?;
@@ -236,6 +239,9 @@ async fn session(
             tokio::select! {
                 _ = ping.tick() => {
                     ctrl_tx.send(&control(Msg::Ping(Ping { sent_us: nexo_proto::now_us() }))).await?;
+                }
+                Some(feedback) = feedback_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::Feedback(feedback))).await?;
                 }
                 Some(()) = key_rx.recv() => {
                     ctrl_tx.send(&control(Msg::RequestKeyframe(RequestKeyframe {}))).await?;

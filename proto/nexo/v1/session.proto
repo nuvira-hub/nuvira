@@ -30,7 +30,18 @@ message ControlMessage {
     RequestKeyframe request_keyframe = 5;
     Auth auth = 6;
     AuthResult auth_result = 7;
+    Feedback feedback = 8;
   }
+}
+
+// Dal viewer, ogni ~250 ms: cosa vede della sessione. L'agent lo usa per
+// adattare il bitrate (latenza che sale = pacchetti in coda = rete satura).
+message Feedback {
+  // Latenza cattura→visualizzazione nell'intervallo (ms): mediana e minima.
+  uint32 latency_ms_p50 = 1;
+  uint32 latency_ms_min = 2;
+  uint32 frames = 3;
+  uint32 window_ms = 4;
 }
 
 // Password di sessione, inviata dal viewer subito dopo Hello quando l'agent la

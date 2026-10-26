@@ -13,14 +13,20 @@ import (
 // *net.UDPConn (ReadMsgUDP, SyscallConn) quic-go li userebbe per leggere
 // direttamente dal socket, scavalcando lo smistamento.
 type Conn struct {
-	udp   *net.UDPConn
-	relay *Relay
+	udp    *net.UDPConn
+	relay  *Relay
+	impair *impairer // solo per i test (NEXO_RELAY_IMPAIR)
 }
 
 var _ net.PacketConn = (*Conn)(nil)
 
 func NewConn(udp *net.UDPConn, r *Relay) *Conn {
 	return &Conn{udp: udp, relay: r}
+}
+
+// Impair applica la simulazione di rete al traffico inoltrato (solo test).
+func (c *Conn) Impair(im *Impairment) {
+	c.impair = newImpairer(im, func(b []byte, to *net.UDPAddr) { _, _ = c.udp.WriteToUDP(b, to) })
 }
 
 func (c *Conn) ReadFrom(b []byte) (int, net.Addr, error) {
@@ -37,7 +43,11 @@ func (c *Conn) ReadFrom(b []byte) (int, net.Addr, error) {
 			continue
 		}
 		if to := c.relay.Destination(from, n); to != nil {
-			_, _ = c.udp.WriteToUDP(p, to)
+			if c.impair != nil {
+				c.impair.send(p, to)
+			} else {
+				_, _ = c.udp.WriteToUDP(p, to)
+			}
 			continue
 		}
 		return n, from, nil

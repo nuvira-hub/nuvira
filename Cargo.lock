@@ -1383,6 +1383,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "openh264",
+ "openh264-sys2",
  "tracing",
  "tracing-subscriber",
  "windows",

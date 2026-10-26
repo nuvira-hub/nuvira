@@ -4,11 +4,13 @@
 //! trasmette lo schermo e applica mouse e tastiera ricevuti.
 //! Nessuna autenticazione oltre all'impronta del certificato: da usare solo in reti fidate.
 
+mod abr;
 mod pipeline;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
@@ -22,6 +24,9 @@ use nexo_transport::{Connection, FramedRecv, FramedSend};
 use crate::pipeline::Pipeline;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
+
+/// Bitrate minimo del controllo adattivo.
+const MIN_BITRATE: u32 = 500_000;
 
 const COPYRIGHT: &str = "Nexo © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/Nexo";
 
@@ -63,6 +68,10 @@ struct Args {
     /// Encoder video: il più veloce tra hardware e software (auto), solo hardware o solo software.
     #[arg(long, value_enum, default_value_t = EncoderArg::Auto)]
     encoder: EncoderArg,
+
+    /// Bitrate fisso (--bitrate) invece di adattarlo alla rete.
+    #[arg(long)]
+    fixed_bitrate: bool,
 
     /// Solo visualizzazione: ignora mouse e tastiera del viewer.
     #[arg(long)]
@@ -404,10 +413,19 @@ async fn session(
     }
 
     let keyframe = Arc::new(AtomicBool::new(true));
+    let max_bps = args.bitrate * 1000;
+    // Si parte da metà del massimo: la rete ignota potrebbe non reggere di più.
+    let mut abr = (!args.fixed_bitrate).then(|| abr::Abr::new(max_bps / 2, MIN_BITRATE, max_bps));
+    let bitrate = Arc::new(AtomicU32::new(abr.as_ref().map_or(max_bps, |a| a.bitrate())));
+    let session_start = Instant::now();
+    // Momento dell'ultimo frame inviato (ms dall'inizio): serve a capire se manca il feedback.
+    let last_sent_ms = Arc::new(AtomicU64::new(0));
     let (frame_tx, mut frame_rx) = mpsc::channel::<VideoFrame>(1);
     let (display, pipeline) = {
-        let (cap_args, keyframe) = (args.clone(), keyframe.clone());
-        let settings = encoder_settings(args);
+        let (cap_args, keyframe, bitrate) = (args.clone(), keyframe.clone(), bitrate.clone());
+        // L'encoder parte dal bitrate iniziale del controllo adattivo.
+        let settings =
+            EncoderSettings { bitrate_bps: bitrate.load(Ordering::Relaxed), ..encoder_settings(args) };
         let fps = args.fps;
         tokio::task::spawn_blocking(move || {
             Pipeline::start(
@@ -417,6 +435,7 @@ async fn session(
                 fps,
                 frame_tx,
                 keyframe,
+                bitrate,
             )
         })
         .await?
@@ -432,26 +451,70 @@ async fn session(
 
     let mut video_tx = FramedSend::new(conn.open_uni().await?);
     tracing::debug!("canale video aperto");
-    let video = async move {
-        while let Some(frame) = frame_rx.recv().await {
-            tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "invio frame");
-            video_tx.send(&frame).await?;
+    let video = {
+        let last_sent_ms = last_sent_ms.clone();
+        async move {
+            while let Some(frame) = frame_rx.recv().await {
+                tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "invio frame");
+                video_tx.send(&frame).await?;
+                last_sent_ms.store(session_start.elapsed().as_millis() as u64, Ordering::Relaxed);
+            }
+            anyhow::Ok(())
         }
-        anyhow::Ok(())
     };
 
     let control_loop = async {
-        while let Some(msg) = ctrl_rx.recv::<ControlMessage>().await? {
+        let mut last_feedback = Instant::now();
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        loop {
+            let msg = tokio::select! {
+                msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
+                    Some(msg) => msg,
+                    None => return anyhow::Ok(()),
+                },
+                _ = tick.tick() => {
+                    // Frame inviati di recente ma nessun feedback: la rete è probabilmente bloccata.
+                    let now_ms = session_start.elapsed().as_millis() as u64;
+                    let sending = now_ms.saturating_sub(last_sent_ms.load(Ordering::Relaxed)) < 1000;
+                    if let Some(abr) = abr.as_mut()
+                        && sending
+                        && last_feedback.elapsed() > abr::FEEDBACK_TIMEOUT
+                        && let Some(bps) = abr.on_silence(Instant::now())
+                    {
+                        bitrate.store(bps, Ordering::Relaxed);
+                        info!("bitrate {} kbit/s (nessun feedback dal viewer)", bps / 1000);
+                    }
+                    continue;
+                }
+            };
             match msg.msg {
                 Some(Msg::Ping(ping)) => {
                     let pong = Pong { ping_sent_us: ping.sent_us, agent_us: nexo_proto::now_us() };
                     ctrl_tx.send(&control(Msg::Pong(pong))).await?;
                 }
                 Some(Msg::RequestKeyframe(_)) => keyframe.store(true, Ordering::Relaxed),
+                Some(Msg::Feedback(fb)) => {
+                    last_feedback = Instant::now();
+                    if let Some(abr) = abr.as_mut()
+                        && fb.frames > 0
+                        && let Some(bps) = abr.on_feedback(
+                            Instant::now(),
+                            fb.latency_ms_p50 as f64,
+                            fb.latency_ms_min as f64,
+                        )
+                    {
+                        bitrate.store(bps, Ordering::Relaxed);
+                        info!(
+                            "bitrate {} kbit/s (latenza {} ms, minima {} ms)",
+                            bps / 1000,
+                            fb.latency_ms_p50,
+                            fb.latency_ms_min
+                        );
+                    }
+                }
                 _ => {}
             }
         }
-        anyhow::Ok(())
     };
 
     let input = async {

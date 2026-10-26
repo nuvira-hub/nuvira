@@ -79,6 +79,9 @@ pub trait VideoEncoder: Send {
         false
     }
 
+    /// Cambia il bitrate durante la sessione (bitrate adattivo).
+    fn set_bitrate(&mut self, _bps: u32) {}
+
     /// Attende (al massimo `timeout`) che l'encoder possa ricevere subito un frame.
     /// Chi chiama può così scegliere l'immagine più recente solo quando serve,
     /// invece di farla invecchiare dentro `encode`. `true` se è pronto.

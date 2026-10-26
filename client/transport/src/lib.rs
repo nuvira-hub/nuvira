@@ -29,6 +29,9 @@ pub use quinn::{Connection, Endpoint};
 /// Identificativo del protocollo negoziato in TLS (ALPN).
 pub(crate) const ALPN: &[u8] = b"nexo/0";
 
+/// Dati non ancora confermati per connessione (vedi `transport_config`).
+const SEND_WINDOW: u64 = 256 * 1024;
+
 /// Porta UDP predefinita del prototipo in LAN.
 pub const DEFAULT_PORT: u16 = 21500;
 
@@ -76,6 +79,14 @@ pub(crate) fn transport_config() -> Arc<TransportConfig> {
     // in loopback, e dopo la perdita la connessione non riceve più nulla: disattivato.
     // TODO: riprovare su LAN reale e riattivarlo dove funziona.
     t.enable_segmentation_offload(false);
+    // Buffer di invio limitato: se la rete non smaltisce, l'invio si blocca presto e
+    // l'agent salta frame invece di accodarne secondi (il bitrate adattivo fa il resto).
+    t.send_window(SEND_WINDOW);
+    // BBR stima la banda invece di dimezzare la finestra a ogni perdita: con perdite
+    // casuali (Wi-Fi, reti mobili) NewReno/Cubic scendono ben sotto la capacità reale.
+    if std::env::var_os("NEXO_CC_CUBIC").is_none() {
+        t.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
+    }
     Arc::new(t)
 }
 

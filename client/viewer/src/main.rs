@@ -129,6 +129,8 @@ fn main() -> Result<()> {
         proxy: event_loop.create_proxy(),
         input: None,
         net_thread: None,
+        feedback: None,
+        feedback_window: (Instant::now(), Vec::new()),
         view_only: args.view_only,
         window: None,
         renderer: None,
@@ -177,6 +179,9 @@ struct App {
     proxy: EventLoopProxy<NetEvent>,
     input: Option<UnboundedSender<InputEvent>>,
     net_thread: Option<std::thread::JoinHandle<()>>,
+    /// Verso l'agent, per il bitrate adattivo: latenze dell'intervallo in corso.
+    feedback: Option<UnboundedSender<nexo_proto::v1::Feedback>>,
+    feedback_window: (Instant, Vec<u32>),
     view_only: bool,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
@@ -195,6 +200,27 @@ impl App {
         if let (false, Some(input)) = (self.view_only, &self.input) {
             let _ = input.send(InputEvent { event: Some(event) });
         }
+    }
+
+    /// Ogni 250 ms invia all'agent latenza mediana e minima dei frame mostrati.
+    fn send_feedback(&mut self) {
+        let (since, latencies) = &mut self.feedback_window;
+        let window = since.elapsed();
+        if window < Duration::from_millis(250) || latencies.is_empty() {
+            return;
+        }
+        latencies.sort_unstable();
+        let feedback = nexo_proto::v1::Feedback {
+            latency_ms_p50: latencies[latencies.len() / 2],
+            latency_ms_min: latencies[0],
+            frames: latencies.len() as u32,
+            window_ms: window.as_millis() as u32,
+        };
+        if let Some(tx) = &self.feedback {
+            let _ = tx.send(feedback);
+        }
+        latencies.clear();
+        *since = Instant::now();
     }
 
     fn release_keys(&mut self) {
@@ -258,8 +284,10 @@ impl ApplicationHandler<NetEvent> for App {
         // La connessione parte solo a finestra e rendering pronti: se la rete
         // arrivava prima, il canale video a volte non veniva mai accettato.
         if let Some((target, password)) = self.connect.take() {
-            let (input, thread) = net::start(target, password, self.proxy.clone(), self.slot.clone());
+            let (input, feedback, thread) =
+                net::start(target, password, self.proxy.clone(), self.slot.clone());
             self.input = Some(input);
+            self.feedback = Some(feedback);
             self.net_thread = Some(thread);
         }
     }
@@ -298,7 +326,9 @@ impl ApplicationHandler<NetEvent> for App {
                     let latency = nexo_proto::now_us() as i64 - captured_here;
                     self.stats.latency_us += latency.max(0) as u64;
                     self.report.latencies_us.push(latency.clamp(0, u32::MAX as i64) as u32);
+                    self.feedback_window.1.push((latency.max(0) / 1000) as u32);
                 }
+                self.send_feedback();
                 let r = &mut self.report;
                 r.first_frame_ms.get_or_insert(self.started.elapsed().as_millis() as u64);
                 r.frames += 1;

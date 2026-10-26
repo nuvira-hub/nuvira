@@ -5,6 +5,8 @@
 //	NEXO_LISTEN    indirizzo UDP (predefinito ":21116")
 //	NEXO_DATA_DIR  cartella per database e certificato (predefinito "./data")
 //	NEXO_LOG       debug | info (predefinito) | warn
+//	NEXO_RELAY_IMPAIR  solo test: simula una rete peggiore sul relay, es.
+//	                   "delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
 //
 // `nexo-server healthcheck` verifica che il server risponda (usato da Docker).
 package main
@@ -92,7 +94,16 @@ func run() error {
 	_ = udp.SetReadBuffer(7 << 20)
 	_ = udp.SetWriteBuffer(7 << 20)
 	rl := relay.New(log)
-	tr := &quic.Transport{Conn: relay.NewConn(udp, rl)}
+	conn := relay.NewConn(udp, rl)
+	impairment, err := relay.ParseImpairment(os.Getenv("NEXO_RELAY_IMPAIR"))
+	if err != nil {
+		return fmt.Errorf("NEXO_RELAY_IMPAIR: %w", err)
+	}
+	if impairment != nil {
+		conn.Impair(impairment)
+		log.Warn("simulazione di rete attiva sul relay (solo test)", "condizioni", impairment.String())
+	}
+	tr := &quic.Transport{Conn: conn}
 	ln, err := tr.Listen(
 		&tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{alpn}, MinVersion: tls.VersionTLS13},
 		&quic.Config{KeepAlivePeriod: 10 * time.Second, MaxIdleTimeout: 30 * time.Second},

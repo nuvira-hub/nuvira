@@ -10,6 +10,11 @@ use crate::{BgraImage, EncodedFrame, EncoderSettings, VideoDecoder, VideoEncoder
 
 pub struct OpenH264Encoder {
     encoder: Encoder,
+    bitrate: u32,
+    /// Il bitrate corrente è già stato passato all'encoder (lo si fa dopo il
+    /// primo frame: prima l'encoder non è inizializzato).
+    bitrate_applied: bool,
+    initialized: bool,
     y: Vec<u8>,
     u: Vec<u8>,
     v: Vec<u8>,
@@ -27,13 +32,26 @@ impl OpenH264Encoder {
             .skip_frames(true);
         let encoder = Encoder::with_api_config(OpenH264API::from_source(), config)
             .context("inizializzazione OpenH264")?;
-        Ok(Self { encoder, y: Vec::new(), u: Vec::new(), v: Vec::new() })
+        Ok(Self {
+            encoder,
+            bitrate: settings.bitrate_bps,
+            bitrate_applied: true,
+            initialized: false,
+            y: Vec::new(),
+            u: Vec::new(),
+            v: Vec::new(),
+        })
     }
 }
 
 impl VideoEncoder for OpenH264Encoder {
     fn name(&self) -> &'static str {
         "openh264"
+    }
+
+    fn set_bitrate(&mut self, bps: u32) {
+        self.bitrate = bps;
+        self.bitrate_applied = false;
     }
 
     fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<Option<EncodedFrame>> {
@@ -44,7 +62,22 @@ impl VideoEncoder for OpenH264Encoder {
         if force_keyframe {
             self.encoder.force_intra_frame();
         }
+        // Il nuovo bitrate si passa solo a encoder già inizializzato (dopo il primo frame).
+        if !self.bitrate_applied && self.initialized {
+            let mut info = openh264_sys2::SBitrateInfo {
+                iLayer: openh264_sys2::SPATIAL_LAYER_ALL,
+                iBitrate: self.bitrate as i32,
+            };
+            // SAFETY: opzione documentata di OpenH264 con la struttura che si aspetta.
+            unsafe {
+                self.encoder
+                    .raw_api()
+                    .set_option(openh264_sys2::ENCODER_OPTION_BITRATE, (&raw mut info).cast());
+            }
+            self.bitrate_applied = true;
+        }
         let bitstream = self.encoder.encode(&yuv).context("compressione OpenH264")?;
+        self.initialized = true;
         let keyframe = match bitstream.frame_type() {
             FrameType::Skip | FrameType::Invalid => return Ok(None),
             FrameType::IDR | FrameType::I => true,

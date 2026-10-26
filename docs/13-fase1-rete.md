@@ -94,6 +94,24 @@ NUC (agent + nexo-server) → PC-LABORATORIO (viewer), schermo vero con animazio
 | Diretta | 32 | 37 ms | 46 ms | 1,3 ms |
 | Relay (forzato) | 33 | 43 ms | 52 ms | 1,7 ms |
 
+## Rete degradata: bitrate adattivo e BBR (2026-10-26)
+
+Simulazione sul relay (`NEXO_RELAY_IMPAIR`, solo test), tutto il traffico forzato attraverso il relay, schermo vero con animazione, 25 s.
+
+| Rete simulata | Prima (bitrate fisso, Cubic) | Dopo (adattivo + BBR), hardware | Dopo, software |
+|---|---|---|---|
+| Libera (LAN) | 37 ms | 38 ms (p95 49) | 59 ms (p95 78) |
+| 25 ms, 1% perdita, 5 Mbit/s | 2,2 s (p95 4,7 s) | **78 ms** (p95 130) | 90 ms (p95 147) |
+| 40 ms, 2% perdita, 2 Mbit/s | 3,7 s (p95 9,6 s) | **100 ms** (p95 202) | 127 ms (p95 222) |
+
+Cosa è stato fatto:
+- **Feedback dal viewer** ogni 250 ms: latenza mediana e minima dei frame mostrati.
+- **Bitrate adattivo** nell'agent (`client/agent/src/abr.rs`): scende del 20% se la latenza supera di 60 ms il minimo degli ultimi 10 s, risale dell'8% se resta vicina; 1,5 s di assestamento dopo ogni cambio. `--fixed-bitrate` lo disattiva.
+- **Quick Sync ignora i cambi di bitrate a sessione avviata** (Media Foundation): il nuovo bitrate si applica riavviando l'encoder (~0,3 s), con isteresi (discese ≥ 15% al massimo ogni secondo, salite ≥ 25% ogni 3 s). OpenH264 cambia al volo.
+- **BBR** come controllo di congestione di QUIC: con perdite casuali NewReno/Cubic usavano meno della metà della banda (`NEXO_CC_CUBIC=1` per confrontare).
+- **Buffer di invio di QUIC limitato a 256 KB**: oltre, l'agent salta frame invece di accodarli.
+- Simulatore: ritardo, jitter senza riordino, perdita, banda limitata con coda finita.
+
 ## Cosa cambia via Internet
 
 La configurazione di OPNsense (inoltro della porta UDP del server) serve solo a rendere raggiungibile il server; il software però va ancora verificato su condizioni che la LAN non presenta:
@@ -101,7 +119,7 @@ La configurazione di OPNsense (inoltro della porta UDP del server) serve solo a 
 - **NAT simmetrici e CGNAT** (reti mobili): la via diretta può fallire e si resta sul relay; da misurare quanto spesso.
 - **Hairpin**: due dispositivi dietro lo stesso NAT che raggiungono il server con l'IP pubblico; il relay li vede con l'indirizzo pubblico e la via diretta deve usare quello locale (servono anche i candidati LAN).
 - **Reti che bloccano UDP** (aziende, alberghi): serve il passo 6.
-- **Perdita di pacchetti, jitter, RTT di 30-100 ms**: il video oggi viaggia su uno stream affidabile, quindi una perdita blocca i frame successivi; servono datagrammi o scarto dei frame vecchi e bitrate adattivo.
+- **Perdita di pacchetti, jitter, RTT di 30-100 ms**: affrontati con bitrate adattivo e BBR (sezione sopra), verificati in simulazione; resta la prova reale.
 - **MTU** più piccole (VPN, PPPoE): QUIC lo gestisce, da verificare.
 
 Questi punti si possono in parte simulare in LAN (perdita e ritardo artificiali) prima della prova vera.
