@@ -11,6 +11,7 @@
 # Variabili: NEXO_REMOTE (utente@pc), NEXO_REMOTE_DIR, NEXO_AGENT_IP, NEXO_SSH_KEY,
 # NEXO_VIEWER_LOG (RUST_LOG del viewer, es. info,nexo_viewer=trace),
 # NEXO_AGENT_EXE (agent da provare al posto di target/release, per confronti A/B),
+# NEXO_VIA_SERVER=1 (avvia nexo-server qui e il viewer si collega per ID attraverso il relay),
 # NEXO_AGENT_LOG (RUST_LOG dell'agent), NEXO_ANIMATE=1 (animazione a schermo intero
 # su questo PC durante il test, per misurare la cattura dello schermo vero;
 # richiede cargo build --release --examples).
@@ -44,23 +45,41 @@ if [ -n "${NEXO_ANIMATE:-}" ]; then
     sleep 1
 fi
 
-echo "== avvio dell'agent ($*)"
-# La regola del firewall di Windows vale per dist/nexo-agent.exe: si lancia quella copia.
+# Le regole del firewall di Windows valgono per i programmi in dist/: si lanciano quelle copie.
 mkdir -p "$ROOT/dist"
+AGENT_ARGS=()
+if [ -n "${NEXO_VIA_SERVER:-}" ]; then
+    echo "== avvio di nexo-server su questo PC"
+    cp "$ROOT/target/nexo-server.exe" "$ROOT/dist/nexo-server.exe"
+    mkdir -p "$OUT/server-data"
+    NEXO_DATA_DIR="$OUT/server-data" "$ROOT/dist/nexo-server.exe" >"$OUT/server.log" 2>&1 &
+    SERVER_PID=$!
+    AGENT_ARGS=(--server "$AGENT_IP")
+    sleep 1
+fi
+
+echo "== avvio dell'agent ($*)"
 cp "${NEXO_AGENT_EXE:-$ROOT/target/release/nexo-agent.exe}" "$ROOT/dist/nexo-agent.exe"
-RUST_LOG="${NEXO_AGENT_LOG:-info}" "$ROOT/dist/nexo-agent.exe" --once --view-only --fingerprint-file "$OUT/fingerprint.txt" "$@" \
-    >"$OUT/agent.log" 2>&1 &
+RUST_LOG="${NEXO_AGENT_LOG:-info}" "$ROOT/dist/nexo-agent.exe" --once --view-only --fingerprint-file "$OUT/fingerprint.txt" \
+    "${AGENT_ARGS[@]}" "$@" >"$OUT/agent.log" 2>&1 &
 AGENT_PID=$!
-trap 'kill $AGENT_PID ${ANIM_PID:-} 2>/dev/null || true' EXIT
-for _ in $(seq 50); do
+trap 'kill $AGENT_PID ${ANIM_PID:-} ${SERVER_PID:-} 2>/dev/null || true' EXIT
+for _ in $(seq 100); do
     [ -s "$OUT/fingerprint.txt" ] && break
     sleep 0.1
 done
 FP="$(cat "$OUT/fingerprint.txt")"
+if [ -n "${NEXO_VIA_SERVER:-}" ]; then
+    # In modalità server l'agent scrive "ID password".
+    read -r AGENT_ID PASSWORD <<<"$FP"
+    VIEWER_TARGET="--server $AGENT_IP $AGENT_ID --password $PASSWORD"
+else
+    VIEWER_TARGET="$AGENT_IP --fingerprint $FP"
+fi
 
 echo "== avvio del viewer per $DURATION s"
-printf '@echo off\r\nset RUST_LOG=%s\r\ncd /d "%s"\r\nnexo-viewer.exe %s --fingerprint %s --view-only --duration %s --stats-file stats.json --snapshot snapshot.png > viewer.log 2>&1\r\n' \
-    "${NEXO_VIEWER_LOG:-info}" "$REMOTE_DIR" "$AGENT_IP" "$FP" "$DURATION" >"$OUT/run-viewer.cmd"
+printf '@echo off\r\nset RUST_LOG=%s\r\ncd /d "%s"\r\nnexo-viewer.exe %s --view-only --duration %s --stats-file stats.json --snapshot snapshot.png > viewer.log 2>&1\r\n' \
+    "${NEXO_VIEWER_LOG:-info}" "$REMOTE_DIR" "$VIEWER_TARGET" "$DURATION" >"$OUT/run-viewer.cmd"
 "${SCP[@]}" "$OUT/run-viewer.cmd" "$REMOTE:$REMOTE_DIR_SCP/run-viewer.cmd"
 "${SSH[@]}" "schtasks /create /tn NexoViewerTest /tr \"$REMOTE_DIR\\run-viewer.cmd\" /sc once /st 23:59 /it /f >nul && schtasks /run /tn NexoViewerTest >nul"
 
@@ -80,5 +99,7 @@ echo "== viewer.log"
 sed 's/\x1b\[[0-9;]*m//g' "$OUT/viewer.log" 2>/dev/null | grep -v "^Nexo ©" || true
 echo "== agent.log"
 sed 's/\x1b\[[0-9;]*m//g' "$OUT/agent.log" | grep -v "OpenH264\|^Nexo ©" || true
+echo "== server.log"
+cat "$OUT/server.log" 2>/dev/null | grep -v "^Nexo ©" || true
 echo "== stats.json"
 cat "$OUT/stats.json" 2>/dev/null || true
