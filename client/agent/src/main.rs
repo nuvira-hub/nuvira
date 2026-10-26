@@ -60,7 +60,7 @@ struct Args {
     #[arg(long, default_value_t = 60)]
     fps: u32,
 
-    /// Encoder video: hardware se disponibile (auto), solo hardware o solo software.
+    /// Encoder video: il più veloce tra hardware e software (auto), solo hardware o solo software.
     #[arg(long, value_enum, default_value_t = EncoderArg::Auto)]
     encoder: EncoderArg,
 
@@ -142,6 +142,12 @@ fn main() -> Result<()> {
     }
 
     println!("{COPYRIGHT}");
+    if matches!(args.encoder, EncoderArg::Auto) {
+        nexo_codec::preselect_encoder(EncoderSettings {
+            bitrate_bps: args.bitrate * 1000,
+            max_fps: args.fps,
+        });
+    }
     tokio::runtime::Runtime::new()?.block_on(serve(args))
 }
 

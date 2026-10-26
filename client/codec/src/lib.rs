@@ -12,6 +12,7 @@ pub mod convert;
 #[cfg(windows)]
 mod mf;
 mod openh264;
+mod select;
 
 #[cfg(windows)]
 pub use crate::mf::{MfEncoder, hardware_encoders};
@@ -70,34 +71,47 @@ pub trait VideoDecoder: Send {
 /// Quale encoder usare.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EncoderChoice {
-    /// Hardware se disponibile, altrimenti software.
+    /// Il più veloce tra hardware e software, provati all'avvio.
     #[default]
     Auto,
     Hardware,
     Software,
 }
 
-/// L'encoder H.264 scelto; con `Auto` quello hardware se c'è, altrimenti OpenH264.
+/// L'encoder H.264 scelto. Con `Auto` si usa il più veloce su questo PC
+/// (vedi [`select`]); se manca l'hardware, OpenH264.
 pub fn create_encoder(
     choice: EncoderChoice,
     settings: EncoderSettings,
 ) -> anyhow::Result<Box<dyn VideoEncoder>> {
-    #[cfg(windows)]
-    if choice != EncoderChoice::Software {
-        match MfEncoder::new(settings) {
-            Ok(enc) => {
-                tracing::info!("encoder hardware: {}", enc.device_name());
-                return Ok(Box::new(enc));
-            }
-            Err(e) if choice == EncoderChoice::Hardware => return Err(e),
-            Err(e) => tracing::info!("encoder hardware non disponibile ({e:#}), uso OpenH264"),
+    let choice = match choice {
+        EncoderChoice::Auto => select::auto_choice(settings),
+        other => other,
+    };
+    create_specific(choice, settings)
+}
+
+/// Esegue subito la prova degli encoder di `Auto` (circa un secondo), così non
+/// ritarda il primo frame della prima sessione.
+pub fn preselect_encoder(settings: EncoderSettings) -> EncoderChoice {
+    select::auto_choice(settings)
+}
+
+fn create_specific(
+    choice: EncoderChoice,
+    settings: EncoderSettings,
+) -> anyhow::Result<Box<dyn VideoEncoder>> {
+    match choice {
+        #[cfg(windows)]
+        EncoderChoice::Hardware => {
+            let enc = MfEncoder::new(settings)?;
+            tracing::info!("encoder hardware: {}", enc.device_name());
+            Ok(Box::new(enc))
         }
+        #[cfg(not(windows))]
+        EncoderChoice::Hardware => anyhow::bail!("encoder hardware non ancora disponibile su questo sistema"),
+        EncoderChoice::Software | EncoderChoice::Auto => Ok(Box::new(OpenH264Encoder::new(settings)?)),
     }
-    #[cfg(not(windows))]
-    if choice == EncoderChoice::Hardware {
-        anyhow::bail!("encoder hardware non ancora disponibile su questo sistema");
-    }
-    Ok(Box::new(OpenH264Encoder::new(settings)?))
 }
 
 /// Il miglior decoder H.264 disponibile su questo sistema.
