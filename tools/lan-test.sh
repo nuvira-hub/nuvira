@@ -9,7 +9,8 @@
 # in sola visualizzazione, e scrive i risultati in JSON.
 #
 # Variabili: NEXO_REMOTE (utente@pc), NEXO_REMOTE_DIR, NEXO_AGENT_IP, NEXO_SSH_KEY,
-# NEXO_VIEWER_LOG (RUST_LOG del viewer, es. info,nexo_viewer=trace).
+# NEXO_VIEWER_LOG (RUST_LOG del viewer, es. info,nexo_viewer=trace),
+# NEXO_AGENT_EXE (agent da provare al posto di target/release, per confronti A/B).
 
 set -euo pipefail
 
@@ -36,7 +37,7 @@ echo "== copia del viewer su $REMOTE"
 echo "== avvio dell'agent ($*)"
 # La regola del firewall di Windows vale per dist/nexo-agent.exe: si lancia quella copia.
 mkdir -p "$ROOT/dist"
-cp "$ROOT/target/release/nexo-agent.exe" "$ROOT/dist/nexo-agent.exe"
+cp "${NEXO_AGENT_EXE:-$ROOT/target/release/nexo-agent.exe}" "$ROOT/dist/nexo-agent.exe"
 "$ROOT/dist/nexo-agent.exe" --once --view-only --fingerprint-file "$OUT/fingerprint.txt" "$@" \
     >"$OUT/agent.log" 2>&1 &
 AGENT_PID=$!

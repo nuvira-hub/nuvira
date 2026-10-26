@@ -4,19 +4,22 @@
 //! trasmette lo schermo e applica mouse e tastiera ricevuti.
 //! Nessuna autenticazione oltre all'impronta del certificato: da usare solo in reti fidate.
 
+mod pipeline;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use nexo_capture::{Capturer, SyntheticCapturer};
-use nexo_codec::{BgraImage, EncoderChoice, EncoderSettings};
+use nexo_codec::{EncoderChoice, EncoderSettings};
 use nexo_proto::v1::{
     Codec, ControlMessage, Hello, InputEvent, Pong, VideoFormat, VideoFrame, control_message::Msg,
 };
 use nexo_transport::{Connection, FramedRecv, FramedSend};
+
+use crate::pipeline::Pipeline;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -190,18 +193,24 @@ async fn session(conn: Connection, args: &Args) -> Result<()> {
     }
     ctrl_tx.send(&control(Msg::Hello(local_hello()))).await?;
 
-    // La cattura si apre nel thread che la userà; le dimensioni tornano indietro subito.
-    let stop = Arc::new(AtomicBool::new(false));
     let keyframe = Arc::new(AtomicBool::new(true));
     let (frame_tx, mut frame_rx) = mpsc::channel::<VideoFrame>(1);
-    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-    let pipeline = {
-        let (args, stop, keyframe) = (args.clone(), stop.clone(), keyframe.clone());
-        std::thread::Builder::new()
-            .name("cattura".into())
-            .spawn(move || capture_loop(&args, ready_tx, frame_tx, &stop, &keyframe))?
+    let (display, pipeline) = {
+        let (cap_args, enc_args, keyframe) = (args.clone(), args.clone(), keyframe.clone());
+        let settings = EncoderSettings { bitrate_bps: args.bitrate * 1000, max_fps: args.fps };
+        let fps = args.fps;
+        tokio::task::spawn_blocking(move || {
+            Pipeline::start(
+                move || open_capturer(&cap_args),
+                move || nexo_codec::create_encoder(enc_args.encoder.into(), settings),
+                fps,
+                frame_tx,
+                keyframe,
+            )
+        })
+        .await?
+        .context("avvio di cattura e compressione")?
     };
-    let display = ready_rx.await.context("avvio della cattura")??;
     ctrl_tx
         .send(&control(Msg::VideoFormat(VideoFormat {
             codec: Codec::H264 as i32,
@@ -260,8 +269,7 @@ async fn session(conn: Connection, args: &Args) -> Result<()> {
         r = control_loop => r.context("canale di controllo"),
         r = input => r.context("canale input"),
     };
-    stop.store(true, Ordering::Relaxed);
-    let _ = tokio::task::spawn_blocking(move || pipeline.join()).await;
+    let _ = tokio::task::spawn_blocking(move || drop(pipeline)).await;
     result
 }
 
@@ -275,123 +283,5 @@ fn local_hello() -> Hello {
         device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
         os: std::env::consts::OS.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
-    }
-}
-
-/// Thread di cattura e compressione. Si ferma quando `stop` diventa vero o la sessione chiude il canale.
-fn capture_loop(
-    args: &Args,
-    ready: tokio::sync::oneshot::Sender<Result<nexo_capture::Display>>,
-    frames: mpsc::Sender<VideoFrame>,
-    stop: &AtomicBool,
-    keyframe: &AtomicBool,
-) {
-    let setup = (|| {
-        let capturer = open_capturer(args)?;
-        let settings = EncoderSettings { bitrate_bps: args.bitrate * 1000, max_fps: args.fps };
-        let encoder = nexo_codec::create_encoder(args.encoder.into(), settings)?;
-        Ok((capturer, encoder))
-    })();
-    let (mut capturer, mut encoder) = match setup {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = ready.send(Err(e));
-            return;
-        }
-    };
-    let screen = capturer.display().clone();
-    info!("trasmetto {} {}x{} con {}", screen.name, screen.width, screen.height, encoder.name());
-    let _ = ready.send(Ok(screen));
-
-    let min_interval = Duration::from_secs(1) / args.fps.max(1);
-    let mut last_sent = Instant::now() - min_interval;
-    let mut seq = 0u64;
-    let mut stats = Stats::default();
-
-    while !stop.load(Ordering::Relaxed) {
-        let force_key = keyframe.load(Ordering::Relaxed);
-        let frame = match capturer.next_frame(Duration::from_millis(100)) {
-            Ok(Some(frame)) => frame,
-            // Schermo fermo: se serve un keyframe si ricomprime l'ultima immagine.
-            Ok(None) if force_key => match capturer.last_frame() {
-                Some(frame) => frame,
-                None => continue,
-            },
-            Ok(None) => continue,
-            Err(e) => {
-                // Es. desktop sicuro o schermo bloccato: si riprova senza chiudere la sessione.
-                warn!("cattura non riuscita: {e:#}");
-                std::thread::sleep(Duration::from_millis(500));
-                continue;
-            }
-        };
-        // Limite di frame al secondo: un'immagine più recente arriverà comunque.
-        if !force_key && last_sent.elapsed() < min_interval {
-            continue;
-        }
-
-        let image =
-            BgraImage { width: frame.width, height: frame.height, stride: frame.stride, data: &frame.data };
-        let captured_us = frame.captured_us;
-        let t = Instant::now();
-        let encoded = match encoder.encode(&image, force_key) {
-            Ok(Some(e)) => e,
-            Ok(None) => continue,
-            Err(e) => {
-                warn!("compressione non riuscita: {e:#}");
-                continue;
-            }
-        };
-        if encoded.keyframe {
-            keyframe.store(false, Ordering::Relaxed);
-        }
-        let encode_us = t.elapsed().as_micros() as u32;
-        stats.add(encode_us, encoded.data.len());
-        seq += 1;
-        last_sent = Instant::now();
-        let msg = VideoFrame {
-            seq,
-            capture_us: captured_us,
-            encode_us,
-            keyframe: encoded.keyframe,
-            data: encoded.data,
-        };
-        // Coda da un solo frame: se la rete è lenta la cattura rallenta invece di accumulare ritardo.
-        if frames.blocking_send(msg).is_err() {
-            break;
-        }
-        stats.report();
-    }
-}
-
-#[derive(Default)]
-struct Stats {
-    since: Option<Instant>,
-    frames: u32,
-    bytes: usize,
-    encode_us: u64,
-}
-
-impl Stats {
-    fn add(&mut self, encode_us: u32, bytes: usize) {
-        self.since.get_or_insert_with(Instant::now);
-        self.frames += 1;
-        self.bytes += bytes;
-        self.encode_us += encode_us as u64;
-    }
-
-    fn report(&mut self) {
-        let Some(since) = self.since else { return };
-        let secs = since.elapsed().as_secs_f64();
-        if secs < 5.0 {
-            return;
-        }
-        info!(
-            "{:.1} fps, compressione {:.1} ms/frame, {:.0} kbit/s",
-            self.frames as f64 / secs,
-            self.encode_us as f64 / self.frames.max(1) as f64 / 1000.0,
-            self.bytes as f64 * 8.0 / secs / 1000.0
-        );
-        *self = Stats::default();
     }
 }
