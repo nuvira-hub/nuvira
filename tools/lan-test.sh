@@ -11,7 +11,8 @@
 # Variabili: NEXO_REMOTE (utente@pc), NEXO_REMOTE_DIR, NEXO_AGENT_IP, NEXO_SSH_KEY,
 # NEXO_VIEWER_LOG (RUST_LOG del viewer, es. info,nexo_viewer=trace),
 # NEXO_AGENT_EXE (agent da provare al posto di target/release, per confronti A/B),
-# NEXO_VIA_SERVER=1 (avvia nexo-server qui e il viewer si collega per ID attraverso il relay),
+# NEXO_VIA_SERVER=1 (avvia nexo-server qui e il viewer si collega per ID attraverso il server),
+# NEXO_FORCE_RELAY=1 (con NEXO_VIA_SERVER: niente via diretta, solo relay),
 # NEXO_AGENT_LOG (RUST_LOG dell'agent), NEXO_ANIMATE=1 (animazione a schermo intero
 # su questo PC durante il test, per misurare la cattura dello schermo vero;
 # richiede cargo build --release --examples).
@@ -31,7 +32,7 @@ SCP=(scp -q -i "$KEY" -o BatchMode=yes -o LogLevel=ERROR)
 REMOTE_DIR_SCP="/${REMOTE_DIR//\\//}"
 
 mkdir -p "$OUT"
-rm -f "$OUT"/*
+rm -rf "${OUT:?}"/*
 
 echo "== copia del viewer su $REMOTE"
 "${SSH[@]}" "if not exist \"$REMOTE_DIR\" mkdir \"$REMOTE_DIR\"" >/dev/null
@@ -51,8 +52,10 @@ AGENT_ARGS=()
 if [ -n "${NEXO_VIA_SERVER:-}" ]; then
     echo "== avvio di nexo-server su questo PC"
     cp "$ROOT/target/nexo-server.exe" "$ROOT/dist/nexo-server.exe"
-    mkdir -p "$OUT/server-data"
-    NEXO_DATA_DIR="$OUT/server-data" "$ROOT/dist/nexo-server.exe" >"$OUT/server.log" 2>&1 &
+    # Dati del server conservati tra le prove: agent e viewer ricordano l'impronta
+    # del suo certificato e rifiuterebbero un server con un certificato nuovo.
+    mkdir -p "$ROOT/target/lan-test-server"
+    NEXO_DATA_DIR="$ROOT/target/lan-test-server" "$ROOT/dist/nexo-server.exe" >"$OUT/server.log" 2>&1 &
     SERVER_PID=$!
     AGENT_ARGS=(--server "$AGENT_IP")
     sleep 1
@@ -78,8 +81,8 @@ else
 fi
 
 echo "== avvio del viewer per $DURATION s"
-printf '@echo off\r\nset RUST_LOG=%s\r\ncd /d "%s"\r\nnexo-viewer.exe %s --view-only --duration %s --stats-file stats.json --snapshot snapshot.png > viewer.log 2>&1\r\n' \
-    "${NEXO_VIEWER_LOG:-info}" "$REMOTE_DIR" "$VIEWER_TARGET" "$DURATION" >"$OUT/run-viewer.cmd"
+printf '@echo off\r\nset NEXO_FORCE_RELAY=%s\r\nset RUST_LOG=%s\r\ncd /d "%s"\r\nnexo-viewer.exe %s --view-only --duration %s --stats-file stats.json --snapshot snapshot.png > viewer.log 2>&1\r\n' \
+    "${NEXO_FORCE_RELAY:-}" "${NEXO_VIEWER_LOG:-info}" "$REMOTE_DIR" "$VIEWER_TARGET" "$DURATION" >"$OUT/run-viewer.cmd"
 "${SCP[@]}" "$OUT/run-viewer.cmd" "$REMOTE:$REMOTE_DIR_SCP/run-viewer.cmd"
 "${SSH[@]}" "schtasks /create /tn NexoViewerTest /tr \"$REMOTE_DIR\\run-viewer.cmd\" /sc once /st 23:59 /it /f >nul && schtasks /run /tn NexoViewerTest >nul"
 

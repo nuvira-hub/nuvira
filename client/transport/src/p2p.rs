@@ -176,7 +176,9 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     endpoint.set_default_client_config(config);
 
     let relay = endpoint.connect(route.relay, "nexo-device")?;
-    let Some(peer) = peer.filter(|p| *p != route.relay) else {
+    // NEXO_FORCE_RELAY=1: solo relay, per misurarne il costo nei test.
+    let force_relay = std::env::var_os("NEXO_FORCE_RELAY").is_some();
+    let Some(peer) = peer.filter(|p| *p != route.relay && !force_relay) else {
         let conn = relay.await.context("collegamento attraverso il relay")?;
         return Ok((conn, Path::Relay));
     };

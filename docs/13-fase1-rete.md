@@ -66,9 +66,42 @@ Il server comunica a entrambi l'indirizzo pubblico dell'altro (visto dal relay);
 
 ## Passi
 
-1. Server Go: segnalazione QUIC, registrazione con firma, SQLite, ID a 9 cifre. Agent: `--server`, stampa il proprio ID.
-2. Richiesta di connessione, relay UDP, viewer che si collega per ID con chiavi verificate, password di sessione.
-3. Test automatici via server (in LAN), confronto della latenza con la connessione diretta.
-4. Immagine Docker e pubblicazione (NAS / server esterno).
-5. Hole punching e scelta del percorso più veloce.
-6. Ripiego su TCP/WebSocket per le reti che bloccano UDP.
+| # | Passo | Stato |
+|---|---|---|
+| 1 | Server Go: segnalazione QUIC, registrazione con firma, SQLite, ID a 9 cifre. Agent: `--server`, stampa ID e password | ✅ |
+| 2 | Richiesta di connessione, relay UDP, viewer che si collega per ID con chiavi verificate, password di sessione | ✅ |
+| 3 | Test automatici via server in LAN (`NEXO_VIA_SERVER=1`, `NEXO_FORCE_RELAY=1`) | ✅ |
+| 4 | Immagine Docker (`ghcr.io/alexbn71/nexo-server`, GitHub Actions) | ✅ immagine; pubblicazione su Internet rimandata |
+| 5 | Hole punching e scelta del percorso (diretta preferita, relay come ripiego) | ✅ |
+| 6 | Ripiego su TCP/WebSocket per le reti che bloccano UDP | da fare |
+
+## Uso
+
+```powershell
+nexo-server.exe                                   # UDP 21116, dati in .\data
+nexo-agent.exe --server 192.168.1.10              # stampa ID e password
+nexo-viewer.exe --server 192.168.1.10 123456789 --password abcd2345
+```
+
+Al primo collegamento agent e viewer memorizzano l'impronta del certificato del server (`servers.txt` nella cartella dati) e rifiutano poi un server con un certificato diverso; `--server-key` la fissa a mano.
+
+## Misure in LAN (2026-10-26)
+
+NUC (agent + nexo-server) → PC-LABORATORIO (viewer), schermo vero con animazione, Quick Sync.
+
+| Percorso | fps | Latenza p50 | p95 | RTT |
+|---|---|---|---|---|
+| Diretta | 32 | 37 ms | 46 ms | 1,3 ms |
+| Relay (forzato) | 33 | 43 ms | 52 ms | 1,7 ms |
+
+## Cosa cambia via Internet
+
+La configurazione di OPNsense (inoltro della porta UDP del server) serve solo a rendere raggiungibile il server; il software però va ancora verificato su condizioni che la LAN non presenta:
+
+- **NAT simmetrici e CGNAT** (reti mobili): la via diretta può fallire e si resta sul relay; da misurare quanto spesso.
+- **Hairpin**: due dispositivi dietro lo stesso NAT che raggiungono il server con l'IP pubblico; il relay li vede con l'indirizzo pubblico e la via diretta deve usare quello locale (servono anche i candidati LAN).
+- **Reti che bloccano UDP** (aziende, alberghi): serve il passo 6.
+- **Perdita di pacchetti, jitter, RTT di 30-100 ms**: il video oggi viaggia su uno stream affidabile, quindi una perdita blocca i frame successivi; servono datagrammi o scarto dei frame vecchi e bitrate adattivo.
+- **MTU** più piccole (VPN, PPPoE): QUIC lo gestisce, da verificare.
+
+Questi punti si possono in parte simulare in LAN (perdita e ritardo artificiali) prima della prova vera.
