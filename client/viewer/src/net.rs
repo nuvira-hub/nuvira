@@ -89,7 +89,9 @@ async fn session(
     });
 
     let mut input_tx = FramedSend::new(conn.open_uni().await?);
+    tracing::debug!("canale input aperto");
     let mut video_rx = FramedRecv::new(conn.accept_uni().await?);
+    tracing::debug!("canale video accettato");
 
     // La decompressione avviene su un thread a parte per non bloccare la rete.
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<()>();

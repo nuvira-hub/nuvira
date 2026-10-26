@@ -54,6 +54,10 @@ fn transport_config() -> Arc<TransportConfig> {
     let mut t = TransportConfig::default();
     t.keep_alive_interval(Some(Duration::from_secs(5)));
     t.max_idle_timeout(Some(Duration::from_secs(20).try_into().expect("durata valida")));
+    // GSO (più datagrammi in un'unica chiamata di invio) su Windows perde i pacchetti
+    // in loopback, e dopo la perdita la connessione non riceve più nulla: disattivato.
+    // TODO: riprovare su LAN reale e riattivarlo dove funziona.
+    t.enable_segmentation_offload(false);
     Arc::new(t)
 }
 

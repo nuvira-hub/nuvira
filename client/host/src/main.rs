@@ -184,8 +184,10 @@ async fn session(conn: Connection, args: &Args) -> Result<()> {
         .await?;
 
     let mut video_tx = FramedSend::new(conn.open_uni().await?);
+    tracing::debug!("canale video aperto");
     let video = async move {
         while let Some(frame) = frame_rx.recv().await {
+            tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "invio frame");
             video_tx.send(&frame).await?;
         }
         anyhow::Ok(())

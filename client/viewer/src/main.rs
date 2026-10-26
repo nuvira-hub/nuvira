@@ -19,7 +19,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
@@ -71,9 +71,10 @@ fn main() -> Result<()> {
     println!("{COPYRIGHT}");
 
     let event_loop = EventLoop::<NetEvent>::with_user_event().build()?;
-    let input = net::start(addr, fingerprint, event_loop.create_proxy());
     let mut app = App {
-        input,
+        connect: Some((addr, fingerprint)),
+        proxy: event_loop.create_proxy(),
+        input: None,
         view_only: args.view_only,
         window: None,
         renderer: None,
@@ -93,7 +94,10 @@ fn main() -> Result<()> {
 }
 
 struct App {
-    input: UnboundedSender<InputEvent>,
+    /// Host a cui collegarsi appena la finestra è pronta.
+    connect: Option<(SocketAddr, Option<nexo_transport::Fingerprint>)>,
+    proxy: EventLoopProxy<NetEvent>,
+    input: Option<UnboundedSender<InputEvent>>,
     view_only: bool,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
@@ -109,8 +113,8 @@ struct App {
 
 impl App {
     fn send(&self, event: Event) {
-        if !self.view_only {
-            let _ = self.input.send(InputEvent { event: Some(event) });
+        if let (false, Some(input)) = (self.view_only, &self.input) {
+            let _ = input.send(InputEvent { event: Some(event) });
         }
     }
 
@@ -170,6 +174,11 @@ impl ApplicationHandler<NetEvent> for App {
             }
         }
         self.window = Some(window);
+        // La connessione parte solo a finestra e rendering pronti: se la rete
+        // arrivava prima, il canale video a volte non veniva mai accettato.
+        if let Some((addr, fingerprint)) = self.connect.take() {
+            self.input = Some(net::start(addr, fingerprint, self.proxy.clone()));
+        }
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
