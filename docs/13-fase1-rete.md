@@ -83,7 +83,7 @@ Test: `NEXO_RELAY_FAKE_REFLEXIVE=1` sul server sostituisce l'indirizzo visto dal
 | 4 | Immagine Docker (`ghcr.io/alexbn71/nexo-server`, GitHub Actions) | ✅ immagine; pubblicazione su Internet rimandata |
 | 5 | Hole punching e scelta del percorso (diretta preferita, relay come ripiego) | ✅ |
 | 5b | Indirizzi locali come candidati (dispositivi dietro lo stesso router, hairpin) | ✅ |
-| 6 | Ripiego su WebSocket per le reti che bloccano UDP | ✅ provato in locale; da provare tra i due PC (serve la regola TCP del firewall) |
+| 6 | Ripiego su WebSocket per le reti che bloccano UDP | ✅ |
 
 ## Uso
 
@@ -121,6 +121,16 @@ Prove in locale (agent e viewer sullo stesso PC, 1280x720 a 30 fps):
 | UDP → WebSocket | 1,4 s | 14 ms | 42 ms |
 | WebSocket → WebSocket | 0,6 s | 18 ms | 44 ms |
 | UDP bloccato, scelta automatica | 5,5 s | 25 ms | 44 ms |
+
+Tra i due PC (NUC → PC-LABORATORIO via nexo-server, Quick Sync, schermo animato):
+
+| Viewer | Percorso | fps | Latenza p50 | p95 |
+|---|---|---|---|---|
+| UDP | diretto | 29 | 38 ms | 49 ms |
+| WebSocket | relay via tunnel | 28 | 39 ms | 57 ms |
+| Automatico con UDP bloccato | relay via tunnel | 29 | 38 ms | 50 ms |
+
+In LAN il tunnel WebSocket costa pochissimo; via Internet il TCP sotto QUIC peggiora con le perdite (ritrasmissioni doppie), per questo resta un ripiego.
 
 Correzioni emerse: il messaggio di chiusura di QUIC passa per una coda svuotata da un task e il viewer usciva prima che partisse (l'agent restava occupato fino al timeout); chiusura del viewer in ordine (wgpu, finestra, thread di rete e di decodifica) dopo crash sporadici in uscita. 30 sessioni consecutive alternando UDP e WebSocket senza errori.
 

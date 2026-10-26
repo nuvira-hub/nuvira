@@ -13,6 +13,8 @@
 # NEXO_AGENT_EXE (agent da provare al posto di target/release, per confronti A/B),
 # NEXO_VIA_SERVER=1 (avvia nexo-server qui e il viewer si collega per ID attraverso il server),
 # NEXO_FORCE_RELAY=1 (con NEXO_VIA_SERVER: niente via diretta, solo relay),
+# NEXO_VIEWER_ARGS (opzioni in più per il viewer, es. "--transport websocket"),
+# NEXO_VIEWER_SERVER (indirizzo del server per il viewer, es. una porta UDP sbagliata),
 # NEXO_AGENT_LOG (RUST_LOG dell'agent), NEXO_ANIMATE=1 (animazione a schermo intero
 # su questo PC durante il test, per misurare la cattura dello schermo vero;
 # richiede cargo build --release --examples).
@@ -75,7 +77,7 @@ FP="$(cat "$OUT/fingerprint.txt")"
 if [ -n "${NEXO_VIA_SERVER:-}" ]; then
     # In modalità server l'agent scrive "ID password".
     read -r AGENT_ID PASSWORD <<<"$FP"
-    VIEWER_TARGET="--server $AGENT_IP $AGENT_ID --password $PASSWORD"
+    VIEWER_TARGET="--server ${NEXO_VIEWER_SERVER:-$AGENT_IP} $AGENT_ID --password $PASSWORD ${NEXO_VIEWER_ARGS:-}"
 else
     VIEWER_TARGET="$AGENT_IP --fingerprint $FP"
 fi
