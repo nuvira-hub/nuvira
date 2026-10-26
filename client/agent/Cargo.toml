@@ -1,27 +1,27 @@
 [package]
-name = "nexo-agent"
-description = "Nexo: dispositivo controllato (prototipo fase 0, solo LAN)"
+name = "nexodesk-agent"
+description = "NexoDesk: dispositivo controllato (prototipo fase 0, solo LAN)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [lib]
-name = "nexo_agent"
+name = "nexodesk_agent"
 path = "src/lib.rs"
 
 [[bin]]
-name = "nexo-agent"
+name = "nexodesk-agent"
 path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-nexo-capture.workspace = true
-nexo-codec.workspace = true
-nexo-input.workspace = true
-nexo-proto.workspace = true
-nexo-transport.workspace = true
+nexodesk-capture.workspace = true
+nexodesk-codec.workspace = true
+nexodesk-input.workspace = true
+nexodesk-proto.workspace = true
+nexodesk-transport.workspace = true
 quinn.workspace = true
 ring = "0.17"
 tokio.workspace = true

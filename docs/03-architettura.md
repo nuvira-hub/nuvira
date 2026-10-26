@@ -1,9 +1,9 @@
-# Nexo — Architettura
+# NexoDesk — Architettura
 
 [← Indice](README.md)
 
 ```
-                    ┌──────────────────── Container "nexo-server" ────────────────────┐
+                    ┌──────────────────── Container "nexodesk-server" ────────────────────┐
                     │                                                                    │
  Client tecnico ───►│  Gateway TLS :443 (HTTP/2, WebSocket, QUIC su UDP :443/udp)        │
                     │   ├─ Rendezvous / Signaling   (presenza, scambio candidati NAT)    │
@@ -38,16 +38,16 @@
 
 ```yaml
 services:
-  nexo:
-    image: nexo/server:latest
+  nexodesk:
+    image: nexodesk/server:latest
     ports:
       - "443:443/tcp"
       - "443:443/udp"
     volumes:
       - ./data:/data
     environment:
-      NEXO_PUBLIC_HOST: remote.example.it
-      NEXO_DB: sqlite:///data/nexo.db
+      NEXODESK_PUBLIC_HOST: remote.example.it
+      NEXODESK_DB: sqlite:///data/nexodesk.db
     restart: unless-stopped
 ```
 
@@ -62,17 +62,17 @@ services:
   - Alternative valutate: tutto in Flutter (scelta di RustDesk, rendering video tramite texture nativa, ma un secondo linguaggio, Dart); tutto in Slint/egui (nessuna webview, interfaccia di gestione più faticosa da costruire e meno curata).
   - Tauri v2 supporta Windows, macOS e Linux con lo stesso codice; usa la webview di sistema, da cui derivano questi requisiti minimi:
 
-    | Sistema | Webview usata da Tauri | Versione minima di Nexo | Limite dato da |
+    | Sistema | Webview usata da Tauri | Versione minima di NexoDesk | Limite dato da |
     |---|---|---|---|
     | Windows | WebView2 (Edge, già presente su Windows 10/11; installabile dall'installer) | Windows 10 1903 | Windows.Graphics.Capture |
     | macOS | WKWebView | macOS 12.3 | ScreenCaptureKit (Tauri da solo arriverebbe a 10.15) |
     | Linux | WebKitGTK 4.1 | Ubuntu 22.04, Debian 12, Fedora 36 o equivalenti | WebKitGTK 4.1 richiesto da Tauri v2 |
 
   - Le differenze tra webview (Edge/Safari/WebKitGTK) riguardano solo l'interfaccia: va provata sui tre sistemi a ogni rilascio.
-  - **Crediti** (licenza, [ADDITIONAL-TERMS.md](../ADDITIONAL-TERMS.md)): "Nexo © 2026 Alessandro Blason · AGPL-3.0 · Source code" visibili nella finestra principale e nella finestra "Informazioni".
+  - **Crediti** (licenza, [ADDITIONAL-TERMS.md](../ADDITIONAL-TERMS.md)): "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · Source code" visibili nella finestra principale e nella finestra "Informazioni".
 - **Processi**:
-  - `nexo` — applicazione utente (UI, sessioni in uscita, modalità "assistenza al volo").
-  - `nexo-service` — servizio di sistema per il non presidiato:
+  - `nexodesk` — applicazione utente (UI, sessioni in uscita, modalità "assistenza al volo").
+  - `nexodesk-service` — servizio di sistema per il non presidiato:
     - Windows: servizio LocalSystem che lancia l'agente nella sessione attiva e sul **desktop sicuro** (UAC, schermata di accesso, Ctrl+Alt+Canc).
     - macOS: LaunchDaemon + LaunchAgent (schermata di login inclusa).
     - Linux: unità systemd; sessione grafica via portale o display manager.

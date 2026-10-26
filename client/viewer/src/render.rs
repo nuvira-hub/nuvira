@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use nexo_codec::YuvFrame;
+use nexodesk_codec::YuvFrame;
 use winit::window::Window;
 
 const SHADER: &str = r#"
@@ -361,9 +361,9 @@ pub enum Renderer {
 
 impl Renderer {
     /// GPU (wgpu) se c'è un'API moderna; CPU se la scheda arriva solo via OpenGL o wgpu non parte.
-    /// `NEXO_RENDERER=gpu|cpu` forza la scelta.
+    /// `NEXODESK_RENDERER=gpu|cpu` forza la scelta.
     pub fn new(window: Arc<Window>) -> Result<(Self, String)> {
-        let forced = std::env::var("NEXO_RENDERER").ok();
+        let forced = std::env::var("NEXODESK_RENDERER").ok();
         if forced.as_deref() != Some("cpu") {
             match GpuRenderer::new(window.clone()) {
                 Ok(gpu) if gpu.backend != wgpu::Backend::Gl || forced.as_deref() == Some("gpu") => {

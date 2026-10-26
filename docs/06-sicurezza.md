@@ -1,4 +1,4 @@
-# Nexo — Modello di sicurezza (sintesi)
+# NexoDesk — Modello di sicurezza (sintesi)
 
 [← Indice](README.md)
 

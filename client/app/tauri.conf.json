@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Nexo",
+  "productName": "NexoDesk",
   "version": "0.0.1",
-  "identifier": "io.github.alexbn71.nexo",
+  "identifier": "io.github.alexbn71.nexodesk",
   "build": {
     "frontendDist": "ui"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Nexo",
+        "title": "NexoDesk",
         "width": 440,
         "height": 680,
         "minWidth": 380,

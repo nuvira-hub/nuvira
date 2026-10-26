@@ -12,9 +12,9 @@ import (
 
 // Impairment simula una rete peggiore sul traffico inoltrato dal relay: ritardo,
 // variazione del ritardo, perdita e banda limitata con una coda finita (come un
-// router con buffer). Serve solo ai test: si attiva con NEXO_RELAY_IMPAIR, es.
+// router con buffer). Serve solo ai test: si attiva con NEXODESK_RELAY_IMPAIR, es.
 //
-//	NEXO_RELAY_IMPAIR="delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
+//	NEXODESK_RELAY_IMPAIR="delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
 type Impairment struct {
 	Delay  time.Duration
 	Jitter time.Duration

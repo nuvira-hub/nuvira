@@ -1,4 +1,4 @@
-// Messaggi tra i dispositivi e nexo-server (segnalazione). Vedi docs/13-fase1-rete.md.
+// Messaggi tra i dispositivi e nexodesk-server (segnalazione). Vedi docs/13-fase1-rete.md.
 //
 // Ogni dispositivo apre una connessione QUIC verso il server e uno stream
 // bidirezionale su cui scambia ClientMessage/ServerMessage con prefisso di
@@ -8,9 +8,9 @@
 
 syntax = "proto3";
 
-package nexo.v1;
+package nexodesk.v1;
 
-option go_package = "github.com/alexbn71/Nexo/server/internal/pb;pb";
+option go_package = "github.com/alexbn71/NexoDesk/server/internal/pb;pb";
 
 message ClientMessage {
   oneof msg {
@@ -42,7 +42,7 @@ message Register {
 }
 
 // Il dispositivo dimostra di possedere la chiave privata firmando
-// "nexo-register-v1" seguito dal nonce.
+// "nexodesk-register-v1" seguito dal nonce.
 message Challenge {
   bytes nonce = 1;
 }

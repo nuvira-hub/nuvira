@@ -1,7 +1,7 @@
-//! Nexo agent — il dispositivo controllato.
+//! NexoDesk agent — il dispositivo controllato.
 //!
-//! Libreria usata dall'app `nexo` e dal programma a riga di comando `nexo-agent`:
-//! si registra su nexo-server (o attende connessioni dirette in LAN), trasmette
+//! Libreria usata dall'app `nexodesk` e dal programma a riga di comando `nexodesk-agent`:
+//! si registra su nexodesk-server (o attende connessioni dirette in LAN), trasmette
 //! lo schermo e applica mouse e tastiera ricevuti. Con il server comunica con
 //! chi lo usa attraverso [`AgentEvent`] e [`AgentCommand`].
 
@@ -16,13 +16,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use nexo_capture::{Capturer, SyntheticCapturer};
-use nexo_codec::{EncoderPlan, EncoderSettings};
-use nexo_proto::v1::{
+use nexodesk_capture::{Capturer, SyntheticCapturer};
+use nexodesk_codec::{EncoderPlan, EncoderSettings};
+use nexodesk_proto::v1::{
     AuthResult, Codec, ControlMessage, Hello, InputEvent, Pong, VideoFormat, VideoFrame, control_message::Msg,
 };
-use nexo_transport::signal::TransportMode;
-use nexo_transport::{Connection, Fingerprint, FramedRecv, FramedSend};
+use nexodesk_transport::signal::TransportMode;
+use nexodesk_transport::{Connection, Fingerprint, FramedRecv, FramedSend};
 use tokio::sync::{Notify, mpsc};
 use tracing::{info, warn};
 
@@ -44,7 +44,7 @@ pub struct AgentConfig {
     /// Bitrate massimo in kbit/s.
     pub bitrate_kbps: u32,
     pub fps: u32,
-    /// Encoder deciso all'avvio (vedi `nexo_codec::plan_encoder`).
+    /// Encoder deciso all'avvio (vedi `nexodesk_codec::plan_encoder`).
     pub plan: EncoderPlan,
     /// Bitrate fisso invece di adattarlo alla rete.
     pub fixed_bitrate: bool,
@@ -60,7 +60,7 @@ impl AgentConfig {
     fn open_capturer(&self) -> Result<Box<dyn Capturer>> {
         match self.synthetic {
             Some((w, h, fps)) => Ok(Box::new(SyntheticCapturer::new(w, h, fps))),
-            None => nexo_capture::open(self.display),
+            None => nexodesk_capture::open(self.display),
         }
     }
 }
@@ -72,7 +72,7 @@ pub fn parse_synthetic(spec: &str) -> Result<(u32, u32, u32)> {
     Ok((w.parse()?, h.parse()?, fps.parse()?))
 }
 
-/// Come raggiungere nexo-server e come comportarsi con le richieste.
+/// Come raggiungere nexodesk-server e come comportarsi con le richieste.
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
     /// host[:porta] del server.
@@ -80,7 +80,7 @@ pub struct ServerOptions {
     /// Impronta attesa del certificato; senza, si usa quella memorizzata (o si memorizza).
     pub server_key: Option<Fingerprint>,
     pub transport: TransportMode,
-    /// URL del ripiego WebSocket; senza, `ws://<server>:<porta>/nexo`.
+    /// URL del ripiego WebSocket; senza, `ws://<server>:<porta>/nexodesk`.
     pub server_ws: Option<String>,
     pub identity_path: PathBuf,
     /// Chiedere conferma (evento [`AgentEvent::Incoming`]) prima di accettare.
@@ -150,9 +150,9 @@ pub async fn serve_direct(
     fingerprint_file: Option<PathBuf>,
 ) -> Result<()> {
     let bind: SocketAddr = ([0, 0, 0, 0], port).into();
-    let (endpoint, fingerprint) = nexo_transport::server_endpoint(bind)?;
+    let (endpoint, fingerprint) = nexodesk_transport::server_endpoint(bind)?;
     info!("in attesa del viewer su UDP {bind}");
-    let fingerprint = nexo_transport::fingerprint_hex(&fingerprint);
+    let fingerprint = nexodesk_transport::fingerprint_hex(&fingerprint);
     info!("impronta dell'agent: {fingerprint}");
     if let Some(path) = &fingerprint_file {
         std::fs::write(path, &fingerprint).with_context(|| format!("scrittura di {}", path.display()))?;
@@ -186,7 +186,7 @@ pub async fn serve_direct(
     Ok(())
 }
 
-/// Registra il dispositivo su nexo-server e accetta le sessioni che arrivano.
+/// Registra il dispositivo su nexodesk-server e accetta le sessioni che arrivano.
 /// Se il server cade, si ricollega. Termina solo se `commands` si chiude.
 pub async fn serve_via_server(
     config: AgentConfig,
@@ -195,8 +195,8 @@ pub async fn serve_via_server(
     events: mpsc::UnboundedSender<AgentEvent>,
     mut commands: mpsc::UnboundedReceiver<AgentCommand>,
 ) -> Result<()> {
-    let server = nexo_transport::resolve_addr(&opts.server_name, nexo_transport::signal::DEFAULT_PORT)?;
-    let identity = Arc::new(nexo_transport::identity::Identity::load_or_create(&opts.identity_path)?);
+    let server = nexodesk_transport::resolve_addr(&opts.server_name, nexodesk_transport::signal::DEFAULT_PORT)?;
+    let identity = Arc::new(nexodesk_transport::identity::Identity::load_or_create(&opts.identity_path)?);
     let ctx = Arc::new(SessionContext {
         config,
         password,
@@ -208,11 +208,11 @@ pub async fn serve_via_server(
     loop {
         let _ = ctx.events.send(AgentEvent::Connecting);
         let expected =
-            opts.server_key.or_else(|| nexo_transport::signal::known_server::get(&opts.server_name));
+            opts.server_key.or_else(|| nexodesk_transport::signal::known_server::get(&opts.server_name));
         match signal_loop(&ctx, &opts, &identity, server, expected, &mut commands).await {
             Ok(()) => return Ok(()),
             Err(e) => {
-                warn!("collegamento con nexo-server perso: {e:#}; riprovo tra 5 s");
+                warn!("collegamento con nexodesk-server perso: {e:#}; riprovo tra 5 s");
                 let _ = ctx.events.send(AgentEvent::Offline { reason: format!("{e:#}") });
             }
         }
@@ -238,16 +238,16 @@ struct Request {
 async fn signal_loop(
     ctx: &Arc<SessionContext>,
     opts: &ServerOptions,
-    identity: &Arc<nexo_transport::identity::Identity>,
+    identity: &Arc<nexodesk_transport::identity::Identity>,
     server: SocketAddr,
     expected: Option<Fingerprint>,
     commands: &mut mpsc::UnboundedReceiver<AgentCommand>,
 ) -> Result<()> {
-    use nexo_proto::v1::{Accept, Reject, client_message, server_message};
+    use nexodesk_proto::v1::{Accept, Reject, client_message, server_message};
     let device_name = std::env::var("COMPUTERNAME").unwrap_or_default();
     let ws_url =
-        opts.server_ws.clone().unwrap_or_else(|| nexo_transport::ws::default_url(&opts.server_name, server));
-    let mut signal = nexo_transport::signal::connect_auto(
+        opts.server_ws.clone().unwrap_or_else(|| nexodesk_transport::ws::default_url(&opts.server_name, server));
+    let mut signal = nexodesk_transport::signal::connect_auto(
         server,
         &ws_url,
         opts.transport,
@@ -256,15 +256,15 @@ async fn signal_loop(
         &device_name,
     )
     .await?;
-    let websocket = matches!(signal.transport, nexo_transport::ServerTransport::WebSocket(_));
-    if let nexo_transport::ServerTransport::WebSocket(url) = &signal.transport {
-        info!("collegato a nexo-server attraverso il WebSocket {url}");
+    let websocket = matches!(signal.transport, nexodesk_transport::ServerTransport::WebSocket(_));
+    if let nexodesk_transport::ServerTransport::WebSocket(url) = &signal.transport {
+        info!("collegato a nexodesk-server attraverso il WebSocket {url}");
     }
     if expected.is_none() {
-        nexo_transport::signal::known_server::remember(&opts.server_name, &signal.server_fingerprint)?;
+        nexodesk_transport::signal::known_server::remember(&opts.server_name, &signal.server_fingerprint)?;
         info!(
-            "impronta di nexo-server memorizzata: {}",
-            nexo_transport::fingerprint_hex(&signal.server_fingerprint)
+            "impronta di nexodesk-server memorizzata: {}",
+            nexodesk_transport::fingerprint_hex(&signal.server_fingerprint)
         );
     }
     let id = signal.device_id.clone();
@@ -311,7 +311,7 @@ async fn signal_loop(
                 }
                 Some(server_message::Msg::Route(route)) => {
                     let request = accepted.remove(&route.session_id);
-                    let p2p_route = nexo_transport::p2p::Route {
+                    let p2p_route = nexodesk_transport::p2p::Route {
                         relay: server,
                         transport: signal.transport.clone(),
                         token: route.relay_token.as_slice().try_into().context("gettone del relay non valido")?,
@@ -320,7 +320,7 @@ async fn signal_loop(
                             .as_slice()
                             .try_into()
                             .context("chiave del viewer non valida")?,
-                        role: nexo_transport::p2p::Role::Agent,
+                        role: nexodesk_transport::p2p::Role::Agent,
                     };
                     let request = request.unwrap_or(Request { viewer_id: route.peer_id, viewer_name: String::new() });
                     ctx.busy.store(true, Ordering::Relaxed);
@@ -336,11 +336,11 @@ async fn signal_loop(
                     None
                 }
                 Some(server_message::Msg::Error(e)) => {
-                    warn!("nexo-server: {}", e.message);
+                    warn!("nexodesk-server: {}", e.message);
                     None
                 }
                 Some(_) => None,
-                None => bail!("nexo-server ha chiuso la connessione"),
+                None => bail!("nexodesk-server ha chiuso la connessione"),
             },
             cmd = commands.recv() => match cmd {
                 Some(AgentCommand::Respond { session_id, accept }) => {
@@ -377,11 +377,11 @@ async fn signal_loop(
 
 async fn relayed_session(
     ctx: &SessionContext,
-    identity: &nexo_transport::identity::Identity,
-    route: &nexo_transport::p2p::Route,
+    identity: &nexodesk_transport::identity::Identity,
+    route: &nexodesk_transport::p2p::Route,
     request: &Request,
 ) -> Result<()> {
-    let endpoint = nexo_transport::p2p::agent_endpoint(identity, route).await?;
+    let endpoint = nexodesk_transport::p2p::agent_endpoint(identity, route).await?;
     // Il viewer può aprire più connessioni (diretta e attraverso il relay): vale quella
     // su cui apre il canale di controllo; le altre le chiude lui.
     let (tx, mut rx) = mpsc::channel(2);
@@ -448,7 +448,7 @@ async fn session(
         bail!("il viewer non si è presentato");
     };
     info!(device = hello.device_name, os = hello.os, version = hello.app_version, "viewer");
-    if hello.protocol_version < nexo_proto::PROTOCOL_VERSION {
+    if hello.protocol_version < nexodesk_proto::PROTOCOL_VERSION {
         bail!("versione del protocollo del viewer non supportata: {}", hello.protocol_version);
     }
     let hello = Hello { password_required: password.is_some(), ..local_hello() };
@@ -486,7 +486,7 @@ async fn session(
         tokio::task::spawn_blocking(move || {
             Pipeline::start(
                 move || cap_config.open_capturer(),
-                move |gpu| nexo_codec::create_encoder(plan, settings, gpu),
+                move |gpu| nexodesk_codec::create_encoder(plan, settings, gpu),
                 plan == EncoderPlan::HardwareGpu,
                 fps,
                 frame_tx,
@@ -545,7 +545,7 @@ async fn session(
             };
             match msg.msg {
                 Some(Msg::Ping(ping)) => {
-                    let pong = Pong { ping_sent_us: ping.sent_us, agent_us: nexo_proto::now_us() };
+                    let pong = Pong { ping_sent_us: ping.sent_us, agent_us: nexodesk_proto::now_us() };
                     ctrl_tx.send(&control(Msg::Pong(pong))).await?;
                 }
                 Some(Msg::RequestKeyframe(_)) => keyframe.store(true, Ordering::Relaxed),
@@ -578,13 +578,13 @@ async fn session(
         let mut injector = if config.view_only || config.synthetic.is_some() {
             None
         } else {
-            let screen = nexo_input::ScreenRect {
+            let screen = nexodesk_input::ScreenRect {
                 left: display.left,
                 top: display.top,
                 width: display.width,
                 height: display.height,
             };
-            Some(nexo_input::open(screen)?)
+            Some(nexodesk_input::open(screen)?)
         };
         while let Some(event) = rx.recv::<InputEvent>().await? {
             if let Some(injector) = injector.as_mut() {
@@ -609,7 +609,7 @@ fn control(msg: Msg) -> ControlMessage {
 
 fn local_hello() -> Hello {
     Hello {
-        protocol_version: nexo_proto::PROTOCOL_VERSION,
+        protocol_version: nexodesk_proto::PROTOCOL_VERSION,
         device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
         os: std::env::consts::OS.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),

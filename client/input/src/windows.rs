@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use nexo_proto::v1::{Button, InputEvent, input_event::Event};
+use nexodesk_proto::v1::{Button, InputEvent, input_event::Event};
 use tracing::{debug, warn};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows::Win32::UI::Input::KeyboardAndMouse::{

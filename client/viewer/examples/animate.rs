@@ -1,7 +1,7 @@
 //! Finestra a schermo intero con un'animazione continua, per misurare la cattura
 //! dello schermo vero con un contenuto che cambia a ogni frame.
 //!
-//! `cargo run --release -p nexo-viewer --example animate -- [secondi]`
+//! `cargo run --release -p nexodesk-viewer --example animate -- [secondi]`
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
-            .with_title("Nexo — animazione di prova")
+            .with_title("NexoDesk — animazione di prova")
             .with_fullscreen(Some(Fullscreen::Borderless(None)));
         let window = Arc::new(el.create_window(attrs).expect("finestra"));
         let context = softbuffer::Context::new(window.clone()).expect("contesto");

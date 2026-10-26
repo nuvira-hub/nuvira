@@ -1,8 +1,8 @@
-# Nexo — Fase 1: server e connessione via Internet
+# NexoDesk — Fase 1: server e connessione via Internet
 
 [← Indice](README.md)
 
-Obiettivo ([08-roadmap.md](08-roadmap.md)): due dispositivi in reti diverse si collegano tramite `nexo-server`, in diretta (P2P) quando possibile, altrimenti attraverso il relay, con autenticazione vera al posto dell'impronta copiata a mano.
+Obiettivo ([08-roadmap.md](08-roadmap.md)): due dispositivi in reti diverse si collegano tramite `nexodesk-server`, in diretta (P2P) quando possibile, altrimenti attraverso il relay, con autenticazione vera al posto dell'impronta copiata a mano.
 
 ## Scelte
 
@@ -16,7 +16,7 @@ Obiettivo ([08-roadmap.md](08-roadmap.md)): due dispositivi in reti diverse si c
 ## Componenti
 
 ```
-            ┌──────────────────── nexo-server (Go) ─────────────────────┐
+            ┌──────────────────── nexodesk-server (Go) ─────────────────────┐
             │  UDP :21116                                                 │
             │   ├─ demux: indirizzo legato a una sessione relay? ─► relay  │
             │   └─ altrimenti ─► QUIC (quic-go): segnalazione             │
@@ -71,7 +71,7 @@ Entrambi i lati inviano pacchetti di apertura verso tutti i candidati; il viewer
 
 Rispetto a `rustdesk-server`, che riconosce i dispositivi dietro lo stesso router dall'IP pubblico uguale e solo allora chiede l'indirizzo locale, qui i candidati locali si provano sempre: non serve indovinare la topologia e copre anche i casi in cui l'IP pubblico visto dal server non coincide (CGNAT con più uscite, IPv4/IPv6).
 
-Test: `NEXO_RELAY_FAKE_REFLEXIVE=1` sul server sostituisce l'indirizzo visto dal relay con uno irraggiungibile (203.0.113.1); la connessione deve comunque riuscire in diretta tramite l'indirizzo locale.
+Test: `NEXODESK_RELAY_FAKE_REFLEXIVE=1` sul server sostituisce l'indirizzo visto dal relay con uno irraggiungibile (203.0.113.1); la connessione deve comunque riuscire in diretta tramite l'indirizzo locale.
 
 ## Passi
 
@@ -79,8 +79,8 @@ Test: `NEXO_RELAY_FAKE_REFLEXIVE=1` sul server sostituisce l'indirizzo visto dal
 |---|---|---|
 | 1 | Server Go: segnalazione QUIC, registrazione con firma, SQLite, ID a 9 cifre. Agent: `--server`, stampa ID e password | ✅ |
 | 2 | Richiesta di connessione, relay UDP, viewer che si collega per ID con chiavi verificate, password di sessione | ✅ |
-| 3 | Test automatici via server in LAN (`NEXO_VIA_SERVER=1`, `NEXO_FORCE_RELAY=1`) | ✅ |
-| 4 | Immagine Docker (`ghcr.io/alexbn71/nexo-server`, GitHub Actions) | ✅ immagine; pubblicazione su Internet rimandata |
+| 3 | Test automatici via server in LAN (`NEXODESK_VIA_SERVER=1`, `NEXODESK_FORCE_RELAY=1`) | ✅ |
+| 4 | Immagine Docker (`ghcr.io/alexbn71/nexodesk-server`, GitHub Actions) | ✅ immagine; pubblicazione su Internet rimandata |
 | 5 | Hole punching e scelta del percorso (diretta preferita, relay come ripiego) | ✅ |
 | 5b | Indirizzi locali come candidati (dispositivi dietro lo stesso router, hairpin) | ✅ |
 | 6 | Ripiego su WebSocket per le reti che bloccano UDP | ✅ |
@@ -88,16 +88,16 @@ Test: `NEXO_RELAY_FAKE_REFLEXIVE=1` sul server sostituisce l'indirizzo visto dal
 ## Uso
 
 ```powershell
-nexo-server.exe                                   # UDP 21116, dati in .\data
-nexo-agent.exe --server 192.168.1.10              # stampa ID e password
-nexo-viewer.exe --server 192.168.1.10 123456789 --password abcd2345
+nexodesk-server.exe                                   # UDP 21116, dati in .\data
+nexodesk-agent.exe --server 192.168.1.10              # stampa ID e password
+nexodesk-viewer.exe --server 192.168.1.10 123456789 --password abcd2345
 ```
 
 Al primo collegamento agent e viewer memorizzano l'impronta del certificato del server (`servers.txt` nella cartella dati) e rifiutano poi un server con un certificato diverso; `--server-key` la fissa a mano.
 
 ## Misure in LAN (2026-10-26)
 
-NUC (agent + nexo-server) → PC-LABORATORIO (viewer), schermo vero con animazione, Quick Sync.
+NUC (agent + nexodesk-server) → PC-LABORATORIO (viewer), schermo vero con animazione, Quick Sync.
 
 | Percorso | fps | Latenza p50 | p95 | RTT |
 |---|---|---|---|---|
@@ -106,12 +106,12 @@ NUC (agent + nexo-server) → PC-LABORATORIO (viewer), schermo vero con animazio
 
 ## Ripiego WebSocket (reti che bloccano UDP)
 
-Invece di un secondo protocollo di sessione su TCP (come `hbbr` di RustDesk, che inoltra connessioni TCP/WebSocket), Nexo fa passare **gli stessi datagrammi QUIC dentro un WebSocket**:
+Invece di un secondo protocollo di sessione su TCP (come `hbbr` di RustDesk, che inoltra connessioni TCP/WebSocket), NexoDesk fa passare **gli stessi datagrammi QUIC dentro un WebSocket**:
 
 - **client** (`client/transport/src/ws.rs`): un socket per quinn che invia e riceve i datagrammi attraverso il WebSocket. QUIC, crittografia end-to-end, verifica delle chiavi e relay restano identici. I tentativi di via diretta vengono scartati (su queste reti UDP non passa).
 - **server** (`server/internal/relay/websocket.go`): ogni connessione WebSocket diventa un indirizzo virtuale nello stesso smistamento della porta UDP; il relay collega senza differenze un lato UDP con un lato WebSocket.
-- **Scelta**: `--transport auto` (predefinito) prova UDP per 4 s e poi passa a `ws://<server>:21116/nexo`; `--transport udp|websocket` forza; `--server-ws wss://…` indica l'URL pubblicato dietro un reverse proxy. La sessione usa lo stesso trasporto della segnalazione.
-- Server: `NEXO_WS_LISTEN` (predefinito `:21116` in TCP, `off` per disattivarlo), percorso `/nexo`.
+- **Scelta**: `--transport auto` (predefinito) prova UDP per 4 s e poi passa a `ws://<server>:21116/nexodesk`; `--transport udp|websocket` forza; `--server-ws wss://…` indica l'URL pubblicato dietro un reverse proxy. La sessione usa lo stesso trasporto della segnalazione.
+- Server: `NEXODESK_WS_LISTEN` (predefinito `:21116` in TCP, `off` per disattivarlo), percorso `/nexodesk`.
 
 Prove in locale (agent e viewer sullo stesso PC, 1280x720 a 30 fps):
 
@@ -122,7 +122,7 @@ Prove in locale (agent e viewer sullo stesso PC, 1280x720 a 30 fps):
 | WebSocket → WebSocket | 0,6 s | 18 ms | 44 ms |
 | UDP bloccato, scelta automatica | 5,5 s | 25 ms | 44 ms |
 
-Tra i due PC (NUC → PC-LABORATORIO via nexo-server, Quick Sync, schermo animato):
+Tra i due PC (NUC → PC-LABORATORIO via nexodesk-server, Quick Sync, schermo animato):
 
 | Viewer | Percorso | fps | Latenza p50 | p95 |
 |---|---|---|---|---|
@@ -136,7 +136,7 @@ Correzioni emerse: il messaggio di chiusura di QUIC passa per una coda svuotata 
 
 ## Rete degradata: bitrate adattivo e BBR (2026-10-26)
 
-Simulazione sul relay (`NEXO_RELAY_IMPAIR`, solo test), tutto il traffico forzato attraverso il relay, schermo vero con animazione, 25 s.
+Simulazione sul relay (`NEXODESK_RELAY_IMPAIR`, solo test), tutto il traffico forzato attraverso il relay, schermo vero con animazione, 25 s.
 
 | Rete simulata | Prima (bitrate fisso, Cubic) | Dopo (adattivo + BBR), hardware | Dopo, software |
 |---|---|---|---|
@@ -148,7 +148,7 @@ Cosa è stato fatto:
 - **Feedback dal viewer** ogni 250 ms: latenza mediana e minima dei frame mostrati.
 - **Bitrate adattivo** nell'agent (`client/agent/src/abr.rs`): scende del 20% se la latenza supera di 60 ms il minimo degli ultimi 10 s, risale dell'8% se resta vicina; 1,5 s di assestamento dopo ogni cambio. `--fixed-bitrate` lo disattiva.
 - **Quick Sync ignora i cambi di bitrate a sessione avviata** (Media Foundation): il nuovo bitrate si applica riavviando l'encoder (~0,3 s), con isteresi (discese ≥ 15% al massimo ogni secondo, salite ≥ 25% ogni 3 s). OpenH264 cambia al volo.
-- **BBR** come controllo di congestione di QUIC: con perdite casuali NewReno/Cubic usavano meno della metà della banda (`NEXO_CC_CUBIC=1` per confrontare).
+- **BBR** come controllo di congestione di QUIC: con perdite casuali NewReno/Cubic usavano meno della metà della banda (`NEXODESK_CC_CUBIC=1` per confrontare).
 - **Buffer di invio di QUIC limitato a 256 KB**: oltre, l'agent salta frame invece di accodarli.
 - Simulatore: ritardo, jitter senza riordino, perdita, banda limitata con coda finita.
 

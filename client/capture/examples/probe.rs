@@ -1,12 +1,12 @@
-//! Elenca gli schermi e misura la cattura: `cargo run -p nexo-capture --example probe`.
+//! Elenca gli schermi e misura la cattura: `cargo run -p nexodesk-capture --example probe`.
 
 use std::time::{Duration, Instant};
 
 fn main() -> anyhow::Result<()> {
-    for d in nexo_capture::displays()? {
+    for d in nexodesk_capture::displays()? {
         println!("{d:?}");
     }
-    let mut capturer = nexo_capture::open(None)?;
+    let mut capturer = nexodesk_capture::open(None)?;
     println!("cattura di {:?}", capturer.display());
 
     let start = Instant::now();

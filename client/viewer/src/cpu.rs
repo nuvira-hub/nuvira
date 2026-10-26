@@ -10,7 +10,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use nexo_codec::YuvFrame;
+use nexodesk_codec::YuvFrame;
 use winit::window::Window;
 
 use crate::render::{Viewport, fit};

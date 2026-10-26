@@ -1,5 +1,5 @@
 [package]
-name = "nexo-input"
+name = "nexodesk-input"
 description = "Simulazione di mouse e tastiera sul dispositivo controllato"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-nexo-proto.workspace = true
+nexodesk-proto.workspace = true
 tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies.windows]

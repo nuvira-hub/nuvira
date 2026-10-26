@@ -4,7 +4,7 @@
 //!   il servizio di sistema della fase 3.
 //! - macOS: CGEvent; Linux: portale RemoteDesktop / XTest (fase 4).
 
-use nexo_proto::v1::InputEvent;
+use nexodesk_proto::v1::InputEvent;
 
 pub mod keys;
 #[cfg(windows)]

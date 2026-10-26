@@ -1,10 +1,10 @@
-//! Messaggi del protocollo Nexo (generati da `proto/`) e framing.
+//! Messaggi del protocollo NexoDesk (generati da `proto/`) e framing.
 //!
 //! Questo crate non dipende dal sistema operativo né dalla rete: deve
 //! compilare anche per `wasm32-unknown-unknown` (decisione D9).
 
 pub mod v1 {
-    include!(concat!(env!("OUT_DIR"), "/nexo.v1.rs"));
+    include!(concat!(env!("OUT_DIR"), "/nexodesk.v1.rs"));
 }
 
 pub mod framing;

@@ -1,4 +1,4 @@
-name: nexo-server
+name: nexodesk-server
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/nexo-server
+  IMAGE: ghcr.io/${{ github.repository_owner }}/nexodesk-server
 
 defaults:
   run:
@@ -50,17 +50,17 @@ jobs:
           context: server
           platforms: linux/amd64
           load: true
-          tags: nexo-server:ci
+          tags: nexodesk-server:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Prova del container
         working-directory: .
         run: |
-          docker run -d --name smoke -p 21116:21116/udp nexo-server:ci
-          for i in $(seq 1 20); do docker exec smoke /nexo-server healthcheck && break; sleep 1; done
-          docker exec smoke /nexo-server healthcheck
-          docker logs smoke 2>&1 | grep -q 'nexo-server avviato'
+          docker run -d --name smoke -p 21116:21116/udp nexodesk-server:ci
+          for i in $(seq 1 20); do docker exec smoke /nexodesk-server healthcheck && break; sleep 1; done
+          docker exec smoke /nexodesk-server healthcheck
+          docker logs smoke 2>&1 | grep -q 'nexodesk-server avviato'
           docker rm -f smoke
 
       - name: Login a ghcr.io

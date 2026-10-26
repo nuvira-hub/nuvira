@@ -1,4 +1,4 @@
-# Nexo — Obiettivi e vincoli
+# NexoDesk — Obiettivi e vincoli
 
 [← Indice](README.md)
 

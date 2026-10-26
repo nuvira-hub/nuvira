@@ -28,9 +28,9 @@ pub mod ws;
 pub use quinn::{Connection, Endpoint};
 
 /// Identificativo del protocollo negoziato in TLS (ALPN).
-pub(crate) const ALPN: &[u8] = b"nexo/0";
+pub(crate) const ALPN: &[u8] = b"nexodesk/0";
 
-/// Come si raggiunge nexo-server (e il suo relay).
+/// Come si raggiunge nexodesk-server (e il suo relay).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerTransport {
     /// QUIC su UDP, il percorso normale.
@@ -123,7 +123,7 @@ pub(crate) fn transport_config() -> Arc<TransportConfig> {
     t.send_window(SEND_WINDOW);
     // BBR stima la banda invece di dimezzare la finestra a ogni perdita: con perdite
     // casuali (Wi-Fi, reti mobili) NewReno/Cubic scendono ben sotto la capacità reale.
-    if std::env::var_os("NEXO_CC_CUBIC").is_none() {
+    if std::env::var_os("NEXODESK_CC_CUBIC").is_none() {
         t.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
     }
     Arc::new(t)
@@ -131,7 +131,7 @@ pub(crate) fn transport_config() -> Arc<TransportConfig> {
 
 /// Endpoint dell'agent: accetta connessioni su `bind`. Restituisce anche l'impronta del certificato.
 pub fn server_endpoint(bind: SocketAddr) -> Result<(Endpoint, Fingerprint)> {
-    let cert = rcgen::generate_simple_self_signed(vec!["nexo-agent".to_string()])?;
+    let cert = rcgen::generate_simple_self_signed(vec!["nexodesk-agent".to_string()])?;
     let cert_der = CertificateDer::from(cert.cert.der().to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()));
     let fingerprint: Fingerprint = Sha256::digest(&cert_der).into();
@@ -167,7 +167,7 @@ pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<
     let mut endpoint = Endpoint::client(bind)?;
     endpoint.set_default_client_config(config);
     let conn =
-        endpoint.connect(addr, "nexo-agent")?.await.with_context(|| format!("connessione a {addr}"))?;
+        endpoint.connect(addr, "nexodesk-agent")?.await.with_context(|| format!("connessione a {addr}"))?;
     Ok(conn)
 }
 
@@ -240,7 +240,7 @@ impl FramedSend {
     }
 
     pub async fn send<M: Message>(&mut self, msg: &M) -> Result<()> {
-        self.stream.write_all(&nexo_proto::framing::encode(msg)).await?;
+        self.stream.write_all(&nexodesk_proto::framing::encode(msg)).await?;
         Ok(())
     }
 }
@@ -248,7 +248,7 @@ impl FramedSend {
 /// Ricezione di messaggi Protobuf da uno stream QUIC.
 pub struct FramedRecv {
     stream: RecvStream,
-    decoder: nexo_proto::framing::Decoder,
+    decoder: nexodesk_proto::framing::Decoder,
     buf: Vec<u8>,
 }
 

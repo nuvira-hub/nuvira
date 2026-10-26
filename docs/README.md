@@ -1,9 +1,9 @@
-# Nexo — Documentazione di progetto
+# NexoDesk — Documentazione di progetto
 
 | # | Documento | Contenuto |
 |---|---|---|
 | 01 | [Analisi concorrenti](01-analisi-concorrenti.md) | RustDesk e Supremo: architettura, funzioni, limiti, cosa prendiamo |
-| 02 | [Obiettivi e vincoli](02-obiettivi.md) | Cosa deve garantire Nexo |
+| 02 | [Obiettivi e vincoli](02-obiettivi.md) | Cosa deve garantire NexoDesk |
 | 03 | [Architettura](03-architettura.md) | Server Docker, client desktop, trasporto, video |
 | 04 | [Funzioni](04-funzioni.md) | Elenco completo con priorità (MVP / 1.0 / successive) |
 | 05 | [Funzioni innovative](05-innovazioni.md) | Ciò che RustDesk e Supremo non hanno |

@@ -1,4 +1,4 @@
-# Nexo — Analisi dei prodotti di riferimento
+# NexoDesk — Analisi dei prodotti di riferimento
 
 [← Indice](README.md)
 
@@ -58,4 +58,4 @@
 | Port forwarding, LAN discovery | Report sessioni per fatturazione |
 | Client multipiattaforma | Personalizzazione/branding del client |
 
-**Posizionamento di Nexo**: la potenza e il self-hosting di RustDesk, la semplicità e la gestione centralizzata di Supremo, **già incluse nel server libero**, più funzioni che nessuno dei due offre ([05-innovazioni.md](05-innovazioni.md)).
+**Posizionamento di NexoDesk**: la potenza e il self-hosting di RustDesk, la semplicità e la gestione centralizzata di Supremo, **già incluse nel server libero**, più funzioni che nessuno dei due offre ([05-innovazioni.md](05-innovazioni.md)).

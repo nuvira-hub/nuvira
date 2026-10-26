@@ -1,4 +1,4 @@
-# Nexo — Protocollo di connessione (bozza)
+# NexoDesk — Protocollo di connessione (bozza)
 
 [← Indice](README.md)
 

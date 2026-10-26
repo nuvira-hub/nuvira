@@ -1,4 +1,4 @@
-# Nexo — Funzioni innovative (non presenti in RustDesk né in Supremo)
+# NexoDesk — Funzioni innovative (non presenti in RustDesk né in Supremo)
 
 [← Indice](README.md)
 

@@ -1,4 +1,4 @@
-//! Collegamento tra due dispositivi passando dal relay di nexo-server.
+//! Collegamento tra due dispositivi passando dal relay di nexodesk-server.
 //!
 //! Ciascun lato apre un socket UDP per la sessione, lo aggancia al relay con il
 //! gettone ricevuto dal server (RelayBind) e poi ci fa girare QUIC. Il TLS è
@@ -22,7 +22,7 @@ use tracing::debug;
 use crate::identity::{Identity, PublicKey};
 use crate::{ALPN, provider, transport_config};
 
-/// Ruolo nel relay (stessi valori di `nexo.v1.Role`).
+/// Ruolo nel relay (stessi valori di `nexodesk.v1.Role`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Viewer = 1,
@@ -300,14 +300,14 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     let (mut endpoint, peers) = session_endpoint(route, None).await?;
     endpoint.set_default_client_config(config);
 
-    let mut relay = Box::pin(endpoint.connect(route.relay, "nexo-device")?);
-    // NEXO_FORCE_RELAY=1: solo relay, per misurarne il costo nei test.
-    let force_relay = std::env::var_os("NEXO_FORCE_RELAY").is_some();
+    let mut relay = Box::pin(endpoint.connect(route.relay, "nexodesk-device")?);
+    // NEXODESK_FORCE_RELAY=1: solo relay, per misurarne il costo nei test.
+    let force_relay = std::env::var_os("NEXODESK_FORCE_RELAY").is_some();
     // Tentativi diretti verso tutti gli indirizzi dell'altro lato, in parallelo.
     let mut direct = tokio::task::JoinSet::new();
     if !force_relay {
         for peer in peers {
-            let connecting = endpoint.connect(peer, "nexo-device")?;
+            let connecting = endpoint.connect(peer, "nexodesk-device")?;
             direct.spawn(async move { connecting.await.map_err(|e| (peer, e)) });
         }
     }

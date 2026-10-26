@@ -1,6 +1,6 @@
 [package]
-name = "nexo-proto"
-description = "Messaggi del protocollo Nexo e framing, senza dipendenze dal sistema operativo"
+name = "nexodesk-proto"
+description = "Messaggi del protocollo NexoDesk e framing, senza dipendenze dal sistema operativo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

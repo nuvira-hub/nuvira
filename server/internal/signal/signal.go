@@ -19,16 +19,16 @@ import (
 	"github.com/quic-go/quic-go"
 	"google.golang.org/protobuf/encoding/protodelim"
 
-	"github.com/alexbn71/Nexo/server/internal/pb"
-	"github.com/alexbn71/Nexo/server/internal/relay"
-	"github.com/alexbn71/Nexo/server/internal/store"
+	"github.com/alexbn71/NexoDesk/server/internal/pb"
+	"github.com/alexbn71/NexoDesk/server/internal/relay"
+	"github.com/alexbn71/NexoDesk/server/internal/store"
 )
 
 // ProtocolVersion è la versione del protocollo di segnalazione parlata dal server.
 const ProtocolVersion = 1
 
 // Prefisso firmato insieme al nonce: impedisce di riusare la firma altrove.
-const registerContext = "nexo-register-v1"
+const registerContext = "nexodesk-register-v1"
 
 // Tempo concesso all'agent per accettare una richiesta.
 const pendingTimeout = 60 * time.Second
@@ -149,7 +149,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	}
 	c := &client{conn: conn, stream: stream}
 	if reg.ProtocolVersion < ProtocolVersion {
-		_ = c.send(errorMsg("versione del protocollo non supportata, aggiornare Nexo", ""))
+		_ = c.send(errorMsg("versione del protocollo non supportata, aggiornare NexoDesk", ""))
 		return nil, fmt.Errorf("protocollo %d", reg.ProtocolVersion)
 	}
 

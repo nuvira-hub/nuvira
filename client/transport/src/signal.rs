@@ -1,11 +1,11 @@
-//! Connessione di segnalazione con nexo-server: registrazione del dispositivo
+//! Connessione di segnalazione con nexodesk-server: registrazione del dispositivo
 //! (prova della chiave), poi scambio di richieste e percorsi.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
-use nexo_proto::v1::{ClientMessage, Proof, Register, ServerMessage, client_message, server_message};
+use nexodesk_proto::v1::{ClientMessage, Proof, Register, ServerMessage, client_message, server_message};
 use quinn::ClientConfig;
 use quinn::crypto::rustls::QuicClientConfig;
 
@@ -13,12 +13,12 @@ use crate::identity::Identity;
 use crate::{Fingerprint, FramedRecv, FramedSend, PinnedCert, ServerTransport, provider, transport_config};
 
 /// ALPN della segnalazione (deve coincidere con quello del server).
-const ALPN: &[u8] = b"nexo-signal/1";
+const ALPN: &[u8] = b"nexodesk-signal/1";
 /// Versione del protocollo di segnalazione.
 pub const PROTOCOL_VERSION: u32 = 1;
 /// Prefisso firmato insieme al nonce (come nel server).
-const REGISTER_CONTEXT: &[u8] = b"nexo-register-v1";
-/// Porta UDP predefinita di nexo-server.
+const REGISTER_CONTEXT: &[u8] = b"nexodesk-register-v1";
+/// Porta UDP predefinita di nexodesk-server.
 pub const DEFAULT_PORT: u16 = 21116;
 
 pub struct Signal {
@@ -49,7 +49,7 @@ impl SignalReceiver {
     }
 }
 
-/// Si collega a nexo-server e registra il dispositivo. Con `expected` il certificato
+/// Si collega a nexodesk-server e registra il dispositivo. Con `expected` il certificato
 /// del server deve avere quell'impronta; senza, qualunque impronta viene accettata
 /// e restituita in `server_fingerprint` (da memorizzare: vedi [`known_server`]).
 /// Quale trasporto usare verso il server.
@@ -95,7 +95,7 @@ pub async fn connect_auto(
                         _ => "nessuna risposta".into(),
                     };
                     tracing::info!(
-                        "nexo-server non raggiungibile via UDP ({why}): provo il WebSocket {ws_url}"
+                        "nexodesk-server non raggiungibile via UDP ({why}): provo il WebSocket {ws_url}"
                     );
                     connect(server, &ws, expected, identity, device_name).await
                 }
@@ -135,9 +135,9 @@ pub async fn connect(
     let mut endpoint = crate::endpoint_for(transport, server, None, None).await?;
     endpoint.set_default_client_config(config);
     let conn = endpoint
-        .connect(server, "nexo-server")?
+        .connect(server, "nexodesk-server")?
         .await
-        .with_context(|| format!("collegamento a nexo-server {server}"))?;
+        .with_context(|| format!("collegamento a nexodesk-server {server}"))?;
     let server_fingerprint = seen.lock().expect("impronta").expect("impronta registrata durante l'handshake");
 
     let (send, recv) = conn.open_bi().await?;

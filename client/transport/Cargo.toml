@@ -1,5 +1,5 @@
 [package]
-name = "nexo-transport"
+name = "nexodesk-transport"
 description = "Trasporto di rete delle sessioni (QUIC)"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-nexo-proto.workspace = true
+nexodesk-proto.workspace = true
 prost.workspace = true
 quinn.workspace = true
 rcgen.workspace = true

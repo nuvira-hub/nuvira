@@ -1,9 +1,9 @@
-# Nexo — Struttura del repository (monorepo)
+# NexoDesk — Struttura del repository (monorepo)
 
 [← Indice](README.md)
 
 ```
-Nexo/
+NexoDesk/
 ├─ proto/                  # Protobuf condivisi (versionati)
 ├─ server/                 # Go: signal, stun, relay, api, audit
 │  └─ console/             # SPA amministrazione (servita dal server)

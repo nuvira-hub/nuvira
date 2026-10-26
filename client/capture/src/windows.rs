@@ -202,7 +202,7 @@ impl DxgiCapturer {
         let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
         let mut resource: Option<IDXGIResource> = None;
         unsafe { dup.AcquireNextFrame(timeout.as_millis() as u32, &mut info, &mut resource) }?;
-        let captured_us = nexo_proto::now_us();
+        let captured_us = nexodesk_proto::now_us();
 
         // LastPresentTime == 0: è cambiato solo il puntatore, l'immagine è la stessa.
         let changed = info.LastPresentTime != 0;

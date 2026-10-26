@@ -1,4 +1,4 @@
-# Nexo — Funzioni — elenco completo
+# NexoDesk — Funzioni — elenco completo
 
 [← Indice](README.md)
 
@@ -67,5 +67,5 @@ Legenda priorità: **M** = MVP, **1** = versione 1.0, **2** = versioni successiv
 | Funzione | Priorità |
 |---|---|
 | Chat durante la sessione | M |
-| Crediti "Nexo © 2026 Alessandro Blason · AGPL-3.0 · Source code" nel client e nella console (obbligo di licenza) | M |
+| Crediti "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · Source code" nel client e nella console (obbligo di licenza) | M |
 | Lavagna/annotazioni sullo schermo remoto | 2 |

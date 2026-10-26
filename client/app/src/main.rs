@@ -1,9 +1,9 @@
-//! Nexo — applicazione desktop.
+//! NexoDesk — applicazione desktop.
 //!
 //! Finestra principale (Tauri) con ID e password di questo dispositivo, stato
-//! del collegamento a nexo-server, conferma delle richieste in arrivo e avvio
+//! del collegamento a nexodesk-server, conferma delle richieste in arrivo e avvio
 //! delle sessioni verso altri dispositivi. L'agent gira in questo processo
-//! (libreria `nexo_agent`); la finestra della sessione remota è `nexo-viewer`,
+//! (libreria `nexodesk_agent`); la finestra della sessione remota è `nexodesk-viewer`,
 //! avviato come processo separato (finestra nativa wgpu, decisione D5).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -12,15 +12,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use nexo_agent::{AgentCommand, AgentConfig, AgentEvent, ServerOptions};
-use nexo_codec::{EncoderChoice, EncoderPlan};
+use nexodesk_agent::{AgentCommand, AgentConfig, AgentEvent, ServerOptions};
+use nexodesk_codec::{EncoderChoice, EncoderPlan};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-const SOURCE_URL: &str = "https://github.com/alexbn71/Nexo";
+const SOURCE_URL: &str = "https://github.com/alexbn71/NexoDesk";
 
 /// Stato mostrato dall'interfaccia (inviato con l'evento "state").
 #[derive(Debug, Default, Clone, Serialize)]
@@ -61,7 +61,7 @@ struct Settings {
 }
 
 fn settings_path() -> PathBuf {
-    nexo_transport::identity::data_dir().join("app.json")
+    nexodesk_transport::identity::data_dir().join("app.json")
 }
 
 fn load_settings() -> Settings {
@@ -157,7 +157,7 @@ fn start_agent(app: &AppHandle) {
             None => {
                 let settings = config.encoder_settings();
                 let plan = tokio::task::spawn_blocking(move || {
-                    nexo_codec::plan_encoder(EncoderChoice::Auto, settings)
+                    nexodesk_codec::plan_encoder(EncoderChoice::Auto, settings)
                 })
                 .await
                 .unwrap_or(EncoderPlan::Software);
@@ -168,9 +168,9 @@ fn start_agent(app: &AppHandle) {
         let opts = ServerOptions {
             server_name: server,
             server_key: None,
-            transport: nexo_transport::signal::TransportMode::Auto,
+            transport: nexodesk_transport::signal::TransportMode::Auto,
             server_ws: None,
-            identity_path: nexo_transport::identity::data_dir().join("device.key"),
+            identity_path: nexodesk_transport::identity::data_dir().join("device.key"),
             confirm: true,
             info_file: None,
         };
@@ -182,7 +182,7 @@ fn start_agent(app: &AppHandle) {
             }
         });
         if let Err(e) =
-            nexo_agent::serve_via_server(config, opts, state.password.clone(), events_tx, commands_rx).await
+            nexodesk_agent::serve_via_server(config, opts, state.password.clone(), events_tx, commands_rx).await
         {
             warn!("agent terminato: {e:#}");
             state.update(&app, |ui| {
@@ -214,7 +214,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                     session_id,
                     viewer_id,
                     viewer_name,
-                    deadline_ms: now_ms() + nexo_agent::CONFIRM_TIMEOUT.as_millis() as u64,
+                    deadline_ms: now_ms() + nexodesk_agent::CONFIRM_TIMEOUT.as_millis() as u64,
                 })
             });
             bring_to_front(app);
@@ -245,7 +245,7 @@ fn get_state(state: State<NexoApp>) -> UiState {
 fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(), String> {
     let server = server.trim().to_string();
     if !server.is_empty() {
-        nexo_transport::resolve_addr(&server, nexo_transport::signal::DEFAULT_PORT)
+        nexodesk_transport::resolve_addr(&server, nexodesk_transport::signal::DEFAULT_PORT)
             .map_err(|e| format!("indirizzo non valido: {e}"))?;
     }
     save_settings(&Settings { server: server.clone() }).map_err(|e| e.to_string())?;
@@ -256,7 +256,7 @@ fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(
 
 #[tauri::command]
 fn new_password(app: AppHandle, state: State<NexoApp>) {
-    let password = nexo_agent::random_password();
+    let password = nexodesk_agent::random_password();
     *state.password.lock().expect("password") = password.clone();
     state.update(&app, |ui| ui.password = password);
 }
@@ -271,7 +271,7 @@ fn end_session(state: State<NexoApp>) {
     state.send(AgentCommand::EndSession);
 }
 
-/// Apre la finestra della sessione verso un altro dispositivo (processo `nexo-viewer`).
+/// Apre la finestra della sessione verso un altro dispositivo (processo `nexodesk-viewer`).
 #[tauri::command]
 fn connect(app: AppHandle, state: State<NexoApp>, device_id: String, password: String) -> Result<(), String> {
     let device_id: String = device_id.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -283,7 +283,7 @@ fn connect(app: AppHandle, state: State<NexoApp>, device_id: String, password: S
         return Err("imposta prima il server".into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let viewer = exe.with_file_name(if cfg!(windows) { "nexo-viewer.exe" } else { "nexo-viewer" });
+    let viewer = exe.with_file_name(if cfg!(windows) { "nexodesk-viewer.exe" } else { "nexodesk-viewer" });
     if !viewer.exists() {
         return Err(format!("{} non trovato", viewer.display()));
     }
@@ -291,11 +291,11 @@ fn connect(app: AppHandle, state: State<NexoApp>, device_id: String, password: S
     // (che altri programmi dello stesso PC possono leggere).
     let mut child = std::process::Command::new(&viewer)
         .args(["--server", &server, &device_id])
-        .env("NEXO_PASSWORD", password)
+        .env("NEXODESK_PASSWORD", password)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("avvio di nexo-viewer: {e}"))?;
+        .map_err(|e| format!("avvio di nexodesk-viewer: {e}"))?;
     info!("sessione verso {device_id} avviata");
     state.update(&app, |ui| ui.viewer_message = None);
 
@@ -329,9 +329,9 @@ fn open_source(app: AppHandle) -> Result<(), String> {
 }
 
 fn init_logging() {
-    let dir = nexo_transport::identity::data_dir();
+    let dir = nexodesk_transport::identity::data_dir();
     let _ = std::fs::create_dir_all(&dir);
-    let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("nexo-app.log"));
+    let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("nexodesk-app.log"));
     let filter =
         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,wgpu=warn".into());
     match file {
@@ -346,9 +346,9 @@ fn init_logging() {
 
 fn main() {
     init_logging();
-    nexo_input::set_dpi_awareness();
+    nexodesk_input::set_dpi_awareness();
     let settings = load_settings();
-    let password = nexo_agent::random_password();
+    let password = nexodesk_agent::random_password();
     let state = NexoApp {
         ui: Mutex::new(UiState {
             server: settings.server,

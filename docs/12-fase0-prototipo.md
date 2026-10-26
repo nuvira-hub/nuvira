@@ -1,4 +1,4 @@
-# Nexo — Fase 0: prototipo Windows in LAN
+# NexoDesk — Fase 0: prototipo Windows in LAN
 
 [← Indice](README.md)
 
@@ -35,16 +35,16 @@ cargo build --release
 Sul PC da controllare:
 
 ```powershell
-target\release\nexo-agent.exe                # schermo principale, encoder automatico
-target\release\nexo-agent.exe --list-displays
-target\release\nexo-agent.exe --display 1 --encoder software
-target\release\nexo-agent.exe --synthetic 1920x1080@60   # immagine generata, senza schermo
+target\release\nexodesk-agent.exe                # schermo principale, encoder automatico
+target\release\nexodesk-agent.exe --list-displays
+target\release\nexodesk-agent.exe --display 1 --encoder software
+target\release\nexodesk-agent.exe --synthetic 1920x1080@60   # immagine generata, senza schermo
 ```
 
 L'agent stampa l'impronta del proprio certificato. Sul PC che controlla:
 
 ```powershell
-target\release\nexo-viewer.exe 192.168.1.20 --fingerprint <impronta>
+target\release\nexodesk-viewer.exe 192.168.1.20 --fingerprint <impronta>
 ```
 
 Il titolo della finestra mostra fps, latenza cattura→visualizzazione, RTT, banda e tempi di compressione e decompressione. La porta predefinita è **UDP 21500** (va aperta nel firewall di Windows dell'agent).
@@ -57,14 +57,14 @@ Il titolo della finestra mostra fps, latenza cattura→visualizzazione, RTT, ban
 
 ```bash
 tools/lan-test.sh 15 --synthetic 1920x1080@60 --encoder software
-NEXO_VIEWER_LOG="info,nexo_viewer::render=trace" tools/lan-test.sh 10
+NEXODESK_VIEWER_LOG="info,nexodesk_viewer::render=trace" tools/lan-test.sh 10
 ```
 
-Opzioni usate dallo script: viewer `--duration`, `--stats-file`; agent `--once`, `--fingerprint-file`. Prerequisiti: server OpenSSH sul PC remoto con la chiave `~/.ssh/nexo_test`, regola del firewall per `dist/nexo-agent.exe` (UDP 21500, solo LAN).
+Opzioni usate dallo script: viewer `--duration`, `--stats-file`; agent `--once`, `--fingerprint-file`. Prerequisiti: server OpenSSH sul PC remoto con la chiave `~/.ssh/nexo_test`, regola del firewall per `dist/nexodesk-agent.exe` (UDP 21500, solo LAN).
 
 ## Misure in LAN con lo schermo vero (2026-10-26, sera)
 
-Agent su PC-STUDIO-NUC, viewer su PC-LABORATORIO (disegno su CPU), schermo del NUC 1920x1080 con un'animazione a schermo intero (`NEXO_ANIMATE=1`), Supremo chiuso.
+Agent su PC-STUDIO-NUC, viewer su PC-LABORATORIO (disegno su CPU), schermo del NUC 1920x1080 con un'animazione a schermo intero (`NEXODESK_ANIMATE=1`), Supremo chiuso.
 
 | Encoder | fps | Latenza p50 | p95 | Compressione | Banda |
 |---|---|---|---|---|---|
@@ -114,7 +114,7 @@ Immagine 1920x1080 a 60 fps con una barra che si muove, OpenH264 senza NASM.
 | Hardware (Quick Sync via Media Foundation) | 20–23 | **36–54 ms** | ~20 ms (4 conversione + 7–20 encoder) | 14–25 ms | ~2,9 Mbit/s |
 | Software (OpenH264) | 16–19 | 46–157 ms | 25–39 ms | 4–5 ms | ~0,2 Mbit/s |
 
-Banco di prova degli encoder (`cargo run --release -p nexo-codec --example bench`), immagine tipo desktop 1080p:
+Banco di prova degli encoder (`cargo run --release -p nexodesk-codec --example bench`), immagine tipo desktop 1080p:
 
 | Encoder | ms/frame |
 |---|---|

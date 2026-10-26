@@ -1,24 +1,24 @@
-//! nexo-agent — il dispositivo controllato, da riga di comando (test e uso senza interfaccia).
+//! nexodesk-agent — il dispositivo controllato, da riga di comando (test e uso senza interfaccia).
 //!
-//! Con `--server` si registra su nexo-server e accetta le sessioni per ID e
+//! Con `--server` si registra su nexodesk-server e accetta le sessioni per ID e
 //! password; senza, attende connessioni dirette in LAN (fase 0, solo reti fidate).
 
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use nexo_agent::{AgentConfig, AgentEvent, ServerOptions};
-use nexo_codec::EncoderChoice;
+use nexodesk_agent::{AgentConfig, AgentEvent, ServerOptions};
+use nexodesk_codec::EncoderChoice;
 use tokio::sync::mpsc;
 use tracing::info;
 
-const COPYRIGHT: &str = "Nexo © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/Nexo";
+const COPYRIGHT: &str = "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/NexoDesk";
 
 #[derive(Parser, Debug, Clone)]
-#[command(version, about = "Nexo agent: rende controllabile questo PC", after_help = COPYRIGHT)]
+#[command(version, about = "NexoDesk agent: rende controllabile questo PC", after_help = COPYRIGHT)]
 struct Args {
     /// Porta UDP su cui attendere il viewer (senza --server).
-    #[arg(long, default_value_t = nexo_transport::DEFAULT_PORT)]
+    #[arg(long, default_value_t = nexodesk_transport::DEFAULT_PORT)]
     port: u16,
 
     /// Schermo da trasmettere (vedi --list-displays). Predefinito: il principale.
@@ -61,7 +61,7 @@ struct Args {
     #[arg(long)]
     view_only: bool,
 
-    /// nexo-server a cui registrarsi (host[:porta]): il viewer si collega per ID.
+    /// nexodesk-server a cui registrarsi (host[:porta]): il viewer si collega per ID.
     #[arg(long, value_name = "HOST[:PORTA]")]
     server: Option<String>,
 
@@ -73,8 +73,8 @@ struct Args {
     #[arg(long, value_enum, default_value_t = TransportArg::Auto)]
     transport: TransportArg,
 
-    /// URL WebSocket del server per il ripiego (predefinito: ws://<server>:<porta>/nexo),
-    /// es. wss://nexo.example.it/nexo dietro un reverse proxy.
+    /// URL WebSocket del server per il ripiego (predefinito: ws://<server>:<porta>/nexodesk),
+    /// es. wss://nexodesk.example.it/nexodesk dietro un reverse proxy.
     #[arg(long, value_name = "URL")]
     server_ws: Option<String>,
 
@@ -94,7 +94,7 @@ enum TransportArg {
     Websocket,
 }
 
-impl From<TransportArg> for nexo_transport::signal::TransportMode {
+impl From<TransportArg> for nexodesk_transport::signal::TransportMode {
     fn from(arg: TransportArg) -> Self {
         match arg {
             TransportArg::Auto => Self::Auto,
@@ -139,10 +139,10 @@ fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
-    nexo_input::set_dpi_awareness();
+    nexodesk_input::set_dpi_awareness();
 
     if args.list_displays {
-        for d in nexo_capture::displays()? {
+        for d in nexodesk_capture::displays()? {
             println!(
                 "{}: {} {}x{} in ({}, {}){}",
                 d.index,
@@ -156,7 +156,7 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
-    let synthetic = args.synthetic.as_deref().map(nexo_agent::parse_synthetic).transpose()?;
+    let synthetic = args.synthetic.as_deref().map(nexodesk_agent::parse_synthetic).transpose()?;
 
     println!("{COPYRIGHT}");
     let mut config = AgentConfig {
@@ -164,32 +164,32 @@ fn main() -> Result<()> {
         synthetic,
         bitrate_kbps: args.bitrate,
         fps: args.fps,
-        plan: nexo_codec::EncoderPlan::Software,
+        plan: nexodesk_codec::EncoderPlan::Software,
         fixed_bitrate: args.fixed_bitrate,
         view_only: args.view_only,
     };
     // Con `auto` gli encoder vengono provati qui, così non ritardano la prima sessione.
-    config.plan = nexo_codec::plan_encoder(args.encoder.into(), config.encoder_settings());
+    config.plan = nexodesk_codec::plan_encoder(args.encoder.into(), config.encoder_settings());
 
     let rt = tokio::runtime::Runtime::new()?;
     let Some(server_name) = args.server.clone() else {
-        return rt.block_on(nexo_agent::serve_direct(config, args.port, args.once, args.fingerprint_file));
+        return rt.block_on(nexodesk_agent::serve_direct(config, args.port, args.once, args.fingerprint_file));
     };
 
     let opts = ServerOptions {
         server_name,
-        server_key: args.server_key.as_deref().map(nexo_transport::parse_fingerprint).transpose()?,
+        server_key: args.server_key.as_deref().map(nexodesk_transport::parse_fingerprint).transpose()?,
         transport: args.transport.into(),
         server_ws: args.server_ws.clone(),
         identity_path: args
             .identity
             .clone()
-            .unwrap_or_else(|| nexo_transport::identity::data_dir().join("device.key")),
+            .unwrap_or_else(|| nexodesk_transport::identity::data_dir().join("device.key")),
         // Da riga di comando non c'è nessuno a cui chiedere: si accetta chi ha la password.
         confirm: false,
         info_file: args.fingerprint_file.clone(),
     };
-    let password = args.password.clone().unwrap_or_else(nexo_agent::random_password);
+    let password = args.password.clone().unwrap_or_else(nexodesk_agent::random_password);
     let shared_password = Arc::new(Mutex::new(password.clone()));
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
     // Il canale dei comandi resta aperto (nessuno li invia): chiuderlo fermerebbe l'agent.
@@ -203,6 +203,6 @@ fn main() -> Result<()> {
                 }
             }
         });
-        nexo_agent::serve_via_server(config, opts, shared_password, events_tx, commands_rx).await
+        nexodesk_agent::serve_via_server(config, opts, shared_password, events_tx, commands_rx).await
     })
 }

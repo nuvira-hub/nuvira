@@ -16,14 +16,14 @@ version = "0.0.1"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 authors = ["Alessandro Blason"]
-repository = "https://github.com/alexbn71/Nexo"
+repository = "https://github.com/alexbn71/NexoDesk"
 
 [workspace.dependencies]
-nexo-proto = { path = "client/proto" }
-nexo-transport = { path = "client/transport" }
-nexo-capture = { path = "client/capture" }
-nexo-codec = { path = "client/codec" }
-nexo-input = { path = "client/input" }
+nexodesk-proto = { path = "client/proto" }
+nexodesk-transport = { path = "client/transport" }
+nexodesk-capture = { path = "client/capture" }
+nexodesk-codec = { path = "client/codec" }
+nexodesk-input = { path = "client/input" }
 
 anyhow = "1"
 bytes = "1"

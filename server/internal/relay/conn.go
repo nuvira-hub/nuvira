@@ -19,7 +19,7 @@ import (
 type Conn struct {
 	udp    *net.UDPConn
 	relay  *Relay
-	impair *impairer // solo per i test (NEXO_RELAY_IMPAIR)
+	impair *impairer // solo per i test (NEXODESK_RELAY_IMPAIR)
 	ws     *WebSockets
 
 	in       chan packet

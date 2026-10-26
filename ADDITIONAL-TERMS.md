@@ -1,6 +1,6 @@
 # Additional terms (AGPL-3.0, section 7)
 
-Nexo
+NexoDesk
 Copyright (C) 2026 Alessandro Blason
 
 This program is free software: you can redistribute it and/or modify it under the terms of the
@@ -13,7 +13,7 @@ additional term applies to this program and to every work based on it:
 1. **Preservation of the author attribution.** The user interfaces of the program display the
    following attribution notice (the "Credits"):
 
-   > Nexo © 2026 Alessandro Blason · AGPL-3.0 · Source code
+   > NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · Source code
 
    where "Source code" links to the Corresponding Source of the program.
    Every copy, modified version or work based on this program that has an interactive user

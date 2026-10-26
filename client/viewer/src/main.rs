@@ -1,4 +1,4 @@
-//! Nexo viewer — la finestra della sessione remota.
+//! NexoDesk viewer — la finestra della sessione remota.
 //!
 //! Prototipo della fase 0: si collega direttamente a un agent in LAN, mostra lo
 //! schermo con wgpu e invia mouse e tastiera. Nel titolo della finestra:
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use nexo_proto::v1::{Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, input_event::Event};
+use nexodesk_proto::v1::{Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, input_event::Event};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
@@ -29,7 +29,7 @@ use crate::net::{FrameSlot, NetEvent};
 use crate::render::Renderer;
 use crate::report::Report;
 
-const COPYRIGHT: &str = "Nexo © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/Nexo";
+const COPYRIGHT: &str = "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/NexoDesk";
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 enum TransportArg {
@@ -38,7 +38,7 @@ enum TransportArg {
     Websocket,
 }
 
-impl From<TransportArg> for nexo_transport::signal::TransportMode {
+impl From<TransportArg> for nexodesk_transport::signal::TransportMode {
     fn from(arg: TransportArg) -> Self {
         match arg {
             TransportArg::Auto => Self::Auto,
@@ -49,12 +49,12 @@ impl From<TransportArg> for nexo_transport::signal::TransportMode {
 }
 
 #[derive(Parser, Debug)]
-#[command(version, about = "Nexo viewer: controlla un PC con Nexo agent (prototipo in LAN)", after_help = COPYRIGHT)]
+#[command(version, about = "NexoDesk viewer: controlla un PC con NexoDesk agent (prototipo in LAN)", after_help = COPYRIGHT)]
 struct Args {
     /// ID dell'agent (con --server) oppure indirizzo in LAN, es. 192.168.1.20[:21500].
     agent: String,
 
-    /// nexo-server da usare per collegarsi per ID (host[:porta]).
+    /// nexodesk-server da usare per collegarsi per ID (host[:porta]).
     #[arg(long, value_name = "HOST[:PORTA]")]
     server: Option<String>,
 
@@ -66,14 +66,14 @@ struct Args {
     #[arg(long, value_enum, default_value_t = TransportArg::Auto)]
     transport: TransportArg,
 
-    /// URL WebSocket del server per il ripiego (predefinito: ws://<server>:<porta>/nexo),
-    /// es. wss://nexo.example.it/nexo dietro un reverse proxy.
+    /// URL WebSocket del server per il ripiego (predefinito: ws://<server>:<porta>/nexodesk),
+    /// es. wss://nexodesk.example.it/nexodesk dietro un reverse proxy.
     #[arg(long, value_name = "URL")]
     server_ws: Option<String>,
 
-    /// Password di sessione mostrata dall'agent (anche dalla variabile NEXO_PASSWORD,
+    /// Password di sessione mostrata dall'agent (anche dalla variabile NEXODESK_PASSWORD,
     /// che a differenza della riga di comando non è visibile agli altri programmi).
-    #[arg(long, env = "NEXO_PASSWORD", hide_env_values = true)]
+    #[arg(long, env = "NEXODESK_PASSWORD", hide_env_values = true)]
     password: Option<String>,
 
     /// File con la chiave del dispositivo (predefinito: viewer.key nella cartella dati;
@@ -122,20 +122,20 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let target = match &args.server {
         Some(server_name) => net::Target::Server {
-            server: nexo_transport::resolve_addr(server_name, nexo_transport::signal::DEFAULT_PORT)?,
+            server: nexodesk_transport::resolve_addr(server_name, nexodesk_transport::signal::DEFAULT_PORT)?,
             server_name: server_name.clone(),
-            server_key: args.server_key.as_deref().map(nexo_transport::parse_fingerprint).transpose()?,
+            server_key: args.server_key.as_deref().map(nexodesk_transport::parse_fingerprint).transpose()?,
             transport: args.transport.into(),
             server_ws: args.server_ws.clone(),
             device_id: args.agent.chars().filter(|c| c.is_ascii_digit()).collect(),
             identity: args
                 .identity
                 .clone()
-                .unwrap_or_else(|| nexo_transport::identity::data_dir().join("viewer.key")),
+                .unwrap_or_else(|| nexodesk_transport::identity::data_dir().join("viewer.key")),
         },
         None => net::Target::Direct {
-            addr: nexo_transport::resolve_addr(&args.agent, nexo_transport::DEFAULT_PORT)?,
-            fingerprint: args.fingerprint.as_deref().map(nexo_transport::parse_fingerprint).transpose()?,
+            addr: nexodesk_transport::resolve_addr(&args.agent, nexodesk_transport::DEFAULT_PORT)?,
+            fingerprint: args.fingerprint.as_deref().map(nexodesk_transport::parse_fingerprint).transpose()?,
         },
     };
     println!("{COPYRIGHT}");
@@ -205,7 +205,7 @@ fn main() -> Result<()> {
 struct App {
     /// Conserva una copia dell'ultimo frame per `--snapshot`.
     keep_last_frame: bool,
-    last_frame: Option<nexo_codec::YuvFrame>,
+    last_frame: Option<nexodesk_codec::YuvFrame>,
     slot: Arc<FrameSlot>,
     started: Instant,
     report: Report,
@@ -215,7 +215,7 @@ struct App {
     input: Option<UnboundedSender<InputEvent>>,
     net_thread: Option<std::thread::JoinHandle<()>>,
     /// Verso l'agent, per il bitrate adattivo: latenze dell'intervallo in corso.
-    feedback: Option<UnboundedSender<nexo_proto::v1::Feedback>>,
+    feedback: Option<UnboundedSender<nexodesk_proto::v1::Feedback>>,
     feedback_window: (Instant, Vec<u32>),
     view_only: bool,
     window: Option<Arc<Window>>,
@@ -245,7 +245,7 @@ impl App {
             return;
         }
         latencies.sort_unstable();
-        let feedback = nexo_proto::v1::Feedback {
+        let feedback = nexodesk_proto::v1::Feedback {
             latency_ms_p50: latencies[latencies.len() / 2],
             latency_ms_min: latencies[0],
             frames: latencies.len() as u32,
@@ -273,7 +273,7 @@ impl App {
             "…".into()
         };
         let title = format!(
-            "Nexo — {} · {:.0} fps · latenza {latency} · RTT {:.1} ms · {:.1} Mbit/s · comp. {:.1} ms · decomp. {:.1} ms",
+            "NexoDesk — {} · {:.0} fps · latenza {latency} · RTT {:.1} ms · {:.1} Mbit/s · comp. {:.1} ms · decomp. {:.1} ms",
             self.agent,
             s.fps(),
             self.rtt_us as f64 / 1000.0,
@@ -292,7 +292,7 @@ impl ApplicationHandler<NetEvent> for App {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title(format!("Nexo — connessione a {}…", self.agent))
+            .with_title(format!("NexoDesk — connessione a {}…", self.agent))
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -358,7 +358,7 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Some(offset) = self.clock_offset_us {
                     // Momento della cattura riportato sul nostro orologio.
                     let captured_here = frame.capture_us as i64 - offset;
-                    let latency = nexo_proto::now_us() as i64 - captured_here;
+                    let latency = nexodesk_proto::now_us() as i64 - captured_here;
                     self.stats.latency_us += latency.max(0) as u64;
                     self.report.latencies_us.push(latency.clamp(0, u32::MAX as i64) as u32);
                     self.feedback_window.1.push((latency.max(0) / 1000) as u32);

@@ -1,4 +1,4 @@
-// Interfaccia di Nexo: riceve lo stato dal processo Rust (evento "state")
+// Interfaccia di NexoDesk: riceve lo stato dal processo Rust (evento "state")
 // e invia i comandi con invoke.
 
 const { invoke } = window.__TAURI__.core;
@@ -7,7 +7,7 @@ const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
 
 const STATUS_TEXT = {
-  setup: "Imposta il server Nexo (Impostazioni)",
+  setup: "Imposta il server NexoDesk (Impostazioni)",
   connecting: "Collegamento al server…",
   online: "Pronto: raggiungibile con questo ID",
   offline: "Non collegato al server",

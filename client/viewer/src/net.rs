@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use nexo_codec::YuvFrame;
-use nexo_proto::v1::{
+use nexodesk_codec::YuvFrame;
+use nexodesk_proto::v1::{
     ControlMessage, Feedback, Hello, InputEvent, Ping, RequestKeyframe, VideoFrame, control_message::Msg,
 };
-use nexo_transport::{Fingerprint, FramedRecv, FramedSend};
+use nexodesk_transport::{Fingerprint, FramedRecv, FramedSend};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use winit::event_loop::EventLoopProxy;
@@ -80,12 +80,12 @@ impl FrameSlot {
 pub enum Target {
     /// Connessione diretta in LAN (fase 0), con l'impronta dell'agent.
     Direct { addr: SocketAddr, fingerprint: Option<Fingerprint> },
-    /// Per ID attraverso nexo-server e il suo relay.
+    /// Per ID attraverso nexodesk-server e il suo relay.
     Server {
         server: SocketAddr,
         server_name: String,
         server_key: Option<Fingerprint>,
-        transport: nexo_transport::signal::TransportMode,
+        transport: nexodesk_transport::signal::TransportMode,
         server_ws: Option<String>,
         device_id: String,
         identity: std::path::PathBuf,
@@ -121,21 +121,21 @@ fn control(msg: Msg) -> ControlMessage {
     ControlMessage { msg: Some(msg) }
 }
 
-/// Connessione all'agent: diretta oppure chiedendo il percorso a nexo-server.
-async fn open_connection(target: Target) -> Result<nexo_transport::Connection> {
-    use nexo_proto::v1::{Connect, Role, client_message, server_message};
-    use nexo_transport::{identity::Identity, p2p, signal};
+/// Connessione all'agent: diretta oppure chiedendo il percorso a nexodesk-server.
+async fn open_connection(target: Target) -> Result<nexodesk_transport::Connection> {
+    use nexodesk_proto::v1::{Connect, Role, client_message, server_message};
+    use nexodesk_transport::{identity::Identity, p2p, signal};
     match target {
-        Target::Direct { addr, fingerprint } => nexo_transport::connect(addr, fingerprint).await,
+        Target::Direct { addr, fingerprint } => nexodesk_transport::connect(addr, fingerprint).await,
         Target::Server { server, server_name, server_key, transport, server_ws, device_id, identity } => {
             let identity = Identity::load_or_create(&identity)?;
             let expected = server_key.or_else(|| signal::known_server::get(&server_name));
             let name = std::env::var("COMPUTERNAME").unwrap_or_default();
-            let ws_url = server_ws.unwrap_or_else(|| nexo_transport::ws::default_url(&server_name, server));
+            let ws_url = server_ws.unwrap_or_else(|| nexodesk_transport::ws::default_url(&server_name, server));
             let mut sig =
                 signal::connect_auto(server, &ws_url, transport, expected, &identity, &name).await?;
-            if let nexo_transport::ServerTransport::WebSocket(url) = &sig.transport {
-                info!("collegato a nexo-server attraverso il WebSocket {url}");
+            if let nexodesk_transport::ServerTransport::WebSocket(url) = &sig.transport {
+                info!("collegato a nexodesk-server attraverso il WebSocket {url}");
             }
             if expected.is_none() {
                 signal::known_server::remember(&server_name, &sig.server_fingerprint)?;
@@ -147,7 +147,7 @@ async fn open_connection(target: Target) -> Result<nexo_transport::Connection> {
                     Some(server_message::Msg::Route(r)) if r.role() == Role::Viewer => break r,
                     Some(server_message::Msg::Error(e)) => bail!("{}", e.message),
                     Some(_) => {}
-                    None => bail!("nexo-server ha chiuso la connessione"),
+                    None => bail!("nexodesk-server ha chiuso la connessione"),
                 }
             };
             let route = p2p::Route {
@@ -183,7 +183,7 @@ async fn session(
 
     ctrl_tx
         .send(&control(Msg::Hello(Hello {
-            protocol_version: nexo_proto::PROTOCOL_VERSION,
+            protocol_version: nexodesk_proto::PROTOCOL_VERSION,
             device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
             os: std::env::consts::OS.into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
@@ -195,7 +195,7 @@ async fn session(
     };
     if agent.password_required {
         let password = password.context("il dispositivo richiede la password (--password)")?;
-        ctrl_tx.send(&control(Msg::Auth(nexo_proto::v1::Auth { password }))).await?;
+        ctrl_tx.send(&control(Msg::Auth(nexodesk_proto::v1::Auth { password }))).await?;
         match ctrl_rx.recv().await? {
             Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) if r.ok => {}
             Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) => bail!("accesso negato: {}", r.message),
@@ -246,7 +246,7 @@ async fn session(
         loop {
             tokio::select! {
                 _ = ping.tick() => {
-                    ctrl_tx.send(&control(Msg::Ping(Ping { sent_us: nexo_proto::now_us() }))).await?;
+                    ctrl_tx.send(&control(Msg::Ping(Ping { sent_us: nexodesk_proto::now_us() }))).await?;
                 }
                 Some(feedback) = feedback_rx.recv() => {
                     ctrl_tx.send(&control(Msg::Feedback(feedback))).await?;
@@ -256,7 +256,7 @@ async fn session(
                 }
                 msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
                     Some(ControlMessage { msg: Some(Msg::Pong(pong)) }) => {
-                        let now = nexo_proto::now_us();
+                        let now = nexodesk_proto::now_us();
                         let rtt_us = now.saturating_sub(pong.ping_sent_us);
                         // Orologio dell'agent meno il nostro, assumendo andata e ritorno simmetrici.
                         let midpoint = (pong.ping_sent_us + now) / 2;
@@ -296,7 +296,7 @@ fn decode_loop(
     slot: Arc<FrameSlot>,
     request_keyframe: mpsc::UnboundedSender<()>,
 ) {
-    let mut decoder = match nexo_codec::best_decoder() {
+    let mut decoder = match nexodesk_codec::best_decoder() {
         Ok(d) => d,
         Err(e) => {
             let _ = proxy.send_event(NetEvent::Disconnected(format!("decoder non disponibile: {e:#}")));

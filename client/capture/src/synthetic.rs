@@ -98,7 +98,7 @@ impl Capturer for SyntheticCapturer {
         }
         self.tick = self.tick.wrapping_add(1);
         self.draw();
-        self.frame.captured_us = nexo_proto::now_us();
+        self.frame.captured_us = nexodesk_proto::now_us();
         Ok(Some(&self.frame))
     }
 

@@ -7,7 +7,7 @@ import (
 )
 
 func TestRegisterKeepsID(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "nexo.db"))
+	s, err := Open(filepath.Join(t.TempDir(), "nexodesk.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

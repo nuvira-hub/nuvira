@@ -1,5 +1,5 @@
 //! Ripiego per le reti che bloccano UDP: i datagrammi QUIC viaggiano dentro una
-//! connessione WebSocket verso nexo-server (ws:// o wss:// dietro un reverse proxy).
+//! connessione WebSocket verso nexodesk-server (ws:// o wss:// dietro un reverse proxy).
 //!
 //! [`WsSocket`] implementa il socket astratto di quinn: QUIC, la crittografia
 //! end-to-end e il relay restano identici, cambia solo come escono i datagrammi.
@@ -23,8 +23,8 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::debug;
 
-/// Percorso del ripiego WebSocket su nexo-server.
-pub const PATH: &str = "/nexo";
+/// Percorso del ripiego WebSocket su nexodesk-server.
+pub const PATH: &str = "/nexodesk";
 
 /// URL WebSocket predefinito per un server raggiunto in UDP su `server`
 /// (stessa porta, in TCP).
@@ -182,10 +182,10 @@ mod tests {
     #[test]
     fn default_urls() {
         let a: SocketAddr = "192.168.1.10:21116".parse().unwrap();
-        assert_eq!(default_url("192.168.1.10", a), "ws://192.168.1.10:21116/nexo");
-        assert_eq!(default_url("nexo.example.it:21116", a), "ws://nexo.example.it:21116/nexo");
+        assert_eq!(default_url("192.168.1.10", a), "ws://192.168.1.10:21116/nexodesk");
+        assert_eq!(default_url("nexodesk.example.it:21116", a), "ws://nexodesk.example.it:21116/nexodesk");
         let b: SocketAddr = "[::1]:9000".parse().unwrap();
-        assert_eq!(default_url("[::1]:9000", b), "ws://[::1]:9000/nexo");
-        assert_eq!(default_url("::1", b), "ws://[::1]:9000/nexo");
+        assert_eq!(default_url("[::1]:9000", b), "ws://[::1]:9000/nexodesk");
+        assert_eq!(default_url("::1", b), "ws://[::1]:9000/nexodesk");
     }
 }

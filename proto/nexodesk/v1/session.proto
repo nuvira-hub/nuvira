@@ -6,7 +6,7 @@
 
 syntax = "proto3";
 
-package nexo.v1;
+package nexodesk.v1;
 
 // La versione negoziata è la più alta comune ai due lati.
 enum ProtocolVersion {
