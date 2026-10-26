@@ -13,3 +13,4 @@
 | 09 | [Rischi e costi](09-rischi.md) | Firma del codice, Wayland, macOS, licenze |
 | 10 | [Registro decisioni](10-decisioni.md) | Decisioni prese e aperte |
 | 11 | [Protocollo](11-protocollo.md) | Bozza dei flussi di registrazione e connessione |
+| 12 | [Fase 0: prototipo](12-fase0-prototipo.md) | Come provarlo, stato e misure di latenza |

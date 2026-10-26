@@ -6,7 +6,7 @@ Sistema di controllo remoto self-hosted.
 - **Client desktop** (Rust; Tauri v2 per la gestione, finestra nativa wgpu per la sessione): Windows, Linux (X11 e Wayland), macOS — assistenza al volo e accesso non presidiato.
 - **Crittografia end-to-end**: il server non vede mai schermo, input o file.
 
-Stato: **progettazione**. Tutta la documentazione è in [docs/](docs/README.md).
+Stato: **fase 0, prototipo Windows in LAN** ([come provarlo](docs/12-fase0-prototipo.md)). Tutta la documentazione è in [docs/](docs/README.md).
 
 ## Licenza
 

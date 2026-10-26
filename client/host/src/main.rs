@@ -10,9 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use nexo_capture::{Capturer, SyntheticCapturer};
-use nexo_codec::{BgraImage, EncoderSettings};
+use nexo_codec::{BgraImage, EncoderChoice, EncoderSettings};
 use nexo_proto::v1::{
     Codec, ControlMessage, Hello, InputEvent, Pong, VideoFormat, VideoFrame, control_message::Msg,
 };
@@ -49,9 +49,30 @@ struct Args {
     #[arg(long, default_value_t = 60)]
     fps: u32,
 
+    /// Encoder video: hardware se disponibile (auto), solo hardware o solo software.
+    #[arg(long, value_enum, default_value_t = EncoderArg::Auto)]
+    encoder: EncoderArg,
+
     /// Solo visualizzazione: ignora mouse e tastiera del viewer.
     #[arg(long)]
     view_only: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum EncoderArg {
+    Auto,
+    Hardware,
+    Software,
+}
+
+impl From<EncoderArg> for EncoderChoice {
+    fn from(arg: EncoderArg) -> Self {
+        match arg {
+            EncoderArg::Auto => EncoderChoice::Auto,
+            EncoderArg::Hardware => EncoderChoice::Hardware,
+            EncoderArg::Software => EncoderChoice::Software,
+        }
+    }
 }
 
 fn parse_synthetic(spec: &str) -> Result<(u32, u32, u32)> {
@@ -83,7 +104,12 @@ fn main() -> Result<()> {
         for d in nexo_capture::displays()? {
             println!(
                 "{}: {} {}x{} in ({}, {}){}",
-                d.index, d.name, d.width, d.height, d.left, d.top,
+                d.index,
+                d.name,
+                d.width,
+                d.height,
+                d.left,
+                d.top,
                 if d.primary { " [principale]" } else { "" }
             );
         }
@@ -234,7 +260,7 @@ fn capture_loop(
     let setup = (|| {
         let capturer = open_capturer(args)?;
         let settings = EncoderSettings { bitrate_bps: args.bitrate * 1000, max_fps: args.fps };
-        let encoder = nexo_codec::best_encoder(settings)?;
+        let encoder = nexo_codec::create_encoder(args.encoder.into(), settings)?;
         Ok((capturer, encoder))
     })();
     let (mut capturer, mut encoder) = match setup {
@@ -245,10 +271,7 @@ fn capture_loop(
         }
     };
     let screen = capturer.display().clone();
-    info!(
-        "trasmetto {} {}x{} con {}",
-        screen.name, screen.width, screen.height, encoder.name()
-    );
+    info!("trasmetto {} {}x{} con {}", screen.name, screen.width, screen.height, encoder.name());
     let _ = ready.send(Ok(screen));
 
     let min_interval = Duration::from_secs(1) / args.fps.max(1);
@@ -278,7 +301,8 @@ fn capture_loop(
             continue;
         }
 
-        let image = BgraImage { width: frame.width, height: frame.height, stride: frame.stride, data: &frame.data };
+        let image =
+            BgraImage { width: frame.width, height: frame.height, stride: frame.stride, data: &frame.data };
         let captured_us = frame.captured_us;
         let t = Instant::now();
         let encoded = match encoder.encode(&image, force_key) {
@@ -296,7 +320,13 @@ fn capture_loop(
         stats.add(encode_us, encoded.data.len());
         seq += 1;
         last_sent = Instant::now();
-        let msg = VideoFrame { seq, capture_us: captured_us, encode_us, keyframe: encoded.keyframe, data: encoded.data };
+        let msg = VideoFrame {
+            seq,
+            capture_us: captured_us,
+            encode_us,
+            keyframe: encoded.keyframe,
+            data: encoded.data,
+        };
         // Coda da un solo frame: se la rete è lenta la cattura rallenta invece di accumulare ritardo.
         if frames.blocking_send(msg).is_err() {
             break;

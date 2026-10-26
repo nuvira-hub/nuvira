@@ -181,7 +181,7 @@ impl FramedRecv {
     /// Prossimo messaggio; `None` quando l'altro lato chiude lo stream.
     pub async fn recv<M: Message + Default>(&mut self) -> Result<Option<M>> {
         loop {
-            if let Some(msg) = self.decoder.next()? {
+            if let Some(msg) = self.decoder.next_message()? {
                 return Ok(Some(msg));
             }
             match self.stream.read(&mut self.buf).await? {
@@ -202,7 +202,8 @@ mod tests {
         let hex = fingerprint_hex(&fp);
         assert_eq!(parse_fingerprint(&hex).unwrap(), fp);
         // Separatori ammessi, come nelle impronte copiate a mano.
-        let spaced: String = hex.as_bytes().chunks(4).map(|c| std::str::from_utf8(c).unwrap()).collect::<Vec<_>>().join(":");
+        let spaced: String =
+            hex.as_bytes().chunks(4).map(|c| std::str::from_utf8(c).unwrap()).collect::<Vec<_>>().join(":");
         assert_eq!(parse_fingerprint(&spaced).unwrap(), fp);
         assert!(parse_fingerprint("abc").is_err());
     }

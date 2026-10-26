@@ -41,7 +41,7 @@ impl Decoder {
     }
 
     /// Prossimo messaggio completo, se è già arrivato per intero.
-    pub fn next<M: Message + Default>(&mut self) -> Result<Option<M>, FrameError> {
+    pub fn next_message<M: Message + Default>(&mut self) -> Result<Option<M>, FrameError> {
         let mut peek = &self.buf[..];
         let len = match prost::encoding::decode_varint(&mut peek) {
             Ok(len) => len as usize,
@@ -79,12 +79,12 @@ mod tests {
         for chunk in wire.chunks(3) {
             dec.push(chunk);
             if ping.is_none() {
-                ping = dec.next::<Ping>().unwrap();
+                ping = dec.next_message::<Ping>().unwrap();
             }
         }
         assert_eq!(ping, Some(a));
-        assert_eq!(dec.next::<VideoFrame>().unwrap(), Some(b));
-        assert_eq!(dec.next::<VideoFrame>().unwrap(), None);
+        assert_eq!(dec.next_message::<VideoFrame>().unwrap(), Some(b));
+        assert_eq!(dec.next_message::<VideoFrame>().unwrap(), None);
     }
 
     #[test]
@@ -93,6 +93,6 @@ mod tests {
         let mut wire = Vec::new();
         prost::encoding::encode_varint((MAX_MESSAGE_LEN + 1) as u64, &mut wire);
         dec.push(&wire);
-        assert!(matches!(dec.next::<Ping>(), Err(FrameError::TooLarge(_))));
+        assert!(matches!(dec.next_message::<Ping>(), Err(FrameError::TooLarge(_))));
     }
 }

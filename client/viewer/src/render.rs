@@ -119,19 +119,13 @@ impl Renderer {
         .context("nessuna scheda video compatibile")?;
         let info = adapter.get_info();
         let adapter_info = format!("{} ({:?})", info.name, info.backend);
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-                .context("dispositivo wgpu")?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+            .context("dispositivo wgpu")?;
 
         let caps = surface.get_capabilities(&adapter);
         // Lo shader produce valori già in gamma sRGB: serve un formato non-sRGB,
         // altrimenti la GPU li convertirebbe una seconda volta (immagine slavata).
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| !f.is_srgb())
-            .unwrap_or(caps.formats[0]);
+        let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
         // Mailbox: nessuno strappo e nessuna coda di frame vecchi. Altrimenti Fifo (sempre presente).
         let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
             wgpu::PresentMode::Mailbox

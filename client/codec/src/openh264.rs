@@ -3,31 +3,31 @@
 use anyhow::{Context, Result};
 use openh264::OpenH264API;
 use openh264::decoder::{Decoder, DecoderConfig};
-use openh264::encoder::{
-    BitRate, Encoder, EncoderConfig, FrameRate, FrameType, RateControlMode, UsageType,
-};
-use openh264::formats::{BgraSliceU8, YUVBuffer, YUVSource};
+use openh264::encoder::{BitRate, Encoder, EncoderConfig, FrameRate, FrameType, RateControlMode, UsageType};
+use openh264::formats::{YUVSlices, YUVSource};
 
 use crate::{BgraImage, EncodedFrame, EncoderSettings, VideoDecoder, VideoEncoder, YuvFrame};
 
 pub struct OpenH264Encoder {
     encoder: Encoder,
-    /// Copia compatta dell'immagine quando lo stride o le dimensioni dispari lo richiedono.
-    packed: Vec<u8>,
-    yuv: Option<YUVBuffer>,
+    y: Vec<u8>,
+    u: Vec<u8>,
+    v: Vec<u8>,
 }
 
 impl OpenH264Encoder {
     pub fn new(settings: EncoderSettings) -> Result<Self> {
+        // La modalità "contenuto schermo" comprime di più ma è ~5 volte più lenta
+        // (98 contro 19 ms a 1080p su un i7-10710U): per il controllo remoto conta la latenza.
         let config = EncoderConfig::new()
-            .usage_type(UsageType::ScreenContentRealTime)
+            .usage_type(UsageType::CameraVideoRealTime)
             .rate_control_mode(RateControlMode::Bitrate)
             .bitrate(BitRate::from_bps(settings.bitrate_bps))
             .max_frame_rate(FrameRate::from_hz(settings.max_fps as f32))
             .skip_frames(true);
         let encoder = Encoder::with_api_config(OpenH264API::from_source(), config)
             .context("inizializzazione OpenH264")?;
-        Ok(Self { encoder, packed: Vec::new(), yuv: None })
+        Ok(Self { encoder, y: Vec::new(), u: Vec::new(), v: Vec::new() })
     }
 }
 
@@ -37,33 +37,14 @@ impl VideoEncoder for OpenH264Encoder {
     }
 
     fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<Option<EncodedFrame>> {
-        // I420 richiede dimensioni pari: si scarta al massimo una riga/colonna.
-        let w = (image.width & !1) as usize;
-        let h = (image.height & !1) as usize;
-        let row = w * 4;
-        let bgra = if image.stride == row && image.height as usize == h {
-            &image.data[..row * h]
-        } else {
-            self.packed.clear();
-            for y in 0..h {
-                self.packed.extend_from_slice(&image.data[y * image.stride..][..row]);
-            }
-            &self.packed[..]
-        };
-
-        let source = BgraSliceU8::new(bgra, (w, h));
-        let yuv = match &mut self.yuv {
-            Some(yuv) if yuv.dimensions() == (w, h) => {
-                yuv.read_bgra8(source);
-                yuv
-            }
-            slot => slot.insert(YUVBuffer::from_bgra8_source(source)),
-        };
+        crate::convert::bgra_to_i420(image, &mut self.y, &mut self.u, &mut self.v);
+        let (w, h) = crate::convert::even_size(image);
+        let yuv = YUVSlices::new((&self.y, &self.u, &self.v), (w, h), (w, w / 2, w / 2));
 
         if force_keyframe {
             self.encoder.force_intra_frame();
         }
-        let bitstream = self.encoder.encode(&*yuv).context("compressione OpenH264")?;
+        let bitstream = self.encoder.encode(&yuv).context("compressione OpenH264")?;
         let keyframe = match bitstream.frame_type() {
             FrameType::Skip | FrameType::Invalid => return Ok(None),
             FrameType::IDR | FrameType::I => true,

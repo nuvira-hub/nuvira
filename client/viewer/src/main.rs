@@ -14,9 +14,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use nexo_proto::v1::{
-    Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, input_event::Event,
-};
+use nexo_proto::v1::{Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, input_event::Event};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;

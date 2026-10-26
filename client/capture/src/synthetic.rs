@@ -40,21 +40,37 @@ impl SyntheticCapturer {
         }
     }
 
-    fn draw(&mut self) {
-        let (w, h) = (self.frame.width as usize, self.frame.height as usize);
-        let t = self.tick as usize;
-        // Sfondo a gradiente che scorre + una barra verticale che attraversa lo schermo.
-        let bar = (t * 8) % w;
-        for y in 0..h {
+    /// Colore dello sfondo fisso nel punto (x, y).
+    fn background(x: usize, y: usize) -> [u8; 4] {
+        [(x % 256) as u8, (y % 256) as u8, 96, 255]
+    }
+
+    /// Ridisegna le colonne `from..to` con lo sfondo o con la barra.
+    fn paint_columns(&mut self, from: usize, to: usize, bar: bool) {
+        let w = self.frame.width as usize;
+        let (from, to) = (from.min(w), to.min(w));
+        for y in 0..self.frame.height as usize {
             let row = &mut self.frame.data[y * self.frame.stride..][..w * 4];
-            for (x, px) in row.chunks_exact_mut(4).enumerate() {
-                let on_bar = x >= bar && x < bar + 24;
-                px[0] = if on_bar { 255 } else { ((x + t) % 256) as u8 };
-                px[1] = if on_bar { 255 } else { ((y + t / 2) % 256) as u8 };
-                px[2] = if on_bar { 255 } else { 96 };
-                px[3] = 255;
+            for x in from..to {
+                let c = if bar { [255, 255, 255, 255] } else { Self::background(x, y) };
+                row[x * 4..x * 4 + 4].copy_from_slice(&c);
             }
         }
+    }
+
+    /// Sfondo fisso e una barra verticale che lo attraversa: come una finestra
+    /// trascinata su un desktop, cambia solo una piccola parte dell'immagine.
+    fn draw(&mut self) {
+        const BAR: usize = 24;
+        let w = self.frame.width as usize;
+        if self.tick == 1 {
+            self.paint_columns(0, w, false);
+        } else {
+            let old = ((self.tick as usize - 1) * 8) % w;
+            self.paint_columns(old, old + BAR, false);
+        }
+        let bar = (self.tick as usize * 8) % w;
+        self.paint_columns(bar, bar + BAR, true);
     }
 }
 

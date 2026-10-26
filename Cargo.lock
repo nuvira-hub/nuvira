@@ -1249,6 +1249,8 @@ dependencies = [
  "anyhow",
  "openh264",
  "tracing",
+ "tracing-subscriber",
+ "windows",
 ]
 
 [[package]]
