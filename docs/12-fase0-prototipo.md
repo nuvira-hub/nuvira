@@ -9,7 +9,7 @@ Obiettivo della fase ([08-roadmap.md](08-roadmap.md)): cattura, compressione con
 | Parte | Modulo | Stato |
 |---|---|---|
 | Protocollo Protobuf + framing | `client/proto` | ✅ |
-| Cattura schermo DXGI Desktop Duplication | `client/capture` | ✅ compila, elenca gli schermi; da provare a schermo sbloccato |
+| Cattura schermo DXGI Desktop Duplication | `client/capture` | ✅ provata sullo schermo reale |
 | Sorgente sintetica per i test | `client/capture` | ✅ |
 | Conversione BGRA → I420/NV12 (interi, multi-core) | `client/codec` | ✅ ~3–4 ms a 1080p |
 | Encoder hardware Media Foundation (Intel Quick Sync) | `client/codec` | ✅ |
@@ -22,7 +22,7 @@ Obiettivo della fase ([08-roadmap.md](08-roadmap.md)): cattura, compressione con
 
 ## Come provarlo
 
-Requisiti per compilare: Rust stable, Visual Studio Build Tools (C++). NASM è facoltativo: rende più veloce OpenH264.
+Requisiti per compilare: Rust stable, Visual Studio Build Tools (C++) e, consigliato, **NASM** nel `PATH` durante la compilazione (OpenH264 passa da 19 a 9 ms per frame). L'installer di NASM lo mette in `%LOCALAPPDATA%\bin\NASM` senza aggiungerlo al `PATH`.
 
 ```powershell
 cargo build --release
@@ -49,7 +49,20 @@ Il titolo della finestra mostra fps, latenza cattura→visualizzazione, RTT, ban
 
 ## Misure (2026-10-26)
 
-PC di prova: Intel Core i7-10710U, Intel UHD Graphics, Windows 11. Host e viewer **sullo stesso PC** (localhost), quindi in competizione per CPU e GPU; sorgente sintetica 1920x1080 a 60 fps con una barra che si muove.
+PC di prova: Intel Core i7-10710U, Intel UHD Graphics, Windows 11. Host e viewer **sullo stesso PC** (localhost), quindi in competizione per CPU e GPU.
+
+### Schermo reale
+
+Schermo principale 1920x1080 con la finestra del viewer visibile (quindi sempre in cambiamento), OpenH264 compilato con NASM.
+
+| Encoder | fps | Latenza cattura→visualizzazione | Compressione | Decompressione |
+|---|---|---|---|---|
+| Hardware (Quick Sync) | 18–22 | **32–40 ms** | 18–22 ms | 7–10 ms |
+| Software (OpenH264 + NASM) | 20–27 | **22–33 ms** | 11–19 ms | 4–5 ms |
+
+### Sorgente sintetica
+
+Immagine 1920x1080 a 60 fps con una barra che si muove, OpenH264 senza NASM.
 
 | Encoder | fps | Latenza cattura→visualizzazione | Compressione | Decompressione (OpenH264) | Banda |
 |---|---|---|---|---|---|
@@ -67,7 +80,8 @@ Banco di prova degli encoder (`cargo run --release -p nexo-codec --example bench
 Osservazioni:
 - Su Windows wgpu usa **Direct3D 12**: il driver Vulkan Intel di questo PC va in crash all'avvio, quindi Vulkan è escluso di default (`WGPU_BACKEND` permette comunque di forzarlo).
 - Con lo schermo bloccato la cattura viene rifiutata (`E_ACCESSDENIED`): è il desktop sicuro, che si potrà catturare solo dal servizio di sistema (fase 3).
-- Il codice OpenH264 è stato compilato senza NASM: con NASM ci si aspetta un miglioramento.
+- OpenH264 senza NASM: 19 ms per frame nel banco di prova; con NASM: 9 ms.
+- **QUIC e GSO su Windows**: inviando più datagrammi con una sola chiamata (segmentation offload) i pacchetti in loopback andavano persi e la connessione smetteva di ricevere (circa 4 sessioni su 10 senza video). GSO è disattivato in `client/transport`; da riprovare tra due PC in LAN.
 
 ## Prossimi passi per arrivare a 60 fps
 
