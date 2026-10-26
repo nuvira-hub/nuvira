@@ -6,7 +6,7 @@ members = [
     "client/codec",
     "client/transport",
     "client/input",
-    "client/host",
+    "client/agent",
     "client/viewer",
 ]
 

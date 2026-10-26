@@ -1,6 +1,6 @@
 //! Trasporto delle sessioni su QUIC.
 //!
-//! Fase 0: connessione diretta in LAN. L'host presenta un certificato
+//! Fase 0: connessione diretta in LAN. L'agent presenta un certificato
 //! autofirmato e il viewer può verificarne l'impronta SHA-256 (`--fingerprint`).
 //! Questa NON è ancora l'autenticazione definitiva: nella fase 1 arrivano
 //! l'handshake Noise con le chiavi dei dispositivi e il server di rendezvous.
@@ -61,9 +61,9 @@ fn transport_config() -> Arc<TransportConfig> {
     Arc::new(t)
 }
 
-/// Endpoint dell'host: accetta connessioni su `bind`. Restituisce anche l'impronta del certificato.
+/// Endpoint dell'agent: accetta connessioni su `bind`. Restituisce anche l'impronta del certificato.
 pub fn server_endpoint(bind: SocketAddr) -> Result<(Endpoint, Fingerprint)> {
-    let cert = rcgen::generate_simple_self_signed(vec!["nexo-host".to_string()])?;
+    let cert = rcgen::generate_simple_self_signed(vec!["nexo-agent".to_string()])?;
     let cert_der = CertificateDer::from(cert.cert.der().to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()));
     let fingerprint: Fingerprint = Sha256::digest(&cert_der).into();
@@ -80,10 +80,10 @@ pub fn server_endpoint(bind: SocketAddr) -> Result<(Endpoint, Fingerprint)> {
     Ok((endpoint, fingerprint))
 }
 
-/// Connessione del viewer verso un host. Senza impronta attesa accetta qualunque certificato.
+/// Connessione del viewer verso un agent. Senza impronta attesa accetta qualunque certificato.
 pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<Connection> {
     if expected.is_none() {
-        warn!("impronta dell'host non indicata: connessione NON verificata (solo per prove in LAN)");
+        warn!("impronta dell'agent non indicata: connessione NON verificata (solo per prove in LAN)");
     }
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
@@ -98,11 +98,12 @@ pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<
     let bind: SocketAddr = if addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
     let mut endpoint = Endpoint::client(bind)?;
     endpoint.set_default_client_config(config);
-    let conn = endpoint.connect(addr, "nexo-host")?.await.with_context(|| format!("connessione a {addr}"))?;
+    let conn =
+        endpoint.connect(addr, "nexo-agent")?.await.with_context(|| format!("connessione a {addr}"))?;
     Ok(conn)
 }
 
-/// Verifica il certificato dell'host confrontandone l'impronta SHA-256.
+/// Verifica il certificato dell'agent confrontandone l'impronta SHA-256.
 #[derive(Debug)]
 struct PinnedCert {
     expected: Option<Fingerprint>,
@@ -120,7 +121,7 @@ impl ServerCertVerifier for PinnedCert {
     ) -> Result<ServerCertVerified, rustls::Error> {
         match self.expected {
             Some(expected) if <[u8; 32]>::from(Sha256::digest(end_entity)) != expected => {
-                Err(rustls::Error::General("impronta dell'host diversa da quella attesa".into()))
+                Err(rustls::Error::General("impronta dell'agent diversa da quella attesa".into()))
             }
             _ => Ok(ServerCertVerified::assertion()),
         }

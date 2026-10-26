@@ -1,4 +1,4 @@
-//! Lato rete del viewer: connessione all'host, ricezione e decompressione del
+//! Lato rete del viewer: connessione all'agent, ricezione e decompressione del
 //! video, invio dell'input e misura di RTT e differenza tra gli orologi.
 
 use std::net::SocketAddr;
@@ -16,7 +16,7 @@ use winit::event_loop::EventLoopProxy;
 
 /// Eventi dalla rete verso la finestra.
 pub enum NetEvent {
-    Connected { host: String, width: u32, height: u32 },
+    Connected { agent: String, width: u32, height: u32 },
     Frame(Box<DecodedFrame>),
     Clock { rtt_us: u64, offset_us: i64 },
     Disconnected(String),
@@ -24,7 +24,7 @@ pub enum NetEvent {
 
 pub struct DecodedFrame {
     pub yuv: YuvFrame,
-    /// Momento della cattura secondo l'orologio dell'host.
+    /// Momento della cattura secondo l'orologio dell'agent.
     pub capture_us: u64,
     pub encode_us: u32,
     pub decode_us: u32,
@@ -75,15 +75,15 @@ async fn session(
             app_version: env!("CARGO_PKG_VERSION").into(),
         })))
         .await?;
-    let Some(ControlMessage { msg: Some(Msg::Hello(host)) }) = ctrl_rx.recv().await? else {
-        bail!("l'host non si è presentato");
+    let Some(ControlMessage { msg: Some(Msg::Hello(agent)) }) = ctrl_rx.recv().await? else {
+        bail!("l'agent non si è presentato");
     };
     let Some(ControlMessage { msg: Some(Msg::VideoFormat(format)) }) = ctrl_rx.recv().await? else {
         bail!("formato video mancante");
     };
-    info!(host = host.device_name, w = format.width, h = format.height, "collegato");
+    info!(agent = agent.device_name, w = format.width, h = format.height, "collegato");
     let _ = proxy.send_event(NetEvent::Connected {
-        host: host.device_name,
+        agent: agent.device_name,
         width: format.width,
         height: format.height,
     });
@@ -131,9 +131,9 @@ async fn session(
                     Some(ControlMessage { msg: Some(Msg::Pong(pong)) }) => {
                         let now = nexo_proto::now_us();
                         let rtt_us = now.saturating_sub(pong.ping_sent_us);
-                        // Orologio dell'host meno il nostro, assumendo andata e ritorno simmetrici.
+                        // Orologio dell'agent meno il nostro, assumendo andata e ritorno simmetrici.
                         let midpoint = (pong.ping_sent_us + now) / 2;
-                        let offset_us = pong.host_us as i64 - midpoint as i64;
+                        let offset_us = pong.agent_us as i64 - midpoint as i64;
                         let _ = proxy.send_event(NetEvent::Clock { rtt_us, offset_us });
                     }
                     Some(_) => {}

@@ -1233,6 +1233,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-agent"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "nexo-capture",
+ "nexo-codec",
+ "nexo-input",
+ "nexo-proto",
+ "nexo-transport",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "nexo-capture"
 version = "0.0.1"
 dependencies = [
@@ -1251,22 +1267,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windows",
-]
-
-[[package]]
-name = "nexo-host"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "clap",
- "nexo-capture",
- "nexo-codec",
- "nexo-input",
- "nexo-proto",
- "nexo-transport",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

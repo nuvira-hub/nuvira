@@ -1,4 +1,4 @@
-//! Nexo host — il dispositivo controllato.
+//! Nexo agent — il dispositivo controllato.
 //!
 //! Prototipo della fase 0: attende in LAN una connessione diretta dal viewer,
 //! trasmette lo schermo e applica mouse e tastiera ricevuti.
@@ -23,7 +23,7 @@ use tracing::{info, warn};
 const COPYRIGHT: &str = "Nexo © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/Nexo";
 
 #[derive(Parser, Debug, Clone)]
-#[command(version, about = "Nexo host: rende controllabile questo PC (prototipo in LAN)", after_help = COPYRIGHT)]
+#[command(version, about = "Nexo agent: rende controllabile questo PC (prototipo in LAN)", after_help = COPYRIGHT)]
 struct Args {
     /// Porta UDP su cui attendere il viewer.
     #[arg(long, default_value_t = nexo_transport::DEFAULT_PORT)]
@@ -127,7 +127,7 @@ async fn serve(args: Args) -> Result<()> {
     let bind: SocketAddr = ([0, 0, 0, 0], args.port).into();
     let (endpoint, fingerprint) = nexo_transport::server_endpoint(bind)?;
     info!("in attesa del viewer su UDP {bind}");
-    info!("impronta dell'host: {}", nexo_transport::fingerprint_hex(&fingerprint));
+    info!("impronta dell'agent: {}", nexo_transport::fingerprint_hex(&fingerprint));
 
     // Una sessione alla volta: le connessioni successive attendono in coda.
     while let Some(incoming) = endpoint.accept().await {
@@ -197,7 +197,7 @@ async fn session(conn: Connection, args: &Args) -> Result<()> {
         while let Some(msg) = ctrl_rx.recv::<ControlMessage>().await? {
             match msg.msg {
                 Some(Msg::Ping(ping)) => {
-                    let pong = Pong { ping_sent_us: ping.sent_us, host_us: nexo_proto::now_us() };
+                    let pong = Pong { ping_sent_us: ping.sent_us, agent_us: nexo_proto::now_us() };
                     ctrl_tx.send(&control(Msg::Pong(pong))).await?;
                 }
                 Some(Msg::RequestKeyframe(_)) => keyframe.store(true, Ordering::Relaxed),

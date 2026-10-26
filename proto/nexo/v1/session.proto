@@ -1,5 +1,5 @@
 // Messaggi scambiati dentro una sessione tra il dispositivo che controlla
-// (viewer) e quello controllato (host). Vedi docs/11-protocollo.md.
+// (viewer) e quello controllato (agent). Vedi docs/11-protocollo.md.
 //
 // Regole: i campi si aggiungono e non si riutilizzano mai; i messaggi
 // sconosciuti vengono ignorati.
@@ -38,7 +38,7 @@ message Hello {
   string app_version = 4;
 }
 
-// Inviato dall'host quando inizia (o cambia) il flusso video.
+// Inviato dall'agent quando inizia (o cambia) il flusso video.
 message VideoFormat {
   Codec codec = 1;
   uint32 width = 2;
@@ -52,23 +52,23 @@ message Ping {
 
 message Pong {
   uint64 ping_sent_us = 1;
-  // Orologio dell'host (microsecondi dal 1970) quando ha ricevuto il Ping.
-  uint64 host_us = 2;
+  // Orologio dell'agent (microsecondi dal 1970) quando ha ricevuto il Ping.
+  uint64 agent_us = 2;
 }
 
 message RequestKeyframe {}
 
-// Canale `video` (stream unidirezionale host -> viewer).
+// Canale `video` (stream unidirezionale agent -> viewer).
 message VideoFrame {
   uint64 seq = 1;
-  // Orologio dell'host (microsecondi dal 1970) al momento della cattura.
+  // Orologio dell'agent (microsecondi dal 1970) al momento della cattura.
   uint64 capture_us = 2;
   uint32 encode_us = 3;
   bool keyframe = 4;
   bytes data = 5;
 }
 
-// Canale `input` (stream unidirezionale viewer -> host).
+// Canale `input` (stream unidirezionale viewer -> agent).
 message InputEvent {
   oneof event {
     MouseMove mouse_move = 1;

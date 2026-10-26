@@ -1,6 +1,6 @@
 //! Nexo viewer — la finestra della sessione remota.
 //!
-//! Prototipo della fase 0: si collega direttamente a un host in LAN, mostra lo
+//! Prototipo della fase 0: si collega direttamente a un agent in LAN, mostra lo
 //! schermo con wgpu e invia mouse e tastiera. Nel titolo della finestra:
 //! frame al secondo, latenza cattura→visualizzazione, RTT e banda.
 
@@ -29,12 +29,12 @@ use crate::render::Renderer;
 const COPYRIGHT: &str = "Nexo © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/Nexo";
 
 #[derive(Parser, Debug)]
-#[command(version, about = "Nexo viewer: controlla un PC con Nexo host (prototipo in LAN)", after_help = COPYRIGHT)]
+#[command(version, about = "Nexo viewer: controlla un PC con Nexo agent (prototipo in LAN)", after_help = COPYRIGHT)]
 struct Args {
-    /// Indirizzo dell'host, es. 192.168.1.20 oppure 192.168.1.20:21500.
-    host: String,
+    /// Indirizzo dell'agent, es. 192.168.1.20 oppure 192.168.1.20:21500.
+    agent: String,
 
-    /// Impronta del certificato mostrata dall'host (consigliata).
+    /// Impronta del certificato mostrata dall'agent (consigliata).
     #[arg(long)]
     fingerprint: Option<String>,
 
@@ -43,20 +43,20 @@ struct Args {
     view_only: bool,
 }
 
-/// Indirizzo dell'host; senza porta si usa quella predefinita.
-fn resolve(host: &str) -> Result<SocketAddr> {
-    if let Ok(addr) = host.parse::<SocketAddr>() {
+/// Indirizzo dell'agent; senza porta si usa quella predefinita.
+fn resolve(agent: &str) -> Result<SocketAddr> {
+    if let Ok(addr) = agent.parse::<SocketAddr>() {
         return Ok(addr);
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    if let Ok(ip) = agent.parse::<IpAddr>() {
         return Ok((ip, nexo_transport::DEFAULT_PORT).into());
     }
-    let mut addrs = if host.contains(':') {
-        host.to_socket_addrs()?
+    let mut addrs = if agent.contains(':') {
+        agent.to_socket_addrs()?
     } else {
-        (host, nexo_transport::DEFAULT_PORT).to_socket_addrs()?
+        (agent, nexo_transport::DEFAULT_PORT).to_socket_addrs()?
     };
-    addrs.next().with_context(|| format!("indirizzo non valido: {host}"))
+    addrs.next().with_context(|| format!("indirizzo non valido: {agent}"))
 }
 
 fn main() -> Result<()> {
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
-    let addr = resolve(&args.host)?;
+    let addr = resolve(&args.agent)?;
     let fingerprint = args.fingerprint.as_deref().map(nexo_transport::parse_fingerprint).transpose()?;
     println!("{COPYRIGHT}");
 
@@ -78,7 +78,7 @@ fn main() -> Result<()> {
         view_only: args.view_only,
         window: None,
         renderer: None,
-        host: addr.to_string(),
+        agent: addr.to_string(),
         stats: Stats::new(),
         clock_offset_us: None,
         best_rtt_us: u64::MAX,
@@ -94,16 +94,16 @@ fn main() -> Result<()> {
 }
 
 struct App {
-    /// Host a cui collegarsi appena la finestra è pronta.
+    /// Agent a cui collegarsi appena la finestra è pronta.
     connect: Option<(SocketAddr, Option<nexo_transport::Fingerprint>)>,
     proxy: EventLoopProxy<NetEvent>,
     input: Option<UnboundedSender<InputEvent>>,
     view_only: bool,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
-    host: String,
+    agent: String,
     stats: Stats,
-    /// Orologio dell'host meno il nostro (dalla misura con RTT minore).
+    /// Orologio dell'agent meno il nostro (dalla misura con RTT minore).
     clock_offset_us: Option<i64>,
     best_rtt_us: u64,
     rtt_us: u64,
@@ -134,7 +134,7 @@ impl App {
         };
         let title = format!(
             "Nexo — {} · {:.0} fps · latenza {latency} · RTT {:.1} ms · {:.1} Mbit/s · comp. {:.1} ms · decomp. {:.1} ms",
-            self.host,
+            self.agent,
             s.fps(),
             self.rtt_us as f64 / 1000.0,
             s.mbps(),
@@ -152,7 +152,7 @@ impl ApplicationHandler<NetEvent> for App {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title(format!("Nexo — connessione a {}…", self.host))
+            .with_title(format!("Nexo — connessione a {}…", self.agent))
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -183,10 +183,10 @@ impl ApplicationHandler<NetEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
         match event {
-            NetEvent::Connected { host, width, height } => {
+            NetEvent::Connected { agent, width, height } => {
                 info!("schermo remoto {width}x{height}");
-                if !host.is_empty() {
-                    self.host = host;
+                if !agent.is_empty() {
+                    self.agent = agent;
                 }
                 self.update_title();
             }

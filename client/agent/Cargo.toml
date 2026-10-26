@@ -1,5 +1,5 @@
 [package]
-name = "nexo-host"
+name = "nexo-agent"
 description = "Nexo: dispositivo controllato (prototipo fase 0, solo LAN)"
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [[bin]]
-name = "nexo-host"
+name = "nexo-agent"
 path = "src/main.rs"
 
 [dependencies]

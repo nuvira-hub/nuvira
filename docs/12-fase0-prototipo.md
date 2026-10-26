@@ -31,25 +31,25 @@ cargo build --release
 Sul PC da controllare:
 
 ```powershell
-target\release\nexo-host.exe                # schermo principale, encoder automatico
-target\release\nexo-host.exe --list-displays
-target\release\nexo-host.exe --display 1 --encoder software
-target\release\nexo-host.exe --synthetic 1920x1080@60   # immagine generata, senza schermo
+target\release\nexo-agent.exe                # schermo principale, encoder automatico
+target\release\nexo-agent.exe --list-displays
+target\release\nexo-agent.exe --display 1 --encoder software
+target\release\nexo-agent.exe --synthetic 1920x1080@60   # immagine generata, senza schermo
 ```
 
-L'host stampa l'impronta del proprio certificato. Sul PC che controlla:
+L'agent stampa l'impronta del proprio certificato. Sul PC che controlla:
 
 ```powershell
 target\release\nexo-viewer.exe 192.168.1.20 --fingerprint <impronta>
 ```
 
-Il titolo della finestra mostra fps, latenza cattura→visualizzazione, RTT, banda e tempi di compressione e decompressione. La porta predefinita è **UDP 21500** (va aperta nel firewall di Windows dell'host).
+Il titolo della finestra mostra fps, latenza cattura→visualizzazione, RTT, banda e tempi di compressione e decompressione. La porta predefinita è **UDP 21500** (va aperta nel firewall di Windows dell'agent).
 
 > Prototipo: nessuna autenticazione oltre all'impronta, una sessione alla volta. Solo per reti fidate.
 
 ## Misure (2026-10-26)
 
-PC di prova: Intel Core i7-10710U, Intel UHD Graphics, Windows 11. Host e viewer **sullo stesso PC** (localhost), quindi in competizione per CPU e GPU.
+PC di prova: Intel Core i7-10710U, Intel UHD Graphics, Windows 11. Agent e viewer **sullo stesso PC** (localhost), quindi in competizione per CPU e GPU.
 
 ### Schermo reale
 
@@ -86,6 +86,6 @@ Osservazioni:
 ## Prossimi passi per arrivare a 60 fps
 
 1. **Cattura e compressione su thread separati**, così la cattura del frame successivo avviene mentre il precedente viene compresso.
-2. **Percorso senza copie sull'host**: la texture D3D11 della cattura viene convertita in NV12 dalla GPU (D3D11 Video Processor) e passata all'encoder tramite `IMFDXGIDeviceManager`. Questo elimina la conversione sulla CPU e il caricamento in memoria video.
+2. **Percorso senza copie sull'agent**: la texture D3D11 della cattura viene convertita in NV12 dalla GPU (D3D11 Video Processor) e passata all'encoder tramite `IMFDXGIDeviceManager`. Questo elimina la conversione sulla CPU e il caricamento in memoria video.
 3. **Decodifica hardware nel viewer** (Media Foundation / D3D11), con il passaggio a wgpu.
 4. Misura tra **due PC diversi** in LAN e a schermo sbloccato, con la cattura reale.
