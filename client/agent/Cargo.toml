@@ -21,3 +21,6 @@ nexo-transport.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+nu-ansi-term.workspace = true

@@ -59,8 +59,19 @@ fn resolve(agent: &str) -> Result<SocketAddr> {
     addrs.next().with_context(|| format!("indirizzo non valido: {agent}"))
 }
 
+/// Colori nei log solo se il terminale li interpreta (il vecchio prompt di Windows
+/// li mostrerebbe come `←[2m`).
+fn ansi_colors() -> bool {
+    #[cfg(windows)]
+    return std::io::IsTerminal::is_terminal(&std::io::stderr())
+        && nu_ansi_term::enable_ansi_support().is_ok();
+    #[cfg(not(windows))]
+    std::io::IsTerminal::is_terminal(&std::io::stderr())
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
+        .with_ansi(ansi_colors())
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )

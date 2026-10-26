@@ -37,6 +37,7 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+nu-ansi-term = "0.50"
 openh264 = "0.9"
 wgpu = "30"
 winit = "0.30"

@@ -119,8 +119,13 @@ impl Renderer {
         .context("nessuna scheda video compatibile")?;
         let info = adapter.get_info();
         let adapter_info = format!("{} ({:?})", info.name, info.backend);
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-            .context("dispositivo wgpu")?;
+        // Si chiedono solo i limiti minimi (quelli di WebGL2) più la risoluzione massima della scheda:
+        // il viewer non usa compute shader, e le schede che passano da OpenGL non li offrono.
+        let required_limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
+        let (device, queue) = pollster::block_on(
+            adapter.request_device(&wgpu::DeviceDescriptor { required_limits, ..Default::default() }),
+        )
+        .with_context(|| format!("dispositivo wgpu su {adapter_info}"))?;
 
         let caps = surface.get_capabilities(&adapter);
         // Lo shader produce valori già in gamma sRGB: serve un formato non-sRGB,
