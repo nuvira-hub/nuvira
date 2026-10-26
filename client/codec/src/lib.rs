@@ -10,6 +10,8 @@
 
 pub mod convert;
 #[cfg(windows)]
+pub mod gpu;
+#[cfg(windows)]
 mod mf;
 mod openh264;
 mod select;
@@ -59,6 +61,23 @@ pub trait VideoEncoder: Send {
 
     /// Comprime un'immagine. `None` se l'encoder decide di saltare il frame.
     fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> anyhow::Result<Option<EncodedFrame>>;
+
+    /// Comprime un frame che è già sulla GPU (solo encoder con [`accepts_textures`](Self::accepts_textures)).
+    #[cfg(windows)]
+    fn encode_texture(
+        &mut self,
+        _texture: &gpu::GpuTexture,
+        _width: u32,
+        _height: u32,
+        _force_keyframe: bool,
+    ) -> anyhow::Result<Option<EncodedFrame>> {
+        anyhow::bail!("questo encoder non accetta texture GPU")
+    }
+
+    /// L'encoder vuole i frame come texture GPU invece che in RAM.
+    fn accepts_textures(&self) -> bool {
+        false
+    }
 }
 
 pub trait VideoDecoder: Send {
@@ -78,39 +97,58 @@ pub enum EncoderChoice {
     Software,
 }
 
-/// L'encoder H.264 scelto. Con `Auto` si usa il più veloce su questo PC
-/// (vedi [`select`]); se manca l'hardware, OpenH264.
-pub fn create_encoder(
-    choice: EncoderChoice,
-    settings: EncoderSettings,
-) -> anyhow::Result<Box<dyn VideoEncoder>> {
-    let choice = match choice {
-        EncoderChoice::Auto => select::auto_choice(settings),
-        other => other,
-    };
-    create_specific(choice, settings)
+/// Come comprimere, deciso una volta per processo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncoderPlan {
+    /// OpenH264 sulla CPU.
+    Software,
+    /// Encoder della scheda video, immagine passata dalla RAM.
+    Hardware,
+    /// Encoder della scheda video, immagine che resta sulla GPU dalla cattura in poi.
+    HardwareGpu,
 }
 
-/// Esegue subito la prova degli encoder di `Auto` (circa un secondo), così non
-/// ritarda il primo frame della prima sessione.
-pub fn preselect_encoder(settings: EncoderSettings) -> EncoderChoice {
-    select::auto_choice(settings)
-}
+/// Device grafico condiviso tra cattura ed encoder (solo Windows).
+#[cfg(not(windows))]
+#[derive(Clone)]
+pub struct GpuDevice(());
+#[cfg(windows)]
+pub use gpu::{GpuDevice, GpuTexture};
 
-fn create_specific(
-    choice: EncoderChoice,
-    settings: EncoderSettings,
-) -> anyhow::Result<Box<dyn VideoEncoder>> {
+/// Traduce la scelta dell'utente in un piano. Con `Auto` prova gli encoder disponibili
+/// (circa due secondi, una volta sola: conviene chiamarla all'avvio).
+pub fn plan_encoder(choice: EncoderChoice, settings: EncoderSettings) -> EncoderPlan {
     match choice {
+        EncoderChoice::Auto => select::auto_plan(settings),
+        EncoderChoice::Hardware if cfg!(windows) => EncoderPlan::HardwareGpu,
+        EncoderChoice::Hardware => EncoderPlan::Hardware,
+        EncoderChoice::Software => EncoderPlan::Software,
+    }
+}
+
+/// Crea l'encoder del piano. Per `HardwareGpu` serve il device della cattura;
+/// senza, si ripiega sull'ingresso dalla RAM.
+pub fn create_encoder(
+    plan: EncoderPlan,
+    settings: EncoderSettings,
+    gpu: Option<GpuDevice>,
+) -> anyhow::Result<Box<dyn VideoEncoder>> {
+    match plan {
         #[cfg(windows)]
-        EncoderChoice::Hardware => {
-            let enc = MfEncoder::new(settings)?;
+        EncoderPlan::Hardware | EncoderPlan::HardwareGpu => {
+            let enc = match (plan, gpu) {
+                (EncoderPlan::HardwareGpu, Some(device)) => MfEncoder::with_device(settings, device)?,
+                _ => MfEncoder::new(settings)?,
+            };
             tracing::info!("encoder hardware: {}", enc.device_name());
             Ok(Box::new(enc))
         }
         #[cfg(not(windows))]
-        EncoderChoice::Hardware => anyhow::bail!("encoder hardware non ancora disponibile su questo sistema"),
-        EncoderChoice::Software | EncoderChoice::Auto => Ok(Box::new(OpenH264Encoder::new(settings)?)),
+        EncoderPlan::Hardware | EncoderPlan::HardwareGpu => {
+            let _ = gpu;
+            anyhow::bail!("encoder hardware non ancora disponibile su questo sistema")
+        }
+        EncoderPlan::Software => Ok(Box::new(OpenH264Encoder::new(settings)?)),
     }
 }
 

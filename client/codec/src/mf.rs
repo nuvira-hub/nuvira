@@ -21,6 +21,9 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoTaskMe
 use windows::Win32::System::Variant::VARIANT;
 use windows::core::{Interface, PWSTR};
 
+use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
+
+use crate::gpu::{GpuDevice, GpuTexture, Nv12Converter};
 use crate::{BgraImage, EncodedFrame, EncoderSettings, VideoEncoder, convert};
 
 /// Tempo massimo di attesa dell'output di un frame prima di restituire `None`
@@ -119,16 +122,40 @@ struct Session {
     output_size: u32,
     need_input: u32,
     sequence_header: Vec<u8>,
+    /// Ingresso da texture GPU: conversione NV12 sulla scheda + gestore del device per l'MFT.
+    gpu: Option<(Nv12Converter, IMFDXGIDeviceManager)>,
 }
 
 impl Session {
-    fn new(activate: &IMFActivate, width: u32, height: u32, settings: EncoderSettings) -> Result<Self> {
+    fn new(
+        activate: &IMFActivate,
+        width: u32,
+        height: u32,
+        settings: EncoderSettings,
+        device: Option<&ID3D11Device>,
+    ) -> Result<Self> {
         let transform: IMFTransform = unsafe { activate.ActivateObject() }.context("ActivateObject")?;
         unsafe {
             let attrs = transform.GetAttributes()?;
             attrs.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1).context("sblocco MFT asincrono")?;
             let _ = attrs.SetUINT32(&MF_LOW_LATENCY, 1);
         }
+        // Con un device D3D11 l'MFT legge le texture NV12 direttamente dalla GPU.
+        // Il gestore va consegnato prima di impostare i tipi di ingresso e uscita.
+        let manager = match device {
+            Some(device) => unsafe {
+                let mut token = 0u32;
+                let mut manager = None;
+                MFCreateDXGIDeviceManager(&mut token, &mut manager)?;
+                let manager = manager.ok_or_else(|| anyhow!("gestore DXGI assente"))?;
+                manager.ResetDevice(device, token)?;
+                transform
+                    .ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize)
+                    .context("l'encoder non accetta texture D3D11")?;
+                Some(manager)
+            },
+            None => None,
+        };
         let fps = settings.max_fps.max(1) as u64;
         let frame_size = ((width as u64) << 32) | height as u64;
 
@@ -179,6 +206,11 @@ impl Session {
             transform.SetInputType(0, &inp, 0).context("tipo di input NV12")?;
         }
 
+        let gpu = match (device, manager) {
+            (Some(device), Some(manager)) => Some((Nv12Converter::new(device, width, height)?, manager)),
+            _ => None,
+        };
+
         let info = unsafe { transform.GetOutputStreamInfo(0) }?;
         let provides_samples = info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0;
 
@@ -228,6 +260,7 @@ impl Session {
             output_size: info.cbSize.max(1024 * 1024),
             need_input: 0,
             sequence_header: Vec::new(),
+            gpu,
         })
     }
 
@@ -333,6 +366,24 @@ impl Session {
     }
 }
 
+impl Session {
+    fn texture_sample(&mut self, bgra: &ID3D11Texture2D, time_100ns: i64) -> Result<IMFSample> {
+        let (converter, _) =
+            self.gpu.as_mut().ok_or_else(|| anyhow!("encoder avviato senza device D3D11"))?;
+        let nv12 = converter.convert(bgra)?;
+        unsafe {
+            let buffer = MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, &nv12, 0, false)?;
+            if let Ok(b2) = buffer.cast::<IMF2DBuffer>() {
+                buffer.SetCurrentLength(b2.GetContiguousLength()?)?;
+            }
+            let sample = MFCreateSample()?;
+            sample.AddBuffer(&buffer)?;
+            sample.SetSampleTime(time_100ns)?;
+            Ok(sample)
+        }
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         unsafe {
@@ -352,6 +403,8 @@ pub struct MfEncoder {
     activate: IMFActivate,
     name: String,
     settings: EncoderSettings,
+    /// Presente se l'encoder riceve texture GPU invece di immagini in RAM.
+    device: Option<ID3D11Device>,
     session: Option<Session>,
     outputs: VecDeque<EncodedFrame>,
     started: Instant,
@@ -369,31 +422,40 @@ impl MfEncoder {
             activate,
             name,
             settings,
+            device: None,
             session: None,
             outputs: VecDeque::new(),
             started: Instant::now(),
         })
     }
 
+    /// Encoder che riceve texture del `device` (cattura sulla GPU, vedi [`crate::gpu`]).
+    pub fn with_device(settings: EncoderSettings, device: GpuDevice) -> Result<Self> {
+        let mut enc = Self::new(settings)?;
+        enc.device = Some(device.0);
+        Ok(enc)
+    }
+
     pub fn device_name(&self) -> &str {
         &self.name
     }
-}
 
-impl VideoEncoder for MfEncoder {
-    fn name(&self) -> &'static str {
-        "mediafoundation"
-    }
-
-    fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<Option<EncodedFrame>> {
-        let (w, h) = convert::even_size(image);
-        let (w, h) = (w as u32, h as u32);
+    /// Comprime un frame preparato da `make_sample` (immagine in RAM o texture GPU).
+    fn encode_sample(
+        &mut self,
+        width: u32,
+        height: u32,
+        force_keyframe: bool,
+        make_sample: impl FnOnce(&mut Session, i64) -> Result<IMFSample>,
+    ) -> Result<Option<EncodedFrame>> {
+        let (w, h) = (width & !1, height & !1);
         if self.session.as_ref().is_none_or(|s| s.width != w || s.height != h) {
             self.session = None;
             self.outputs.clear();
-            let session = Session::new(&self.activate, w, h, self.settings)
+            let session = Session::new(&self.activate, w, h, self.settings, self.device.as_ref())
                 .with_context(|| format!("avvio di {}", self.name))?;
-            info!("encoder hardware {} avviato a {w}x{h}", self.name);
+            let input = if self.device.is_some() { "texture GPU" } else { "RAM" };
+            info!("encoder hardware {} avviato a {w}x{h}, ingresso da {input}", self.name);
             self.session = Some(session);
         }
         let session = self.session.as_mut().expect("sessione avviata");
@@ -414,7 +476,7 @@ impl VideoEncoder for MfEncoder {
         let waited_input = t_wait.elapsed();
         let time = (self.started.elapsed().as_nanos() / 100) as i64;
         let t_convert = Instant::now();
-        let sample = session.input_sample(image, time)?;
+        let sample = make_sample(session, time)?;
         let converted = t_convert.elapsed();
         let t_encode = Instant::now();
         unsafe { session.transform.ProcessInput(0, &sample, 0) }.context("ProcessInput")?;
@@ -439,6 +501,37 @@ impl VideoEncoder for MfEncoder {
             "frame hardware"
         );
         Ok(self.outputs.pop_front())
+    }
+}
+
+impl VideoEncoder for MfEncoder {
+    fn name(&self) -> &'static str {
+        "mediafoundation"
+    }
+
+    fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<Option<EncodedFrame>> {
+        if self.device.is_some() {
+            bail!("encoder configurato per texture GPU");
+        }
+        self.encode_sample(image.width, image.height, force_keyframe, |session, time| {
+            session.input_sample(image, time)
+        })
+    }
+
+    fn encode_texture(
+        &mut self,
+        texture: &GpuTexture,
+        width: u32,
+        height: u32,
+        force_keyframe: bool,
+    ) -> Result<Option<EncodedFrame>> {
+        self.encode_sample(width, height, force_keyframe, |session, time| {
+            session.texture_sample(&texture.0, time)
+        })
+    }
+
+    fn accepts_textures(&self) -> bool {
+        self.device.is_some()
     }
 }
 

@@ -27,3 +27,4 @@ nu-ansi-term.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
+png.workspace = true

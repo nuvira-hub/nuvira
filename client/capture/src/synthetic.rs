@@ -33,6 +33,8 @@ impl SyntheticCapturer {
                 stride: width as usize * 4,
                 data: vec![0; width as usize * height as usize * 4],
                 captured_us: 0,
+                #[cfg(windows)]
+                texture: None,
             },
             interval: Duration::from_secs(1) / fps.max(1),
             next: Instant::now(),

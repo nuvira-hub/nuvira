@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use nexo_codec::{BgraImage, EncoderChoice, EncoderSettings, VideoDecoder, VideoEncoder};
+use nexo_codec::{BgraImage, EncoderPlan, EncoderSettings, VideoDecoder, VideoEncoder};
 
 const FRAMES: usize = 120;
 
@@ -77,9 +77,14 @@ fn main() {
         Ok(list) => println!("encoder hardware trovati: {list:?}"),
         Err(e) => println!("enumerazione encoder hardware non riuscita: {e:#}"),
     }
-    match nexo_codec::create_encoder(EncoderChoice::Hardware, settings) {
+    match nexo_codec::create_encoder(EncoderPlan::Hardware, settings, None) {
         Ok(enc) => run("hardware (Media Foundation)", enc, w, h),
         Err(e) => println!("hardware non disponibile: {e:#}"),
     }
-    run("software (OpenH264)", nexo_codec::create_encoder(EncoderChoice::Software, settings).unwrap(), w, h);
+    run(
+        "software (OpenH264)",
+        nexo_codec::create_encoder(EncoderPlan::Software, settings, None).unwrap(),
+        w,
+        h,
+    );
 }

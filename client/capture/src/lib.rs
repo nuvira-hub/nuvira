@@ -35,6 +35,9 @@ pub struct Frame {
     pub data: Vec<u8>,
     /// Orologio di sistema in microsecondi al momento della cattura.
     pub captured_us: u64,
+    /// Modalità GPU (Windows): l'immagine è in questa texture BGRA e `data` è vuoto.
+    #[cfg(windows)]
+    pub texture: Option<::windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>,
 }
 
 pub trait Capturer: Send {
@@ -45,6 +48,13 @@ pub trait Capturer: Send {
 
     /// Ultima immagine catturata (per ricomprimerla quando serve un keyframe a schermo fermo).
     fn last_frame(&self) -> Option<&Frame>;
+
+    /// Passa alla modalità GPU: i frame restano in texture Direct3D 11 su questo device,
+    /// da condividere con l'encoder hardware. `None` se la sorgente non la supporta.
+    #[cfg(windows)]
+    fn enable_gpu_output(&mut self) -> Option<::windows::Win32::Graphics::Direct3D11::ID3D11Device> {
+        None
+    }
 }
 
 /// Elenco degli schermi disponibili.

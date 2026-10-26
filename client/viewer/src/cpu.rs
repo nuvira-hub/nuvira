@@ -89,6 +89,20 @@ impl CpuRenderer {
     }
 }
 
+/// Salva un frame in PNG a risoluzione piena.
+pub fn write_png(frame: &YuvFrame, path: &std::path::Path) -> Result<()> {
+    let (w, h) = (frame.width as usize, frame.height as usize);
+    let src_x: Vec<usize> = (0..w).collect();
+    let mut pixels = vec![0u32; w * h];
+    yuv_to_rgb_scaled(frame, &src_x, h, &mut pixels, w, 0);
+    let rgb: Vec<u8> = pixels.iter().flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8]).collect();
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut encoder = png::Encoder::new(file, frame.width, frame.height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.write_header()?.write_image_data(&rgb)?;
+    Ok(())
+}
+
 #[inline(always)]
 fn clamp8(v: i32) -> u32 {
     v.clamp(0, 255) as u32

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use nexo_capture::{Capturer, Display};
-use nexo_codec::{BgraImage, VideoEncoder};
+use nexo_codec::{BgraImage, GpuDevice, VideoEncoder};
 use nexo_proto::v1::VideoFrame;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -24,6 +24,9 @@ struct Captured {
     stride: usize,
     data: Vec<u8>,
     captured_us: u64,
+    /// Modalità GPU: l'immagine è in questa texture e `data` è vuoto.
+    #[cfg(windows)]
+    texture: Option<nexo_codec::GpuTexture>,
 }
 
 #[derive(Default)]
@@ -53,9 +56,12 @@ pub struct Pipeline {
 
 impl Pipeline {
     /// Avvia i due thread. Bloccante finché cattura ed encoder non sono pronti.
+    /// Con `gpu` la cattura lascia le immagini sulla scheda video e l'encoder riceve
+    /// il suo device (se la sorgente non lo supporta, si passa dalla RAM).
     pub fn start(
-        open_capturer: impl FnOnce() -> Result<Box<dyn Capturer>> + Send + 'static,
-        open_encoder: impl FnOnce() -> Result<Box<dyn VideoEncoder>> + Send + 'static,
+        open_capturer: impl FnOnce() -> Result<Box<dyn Capturer>>,
+        open_encoder: impl FnOnce(Option<GpuDevice>) -> Result<Box<dyn VideoEncoder>> + Send + 'static,
+        gpu: bool,
         max_fps: u32,
         frames: mpsc::Sender<VideoFrame>,
         keyframe: Arc<AtomicBool>,
@@ -63,11 +69,21 @@ impl Pipeline {
         let shared = Arc::new(Shared::default());
         let mut pipeline = Self { shared: shared.clone(), threads: Vec::new() };
 
+        let mut capturer = open_capturer()?;
+        #[cfg(windows)]
+        let device = if gpu { capturer.enable_gpu_output().map(GpuDevice) } else { None };
+        #[cfg(not(windows))]
+        let device: Option<GpuDevice> = None;
+        if gpu && device.is_none() {
+            info!("la sorgente non offre immagini sulla GPU: l'encoder le riceve dalla RAM");
+        }
+        let screen = capturer.display().clone();
+
         // L'encoder si crea nel thread che lo userà (Media Foundation inizializza COM per thread).
         let (enc_ready_tx, enc_ready_rx) = std::sync::mpsc::channel();
         let s = shared.clone();
         pipeline.threads.push(std::thread::Builder::new().name("compressione".into()).spawn(move || {
-            let encoder = match open_encoder() {
+            let encoder = match open_encoder(device) {
                 Ok(e) => {
                     let _ = enc_ready_tx.send(Ok(e.name()));
                     e
@@ -80,25 +96,13 @@ impl Pipeline {
             encode_loop(&s, encoder, max_fps, &frames, &keyframe);
         })?);
 
-        let (cap_ready_tx, cap_ready_rx) = std::sync::mpsc::channel();
         let s = shared.clone();
-        pipeline.threads.push(std::thread::Builder::new().name("cattura".into()).spawn(move || {
-            let capturer = match open_capturer() {
-                Ok(c) => {
-                    let _ = cap_ready_tx.send(Ok(c.display().clone()));
-                    c
-                }
-                Err(e) => {
-                    let _ = cap_ready_tx.send(Err(e));
-                    return;
-                }
-            };
-            capture_loop(&s, capturer);
-        })?);
+        pipeline.threads.push(
+            std::thread::Builder::new().name("cattura".into()).spawn(move || capture_loop(&s, capturer))?,
+        );
 
         // In caso di errore `pipeline` viene distrutta e ferma l'altro thread.
         let encoder = enc_ready_rx.recv().map_err(|_| anyhow!("thread di compressione terminato"))??;
-        let screen = cap_ready_rx.recv().map_err(|_| anyhow!("thread di cattura terminato"))??;
         info!("trasmetto {} {}x{} con {encoder}", screen.name, screen.width, screen.height);
         Ok((screen, pipeline))
     }
@@ -135,6 +139,8 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
             stride: frame.stride,
             data,
             captured_us: frame.captured_us,
+            #[cfg(windows)]
+            texture: frame.texture.clone().map(nexo_codec::GpuTexture),
         };
         shared.captured.fetch_add(1, Ordering::Relaxed);
         let old = shared.slot.lock().expect("slot").replace(captured);
@@ -189,9 +195,22 @@ fn encode_loop(
         let Some(image) = &last else { continue };
 
         let t = Instant::now();
-        let bgra =
-            BgraImage { width: image.width, height: image.height, stride: image.stride, data: &image.data };
-        let encoded = match encoder.encode(&bgra, force_key) {
+        let result = match image_texture(image) {
+            #[cfg(windows)]
+            Some(texture) if encoder.accepts_textures() => {
+                encoder.encode_texture(texture, image.width, image.height, force_key)
+            }
+            _ => {
+                let bgra = BgraImage {
+                    width: image.width,
+                    height: image.height,
+                    stride: image.stride,
+                    data: &image.data,
+                };
+                encoder.encode(&bgra, force_key)
+            }
+        };
+        let encoded = match result {
             Ok(Some(e)) => e,
             Ok(None) => continue,
             Err(e) => {
@@ -219,6 +238,16 @@ fn encode_loop(
         }
         stats.report(shared);
     }
+}
+
+#[cfg(windows)]
+fn image_texture(image: &Captured) -> Option<&nexo_codec::GpuTexture> {
+    image.texture.as_ref()
+}
+
+#[cfg(not(windows))]
+fn image_texture(_image: &Captured) -> Option<&()> {
+    None
 }
 
 #[derive(Default)]
@@ -271,7 +300,8 @@ mod tests {
         let keyframe = Arc::new(AtomicBool::new(true));
         let (display, pipeline) = Pipeline::start(
             || Ok(Box::new(nexo_capture::SyntheticCapturer::new(320, 180, 60)) as Box<dyn Capturer>),
-            || nexo_codec::create_encoder(nexo_codec::EncoderChoice::Software, Default::default()),
+            |gpu| nexo_codec::create_encoder(nexo_codec::EncoderPlan::Software, Default::default(), gpu),
+            false,
             60,
             tx,
             keyframe,

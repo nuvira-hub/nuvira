@@ -53,6 +53,10 @@ struct Args {
     /// Scrive i risultati della sessione in JSON all'uscita (test automatici).
     #[arg(long, value_name = "FILE")]
     stats_file: Option<PathBuf>,
+
+    /// Salva l'ultimo frame mostrato in PNG all'uscita (verifica dei colori nei test).
+    #[arg(long, value_name = "FILE")]
+    snapshot: Option<PathBuf>,
 }
 
 /// Indirizzo dell'agent; senza porta si usa quella predefinita.
@@ -103,6 +107,8 @@ fn main() -> Result<()> {
         });
     }
     let mut app = App {
+        keep_last_frame: args.snapshot.is_some(),
+        last_frame: None,
         slot: Arc::new(FrameSlot::default()),
         started,
         report: Report::default(),
@@ -130,10 +136,16 @@ fn main() -> Result<()> {
         std::fs::write(path, app.report.to_json(app.started))
             .with_context(|| format!("scrittura di {}", path.display()))?;
     }
+    if let (Some(path), Some(frame)) = (&args.snapshot, &app.last_frame) {
+        cpu::write_png(frame, path).with_context(|| format!("scrittura di {}", path.display()))?;
+    }
     Ok(())
 }
 
 struct App {
+    /// Conserva una copia dell'ultimo frame per `--snapshot`.
+    keep_last_frame: bool,
+    last_frame: Option<nexo_codec::YuvFrame>,
     slot: Arc<FrameSlot>,
     started: Instant,
     report: Report,
@@ -239,6 +251,14 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::FrameReady => {
                 let Some(frame) = self.slot.take() else { return };
+                if self.keep_last_frame {
+                    let last = self.last_frame.get_or_insert_with(Default::default);
+                    last.width = frame.yuv.width;
+                    last.height = frame.yuv.height;
+                    last.y.clone_from(&frame.yuv.y);
+                    last.u.clone_from(&frame.yuv.u);
+                    last.v.clone_from(&frame.yuv.v);
+                }
                 let Some(renderer) = self.renderer.as_mut() else { return };
                 let t = Instant::now();
                 renderer.upload(&frame.yuv);

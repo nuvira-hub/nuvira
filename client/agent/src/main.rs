@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use nexo_capture::{Capturer, SyntheticCapturer};
-use nexo_codec::{EncoderChoice, EncoderSettings};
+use nexo_codec::{EncoderChoice, EncoderPlan, EncoderSettings};
 use nexo_proto::v1::{
     Codec, ControlMessage, Hello, InputEvent, Pong, VideoFormat, VideoFrame, control_message::Msg,
 };
@@ -142,16 +142,16 @@ fn main() -> Result<()> {
     }
 
     println!("{COPYRIGHT}");
-    if matches!(args.encoder, EncoderArg::Auto) {
-        nexo_codec::preselect_encoder(EncoderSettings {
-            bitrate_bps: args.bitrate * 1000,
-            max_fps: args.fps,
-        });
-    }
-    tokio::runtime::Runtime::new()?.block_on(serve(args))
+    // Con `auto` gli encoder vengono provati qui, così non ritardano la prima sessione.
+    let plan = nexo_codec::plan_encoder(args.encoder.into(), encoder_settings(&args));
+    tokio::runtime::Runtime::new()?.block_on(serve(args, plan))
 }
 
-async fn serve(args: Args) -> Result<()> {
+fn encoder_settings(args: &Args) -> EncoderSettings {
+    EncoderSettings { bitrate_bps: args.bitrate * 1000, max_fps: args.fps }
+}
+
+async fn serve(args: Args, plan: EncoderPlan) -> Result<()> {
     let bind: SocketAddr = ([0, 0, 0, 0], args.port).into();
     let (endpoint, fingerprint) = nexo_transport::server_endpoint(bind)?;
     info!("in attesa del viewer su UDP {bind}");
@@ -172,7 +172,7 @@ async fn serve(args: Args) -> Result<()> {
         };
         let peer = conn.remote_address();
         info!("viewer collegato da {peer}");
-        match session(conn.clone(), &args).await {
+        match session(conn.clone(), &args, plan).await {
             Ok(()) => info!("sessione con {peer} terminata"),
             Err(e) => warn!("sessione con {peer} terminata: {e:#}"),
         }
@@ -185,7 +185,7 @@ async fn serve(args: Args) -> Result<()> {
     Ok(())
 }
 
-async fn session(conn: Connection, args: &Args) -> Result<()> {
+async fn session(conn: Connection, args: &Args, plan: EncoderPlan) -> Result<()> {
     let (send, recv) = conn.accept_bi().await.context("canale di controllo")?;
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -202,13 +202,14 @@ async fn session(conn: Connection, args: &Args) -> Result<()> {
     let keyframe = Arc::new(AtomicBool::new(true));
     let (frame_tx, mut frame_rx) = mpsc::channel::<VideoFrame>(1);
     let (display, pipeline) = {
-        let (cap_args, enc_args, keyframe) = (args.clone(), args.clone(), keyframe.clone());
-        let settings = EncoderSettings { bitrate_bps: args.bitrate * 1000, max_fps: args.fps };
+        let (cap_args, keyframe) = (args.clone(), keyframe.clone());
+        let settings = encoder_settings(args);
         let fps = args.fps;
         tokio::task::spawn_blocking(move || {
             Pipeline::start(
                 move || open_capturer(&cap_args),
-                move || nexo_codec::create_encoder(enc_args.encoder.into(), settings),
+                move |gpu| nexo_codec::create_encoder(plan, settings, gpu),
+                plan == EncoderPlan::HardwareGpu,
                 fps,
                 frame_tx,
                 keyframe,
