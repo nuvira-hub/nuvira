@@ -1,0 +1,327 @@
+// Package signal gestisce le connessioni dei dispositivi al server:
+// registrazione con prova della chiave, presenza, richieste di collegamento
+// e consegna dei percorsi (relay) ai due lati di una sessione.
+package signal
+
+import (
+	"bufio"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/quic-go/quic-go"
+	"google.golang.org/protobuf/encoding/protodelim"
+
+	"github.com/alexbn71/Nexo/server/internal/pb"
+	"github.com/alexbn71/Nexo/server/internal/relay"
+	"github.com/alexbn71/Nexo/server/internal/store"
+)
+
+// ProtocolVersion è la versione del protocollo di segnalazione parlata dal server.
+const ProtocolVersion = 1
+
+// Prefisso firmato insieme al nonce: impedisce di riusare la firma altrove.
+const registerContext = "nexo-register-v1"
+
+// Tempo concesso all'agent per accettare una richiesta.
+const pendingTimeout = 60 * time.Second
+
+const maxMessage = 64 * 1024
+
+type client struct {
+	device *store.Device
+	conn   *quic.Conn
+	mu     sync.Mutex // serializza le scritture sullo stream
+	stream *quic.Stream
+}
+
+func (c *client) send(msg *pb.ServerMessage) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, err := protodelim.MarshalTo(c.stream, msg)
+	return err
+}
+
+type pending struct {
+	id      string
+	viewer  *client
+	agentID string
+	created time.Time
+}
+
+type Server struct {
+	store *store.Store
+	relay *relay.Relay
+	log   *slog.Logger
+
+	mu       sync.Mutex
+	online   map[string]*client // per ID dispositivo
+	sessions map[string]*pending
+}
+
+func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
+	return &Server{store: st, relay: r, log: log, online: map[string]*client{}, sessions: map[string]*pending{}}
+}
+
+// Serve accetta connessioni finché il listener non viene chiuso.
+func (s *Server) Serve(ctx context.Context, ln *quic.Listener) error {
+	go s.expireLoop(ctx)
+	for {
+		conn, err := ln.Accept(ctx)
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := s.handle(ctx, conn); err != nil && !isClosed(err) {
+				s.log.Debug("connessione terminata", "da", conn.RemoteAddr(), "err", err)
+			}
+		}()
+	}
+}
+
+func isClosed(err error) bool {
+	var appErr *quic.ApplicationError
+	var idle *quic.IdleTimeoutError
+	return errors.Is(err, io.EOF) || errors.As(err, &appErr) || errors.As(err, &idle)
+}
+
+func errorMsg(text, session string) *pb.ServerMessage {
+	return &pb.ServerMessage{Msg: &pb.ServerMessage_Error{Error: &pb.Error{Message: text, SessionId: session}}}
+}
+
+func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
+	defer conn.CloseWithError(0, "")
+	stream, err := conn.AcceptStream(ctx)
+	if err != nil {
+		return err
+	}
+	r := bufio.NewReader(stream)
+	read := func() (*pb.ClientMessage, error) {
+		msg := &pb.ClientMessage{}
+		err := protodelim.UnmarshalOptions{MaxSize: maxMessage}.UnmarshalFrom(r, msg)
+		return msg, err
+	}
+
+	c, err := s.register(conn, stream, read)
+	if err != nil {
+		return fmt.Errorf("registrazione: %w", err)
+	}
+	s.setOnline(c)
+	defer s.setOffline(c)
+	s.log.Info("dispositivo collegato", "id", c.device.ID, "nome", c.device.Name, "da", conn.RemoteAddr())
+
+	for {
+		msg, err := read()
+		if err != nil {
+			s.log.Info("dispositivo scollegato", "id", c.device.ID)
+			return err
+		}
+		switch m := msg.Msg.(type) {
+		case *pb.ClientMessage_Connect:
+			s.connect(c, m.Connect.DeviceId)
+		case *pb.ClientMessage_Accept:
+			s.accept(c, m.Accept.SessionId)
+		case *pb.ClientMessage_Reject:
+			s.reject(c, m.Reject.SessionId, m.Reject.Reason)
+		default:
+			_ = c.send(errorMsg("messaggio non previsto", ""))
+		}
+	}
+}
+
+// register verifica che il dispositivo possieda la chiave privata della chiave
+// pubblica che presenta e gli assegna (o ritrova) il suo ID.
+func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb.ClientMessage, error)) (*client, error) {
+	msg, err := read()
+	if err != nil {
+		return nil, err
+	}
+	reg := msg.GetRegister()
+	if reg == nil || len(reg.PublicKey) != ed25519.PublicKeySize {
+		return nil, errors.New("Register mancante o chiave non valida")
+	}
+	c := &client{conn: conn, stream: stream}
+	if reg.ProtocolVersion < ProtocolVersion {
+		_ = c.send(errorMsg("versione del protocollo non supportata, aggiornare Nexo", ""))
+		return nil, fmt.Errorf("protocollo %d", reg.ProtocolVersion)
+	}
+
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	if err := c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Challenge{Challenge: &pb.Challenge{Nonce: nonce}}}); err != nil {
+		return nil, err
+	}
+	msg, err = read()
+	if err != nil {
+		return nil, err
+	}
+	proof := msg.GetProof()
+	signed := append([]byte(registerContext), nonce...)
+	if proof == nil || !ed25519.Verify(reg.PublicKey, signed, proof.Signature) {
+		_ = c.send(errorMsg("prova della chiave non valida", ""))
+		return nil, errors.New("firma non valida")
+	}
+
+	device, err := s.store.Register(reg.PublicKey, limit(reg.DeviceName, 64), limit(reg.Os, 32))
+	if err != nil {
+		return nil, err
+	}
+	c.device = device
+	err = c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Registered{Registered: &pb.Registered{DeviceId: device.ID}}})
+	return c, err
+}
+
+func limit(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+func (s *Server) setOnline(c *client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if old := s.online[c.device.ID]; old != nil {
+		// Stesso dispositivo ricollegato: la connessione vecchia non serve più.
+		_ = old.conn.CloseWithError(0, "sostituita da una nuova connessione")
+	}
+	s.online[c.device.ID] = c
+}
+
+func (s *Server) setOffline(c *client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.online[c.device.ID] == c {
+		delete(s.online, c.device.ID)
+	}
+	_ = s.store.Touch(c.device.ID)
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func (s *Server) connect(viewer *client, target string) {
+	s.mu.Lock()
+	agent := s.online[target]
+	var p *pending
+	if agent != nil && target != viewer.device.ID {
+		p = &pending{id: randomHex(8), viewer: viewer, agentID: target, created: time.Now()}
+		s.sessions[p.id] = p
+	}
+	s.mu.Unlock()
+
+	if agent == nil {
+		_ = viewer.send(errorMsg("dispositivo "+target+" non raggiungibile", ""))
+		return
+	}
+	if p == nil {
+		_ = viewer.send(errorMsg("non ci si può collegare a se stessi", ""))
+		return
+	}
+	s.log.Info("richiesta di collegamento", "sessione", p.id, "da", viewer.device.ID, "a", target)
+	err := agent.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Incoming{Incoming: &pb.Incoming{
+		SessionId:       p.id,
+		ViewerId:        viewer.device.ID,
+		ViewerName:      viewer.device.Name,
+		ViewerPublicKey: viewer.device.PublicKey,
+	}}})
+	if err != nil {
+		s.dropSession(p.id)
+		_ = viewer.send(errorMsg("dispositivo "+target+" non raggiungibile", p.id))
+	}
+}
+
+// take toglie la sessione dalle richieste in attesa, se appartiene a questo agent.
+func (s *Server) take(agent *client, id string) *pending {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.sessions[id]
+	if p == nil || p.agentID != agent.device.ID {
+		return nil
+	}
+	delete(s.sessions, id)
+	return p
+}
+
+func (s *Server) dropSession(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, id)
+}
+
+func (s *Server) accept(agent *client, id string) {
+	p := s.take(agent, id)
+	if p == nil {
+		_ = agent.send(errorMsg("sessione sconosciuta o scaduta", id))
+		return
+	}
+	var token [16]byte
+	_, _ = rand.Read(token[:])
+	s.relay.Allow(token)
+
+	route := func(role pb.Role, peer *store.Device) *pb.ServerMessage {
+		return &pb.ServerMessage{Msg: &pb.ServerMessage_Route{Route: &pb.Route{
+			SessionId:     id,
+			Role:          role,
+			PeerPublicKey: peer.PublicKey,
+			PeerId:        peer.ID,
+			RelayToken:    token[:],
+		}}}
+	}
+	if err := agent.send(route(pb.Role_ROLE_AGENT, p.viewer.device)); err != nil {
+		_ = p.viewer.send(errorMsg("il dispositivo si è scollegato", id))
+		return
+	}
+	if err := p.viewer.send(route(pb.Role_ROLE_VIEWER, agent.device)); err != nil {
+		s.log.Debug("viewer non raggiungibile", "sessione", id, "err", err)
+	}
+	s.log.Info("sessione accettata", "sessione", id)
+}
+
+func (s *Server) reject(agent *client, id, reason string) {
+	p := s.take(agent, id)
+	if p == nil {
+		return
+	}
+	if reason == "" {
+		reason = "collegamento rifiutato"
+	}
+	_ = p.viewer.send(errorMsg(reason, id))
+	s.log.Info("sessione rifiutata", "sessione", id, "motivo", reason)
+}
+
+func (s *Server) expireLoop(ctx context.Context) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			var expired []*pending
+			s.mu.Lock()
+			for id, p := range s.sessions {
+				if now.Sub(p.created) > pendingTimeout {
+					expired = append(expired, p)
+					delete(s.sessions, id)
+				}
+			}
+			s.mu.Unlock()
+			for _, p := range expired {
+				_ = p.viewer.send(errorMsg("nessuna risposta dal dispositivo", p.id))
+			}
+		}
+	}
+}

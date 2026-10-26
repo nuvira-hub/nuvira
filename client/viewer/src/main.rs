@@ -10,7 +10,6 @@ mod render;
 mod report;
 
 use std::collections::HashSet;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -35,8 +34,24 @@ const COPYRIGHT: &str = "Nexo © 2026 Alessandro Blason · AGPL-3.0 · https://g
 #[derive(Parser, Debug)]
 #[command(version, about = "Nexo viewer: controlla un PC con Nexo agent (prototipo in LAN)", after_help = COPYRIGHT)]
 struct Args {
-    /// Indirizzo dell'agent, es. 192.168.1.20 oppure 192.168.1.20:21500.
+    /// ID dell'agent (con --server) oppure indirizzo in LAN, es. 192.168.1.20[:21500].
     agent: String,
+
+    /// nexo-server da usare per collegarsi per ID (host[:porta]).
+    #[arg(long, value_name = "HOST[:PORTA]")]
+    server: Option<String>,
+
+    /// Impronta del certificato del server. Senza, si memorizza quella vista al primo collegamento.
+    #[arg(long, value_name = "IMPRONTA")]
+    server_key: Option<String>,
+
+    /// Password di sessione mostrata dall'agent.
+    #[arg(long)]
+    password: Option<String>,
+
+    /// File con la chiave del dispositivo (predefinito: device.key nella cartella dati).
+    #[arg(long, value_name = "FILE")]
+    identity: Option<PathBuf>,
 
     /// Impronta del certificato mostrata dall'agent (consigliata).
     #[arg(long)]
@@ -59,22 +74,6 @@ struct Args {
     snapshot: Option<PathBuf>,
 }
 
-/// Indirizzo dell'agent; senza porta si usa quella predefinita.
-fn resolve(agent: &str) -> Result<SocketAddr> {
-    if let Ok(addr) = agent.parse::<SocketAddr>() {
-        return Ok(addr);
-    }
-    if let Ok(ip) = agent.parse::<IpAddr>() {
-        return Ok((ip, nexo_transport::DEFAULT_PORT).into());
-    }
-    let mut addrs = if agent.contains(':') {
-        agent.to_socket_addrs()?
-    } else {
-        (agent, nexo_transport::DEFAULT_PORT).to_socket_addrs()?
-    };
-    addrs.next().with_context(|| format!("indirizzo non valido: {agent}"))
-}
-
 /// Colori nei log solo se il terminale li interpreta (il vecchio prompt di Windows
 /// li mostrerebbe come `←[2m`).
 fn ansi_colors() -> bool {
@@ -93,8 +92,22 @@ fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
-    let addr = resolve(&args.agent)?;
-    let fingerprint = args.fingerprint.as_deref().map(nexo_transport::parse_fingerprint).transpose()?;
+    let target = match &args.server {
+        Some(server_name) => net::Target::Server {
+            server: nexo_transport::resolve_addr(server_name, nexo_transport::signal::DEFAULT_PORT)?,
+            server_name: server_name.clone(),
+            server_key: args.server_key.as_deref().map(nexo_transport::parse_fingerprint).transpose()?,
+            device_id: args.agent.chars().filter(|c| c.is_ascii_digit()).collect(),
+            identity: args
+                .identity
+                .clone()
+                .unwrap_or_else(|| nexo_transport::identity::data_dir().join("device.key")),
+        },
+        None => net::Target::Direct {
+            addr: nexo_transport::resolve_addr(&args.agent, nexo_transport::DEFAULT_PORT)?,
+            fingerprint: args.fingerprint.as_deref().map(nexo_transport::parse_fingerprint).transpose()?,
+        },
+    };
     println!("{COPYRIGHT}");
 
     let started = Instant::now();
@@ -112,13 +125,13 @@ fn main() -> Result<()> {
         slot: Arc::new(FrameSlot::default()),
         started,
         report: Report::default(),
-        connect: Some((addr, fingerprint)),
+        connect: Some((target, args.password.clone())),
         proxy: event_loop.create_proxy(),
         input: None,
         view_only: args.view_only,
         window: None,
         renderer: None,
-        agent: addr.to_string(),
+        agent: args.agent.clone(),
         stats: Stats::new(),
         clock_offset_us: None,
         best_rtt_us: u64::MAX,
@@ -150,7 +163,7 @@ struct App {
     started: Instant,
     report: Report,
     /// Agent a cui collegarsi appena la finestra è pronta.
-    connect: Option<(SocketAddr, Option<nexo_transport::Fingerprint>)>,
+    connect: Option<(net::Target, Option<String>)>,
     proxy: EventLoopProxy<NetEvent>,
     input: Option<UnboundedSender<InputEvent>>,
     view_only: bool,
@@ -233,8 +246,8 @@ impl ApplicationHandler<NetEvent> for App {
         self.window = Some(window);
         // La connessione parte solo a finestra e rendering pronti: se la rete
         // arrivava prima, il canale video a volte non veniva mai accettato.
-        if let Some((addr, fingerprint)) = self.connect.take() {
-            self.input = Some(net::start(addr, fingerprint, self.proxy.clone(), self.slot.clone()));
+        if let Some((target, password)) = self.connect.take() {
+            self.input = Some(net::start(target, password, self.proxy.clone(), self.slot.clone()));
         }
     }
 
@@ -410,14 +423,6 @@ impl Stats {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn resolve_adds_default_port() {
-        assert_eq!(resolve("127.0.0.1").unwrap().port(), nexo_transport::DEFAULT_PORT);
-        assert_eq!(resolve("127.0.0.1:9000").unwrap().port(), 9000);
-        assert_eq!(resolve("[::1]:9000").unwrap().port(), 9000);
-        assert_eq!(resolve("::1").unwrap().port(), nexo_transport::DEFAULT_PORT);
-    }
 
     #[test]
     fn super_becomes_meta() {

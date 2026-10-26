@@ -14,3 +14,4 @@
 | 10 | [Registro decisioni](10-decisioni.md) | Decisioni prese e aperte |
 | 11 | [Protocollo](11-protocollo.md) | Bozza dei flussi di registrazione e connessione |
 | 12 | [Fase 0: prototipo](12-fase0-prototipo.md) | Come provarlo, stato e misure di latenza |
+| 13 | [Fase 1: server e rete](13-fase1-rete.md) | Server, registrazione, relay, connessione per ID |

@@ -15,7 +15,7 @@ use clap::{Parser, ValueEnum};
 use nexo_capture::{Capturer, SyntheticCapturer};
 use nexo_codec::{EncoderChoice, EncoderPlan, EncoderSettings};
 use nexo_proto::v1::{
-    Codec, ControlMessage, Hello, InputEvent, Pong, VideoFormat, VideoFrame, control_message::Msg,
+    AuthResult, Codec, ControlMessage, Hello, InputEvent, Pong, VideoFormat, VideoFrame, control_message::Msg,
 };
 use nexo_transport::{Connection, FramedRecv, FramedSend};
 
@@ -67,6 +67,23 @@ struct Args {
     /// Solo visualizzazione: ignora mouse e tastiera del viewer.
     #[arg(long)]
     view_only: bool,
+
+    /// nexo-server a cui registrarsi (host[:porta]): il viewer si collega per ID.
+    /// Senza, l'agent attende connessioni dirette in LAN sulla porta --port.
+    #[arg(long, value_name = "HOST[:PORTA]")]
+    server: Option<String>,
+
+    /// Impronta del certificato del server. Senza, si memorizza quella vista al primo collegamento.
+    #[arg(long, value_name = "IMPRONTA")]
+    server_key: Option<String>,
+
+    /// Password di sessione (con --server). Senza, ne viene generata una a ogni avvio.
+    #[arg(long)]
+    password: Option<String>,
+
+    /// File con la chiave del dispositivo (predefinito: device.key nella cartella dati).
+    #[arg(long, value_name = "FILE")]
+    identity: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -144,7 +161,12 @@ fn main() -> Result<()> {
     println!("{COPYRIGHT}");
     // Con `auto` gli encoder vengono provati qui, così non ritardano la prima sessione.
     let plan = nexo_codec::plan_encoder(args.encoder.into(), encoder_settings(&args));
-    tokio::runtime::Runtime::new()?.block_on(serve(args, plan))
+    let rt = tokio::runtime::Runtime::new()?;
+    if args.server.is_some() {
+        rt.block_on(serve_via_server(args, plan))
+    } else {
+        rt.block_on(serve(args, plan))
+    }
 }
 
 fn encoder_settings(args: &Args) -> EncoderSettings {
@@ -172,7 +194,7 @@ async fn serve(args: Args, plan: EncoderPlan) -> Result<()> {
         };
         let peer = conn.remote_address();
         info!("viewer collegato da {peer}");
-        match session(conn.clone(), &args, plan).await {
+        match session(conn.clone(), &args, plan, None).await {
             Ok(()) => info!("sessione con {peer} terminata"),
             Err(e) => warn!("sessione con {peer} terminata: {e:#}"),
         }
@@ -185,7 +207,145 @@ async fn serve(args: Args, plan: EncoderPlan) -> Result<()> {
     Ok(())
 }
 
-async fn session(conn: Connection, args: &Args, plan: EncoderPlan) -> Result<()> {
+/// Password casuale di 8 caratteri facili da dettare (niente 0/O, 1/l/I).
+fn random_password() -> String {
+    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+    let mut bytes = [0u8; 8];
+    rand_fill(&mut bytes);
+    bytes.iter().map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char).collect()
+}
+
+fn rand_fill(buf: &mut [u8]) {
+    // Generatore casuale del sistema operativo (tramite ring).
+    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), buf).expect("generatore casuale");
+}
+
+/// Confronto a tempo costante (non rivela quanti caratteri iniziali sono giusti).
+fn same_secret(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Registra il dispositivo su nexo-server e accetta le sessioni che arrivano attraverso il relay.
+/// Se il server cade, si ricollega.
+async fn serve_via_server(args: Args, plan: EncoderPlan) -> Result<()> {
+    let server_name = args.server.clone().expect("--server");
+    let server = nexo_transport::resolve_addr(&server_name, nexo_transport::signal::DEFAULT_PORT)?;
+    let identity_path =
+        args.identity.clone().unwrap_or_else(|| nexo_transport::identity::data_dir().join("device.key"));
+    let identity = Arc::new(nexo_transport::identity::Identity::load_or_create(&identity_path)?);
+    let password = args.password.clone().unwrap_or_else(random_password);
+    let busy = Arc::new(AtomicBool::new(false));
+
+    loop {
+        let expected = match &args.server_key {
+            Some(fp) => Some(nexo_transport::parse_fingerprint(fp)?),
+            None => nexo_transport::signal::known_server::get(&server_name),
+        };
+        match signal_loop(&args, plan, &identity, server, &server_name, expected, &password, &busy).await {
+            Ok(()) => return Ok(()),
+            Err(e) => warn!("collegamento con nexo-server perso: {e:#}; riprovo tra 5 s"),
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn signal_loop(
+    args: &Args,
+    plan: EncoderPlan,
+    identity: &Arc<nexo_transport::identity::Identity>,
+    server: SocketAddr,
+    server_name: &str,
+    expected: Option<nexo_transport::Fingerprint>,
+    password: &str,
+    busy: &Arc<AtomicBool>,
+) -> Result<()> {
+    use nexo_proto::v1::{Accept, Reject, client_message, server_message};
+    let device_name = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let mut signal = nexo_transport::signal::connect(server, expected, identity, &device_name).await?;
+    if expected.is_none() {
+        nexo_transport::signal::known_server::remember(server_name, &signal.server_fingerprint)?;
+        info!(
+            "impronta di nexo-server memorizzata: {}",
+            nexo_transport::fingerprint_hex(&signal.server_fingerprint)
+        );
+    }
+    let id = &signal.device_id;
+    info!("registrato su {server_name}: ID {} {} {}, password {password}", &id[..3], &id[3..6], &id[6..]);
+    if let Some(path) = &args.fingerprint_file {
+        // Nei test automatici il viewer legge da qui ID e password.
+        std::fs::write(path, format!("{id} {password}"))?;
+    }
+
+    loop {
+        match signal.rx.recv().await? {
+            Some(server_message::Msg::Incoming(inc)) => {
+                // TODO (fase 2): conferma dell'utente prima di accettare.
+                let reply = if busy.load(Ordering::Relaxed) {
+                    client_message::Msg::Reject(Reject {
+                        session_id: inc.session_id,
+                        reason: "dispositivo occupato in un'altra sessione".into(),
+                    })
+                } else {
+                    info!("richiesta di collegamento da {} ({})", inc.viewer_name, inc.viewer_id);
+                    client_message::Msg::Accept(Accept { session_id: inc.session_id })
+                };
+                signal.tx.send(reply).await?;
+            }
+            Some(server_message::Msg::Route(route)) => {
+                let route = nexo_transport::p2p::Route {
+                    relay: server,
+                    token: route.relay_token.as_slice().try_into().context("gettone del relay non valido")?,
+                    peer_public_key: route
+                        .peer_public_key
+                        .as_slice()
+                        .try_into()
+                        .context("chiave del viewer non valida")?,
+                    role: nexo_transport::p2p::Role::Agent,
+                };
+                busy.store(true, Ordering::Relaxed);
+                let (args, identity, busy, password) =
+                    (args.clone(), identity.clone(), busy.clone(), password.to_string());
+                tokio::spawn(async move {
+                    if let Err(e) = relayed_session(&args, plan, &identity, &route, &password).await {
+                        warn!("sessione terminata: {e:#}");
+                    }
+                    busy.store(false, Ordering::Relaxed);
+                });
+            }
+            Some(server_message::Msg::Error(e)) => warn!("nexo-server: {}", e.message),
+            Some(_) => {}
+            None => bail!("nexo-server ha chiuso la connessione"),
+        }
+    }
+}
+
+async fn relayed_session(
+    args: &Args,
+    plan: EncoderPlan,
+    identity: &nexo_transport::identity::Identity,
+    route: &nexo_transport::p2p::Route,
+    password: &str,
+) -> Result<()> {
+    let endpoint = nexo_transport::p2p::agent_endpoint(identity, route).await?;
+    let incoming = tokio::time::timeout(std::time::Duration::from_secs(20), endpoint.accept())
+        .await
+        .context("il viewer non si è collegato entro 20 s")?
+        .context("endpoint chiuso")?;
+    let conn = incoming.await.context("handshake con il viewer")?;
+    info!("viewer collegato attraverso il relay");
+    let result = session(conn.clone(), args, plan, Some(password)).await;
+    conn.close(0u32.into(), b"fine sessione");
+    endpoint.wait_idle().await;
+    if result.is_ok() {
+        info!("sessione terminata");
+    }
+    result
+}
+
+/// Una sessione con un viewer già collegato. Con `password` il viewer deve
+/// autenticarsi prima di ricevere qualunque immagine.
+async fn session(conn: Connection, args: &Args, plan: EncoderPlan, password: Option<&str>) -> Result<()> {
     let (send, recv) = conn.accept_bi().await.context("canale di controllo")?;
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -197,7 +357,22 @@ async fn session(conn: Connection, args: &Args, plan: EncoderPlan) -> Result<()>
     if hello.protocol_version < nexo_proto::PROTOCOL_VERSION {
         bail!("versione del protocollo del viewer non supportata: {}", hello.protocol_version);
     }
-    ctrl_tx.send(&control(Msg::Hello(local_hello()))).await?;
+    let hello = Hello { password_required: password.is_some(), ..local_hello() };
+    ctrl_tx.send(&control(Msg::Hello(hello))).await?;
+    if let Some(password) = password {
+        let given = match ctrl_rx.recv::<ControlMessage>().await? {
+            Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth.password,
+            _ => bail!("il viewer non ha inviato la password"),
+        };
+        let ok = same_secret(&given, password);
+        let message = if ok { String::new() } else { "password errata".into() };
+        ctrl_tx.send(&control(Msg::AuthResult(AuthResult { ok, message }))).await?;
+        if !ok {
+            // Pausa contro i tentativi a raffica.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            bail!("password errata");
+        }
+    }
 
     let keyframe = Arc::new(AtomicBool::new(true));
     let (frame_tx, mut frame_rx) = mpsc::channel::<VideoFrame>(1);
@@ -290,5 +465,6 @@ fn local_hello() -> Hello {
         device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
         os: std::env::consts::OS.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
+        password_required: false,
     }
 }

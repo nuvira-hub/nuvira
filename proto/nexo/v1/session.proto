@@ -28,7 +28,20 @@ message ControlMessage {
     Ping ping = 3;
     Pong pong = 4;
     RequestKeyframe request_keyframe = 5;
+    Auth auth = 6;
+    AuthResult auth_result = 7;
   }
+}
+
+// Password di sessione, inviata dal viewer subito dopo Hello quando l'agent la
+// richiede. Viaggia solo nel canale cifrato end-to-end: il server non la vede.
+message Auth {
+  string password = 1;
+}
+
+message AuthResult {
+  bool ok = 1;
+  string message = 2;
 }
 
 message Hello {
@@ -36,6 +49,8 @@ message Hello {
   string device_name = 2;
   string os = 3;
   string app_version = 4;
+  // Solo dall'agent: il viewer deve inviare Auth prima di ricevere il video.
+  bool password_required = 5;
 }
 
 // Inviato dall'agent quando inizia (o cambia) il flusso video.

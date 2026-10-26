@@ -75,10 +75,25 @@ impl FrameSlot {
     }
 }
 
+/// Come raggiungere l'agent.
+#[derive(Clone)]
+pub enum Target {
+    /// Connessione diretta in LAN (fase 0), con l'impronta dell'agent.
+    Direct { addr: SocketAddr, fingerprint: Option<Fingerprint> },
+    /// Per ID attraverso nexo-server e il suo relay.
+    Server {
+        server: SocketAddr,
+        server_name: String,
+        server_key: Option<Fingerprint>,
+        device_id: String,
+        identity: std::path::PathBuf,
+    },
+}
+
 /// Avvia la sessione su un thread dedicato. Restituisce il canale per l'input.
 pub fn start(
-    addr: SocketAddr,
-    fingerprint: Option<Fingerprint>,
+    target: Target,
+    password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
 ) -> mpsc::UnboundedSender<InputEvent> {
@@ -87,7 +102,7 @@ pub fn start(
         .name("rete".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
-            let reason = match rt.block_on(session(addr, fingerprint, proxy.clone(), slot, input_rx)) {
+            let reason = match rt.block_on(session(target, password, proxy.clone(), slot, input_rx)) {
                 Ok(()) => "sessione terminata".to_string(),
                 Err(e) => format!("{e:#}"),
             };
@@ -101,14 +116,53 @@ fn control(msg: Msg) -> ControlMessage {
     ControlMessage { msg: Some(msg) }
 }
 
+/// Connessione all'agent: diretta oppure chiedendo il percorso a nexo-server.
+async fn open_connection(target: Target) -> Result<nexo_transport::Connection> {
+    use nexo_proto::v1::{Connect, Role, client_message, server_message};
+    use nexo_transport::{identity::Identity, p2p, signal};
+    match target {
+        Target::Direct { addr, fingerprint } => nexo_transport::connect(addr, fingerprint).await,
+        Target::Server { server, server_name, server_key, device_id, identity } => {
+            let identity = Identity::load_or_create(&identity)?;
+            let expected = server_key.or_else(|| signal::known_server::get(&server_name));
+            let name = std::env::var("COMPUTERNAME").unwrap_or_default();
+            let mut sig = signal::connect(server, expected, &identity, &name).await?;
+            if expected.is_none() {
+                signal::known_server::remember(&server_name, &sig.server_fingerprint)?;
+            }
+            info!(id = sig.device_id, "registrato su {server_name}; richiedo {device_id}");
+            sig.tx.send(client_message::Msg::Connect(Connect { device_id: device_id.clone() })).await?;
+            let route = loop {
+                match sig.rx.recv().await? {
+                    Some(server_message::Msg::Route(r)) if r.role() == Role::Viewer => break r,
+                    Some(server_message::Msg::Error(e)) => bail!("{}", e.message),
+                    Some(_) => {}
+                    None => bail!("nexo-server ha chiuso la connessione"),
+                }
+            };
+            let route = p2p::Route {
+                relay: server,
+                token: route.relay_token.as_slice().try_into().context("gettone del relay non valido")?,
+                peer_public_key: route
+                    .peer_public_key
+                    .as_slice()
+                    .try_into()
+                    .context("chiave dell'agent non valida")?,
+                role: p2p::Role::Viewer,
+            };
+            p2p::viewer_connect(&identity, &route).await
+        }
+    }
+}
+
 async fn session(
-    addr: SocketAddr,
-    fingerprint: Option<Fingerprint>,
+    target: Target,
+    password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
     mut input_rx: mpsc::UnboundedReceiver<InputEvent>,
 ) -> Result<()> {
-    let conn = nexo_transport::connect(addr, fingerprint).await?;
+    let conn = open_connection(target).await?;
     let (send, recv) = conn.open_bi().await?;
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -119,11 +173,21 @@ async fn session(
             device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
             os: std::env::consts::OS.into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
+            password_required: false,
         })))
         .await?;
     let Some(ControlMessage { msg: Some(Msg::Hello(agent)) }) = ctrl_rx.recv().await? else {
         bail!("l'agent non si è presentato");
     };
+    if agent.password_required {
+        let password = password.context("il dispositivo richiede la password (--password)")?;
+        ctrl_tx.send(&control(Msg::Auth(nexo_proto::v1::Auth { password }))).await?;
+        match ctrl_rx.recv().await? {
+            Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) if r.ok => {}
+            Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) => bail!("accesso negato: {}", r.message),
+            _ => bail!("nessuna risposta alla password"),
+        }
+    }
     let Some(ControlMessage { msg: Some(Msg::VideoFormat(format)) }) = ctrl_rx.recv().await? else {
         bail!("formato video mancante");
     };

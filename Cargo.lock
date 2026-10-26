@@ -1360,6 +1360,7 @@ dependencies = [
  "nexo-proto",
  "nexo-transport",
  "nu-ansi-term",
+ "ring",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1415,8 +1416,11 @@ dependencies = [
  "prost",
  "quinn",
  "rcgen",
+ "ring",
  "rustls",
+ "rustls-webpki",
  "sha2",
+ "tokio",
  "tracing",
 ]
 

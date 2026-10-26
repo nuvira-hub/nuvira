@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use prost::Message;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
-use quinn::{ClientConfig, Endpoint, RecvStream, SendStream, ServerConfig, TransportConfig};
+use quinn::{ClientConfig, RecvStream, SendStream, ServerConfig, TransportConfig};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{CryptoProvider, ring};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
@@ -20,15 +20,33 @@ use rustls::{DigitallySignedStruct, SignatureScheme};
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
-pub use quinn::Connection;
+pub mod identity;
+pub mod p2p;
+pub mod signal;
+
+pub use quinn::{Connection, Endpoint};
 
 /// Identificativo del protocollo negoziato in TLS (ALPN).
-const ALPN: &[u8] = b"nexo/0";
+pub(crate) const ALPN: &[u8] = b"nexo/0";
 
 /// Porta UDP predefinita del prototipo in LAN.
 pub const DEFAULT_PORT: u16 = 21500;
 
 pub type Fingerprint = [u8; 32];
+
+/// Indirizzo `host[:porta]` (anche IPv6 tra parentesi); senza porta si usa `default_port`.
+pub fn resolve_addr(host: &str, default_port: u16) -> Result<SocketAddr> {
+    use std::net::{IpAddr, ToSocketAddrs};
+    if let Ok(addr) = host.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok((ip, default_port).into());
+    }
+    let mut addrs =
+        if host.contains(':') { host.to_socket_addrs()? } else { (host, default_port).to_socket_addrs()? };
+    addrs.next().with_context(|| format!("indirizzo non valido: {host}"))
+}
 
 pub fn fingerprint_hex(fp: &Fingerprint) -> String {
     fp.iter().map(|b| format!("{b:02x}")).collect()
@@ -46,11 +64,11 @@ pub fn parse_fingerprint(hex: &str) -> Result<Fingerprint> {
     Ok(fp)
 }
 
-fn provider() -> Arc<CryptoProvider> {
+pub(crate) fn provider() -> Arc<CryptoProvider> {
     Arc::new(ring::default_provider())
 }
 
-fn transport_config() -> Arc<TransportConfig> {
+pub(crate) fn transport_config() -> Arc<TransportConfig> {
     let mut t = TransportConfig::default();
     t.keep_alive_interval(Some(Duration::from_secs(5)));
     t.max_idle_timeout(Some(Duration::from_secs(20).try_into().expect("durata valida")));
@@ -88,7 +106,7 @@ pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(PinnedCert { expected, provider: provider() }))
+        .with_custom_certificate_verifier(Arc::new(PinnedCert { expected, provider: provider(), seen: None }))
         .with_no_client_auth();
     tls.alpn_protocols = vec![ALPN.to_vec()];
 
@@ -105,9 +123,11 @@ pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<
 
 /// Verifica il certificato dell'agent confrontandone l'impronta SHA-256.
 #[derive(Debug)]
-struct PinnedCert {
-    expected: Option<Fingerprint>,
-    provider: Arc<CryptoProvider>,
+pub(crate) struct PinnedCert {
+    pub(crate) expected: Option<Fingerprint>,
+    pub(crate) provider: Arc<CryptoProvider>,
+    /// Se presente, vi si registra l'impronta vista (per memorizzarla al primo collegamento).
+    pub(crate) seen: Option<Arc<std::sync::Mutex<Option<Fingerprint>>>>,
 }
 
 impl ServerCertVerifier for PinnedCert {
@@ -119,9 +139,13 @@ impl ServerCertVerifier for PinnedCert {
         _ocsp_response: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
+        let fingerprint: Fingerprint = Sha256::digest(end_entity).into();
+        if let Some(seen) = &self.seen {
+            *seen.lock().expect("impronta") = Some(fingerprint);
+        }
         match self.expected {
-            Some(expected) if <[u8; 32]>::from(Sha256::digest(end_entity)) != expected => {
-                Err(rustls::Error::General("impronta dell'agent diversa da quella attesa".into()))
+            Some(expected) if fingerprint != expected => {
+                Err(rustls::Error::General("impronta del certificato diversa da quella attesa".into()))
             }
             _ => Ok(ServerCertVerified::assertion()),
         }
@@ -200,6 +224,14 @@ impl FramedRecv {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_adds_default_port() {
+        assert_eq!(resolve_addr("127.0.0.1", 9).unwrap().port(), 9);
+        assert_eq!(resolve_addr("127.0.0.1:9000", 9).unwrap().port(), 9000);
+        assert_eq!(resolve_addr("[::1]:9000", 9).unwrap().port(), 9000);
+        assert_eq!(resolve_addr("::1", 9).unwrap().port(), 9);
+    }
 
     #[test]
     fn fingerprint_hex_round_trip() {
