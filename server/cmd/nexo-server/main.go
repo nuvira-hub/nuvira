@@ -5,6 +5,8 @@
 //	NEXO_LISTEN    indirizzo UDP (predefinito ":21116")
 //	NEXO_DATA_DIR  cartella per database e certificato (predefinito "./data")
 //	NEXO_LOG       debug | info (predefinito) | warn
+//	NEXO_RELAY_FAKE_REFLEXIVE  solo test: comunica indirizzi pubblici irraggiungibili
+//	                   (simula due dispositivi dietro lo stesso router)
 //	NEXO_RELAY_IMPAIR  solo test: simula una rete peggiore sul relay, es.
 //	                   "delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
 //
@@ -94,6 +96,10 @@ func run() error {
 	_ = udp.SetReadBuffer(7 << 20)
 	_ = udp.SetWriteBuffer(7 << 20)
 	rl := relay.New(log)
+	if os.Getenv("NEXO_RELAY_FAKE_REFLEXIVE") != "" {
+		rl.FakeReflexive = true
+		log.Warn("indirizzi visti dal relay falsificati: simulazione hairpin (solo test)")
+	}
 	conn := relay.NewConn(udp, rl)
 	impairment, err := relay.ParseImpairment(os.Getenv("NEXO_RELAY_IMPAIR"))
 	if err != nil {

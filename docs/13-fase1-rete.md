@@ -60,9 +60,18 @@ viewer                         server                          agent
 
 Il relay accoppia i due indirizzi che hanno inviato `RelayBind` per la stessa sessione e da quel momento inoltra ogni datagramma dall'uno all'altro.
 
-### Diretta (P2P), passo successivo
+### Diretta (P2P)
 
-Il server comunica a entrambi l'indirizzo pubblico dell'altro (visto dal relay); i due lati provano la connessione diretta in parallelo al relay e si tiene la prima che riesce.
+Nel bind al relay ciascun lato aggiunge il proprio indirizzo locale (l'interfaccia con cui raggiunge il server, con la porta del socket della sessione). Quando entrambi sono agganciati, il relay comunica a ciascuno i candidati dell'altro:
+
+- l'indirizzo **visto dal relay**, attraverso gli eventuali NAT (hole punching tra reti diverse);
+- gli indirizzi **locali** (stessa rete dietro lo stesso router, dove l'indirizzo pubblico spesso non è raggiungibile: hairpin).
+
+Entrambi i lati inviano pacchetti di apertura verso tutti i candidati; il viewer tenta QUIC verso ognuno in parallelo al relay e vince la prima connessione diretta. Il relay si usa solo se nessuna diretta riesce entro 1,5 s da quando il relay è pronto.
+
+Rispetto a `rustdesk-server`, che riconosce i dispositivi dietro lo stesso router dall'IP pubblico uguale e solo allora chiede l'indirizzo locale, qui i candidati locali si provano sempre: non serve indovinare la topologia e copre anche i casi in cui l'IP pubblico visto dal server non coincide (CGNAT con più uscite, IPv4/IPv6).
+
+Test: `NEXO_RELAY_FAKE_REFLEXIVE=1` sul server sostituisce l'indirizzo visto dal relay con uno irraggiungibile (203.0.113.1); la connessione deve comunque riuscire in diretta tramite l'indirizzo locale.
 
 ## Passi
 
@@ -73,6 +82,7 @@ Il server comunica a entrambi l'indirizzo pubblico dell'altro (visto dal relay);
 | 3 | Test automatici via server in LAN (`NEXO_VIA_SERVER=1`, `NEXO_FORCE_RELAY=1`) | ✅ |
 | 4 | Immagine Docker (`ghcr.io/alexbn71/nexo-server`, GitHub Actions) | ✅ immagine; pubblicazione su Internet rimandata |
 | 5 | Hole punching e scelta del percorso (diretta preferita, relay come ripiego) | ✅ |
+| 5b | Indirizzi locali come candidati (dispositivi dietro lo stesso router, hairpin) | ✅ |
 | 6 | Ripiego su TCP/WebSocket per le reti che bloccano UDP | da fare |
 
 ## Uso
@@ -117,7 +127,7 @@ Cosa è stato fatto:
 La configurazione di OPNsense (inoltro della porta UDP del server) serve solo a rendere raggiungibile il server; il software però va ancora verificato su condizioni che la LAN non presenta:
 
 - **NAT simmetrici e CGNAT** (reti mobili): la via diretta può fallire e si resta sul relay; da misurare quanto spesso.
-- **Hairpin**: due dispositivi dietro lo stesso NAT che raggiungono il server con l'IP pubblico; il relay li vede con l'indirizzo pubblico e la via diretta deve usare quello locale (servono anche i candidati LAN).
+- **Hairpin**: due dispositivi dietro lo stesso NAT che raggiungono il server con l'IP pubblico. Risolto con i candidati locali (sotto); verificato in LAN simulando un indirizzo pubblico irraggiungibile.
 - **Reti che bloccano UDP** (aziende, alberghi): serve il passo 6.
 - **Perdita di pacchetti, jitter, RTT di 30-100 ms**: affrontati con bitrate adattivo e BBR (sezione sopra), verificati in simulazione; resta la prova reale.
 - **MTU** più piccole (VPN, PPPoE): QUIC lo gestisce, da verificare.
