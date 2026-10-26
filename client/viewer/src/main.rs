@@ -4,6 +4,7 @@
 //! schermo con wgpu e invia mouse e tastiera. Nel titolo della finestra:
 //! frame al secondo, latenza cattura→visualizzazione, RTT e banda.
 
+mod cpu;
 mod net;
 mod render;
 mod report;
@@ -205,9 +206,9 @@ impl ApplicationHandler<NetEvent> for App {
             }
         };
         match Renderer::new(window.clone()) {
-            Ok(r) => {
-                info!("rendering con {}", r.adapter_info);
-                self.report.renderer = Some(r.adapter_info.clone());
+            Ok((r, info)) => {
+                info!("rendering con {info}");
+                self.report.renderer = Some(info);
                 self.renderer = Some(r);
             }
             Err(e) => {

@@ -41,6 +41,7 @@ nu-ansi-term = "0.50"
 openh264 = "0.9"
 wgpu = "30"
 winit = "0.30"
+softbuffer = "0.4"
 pollster = "1"
 bytemuck = { version = "1", features = ["derive"] }
 windows = "0.62"

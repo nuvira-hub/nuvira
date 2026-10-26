@@ -89,6 +89,18 @@ fn native_backends() -> wgpu::Backends {
     }
 }
 
+/// Rettangolo in cui l'immagine `fw`x`fh` entra nella finestra `sw`x`sh`
+/// mantenendo le proporzioni, centrata.
+pub fn fit(fw: u32, fh: u32, sw: u32, sh: u32) -> Viewport {
+    if fw == 0 || fh == 0 {
+        return Viewport::default();
+    }
+    let (sw, sh) = (sw as f32, sh as f32);
+    let scale = (sw / fw as f32).min(sh / fh as f32);
+    let (w, h) = ((fw as f32 * scale).floor(), (fh as f32 * scale).floor());
+    Viewport { x: ((sw - w) / 2.0).floor(), y: ((sh - h) / 2.0).floor(), width: w, height: h }
+}
+
 struct Planes {
     width: u32,
     height: u32,
@@ -98,7 +110,7 @@ struct Planes {
     bind_group: wgpu::BindGroup,
 }
 
-pub struct Renderer {
+pub struct GpuRenderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -108,9 +120,10 @@ pub struct Renderer {
     sampler: wgpu::Sampler,
     planes: Option<Planes>,
     pub adapter_info: String,
+    pub backend: wgpu::Backend,
 }
 
-impl Renderer {
+impl GpuRenderer {
     pub fn new(window: Arc<Window>) -> Result<Self> {
         let size = window.inner_size();
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
@@ -128,6 +141,7 @@ impl Renderer {
         .context("nessuna scheda video compatibile")?;
         let info = adapter.get_info();
         let adapter_info = format!("{} ({:?})", info.name, info.backend);
+        let backend = info.backend;
         // Si chiedono solo i limiti minimi (quelli di WebGL2) più la risoluzione massima della scheda:
         // il viewer non usa compute shader, e le schede che passano da OpenGL non li offrono.
         let required_limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
@@ -216,7 +230,18 @@ impl Renderer {
             ..Default::default()
         });
 
-        Ok(Self { surface, device, queue, config, pipeline, layout, sampler, planes: None, adapter_info })
+        Ok(Self {
+            surface,
+            device,
+            queue,
+            config,
+            pipeline,
+            layout,
+            sampler,
+            planes: None,
+            adapter_info,
+            backend,
+        })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -284,10 +309,7 @@ impl Renderer {
     /// Dove finisce l'immagine nella finestra (proporzioni mantenute, centrata).
     pub fn viewport(&self) -> Viewport {
         let Some(p) = &self.planes else { return Viewport::default() };
-        let (sw, sh) = (self.config.width as f32, self.config.height as f32);
-        let scale = (sw / p.width as f32).min(sh / p.height as f32);
-        let (w, h) = (p.width as f32 * scale, p.height as f32 * scale);
-        Viewport { x: ((sw - w) / 2.0).floor(), y: ((sh - h) / 2.0).floor(), width: w, height: h }
+        fit(p.width, p.height, self.config.width, self.config.height)
     }
 
     pub fn render(&mut self) {
@@ -328,5 +350,66 @@ impl Renderer {
         let t_present = std::time::Instant::now();
         self.queue.present(frame);
         tracing::trace!(acquire_submit = ?(t_present - t), present = ?t_present.elapsed(), "render");
+    }
+}
+
+/// Il modo di disegnare scelto per questa finestra.
+pub enum Renderer {
+    Gpu(Box<GpuRenderer>),
+    Cpu(crate::cpu::CpuRenderer),
+}
+
+impl Renderer {
+    /// GPU (wgpu) se c'è un'API moderna; CPU se la scheda arriva solo via OpenGL o wgpu non parte.
+    /// `NEXO_RENDERER=gpu|cpu` forza la scelta.
+    pub fn new(window: Arc<Window>) -> Result<(Self, String)> {
+        let forced = std::env::var("NEXO_RENDERER").ok();
+        if forced.as_deref() != Some("cpu") {
+            match GpuRenderer::new(window.clone()) {
+                Ok(gpu) if gpu.backend != wgpu::Backend::Gl || forced.as_deref() == Some("gpu") => {
+                    let info = gpu.adapter_info.clone();
+                    return Ok((Renderer::Gpu(Box::new(gpu)), info));
+                }
+                Ok(gpu) => {
+                    tracing::info!("{} disponibile solo via OpenGL: disegno con la CPU", gpu.adapter_info)
+                }
+                Err(e) if forced.as_deref() == Some("gpu") => return Err(e),
+                Err(e) => tracing::info!("wgpu non disponibile ({e:#}): disegno con la CPU"),
+            }
+        }
+        let cpu = crate::cpu::CpuRenderer::new(window)?;
+        Ok((Renderer::Cpu(cpu), "CPU (softbuffer)".into()))
+    }
+
+    pub fn upload(&mut self, frame: &YuvFrame) {
+        match self {
+            Renderer::Gpu(r) => r.upload(frame),
+            Renderer::Cpu(r) => r.upload(frame),
+        }
+    }
+
+    pub fn render(&mut self) {
+        match self {
+            Renderer::Gpu(r) => r.render(),
+            Renderer::Cpu(r) => {
+                if let Err(e) = r.render() {
+                    tracing::debug!("presentazione non riuscita: {e:#}");
+                }
+            }
+        }
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        match self {
+            Renderer::Gpu(r) => r.resize(width, height),
+            Renderer::Cpu(r) => r.resize(width, height),
+        }
+    }
+
+    pub fn viewport(&self) -> Viewport {
+        match self {
+            Renderer::Gpu(r) => r.viewport(),
+            Renderer::Cpu(r) => r.viewport(),
+        }
     }
 }
