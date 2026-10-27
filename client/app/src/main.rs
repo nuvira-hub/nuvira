@@ -40,6 +40,15 @@ struct UiState {
     session: Option<SessionUi>,
     /// Messaggio dell'ultima sessione verso un altro dispositivo.
     viewer_message: Option<String>,
+    /// Chat con chi controlla questo PC (sessione in corso o ultima).
+    chat: Vec<ChatLine>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ChatLine {
+    /// Scritto da chi usa questo PC.
+    mine: bool,
+    text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -291,8 +300,13 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                 ui.incoming = None;
             }
         }),
-        AgentEvent::SessionStarted { viewer_id, viewer_name, direct } => {
-            state.update(app, |ui| ui.session = Some(SessionUi { viewer_id, viewer_name, direct }))
+        AgentEvent::SessionStarted { viewer_id, viewer_name, direct } => state.update(app, |ui| {
+            ui.session = Some(SessionUi { viewer_id, viewer_name, direct });
+            ui.chat.clear();
+        }),
+        AgentEvent::Chat { text } => {
+            state.update(app, |ui| ui.chat.push(ChatLine { mine: false, text }));
+            bring_to_front(app);
         }
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
             ui.session = None;
@@ -330,6 +344,16 @@ fn new_password(state: State<NexoApp>) {
 #[tauri::command]
 fn respond(state: State<NexoApp>, session_id: String, accept: bool) {
     state.send(AgentCommand::Respond { session_id, accept });
+}
+
+#[tauri::command]
+fn send_chat(app: AppHandle, state: State<NexoApp>, text: String) {
+    let text = text.trim().to_string();
+    if text.is_empty() || state.ui.lock().expect("stato").session.is_none() {
+        return;
+    }
+    state.send(AgentCommand::Chat { text: text.clone() });
+    state.update(&app, |ui| ui.chat.push(ChatLine { mine: true, text }));
 }
 
 #[tauri::command]
@@ -436,6 +460,7 @@ fn main() {
             set_server,
             new_password,
             respond,
+            send_chat,
             end_session,
             connect,
             open_source

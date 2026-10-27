@@ -39,6 +39,8 @@ pub enum NetEvent {
         displays: Vec<DisplayInfo>,
         current: u32,
     },
+    /// Messaggio di chat da chi usa il PC remoto.
+    Chat(String),
     /// Clic sulla barra degli strumenti.
     Toolbar(crate::toolbar::Action),
 }
@@ -290,6 +292,9 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::Displays(d)) }) => {
                         let _ = proxy.send_event(NetEvent::Displays { displays: d.displays, current: d.current });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::Chat(chat)) }) => {
+                        let _ = proxy.send_event(NetEvent::Chat(chat.text));
                     }
                     Some(ControlMessage { msg: Some(Msg::Clipboard(clip)) }) => {
                         if let Some(clipboard) = &clipboard {

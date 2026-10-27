@@ -17,7 +17,15 @@ Prova del 2026-10-27: NUC ↔ PC-LABORATORIO (agent del servizio), copia e incol
 
 ## Chat
 
-Da fare.
+Chat testuale tra chi controlla e chi usa il PC.
+
+- Protocollo: `ControlMessage.chat` nel canale di controllo, in entrambe le direzioni.
+- Viewer: pulsante a fumetto nella barra; il riquadro (`chat.html`) è una seconda WebView a destra, sotto la barra. Si apre da solo quando arriva un messaggio. Mentre è aperto la tastiera serve a scrivere; un clic sull'immagine la riporta alla sessione.
+- Al PC controllato la chat è nell'app NexoDesk, sotto "Sessione attiva": un messaggio in arrivo porta l'app in primo piano con il cursore nel campo di risposta. Funziona con l'agent dell'app e con quello del servizio (eventi `chat` e comando `chat` del canale locale, vedi [14-fase3-servizio.md](14-fase3-servizio.md)).
+- La chat resta visibile nell'app anche a sessione chiusa, fino alla sessione successiva. Non viene salvata.
+- L'agent da riga di comando, senza app, scrive i messaggi ricevuti nel log.
+
+Prova del 2026-10-27: messaggio dal NUC arrivato nell'app di PC-LABORATORIO (servizio), risposta da lì arrivata nel riquadro del viewer.
 
 ## Trasferimento file
 

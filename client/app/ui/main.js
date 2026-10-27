@@ -47,7 +47,30 @@ function render(state) {
   $("connect-message").classList.toggle("hidden", !msg);
   $("connect-message").textContent = msg ?? "";
 
+  renderChat(state);
   renderIncoming(state.incoming);
+}
+
+function renderChat(state) {
+  const visible = Boolean(state.session) || state.chat.length > 0;
+  $("chat").classList.toggle("hidden", !visible);
+  $("chat-form").classList.toggle("hidden", !state.session);
+  const log = $("chat-log");
+  if (log.childElementCount === state.chat.length) return;
+  log.replaceChildren(
+    ...state.chat.map((line) => {
+      const p = document.createElement("p");
+      p.className = line.mine ? "mine" : "theirs";
+      p.textContent = line.text;
+      return p;
+    }),
+  );
+  log.scrollTop = log.scrollHeight;
+  // Messaggio in arrivo: si può rispondere subito, senza cliccare nel campo.
+  const last = state.chat[state.chat.length - 1];
+  if (state.session && last && !last.mine && document.activeElement?.tagName !== "INPUT") {
+    $("chat-text").focus();
+  }
 }
 
 function renderIncoming(incoming) {
@@ -114,6 +137,14 @@ $("connect-form").addEventListener("submit", async (e) => {
     message.textContent = String(err);
     message.classList.remove("hidden");
   }
+});
+
+$("chat-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("chat-text").value;
+  if (!text.trim()) return;
+  $("chat-text").value = "";
+  await invoke("send_chat", { text });
 });
 
 document.addEventListener("keydown", (e) => {

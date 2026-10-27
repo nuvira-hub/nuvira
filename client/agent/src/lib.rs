@@ -132,6 +132,10 @@ pub enum AgentEvent {
     SessionEnded {
         error: Option<String>,
     },
+    /// Messaggio di chat da chi controlla.
+    Chat {
+        text: String,
+    },
 }
 
 /// Cosa chiede chi usa il PC.
@@ -142,6 +146,8 @@ pub enum AgentCommand {
     EndSession,
     /// Genera una nuova password temporanea (risposta: [`AgentEvent::Password`]).
     NewPassword,
+    /// Messaggio di chat per chi controlla (sessione in corso).
+    Chat { text: String },
 }
 
 /// Password casuale di 8 caratteri facili da dettare (niente 0/O, 1/l/I).
@@ -220,6 +226,7 @@ pub async fn serve_via_server(
         confirm: opts.confirm,
         pending: Mutex::new(HashMap::new()),
         events,
+        chat: Mutex::new(None),
         busy: AtomicBool::new(false),
         end_session: Notify::new(),
     });
@@ -251,6 +258,8 @@ struct SessionContext {
     /// Richieste in attesa della risposta di chi usa il PC, per sessione.
     pending: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
     events: mpsc::UnboundedSender<AgentEvent>,
+    /// Chat verso il viewer della sessione in corso.
+    chat: Mutex<Option<mpsc::UnboundedSender<String>>>,
     busy: AtomicBool,
     end_session: Notify,
 }
@@ -359,6 +368,12 @@ async fn signal_loop(
                 Some(AgentCommand::Respond { session_id, accept }) => {
                     if let Some(answer) = ctx.pending.lock().expect("richieste").remove(&session_id) {
                         let _ = answer.send(accept);
+                    }
+                    None
+                }
+                Some(AgentCommand::Chat { text }) => {
+                    if let Some(chat) = ctx.chat.lock().expect("chat").as_ref() {
+                        let _ = chat.send(text);
                     }
                     None
                 }
@@ -560,6 +575,12 @@ async fn session(
     let pipeline = std::sync::Mutex::new(Some(first));
     let (screen_tx, mut screen_rx) = tokio::sync::watch::channel(screen_rect(&display));
 
+    // Chat: i messaggi di chi usa il PC arrivano dall'app attraverso il contesto.
+    let (chat_tx, mut chat_rx) = mpsc::unbounded_channel::<String>();
+    let events = gate.map(|g| {
+        *g.ctx.chat.lock().expect("chat") = Some(chat_tx.clone());
+        g.ctx.events.clone()
+    });
     // Appunti condivisi: il testo copiato qui va al viewer, quello copiato là arriva qui.
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<String>();
     let clipboard = if config.view_only || config.synthetic.is_some() {
@@ -599,6 +620,10 @@ async fn session(
                 },
                 Some(text) = clip_rx.recv() => {
                     ctrl_tx.send(&control(Msg::Clipboard(nexodesk_proto::v1::Clipboard { text }))).await?;
+                    continue;
+                }
+                Some(text) = chat_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::Chat(nexodesk_proto::v1::Chat { text }))).await?;
                     continue;
                 }
                 _ = tick.tick() => {
@@ -669,6 +694,12 @@ async fn session(
                         let _ = clipboard.send(clip.text);
                     }
                 }
+                Some(Msg::Chat(chat)) => match &events {
+                    Some(events) => {
+                        let _ = events.send(AgentEvent::Chat { text: chat.text });
+                    }
+                    None => info!("chat dal viewer: {}", chat.text),
+                },
                 Some(Msg::SetQuality(q)) => {
                     let (limit_bps, limit_fps) = quality_limits(config, q.quality());
                     fps.store(limit_fps, Ordering::Relaxed);
@@ -719,6 +750,10 @@ async fn session(
     };
     let last = pipeline.lock().expect("pipeline").take();
     let _ = tokio::task::spawn_blocking(move || drop(last)).await;
+    if let Some(gate) = gate {
+        *gate.ctx.chat.lock().expect("chat") = None;
+    }
+    drop(chat_tx);
     result
 }
 

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bar: #1f252b;
+    --bg: #15191d;
+    --hover: #323a42;
+    --text: #e6eaee;
+    --muted: #9aa6b1;
+    --accent: #3aa7cc;
+    --on: #0b1a20;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bar); color: var(--text);
+    font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+  }
+  body { display: flex; flex-direction: column; border: 1px solid var(--hover); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 6px 6px 6px 12px; font-weight: 600; }
+  header button {
+    width: 28px; height: 28px; border: 0; border-radius: 6px;
+    background: transparent; color: var(--text); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  header button:hover { background: var(--hover); }
+  svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  #log {
+    flex: 1; overflow-y: auto; padding: 8px 10px;
+    display: flex; flex-direction: column; gap: 6px; background: var(--bg);
+  }
+  #log p { margin: 0; padding: 6px 10px; border-radius: 10px; max-width: 85%; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #log .theirs { background: var(--hover); align-self: flex-start; }
+  #log .mine { background: var(--accent); color: var(--on); align-self: flex-end; }
+  #empty { color: var(--muted); margin: auto; text-align: center; }
+  form { display: flex; gap: 6px; padding: 8px; }
+  input {
+    flex: 1; min-width: 0; font: inherit; padding: 7px 9px;
+    border-radius: 6px; border: 1px solid var(--hover); background: var(--bg); color: var(--text);
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  form button {
+    font: inherit; font-weight: 600; padding: 0 12px; border: 0; border-radius: 6px;
+    background: var(--accent); color: var(--on); cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<header>
+  <span>Chat</span>
+  <button id="close" title="Chiudi la chat">
+    <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+  </button>
+</header>
+<div id="log"><span id="empty">Scrivi a chi usa il computer remoto: vedrà il messaggio nell'app NexoDesk.</span></div>
+<form id="form">
+  <input id="text" autocomplete="off" placeholder="Scrivi un messaggio">
+  <button type="submit">Invia</button>
+</form>
+<script>
+  const send = (msg) => window.ipc.postMessage(msg);
+  document.getElementById("close").addEventListener("click", () => send("chat"));
+  document.getElementById("form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = document.getElementById("text");
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    send("chat:" + text);
+  });
+
+  // Chiamata dal viewer.
+  window.nexodesk = {
+    add(line) {
+      document.getElementById("empty")?.remove();
+      const log = document.getElementById("log");
+      const p = document.createElement("p");
+      p.className = line.mine ? "mine" : "theirs";
+      p.textContent = line.text;
+      log.append(p);
+      log.scrollTop = log.scrollHeight;
+    },
+    focus() {
+      document.getElementById("text").focus();
+    },
+  };
+</script>
+</body>
+</html>

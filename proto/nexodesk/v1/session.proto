@@ -35,7 +35,13 @@ message ControlMessage {
     SelectDisplay select_display = 10;
     SetQuality set_quality = 11;
     Clipboard clipboard = 12;
+    Chat chat = 13;
   }
+}
+
+// Messaggio di chat tra chi controlla e chi usa il PC (in entrambe le direzioni).
+message Chat {
+  string text = 1;
 }
 
 // Testo copiato negli appunti da una delle due parti, da scrivere negli appunti

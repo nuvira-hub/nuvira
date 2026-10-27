@@ -87,6 +87,8 @@ impl Snapshot {
                 self.incoming = None;
                 return;
             }
+            // I messaggi di chat valgono solo per l'app collegata in quel momento.
+            AgentEvent::Chat { .. } => return,
         };
         *slot = Some(event.clone());
     }

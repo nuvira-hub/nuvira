@@ -120,4 +120,11 @@ footer a { color: inherit; }
 .dialog h2 { margin: 0 0 10px; font-size: 18px; }
 .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 
+.chat-log { max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.chat-log:empty { display: none; }
+.chat-log p { margin: 0; padding: 6px 10px; border-radius: 10px; max-width: 85%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-log .theirs { background: var(--bg); align-self: flex-start; }
+.chat-log .mine { background: var(--accent); color: var(--accent-text); align-self: flex-end; }
+.chat-form { flex-direction: row; }
+
 .hidden { display: none !important; }

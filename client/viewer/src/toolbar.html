@@ -68,6 +68,9 @@
     <span id="quality-label">Bilanciata</span>
   </button>
   <div class="sep"></div>
+  <button id="chat" title="Chat con chi usa il computer remoto">
+    <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+  </button>
   <button id="sas" title="Invia Ctrl+Alt+Canc (anche Ctrl+Alt+Fine)">
     <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
     Ctrl+Alt+Canc
@@ -91,7 +94,7 @@
 </button>
 <script>
   const send = (action) => window.ipc.postMessage(action);
-  for (const id of ["sas", "viewonly", "fullscreen", "collapse", "expand", "close"]) {
+  for (const id of ["chat", "sas", "viewonly", "fullscreen", "collapse", "expand", "close"]) {
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
@@ -145,6 +148,7 @@
           }
         }
       }
+      if ("chat" in state) document.getElementById("chat").classList.toggle("on", state.chat);
       if ("collapsed" in state) document.body.classList.toggle("collapsed", state.collapsed);
     },
   };

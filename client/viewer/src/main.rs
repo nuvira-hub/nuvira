@@ -169,6 +169,7 @@ fn main() -> Result<()> {
         window: None,
         renderer: None,
         toolbar: None,
+        chat: None,
         quality: nexodesk_proto::v1::Quality::Balanced,
         agent: args.agent.clone(),
         stats: Stats::new(),
@@ -202,6 +203,7 @@ fn main() -> Result<()> {
     }
     // Chiusura in ordine: barra e superficie wgpu, poi la finestra, poi il resto.
     // Lasciata all'ordine implicito, il viewer andava talvolta in crash in uscita.
+    drop(app.chat.take());
     drop(app.toolbar.take());
     drop(app.renderer.take());
     drop(app.window.take());
@@ -229,6 +231,7 @@ struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     toolbar: Option<toolbar::Toolbar>,
+    chat: Option<toolbar::ChatPanel>,
     quality: nexodesk_proto::v1::Quality,
     agent: String,
     stats: Stats,
@@ -335,6 +338,21 @@ impl App {
                 info!("qualità {quality:?}");
                 self.send_control(Msg::SetQuality(nexodesk_proto::v1::SetQuality { quality: quality as i32 }));
             }
+            Action::Chat => {
+                let open = !self.chat.as_ref().is_some_and(|c| c.visible());
+                self.show_chat(open);
+                // Il riquadro aperto tiene la tastiera per scrivere.
+                if open {
+                    return;
+                }
+            }
+            Action::ChatSend(text) => {
+                if let Some(chat) = &self.chat {
+                    chat.add(true, &text);
+                }
+                self.send_control(Msg::Chat(nexodesk_proto::v1::Chat { text }));
+                return;
+            }
             Action::Collapse | Action::Expand => {
                 if let Some(toolbar) = self.toolbar.as_mut() {
                     toolbar.set_collapsed(action == Action::Collapse);
@@ -350,6 +368,15 @@ impl App {
         self.update_toolbar_state();
         if let Some(toolbar) = &self.toolbar {
             toolbar.focus_session();
+        }
+    }
+
+    fn show_chat(&mut self, open: bool) {
+        if let Some(chat) = self.chat.as_mut() {
+            chat.set_visible(open);
+        }
+        if let Some(toolbar) = &self.toolbar {
+            toolbar.update(&format!("{{chat:{open}}}"));
         }
     }
 
@@ -400,6 +427,10 @@ impl ApplicationHandler<NetEvent> for App {
             }
             // La sessione resta usabile (Ctrl+Alt+Fine, chiusura della finestra).
             Err(e) => error!("barra degli strumenti non disponibile: {e:#}"),
+        }
+        match toolbar::ChatPanel::new(window.clone(), self.proxy.clone()) {
+            Ok(chat) => self.chat = Some(chat),
+            Err(e) => error!("chat non disponibile: {e:#}"),
         }
         self.window = Some(window);
         self.update_toolbar_state();
@@ -492,6 +523,15 @@ impl ApplicationHandler<NetEvent> for App {
                     toolbar.update(&toolbar::displays_state(&displays, current));
                 }
             }
+            NetEvent::Chat(text) => {
+                info!("messaggio di chat ricevuto");
+                if !self.chat.as_ref().is_some_and(|c| c.visible()) {
+                    self.show_chat(true);
+                }
+                if let Some(chat) = &self.chat {
+                    chat.add(false, &text);
+                }
+            }
             NetEvent::Toolbar(action) => self.handle_toolbar(event_loop, action),
             NetEvent::Disconnected(reason) => {
                 info!("disconnesso: {reason}");
@@ -515,6 +555,9 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.layout();
                 }
+                if let Some(chat) = &self.chat {
+                    chat.layout();
+                }
                 self.update_toolbar_state();
             }
             WindowEvent::RedrawRequested => {
@@ -530,6 +573,12 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                // Clic sull'immagine mentre si scriveva in chat: la tastiera torna alla sessione.
+                if state == ElementState::Pressed
+                    && let Some(chat) = &self.chat
+                {
+                    chat.focus_session();
+                }
                 let button = match button {
                     winit::event::MouseButton::Left => Button::Left,
                     winit::event::MouseButton::Right => Button::Right,

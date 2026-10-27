@@ -21,6 +21,15 @@
       <button id="end-session" class="danger">Termina</button>
     </section>
 
+    <section id="chat" class="card hidden">
+      <h2>Chat con chi ti assiste</h2>
+      <div id="chat-log" class="chat-log" aria-live="polite"></div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-text" autocomplete="off" placeholder="Scrivi un messaggio">
+        <button type="submit" class="primary">Invia</button>
+      </form>
+    </section>
+
     <section class="card">
       <h2>Questo dispositivo</h2>
       <p class="status"><span id="status-dot" class="dot"></span><span id="status-text">…</span></p>
