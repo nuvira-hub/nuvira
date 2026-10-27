@@ -309,10 +309,12 @@ fn start_service_link(app: &AppHandle) {
     let app = app.clone();
     let handle = tauri::async_runtime::spawn(async move {
         let state = app.state::<NexoApp>();
+        let mut last_error: Option<String> = None;
         loop {
             match nexodesk_agent::ipc::connect() {
                 Ok((mut messages, commands)) => {
                     info!("connected to the service's agent");
+                    last_error = None;
                     *state.commands.lock().expect("commands") = Some(commands);
                     state.update(&app, |ui| ui.error = None);
                     while let Some(msg) = messages.recv().await {
@@ -336,7 +338,12 @@ fn start_service_link(app: &AppHandle) {
                     });
                 }
                 Err(e) => {
-                    tracing::debug!("service agent not reachable: {e:#}");
+                    // Every 2 s while the service starts: logged once per different reason.
+                    let reason = format!("{e:#}");
+                    if last_error.as_ref() != Some(&reason) {
+                        warn!("service agent not reachable: {reason}");
+                        last_error = Some(reason);
+                    }
                     state.update(&app, |ui| {
                         ui.status = "connecting".into();
                         ui.error = Some("@status.service_waiting".into());

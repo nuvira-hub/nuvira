@@ -259,6 +259,7 @@ async fn send_line(write: &mut (impl AsyncWrite + Unpin), msg: &impl Serialize) 
 /// The message channel closes when the agent disconnects.
 pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSender<AgentCommand>)> {
     let pipe = ClientOptions::new().open(pipe_name(current_session())).context("service agent not reachable")?;
+    check_server(&pipe)?;
     let (read, mut write) = tokio::io::split(pipe);
     let (to_app_tx, to_app_rx) = mpsc::unbounded_channel();
     let (commands_tx, mut commands_rx) = mpsc::unbounded_channel::<AgentCommand>();
@@ -283,6 +284,70 @@ pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSende
         }
     });
     Ok((to_app_rx, commands_tx))
+}
+
+/// The other end must be the service's agent, not a program that took the pipe name
+/// first (malware running as the user), which would otherwise receive the confirmation
+/// requests and could fake them. A process of the current user can always be
+/// examined by it; the service's agent runs as SYSTEM and Windows does not even let a
+/// user query it. So: not accessible means not the user's, and is accepted;
+/// accessible means it must be the installed program (in Program Files, where only
+/// administrators write) running as SYSTEM.
+fn check_server(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED};
+    use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser, WinLocalSystemSid};
+    use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
+    use windows::Win32::System::Threading::{
+        OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
+    };
+
+    let mut pid = 0u32;
+    unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid) }.context("agent process")?;
+    let process = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+        Ok(process) => process,
+        Err(e) if e.code() == ERROR_ACCESS_DENIED.to_hresult() => return Ok(()),
+        Err(e) => return Err(e).context("agent process"),
+    };
+    let result = (|| {
+        let mut buffer = [0u16; 1024];
+        let mut len = buffer.len() as u32;
+        unsafe {
+            QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, windows::core::PWSTR(buffer.as_mut_ptr()), &mut len)
+        }
+        .context("agent program")?;
+        let image = std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..len as usize]));
+        let expected = std::env::var_os("ProgramFiles")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| r"C:\Program Files".into())
+            .join(r"NexoDesk\nexodesk.exe");
+        if !image.to_string_lossy().eq_ignore_ascii_case(&expected.to_string_lossy()) {
+            anyhow::bail!("the local channel is held by {} instead of the NexoDesk service", image.display());
+        }
+        // An administrator's prompt can open it: the account must still be SYSTEM.
+        let mut token = HANDLE::default();
+        match unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } {
+            Ok(()) => {
+                let mut info = [0u8; 256];
+                let mut size = 0u32;
+                let ok = unsafe {
+                    GetTokenInformation(token, TokenUser, Some(info.as_mut_ptr().cast()), info.len() as u32, &mut size)
+                };
+                let _ = unsafe { CloseHandle(token) };
+                ok.context("agent account")?;
+                let user = unsafe { &*(info.as_ptr() as *const TOKEN_USER) };
+                if !unsafe { windows::Win32::Security::IsWellKnownSid(user.User.Sid, WinLocalSystemSid) }.as_bool() {
+                    anyhow::bail!("the local channel is held by a program not running as SYSTEM");
+                }
+                Ok(())
+            }
+            Err(e) if e.code() == ERROR_ACCESS_DENIED.to_hresult() => Ok(()),
+            Err(e) => Err(e).context("agent account"),
+        }
+    })();
+    let _ = unsafe { CloseHandle(process) };
+    result
 }
 
 #[cfg(test)]
