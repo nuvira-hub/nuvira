@@ -34,6 +34,7 @@
   #log p { margin: 0; padding: 6px 10px; border-radius: 10px; max-width: 85%; white-space: pre-wrap; overflow-wrap: anywhere; }
   #log .theirs { background: var(--hover); align-self: flex-start; }
   #log .mine { background: var(--accent); color: var(--on); align-self: flex-end; }
+  #log .system { align-self: center; max-width: 100%; color: var(--muted); text-align: center; font-size: 12px; }
   #empty { color: var(--muted); margin: auto; text-align: center; }
   form { display: flex; gap: 6px; padding: 8px; }
   input {
@@ -77,7 +78,7 @@
       document.getElementById("empty")?.remove();
       const log = document.getElementById("log");
       const p = document.createElement("p");
-      p.className = line.mine ? "mine" : "theirs";
+      p.className = line.system ? "system" : line.mine ? "mine" : "theirs";
       p.textContent = line.text;
       log.append(p);
       log.scrollTop = log.scrollHeight;

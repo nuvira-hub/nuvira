@@ -125,6 +125,7 @@ footer a { color: inherit; }
 .chat-log p { margin: 0; padding: 6px 10px; border-radius: 10px; max-width: 85%; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-log .theirs { background: var(--bg); align-self: flex-start; }
 .chat-log .mine { background: var(--accent); color: var(--accent-text); align-self: flex-end; }
+.chat-log .system { align-self: center; max-width: 100%; font-size: 13px; color: var(--muted); text-align: center; }
 .chat-form { flex-direction: row; }
 
 .hidden { display: none !important; }

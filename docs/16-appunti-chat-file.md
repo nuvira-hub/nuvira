@@ -27,6 +27,19 @@ Chat testuale tra chi controlla e chi usa il PC.
 
 Prova del 2026-10-27: messaggio dal NUC arrivato nell'app di PC-LABORATORIO (servizio), risposta da lì arrivata nel riquadro del viewer.
 
-## Trasferimento file
+## Invio di file al PC remoto
 
-Da fare.
+Prima versione, scelta con l'utente: chi controlla invia file al PC remoto. Il file manager completo nei due sensi verrà dopo.
+
+- **Viewer**: si trascinano i file sulla finestra della sessione, oppure si usa il pulsante "Invia file" della barra (finestra di scelta, libreria rfd, in un thread a parte). I file partono uno alla volta. Nella barra, al posto di fps e latenza, compare l'avanzamento, poi l'esito, che resta anche nel riquadro della chat. Per i test: `--send-file FILE` invia appena collegato.
+- **Protocollo**: ogni file ha il proprio stream unidirezionale QUIC, aperto dal viewer dopo quello dell'input. Il primo `FileChunk` porta nome e dimensione, i successivi i dati (256 KB ciascuno); la fine dello stream chiude il file. L'agent risponde con `ControlMessage.file_received` (esito e cartella, oppure il motivo dell'errore).
+- **Agent** (`client/agent/src/files.rs`): salva nella cartella Download dell'utente collegato. Da SYSTEM (servizio) la ricava dal token dell'utente della sessione (`WTSQueryUserToken` + `SHGetKnownFolderPath`); senza utente collegato rifiuta il file. Scrive prima `nome.part` e lo rinomina solo se la dimensione torna; se il nome esiste aggiunge " (1)", " (2)"…; dal nome tiene solo l'ultima parte, senza cartelle né caratteri non validi. Con `--view-only` non accetta file.
+- **Al PC controllato** l'app avvisa nel riquadro della chat ("Hai ricevuto il file … nella cartella Download") e passa in primo piano.
+
+Prove del 2026-10-27, NUC → PC-LABORATORIO (agent del servizio):
+
+- file casuale di 20 MB in circa 0,7 s (circa 230 Mbit/s in LAN), SHA-256 identico sui due PC;
+- secondo invio dello stesso file salvato come "nome (1).bin"; il file scritto da SYSTEM eredita i permessi della cartella Download, quindi l'utente ne ha il controllo completo;
+- trascinamento e pulsante "Invia file" provati dall'utente.
+
+Da fare: invio di cartelle, invio dal PC remoto a chi controlla, file manager a due pannelli, ripresa di un invio interrotto.

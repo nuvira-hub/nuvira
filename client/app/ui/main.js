@@ -60,7 +60,7 @@ function renderChat(state) {
   log.replaceChildren(
     ...state.chat.map((line) => {
       const p = document.createElement("p");
-      p.className = line.mine ? "mine" : "theirs";
+      p.className = line.system ? "system" : line.mine ? "mine" : "theirs";
       p.textContent = line.text;
       return p;
     }),
@@ -68,7 +68,7 @@ function renderChat(state) {
   log.scrollTop = log.scrollHeight;
   // Messaggio in arrivo: si può rispondere subito, senza cliccare nel campo.
   const last = state.chat[state.chat.length - 1];
-  if (state.session && last && !last.mine && document.activeElement?.tagName !== "INPUT") {
+  if (state.session && last && !last.mine && !last.system && document.activeElement?.tagName !== "INPUT") {
     $("chat-text").focus();
   }
 }

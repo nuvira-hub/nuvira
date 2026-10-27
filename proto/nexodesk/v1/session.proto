@@ -36,7 +36,25 @@ message ControlMessage {
     SetQuality set_quality = 11;
     Clipboard clipboard = 12;
     Chat chat = 13;
+    FileReceived file_received = 14;
   }
+}
+
+// Dall'agent, alla fine di ogni file ricevuto (vedi FileChunk).
+message FileReceived {
+  string name = 1;
+  bool ok = 2;
+  // Con ok: dove è stato salvato (es. "Download"); altrimenti il motivo.
+  string message = 3;
+}
+
+// Canale `file` (stream unidirezionale viewer -> agent, uno per file, aperto dopo
+// quello dell'input). Il primo messaggio porta nome e dimensione, i successivi
+// solo i dati (al massimo 256 KB ciascuno). La fine dello stream chiude il file.
+message FileChunk {
+  string name = 1;
+  uint64 size = 2;
+  bytes data = 3;
 }
 
 // Messaggio di chat tra chi controlla e chi usa il PC (in entrambe le direzioni).

@@ -104,6 +104,10 @@ struct Args {
     /// Salva l'ultimo frame mostrato in PNG all'uscita (verifica dei colori nei test).
     #[arg(long, value_name = "FILE")]
     snapshot: Option<PathBuf>,
+
+    /// Invia questo file all'agent appena collegato (test automatici; ripetibile).
+    #[arg(long, value_name = "FILE")]
+    send_file: Vec<PathBuf>,
 }
 
 /// Colori nei log solo se il terminale li interpreta (il vecchio prompt di Windows
@@ -164,6 +168,8 @@ fn main() -> Result<()> {
         input: None,
         net_thread: None,
         control: None,
+        files: None,
+        pending_files: args.send_file.clone(),
         feedback_window: (Instant::now(), Vec::new()),
         view_only: args.view_only,
         window: None,
@@ -226,6 +232,10 @@ struct App {
     /// Verso l'agent, per il bitrate adattivo: latenze dell'intervallo in corso.
     /// Messaggi di controllo verso l'agent (feedback, schermo, qualità).
     control: Option<UnboundedSender<nexodesk_proto::v1::control_message::Msg>>,
+    /// File da inviare all'agent.
+    files: Option<UnboundedSender<PathBuf>>,
+    /// `--send-file`: da inviare appena collegati.
+    pending_files: Vec<PathBuf>,
     feedback_window: (Instant, Vec<u32>),
     view_only: bool,
     window: Option<Arc<Window>>,
@@ -353,6 +363,16 @@ impl App {
                 self.send_control(Msg::Chat(nexodesk_proto::v1::Chat { text }));
                 return;
             }
+            Action::SendFile => {
+                // La finestra di scelta blocca il suo thread, non la sessione.
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || {
+                    let picked = rfd::FileDialog::new().set_title("Invia file al computer remoto").pick_files();
+                    if let Some(paths) = picked {
+                        let _ = proxy.send_event(NetEvent::FilesPicked(paths));
+                    }
+                });
+            }
             Action::Collapse | Action::Expand => {
                 if let Some(toolbar) = self.toolbar.as_mut() {
                     toolbar.set_collapsed(action == Action::Collapse);
@@ -368,6 +388,19 @@ impl App {
         self.update_toolbar_state();
         if let Some(toolbar) = &self.toolbar {
             toolbar.focus_session();
+        }
+    }
+
+    fn send_file(&self, path: PathBuf) {
+        if let Some(files) = &self.files {
+            info!("file da inviare: {}", path.display());
+            let _ = files.send(path);
+        }
+    }
+
+    fn notice(&self, text: &str, sticky: bool) {
+        if let Some(toolbar) = &self.toolbar {
+            toolbar.update(&format!("{{notice:{},sticky:{sticky}}}", toolbar::js_string(text)));
         }
     }
 
@@ -437,11 +470,11 @@ impl ApplicationHandler<NetEvent> for App {
         // La connessione parte solo a finestra e rendering pronti: se la rete
         // arrivava prima, il canale video a volte non veniva mai accettato.
         if let Some((target, password)) = self.connect.take() {
-            let (input, control, thread) =
-                net::start(target, password, self.proxy.clone(), self.slot.clone());
-            self.input = Some(input);
-            self.control = Some(control);
-            self.net_thread = Some(thread);
+            let session = net::start(target, password, self.proxy.clone(), self.slot.clone());
+            self.input = Some(session.input);
+            self.control = Some(session.control);
+            self.files = Some(session.files);
+            self.net_thread = Some(session.thread);
         }
     }
 
@@ -449,6 +482,9 @@ impl ApplicationHandler<NetEvent> for App {
         match event {
             NetEvent::Connected { agent, direct, width, height } => {
                 info!("schermo remoto {width}x{height}");
+                for path in std::mem::take(&mut self.pending_files) {
+                    self.send_file(path);
+                }
                 if let Some(toolbar) = &self.toolbar {
                     let name = if agent.is_empty() { &self.agent } else { &agent };
                     let path = if direct { "direct" } else { "relay" };
@@ -523,6 +559,32 @@ impl ApplicationHandler<NetEvent> for App {
                     toolbar.update(&toolbar::displays_state(&displays, current));
                 }
             }
+            NetEvent::FilesPicked(paths) => {
+                for path in paths {
+                    self.send_file(path);
+                }
+            }
+            NetEvent::FileProgress { name, sent, total } => {
+                let percent = (sent * 100).checked_div(total).unwrap_or(100);
+                let text = if sent < total {
+                    format!("Invio «{name}» {percent}%")
+                } else {
+                    format!("«{name}» inviato, in attesa di conferma…")
+                };
+                self.notice(&text, true);
+            }
+            NetEvent::FileDone { name, ok, message } => {
+                let text = if ok {
+                    format!("«{name}» arrivato nella cartella {message} del computer remoto")
+                } else {
+                    format!("«{name}» non inviato: {message}")
+                };
+                info!("{text}");
+                self.notice(&text, false);
+                if let Some(chat) = &self.chat {
+                    chat.notice(&text);
+                }
+            }
             NetEvent::Chat(text) => {
                 info!("messaggio di chat ricevuto");
                 if !self.chat.as_ref().is_some_and(|c| c.visible()) {
@@ -566,6 +628,7 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             WindowEvent::Focused(false) => self.release_keys(),
+            WindowEvent::DroppedFile(path) => self.send_file(path),
             WindowEvent::CursorMoved { position, .. } => {
                 let Some(r) = &self.renderer else { return };
                 if let Some((x, y)) = r.viewport().normalize(position.x, position.y) {

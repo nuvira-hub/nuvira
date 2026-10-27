@@ -68,6 +68,9 @@
     <span id="quality-label">Bilanciata</span>
   </button>
   <div class="sep"></div>
+  <button id="sendfile" title="Invia file al computer remoto (anche trascinandoli sulla finestra)">
+    <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+  </button>
   <button id="chat" title="Chat con chi usa il computer remoto">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
   </button>
@@ -94,7 +97,7 @@
 </button>
 <script>
   const send = (action) => window.ipc.postMessage(action);
-  for (const id of ["chat", "sas", "viewonly", "fullscreen", "collapse", "expand", "close"]) {
+  for (const id of ["sendfile", "chat", "sas", "viewonly", "fullscreen", "collapse", "expand", "close"]) {
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
@@ -105,6 +108,8 @@
     ["fast", "Fluida", "Fluida: meno banda, per reti lente"],
   ];
   let quality = "balanced";
+  let stats = "";
+  let noticeTimer = null;
   document.getElementById("quality").addEventListener("click", () => {
     const i = QUALITIES.findIndex(([id]) => id === quality);
     send("quality:" + QUALITIES[(i + 1) % QUALITIES.length][0]);
@@ -114,7 +119,19 @@
   window.nexodesk = {
     update(state) {
       if ("name" in state) document.getElementById("name").textContent = state.name;
-      if ("stats" in state) document.getElementById("stats").textContent = state.stats;
+      // Un avviso (es. invio file) prende per qualche secondo il posto delle statistiche.
+      if ("stats" in state) {
+        stats = state.stats;
+        if (!noticeTimer) document.getElementById("stats").textContent = stats;
+      }
+      if ("notice" in state) {
+        clearTimeout(noticeTimer);
+        document.getElementById("stats").textContent = state.notice;
+        noticeTimer = setTimeout(() => {
+          noticeTimer = null;
+          document.getElementById("stats").textContent = stats;
+        }, state.sticky ? 60000 : 6000);
+      }
       if ("path" in state) {
         const dot = document.getElementById("dot");
         dot.className = "dot " + state.path;

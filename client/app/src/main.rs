@@ -48,6 +48,8 @@ struct UiState {
 struct ChatLine {
     /// Scritto da chi usa questo PC.
     mine: bool,
+    /// Avviso dell'app (es. file ricevuto), non un messaggio.
+    system: bool,
     text: String,
 }
 
@@ -304,8 +306,14 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
             ui.session = Some(SessionUi { viewer_id, viewer_name, direct });
             ui.chat.clear();
         }),
+        AgentEvent::FileReceived { name, path } => {
+            info!("file ricevuto: {path}");
+            let text = format!("Hai ricevuto il file «{name}» nella cartella Download");
+            state.update(app, |ui| ui.chat.push(ChatLine { mine: false, system: true, text }));
+            bring_to_front(app);
+        }
         AgentEvent::Chat { text } => {
-            state.update(app, |ui| ui.chat.push(ChatLine { mine: false, text }));
+            state.update(app, |ui| ui.chat.push(ChatLine { mine: false, system: false, text }));
             bring_to_front(app);
         }
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
@@ -353,7 +361,7 @@ fn send_chat(app: AppHandle, state: State<NexoApp>, text: String) {
         return;
     }
     state.send(AgentCommand::Chat { text: text.clone() });
-    state.update(&app, |ui| ui.chat.push(ChatLine { mine: true, text }));
+    state.update(&app, |ui| ui.chat.push(ChatLine { mine: true, system: false, text }));
 }
 
 #[tauri::command]

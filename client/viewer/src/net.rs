@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use nexodesk_codec::YuvFrame;
 use nexodesk_proto::v1::{
-    ControlMessage, DisplayInfo, Hello, InputEvent, Ping, RequestKeyframe, VideoFrame, control_message::Msg,
+    ControlMessage, DisplayInfo, FileChunk, Hello, InputEvent, Ping, RequestKeyframe, VideoFrame,
+    control_message::Msg,
 };
 use nexodesk_transport::{Fingerprint, FramedRecv, FramedSend};
 use tokio::sync::mpsc;
@@ -39,6 +40,20 @@ pub enum NetEvent {
         displays: Vec<DisplayInfo>,
         current: u32,
     },
+    /// Avanzamento dell'invio di un file.
+    FileProgress {
+        name: String,
+        sent: u64,
+        total: u64,
+    },
+    /// Esito di un file inviato (dall'agent, o un errore nell'invio).
+    FileDone {
+        name: String,
+        ok: bool,
+        message: String,
+    },
+    /// File scelti con il pulsante "Invia file".
+    FilesPicked(Vec<std::path::PathBuf>),
     /// Messaggio di chat da chi usa il PC remoto.
     Chat(String),
     /// Clic sulla barra degli strumenti.
@@ -103,30 +118,41 @@ pub enum Target {
     },
 }
 
-/// Avvia la sessione su un thread dedicato. Restituisce il canale per l'input
-/// (chiuderlo termina la sessione), quello dei messaggi di controllo verso
-/// l'agent (feedback, schermo, qualità) e il thread, da attendere prima di uscire.
+/// Canali verso la sessione avviata da [`start`].
+pub struct Session {
+    /// Chiuderlo termina la sessione.
+    pub input: mpsc::UnboundedSender<InputEvent>,
+    /// Messaggi di controllo verso l'agent (feedback, schermo, qualità, chat).
+    pub control: mpsc::UnboundedSender<Msg>,
+    /// File da inviare all'agent, uno alla volta.
+    pub files: mpsc::UnboundedSender<std::path::PathBuf>,
+    /// Da attendere prima di uscire.
+    pub thread: std::thread::JoinHandle<()>,
+}
+
+/// Avvia la sessione su un thread dedicato.
 pub fn start(
     target: Target,
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
-) -> (mpsc::UnboundedSender<InputEvent>, mpsc::UnboundedSender<Msg>, std::thread::JoinHandle<()>) {
+) -> Session {
     let (input_tx, input_rx) = mpsc::unbounded_channel();
     let (control_tx, control_rx) = mpsc::unbounded_channel();
+    let (files_tx, files_rx) = mpsc::unbounded_channel();
     let thread = std::thread::Builder::new()
         .name("rete".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
             let reason =
-                match rt.block_on(session(target, password, proxy.clone(), slot, input_rx, control_rx)) {
+                match rt.block_on(session(target, password, proxy.clone(), slot, input_rx, control_rx, files_rx)) {
                     Ok(()) => "sessione terminata".to_string(),
                     Err(e) => format!("{e:#}"),
                 };
             let _ = proxy.send_event(NetEvent::Disconnected(reason));
         })
         .expect("thread di rete");
-    (input_tx, control_tx, thread)
+    Session { input: input_tx, control: control_tx, files: files_tx, thread }
 }
 
 fn control(msg: Msg) -> ControlMessage {
@@ -188,6 +214,7 @@ async fn session(
     slot: Arc<FrameSlot>,
     mut input_rx: mpsc::UnboundedReceiver<InputEvent>,
     mut control_rx: mpsc::UnboundedReceiver<Msg>,
+    mut files_rx: mpsc::UnboundedReceiver<std::path::PathBuf>,
 ) -> Result<()> {
     let (conn, direct) = open_connection(target).await?;
     let (send, recv) = conn.open_bi().await?;
@@ -293,6 +320,9 @@ async fn session(
                     Some(ControlMessage { msg: Some(Msg::Displays(d)) }) => {
                         let _ = proxy.send_event(NetEvent::Displays { displays: d.displays, current: d.current });
                     }
+                    Some(ControlMessage { msg: Some(Msg::FileReceived(f)) }) => {
+                        let _ = proxy.send_event(NetEvent::FileDone { name: f.name, ok: f.ok, message: f.message });
+                    }
                     Some(ControlMessage { msg: Some(Msg::Chat(chat)) }) => {
                         let _ = proxy.send_event(NetEvent::Chat(chat.text));
                     }
@@ -311,7 +341,21 @@ async fn session(
         }
     };
 
+    // File in uscita, uno alla volta, ciascuno sul proprio canale.
+    let files = async {
+        while let Some(path) = files_rx.recv().await {
+            if let Err(e) = send_file(&conn, &path, &proxy).await {
+                warn!("invio di {} non riuscito: {e:#}", path.display());
+                let name = file_name(&path);
+                let _ = proxy.send_event(NetEvent::FileDone { name, ok: false, message: format!("{e:#}") });
+            }
+        }
+        // Canale chiuso solo all'uscita: la sessione la termina l'input.
+        std::future::pending::<anyhow::Result<()>>().await
+    };
+
     let result = tokio::select! {
+        r = files => r.context("invio file"),
         r = video => r.context("ricezione video"),
         r = input => r.context("invio input"),
         r = control_loop => r.context("canale di controllo"),
@@ -329,6 +373,47 @@ async fn session(
     let _ = tokio::time::timeout(Duration::from_secs(1), tokio::task::spawn_blocking(move || decoder.join()))
         .await;
     result
+}
+
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// Invia un file su un nuovo canale; l'esito arriva poi dall'agent (`FileReceived`).
+async fn send_file(
+    conn: &nexodesk_transport::Connection,
+    path: &std::path::Path,
+    proxy: &EventLoopProxy<NetEvent>,
+) -> Result<()> {
+    use tokio::io::AsyncReadExt;
+
+    let name = file_name(path);
+    if tokio::fs::metadata(path).await.is_ok_and(|m| m.is_dir()) {
+        bail!("le cartelle non si possono ancora inviare");
+    }
+    let mut file = tokio::fs::File::open(path).await.with_context(|| format!("apertura di {}", path.display()))?;
+    let total = file.metadata().await?.len();
+    info!("invio {name} ({total} byte)");
+    let mut tx = FramedSend::new(conn.open_uni().await?);
+    tx.send(&FileChunk { name: name.clone(), size: total, data: Vec::new() }).await?;
+    let mut buf = vec![0u8; 256 * 1024];
+    let (mut sent, mut last) = (0u64, Instant::now());
+    let _ = proxy.send_event(NetEvent::FileProgress { name: name.clone(), sent, total });
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        tx.send(&FileChunk { data: buf[..n].to_vec(), ..Default::default() }).await?;
+        sent += n as u64;
+        if last.elapsed() >= Duration::from_millis(250) {
+            last = Instant::now();
+            let _ = proxy.send_event(NetEvent::FileProgress { name: name.clone(), sent, total });
+        }
+    }
+    tx.finish()?;
+    let _ = proxy.send_event(NetEvent::FileProgress { name, sent, total });
+    Ok(())
 }
 
 fn decode_loop(

@@ -246,6 +246,12 @@ impl FramedSend {
         self.stream.write_all(&nexodesk_proto::framing::encode(msg)).await?;
         Ok(())
     }
+
+    /// Chiude lo stream: l'altro lato riceve la fine dopo l'ultimo messaggio.
+    pub fn finish(mut self) -> Result<()> {
+        self.stream.finish()?;
+        Ok(())
+    }
 }
 
 /// Ricezione di messaggi Protobuf da uno stream QUIC.

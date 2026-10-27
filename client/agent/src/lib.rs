@@ -6,6 +6,7 @@
 //! chi lo usa attraverso [`AgentEvent`] e [`AgentCommand`].
 
 mod abr;
+mod files;
 #[cfg(windows)]
 pub mod ipc;
 mod pipeline;
@@ -135,6 +136,11 @@ pub enum AgentEvent {
     /// Messaggio di chat da chi controlla.
     Chat {
         text: String,
+    },
+    /// File inviato da chi controlla, salvato in `path`.
+    FileReceived {
+        name: String,
+        path: String,
     },
 }
 
@@ -581,6 +587,8 @@ async fn session(
         *g.ctx.chat.lock().expect("chat") = Some(chat_tx.clone());
         g.ctx.events.clone()
     });
+    // Esito dei file ricevuti, da comunicare al viewer.
+    let (file_tx, mut file_rx) = mpsc::unbounded_channel::<nexodesk_proto::v1::FileReceived>();
     // Appunti condivisi: il testo copiato qui va al viewer, quello copiato là arriva qui.
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<String>();
     let clipboard = if config.view_only || config.synthetic.is_some() {
@@ -624,6 +632,10 @@ async fn session(
                 }
                 Some(text) = chat_rx.recv() => {
                     ctrl_tx.send(&control(Msg::Chat(nexodesk_proto::v1::Chat { text }))).await?;
+                    continue;
+                }
+                Some(done) = file_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::FileReceived(done))).await?;
                     continue;
                 }
                 _ = tick.tick() => {
@@ -738,6 +750,32 @@ async fn session(
                     let screen = *screen_rx.borrow_and_update();
                     injector.send(InputCmd::Screen(screen)).map_err(|_| closed())?;
                 },
+                // Dopo quello dell'input, ogni canale unidirezionale del viewer è un file.
+                stream = conn.accept_uni() => {
+                    let mut stream = stream?;
+                    if injector.is_none() {
+                        // Solo visualizzazione: niente file.
+                        let _ = stream.stop(0u32.into());
+                        continue;
+                    }
+                    let (file_tx, events) = (file_tx.clone(), events.clone());
+                    tokio::spawn(async move {
+                        let done = match files::receive(stream).await {
+                            Ok((name, path)) => {
+                                if let Some(events) = &events {
+                                    let path = path.display().to_string();
+                                    let _ = events.send(AgentEvent::FileReceived { name: name.clone(), path });
+                                }
+                                nexodesk_proto::v1::FileReceived { name, ok: true, message: "Download".into() }
+                            }
+                            Err((name, e)) => {
+                                warn!("file {name} non ricevuto: {e:#}");
+                                nexodesk_proto::v1::FileReceived { name, ok: false, message: format!("{e:#}") }
+                            }
+                        };
+                        let _ = file_tx.send(done);
+                    });
+                }
             }
         }
         anyhow::Ok(())

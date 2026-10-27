@@ -23,7 +23,7 @@ use crate::net::NetEvent;
 const HTML: &str = include_str!("toolbar.html");
 const CHAT_HTML: &str = include_str!("chat.html");
 /// Dimensioni in pixel logici: barra aperta e linguetta per riaprirla.
-const BAR: (f64, f64) = (820.0, 38.0);
+const BAR: (f64, f64) = (860.0, 38.0);
 /// Riquadro della chat: larghezza e altezza massima, distanza dai bordi.
 const CHAT: (f64, f64) = (340.0, 440.0);
 const CHAT_MARGIN: f64 = 12.0;
@@ -44,6 +44,8 @@ pub enum Action {
     Chat,
     /// Messaggio scritto nel riquadro della chat.
     ChatSend(String),
+    /// Sceglie file da inviare al PC remoto.
+    SendFile,
 }
 
 impl Action {
@@ -70,6 +72,7 @@ impl Action {
             "expand" => Self::Expand,
             "close" => Self::Close,
             "chat" => Self::Chat,
+            "sendfile" => Self::SendFile,
             _ => return None,
         })
     }
@@ -153,6 +156,13 @@ impl ChatPanel {
         let _ = self
             .webview
             .evaluate_script(&format!("window.nexodesk && nexodesk.add({{mine:{mine},text:{}}})", js_string(text)));
+    }
+
+    /// Avviso del viewer (es. file inviato), non un messaggio.
+    pub fn notice(&self, text: &str) {
+        let _ = self
+            .webview
+            .evaluate_script(&format!("window.nexodesk && nexodesk.add({{system:true,text:{}}})", js_string(text)));
     }
 
     /// Clic sull'immagine: la tastiera torna alla sessione.
