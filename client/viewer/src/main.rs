@@ -16,7 +16,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use nexodesk_proto::v1::{Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, input_event::Event};
+use nexodesk_proto::v1::{
+    Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, SecureAttention, input_event::Event,
+};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
@@ -258,6 +260,11 @@ impl App {
         *since = Instant::now();
     }
 
+    fn ctrl_alt_held(&self) -> bool {
+        let held = |a: &str, b: &str| self.pressed_keys.contains(a) || self.pressed_keys.contains(b);
+        held("ControlLeft", "ControlRight") && held("AltLeft", "AltRight")
+    }
+
     fn release_keys(&mut self) {
         for code in std::mem::take(&mut self.pressed_keys) {
             self.send(Event::Key(Key { code, down: false }));
@@ -453,6 +460,15 @@ impl ApplicationHandler<NetEvent> for App {
                 let PhysicalKey::Code(code) = event.physical_key else { return };
                 let code = w3c_code(code);
                 let down = event.state == ElementState::Pressed;
+                // Ctrl+Alt+Fine (come in Desktop remoto) = Ctrl+Alt+Canc sul dispositivo
+                // controllato: Ctrl+Alt+Canc vero lo intercetta il sistema locale.
+                if code == "End" && self.ctrl_alt_held() {
+                    if down && !event.repeat {
+                        info!("Ctrl+Alt+Fine: invio Ctrl+Alt+Canc");
+                        self.send(Event::SecureAttention(SecureAttention {}));
+                    }
+                    return;
+                }
                 if down {
                     self.pressed_keys.insert(code.clone());
                 } else {

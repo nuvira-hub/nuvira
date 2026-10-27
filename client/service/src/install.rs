@@ -155,6 +155,8 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     )))
     .context("regola del firewall")?;
 
+    allow_software_sas()?;
+
     let _ = std::fs::remove_file(config::online_path());
     unsafe { StartServiceW(service.0, None) }.context("avvio del servizio")?;
     if !wait_state(&service, SERVICE_RUNNING, Duration::from_secs(20))? {
@@ -168,6 +170,35 @@ pub fn install(opts: InstallOptions) -> Result<()> {
             service_config.server,
             config::agent_log().display()
         ),
+    }
+    Ok(())
+}
+
+/// Criterio "Generazione SAS software" (SoftwareSASGeneration): permette ai servizi
+/// di inviare Ctrl+Alt+Canc (`SendSAS`). Valori: 0 nessuno, 1 servizi, 2 app di
+/// accessibilità, 3 entrambi. Si aggiungono i servizi senza togliere il resto.
+fn allow_software_sas() -> Result<()> {
+    const KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
+    let output = Command::new("reg").args(["query", KEY, "/v", "SoftwareSASGeneration"]).output()?;
+    let current = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .last()
+        .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+        .filter(|_| output.status.success())
+        .unwrap_or(0);
+    if current & 1 == 0 {
+        run(Command::new("reg").args([
+            "add",
+            KEY,
+            "/v",
+            "SoftwareSASGeneration",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            &(current | 1).to_string(),
+            "/f",
+        ]))
+        .context("criterio SoftwareSASGeneration")?;
     }
     Ok(())
 }

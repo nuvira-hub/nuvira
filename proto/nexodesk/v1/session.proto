@@ -101,8 +101,13 @@ message InputEvent {
     MouseButton mouse_button = 2;
     MouseWheel mouse_wheel = 3;
     Key key = 4;
+    SecureAttention secure_attention = 5;
   }
 }
+
+// Ctrl+Alt+Canc sul dispositivo controllato. Non si può inviare come tasti: il
+// sistema del viewer lo intercetta sempre (nel viewer: Ctrl+Alt+Fine).
+message SecureAttention {}
 
 // Posizione normalizzata 0..1 rispetto allo schermo trasmesso.
 message MouseMove {

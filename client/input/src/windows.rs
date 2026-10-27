@@ -4,7 +4,10 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 use nexodesk_proto::v1::{Button, InputEvent, input_event::Event};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
+use windows::core::HSTRING;
+use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
@@ -129,6 +132,26 @@ fn keyboard(vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     }
 }
 
+/// Evento creato da nexodesk-service: segnalarlo chiede al servizio Ctrl+Alt+Canc.
+/// Con la sicurezza predefinita di un oggetto creato da SYSTEM, solo SYSTEM può segnalarlo.
+/// Lo stesso nome è in nexodesk-service (`scm.rs`).
+const SAS_EVENT: &str = r"Global\NexoDeskSAS";
+
+/// Ctrl+Alt+Canc. Windows lo accetta solo da un servizio (`SendSAS`, con il criterio
+/// SoftwareSASGeneration impostato da `nexodesk-service install`): l'agent lo chiede
+/// al servizio. Senza servizio non è disponibile.
+fn secure_attention() {
+    let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, false, &HSTRING::from(SAS_EVENT)) };
+    match event {
+        Ok(event) => {
+            info!("Ctrl+Alt+Canc richiesto dal viewer");
+            let _ = unsafe { SetEvent(event) };
+            let _ = unsafe { CloseHandle(event) };
+        }
+        Err(e) => warn!("Ctrl+Alt+Canc non disponibile: serve nexodesk-service ({e})"),
+    }
+}
+
 fn send(input: INPUT) {
     let sent = unsafe { SendInput(&[input], size_of::<INPUT>() as i32) };
     if sent == 0 {
@@ -151,6 +174,7 @@ impl InputInjector for SendInputInjector {
                 }
             }
             Some(Event::Key(k)) => self.key(&k.code, k.down),
+            Some(Event::SecureAttention(_)) => secure_attention(),
             None => {}
         }
         Ok(())

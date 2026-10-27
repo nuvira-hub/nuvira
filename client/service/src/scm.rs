@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tracing::{error, info, warn};
-use windows::Win32::Foundation::{ERROR_CALL_NOT_IMPLEMENTED, NO_ERROR};
+use windows::Win32::Foundation::{CloseHandle, ERROR_CALL_NOT_IMPLEMENTED, HANDLE, NO_ERROR, WAIT_OBJECT_0};
+use windows::Win32::Security::Authentication::Identity::SendSAS;
+use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::Win32::System::Services::{
     RegisterServiceCtrlHandlerExW, SERVICE_ACCEPT_SHUTDOWN, SERVICE_ACCEPT_STOP, SERVICE_CONTROL_INTERROGATE,
     SERVICE_CONTROL_SHUTDOWN, SERVICE_CONTROL_STOP, SERVICE_RUNNING, SERVICE_START_PENDING, SERVICE_STATUS,
@@ -94,6 +96,35 @@ fn set_status(state: SERVICE_STATUS_CURRENT_STATE, exit_code: u32) {
     }
 }
 
+/// Evento con cui l'agent chiede Ctrl+Alt+Canc (stesso nome in nexodesk-input).
+const SAS_EVENT: &str = r"Global\NexoDeskSAS";
+
+/// Thread che esegue Ctrl+Alt+Canc quando l'agent segnala [`SAS_EVENT`]. Windows
+/// accetta `SendSAS` solo da un servizio, non dall'agent pur essendo SYSTEM.
+/// L'evento creato da SYSTEM, con la sicurezza predefinita, può segnalarlo solo SYSTEM.
+fn sas_listener() -> Option<std::thread::JoinHandle<()>> {
+    let event = match unsafe { CreateEventW(None, false, false, &HSTRING::from(SAS_EVENT)) } {
+        Ok(event) => event,
+        Err(e) => {
+            warn!("Ctrl+Alt+Canc non disponibile: CreateEvent: {e}");
+            return None;
+        }
+    };
+    // HANDLE non è Send: passa al thread come numero.
+    let raw = event.0 as usize;
+    let thread = std::thread::Builder::new().name("ctrl-alt-canc".into()).spawn(move || {
+        let event = HANDLE(raw as *mut c_void);
+        while !STOP.load(Ordering::Relaxed) {
+            if unsafe { WaitForSingleObject(event, 500) } == WAIT_OBJECT_0 {
+                info!("Ctrl+Alt+Canc richiesto dall'agent");
+                unsafe { SendSAS(false) };
+            }
+        }
+        let _ = unsafe { CloseHandle(event) };
+    });
+    thread.ok()
+}
+
 fn agent_args(config: &ServiceConfig) -> String {
     let mut args = format!(
         "--server \"{}\" --transport {} --identity \"{}\" --fingerprint-file \"{}\"",
@@ -117,6 +148,7 @@ fn run() -> Result<()> {
     let exe = std::env::current_exe()?.with_file_name(config::AGENT_EXE);
     let data = config::data_dir();
     let job = Job::new()?;
+    let _sas = sas_listener();
 
     let mut agent: Option<AgentProcess> = None;
     let mut backoff = Duration::from_secs(1);
