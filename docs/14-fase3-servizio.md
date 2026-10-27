@@ -50,10 +50,11 @@ Servizio installato su PC-LABORATORIO, viewer sul NUC:
 - richiesta UAC aperta durante la sessione: la cattura passa al desktop `Winlogon` subito e il viewer vede la finestra "Vuoi consentire a questa app...". Chiusa la richiesta, torna su `Default` in pochi millisecondi, senza interrompere la sessione;
 - latenza mediana 24 ms in LAN;
 - schermata di blocco: con la sessione aperta dal NUC, LABORATORIO è stato bloccato; la schermata di blocco è comparsa nel viewer e l'utente l'ha sbloccata con il PIN da remoto. Cattura e input sono passati a `Winlogon` e tornati a `Default` dopo lo sblocco.
+- riavvio: LABORATORIO riavviato alle 08:11:18, servizio avviato alle 08:11:33, agent registrato alle 08:11:39 senza nessun utente entrato. Dal NUC si vede la schermata di accesso; l'utente ha inserito il PIN da remoto e la sessione è proseguita sul desktop (l'accesso non cambia la sessione della console).
+- spegnimento: Windows chiude le sessioni (e l'agent, codice `0x40010004`) prima di fermare i servizi. Il servizio lo trattava come un crash e programmava un riavvio; ora lo riconosce e riparte senza avvisi solo se la sessione continua.
 
 ## Da fare
 
-- Riavvio del PC con ripresa automatica (prima dell'accesso dell'utente).
 - Ctrl+Alt+Canc da remoto (`SendSAS`, richiede il criterio "Software Secure Attention Sequence").
 - App e servizio sullo stesso PC: oggi l'app avvia un suo agent con un ID diverso. L'app dovrà riconoscere il servizio e mostrarne ID e richieste di conferma (canale locale tra app e servizio).
 - Conferma da parte dell'utente presente anche in modalità servizio (opzionale, per l'assistenza presidiata).

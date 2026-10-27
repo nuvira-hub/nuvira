@@ -24,6 +24,9 @@ use windows::core::{HSTRING, PWSTR};
 use crate::config::{self, ServiceConfig};
 use crate::launch::{AgentProcess, Job};
 
+/// Codice di uscita di un processo chiuso dal sistema alla fine della sua sessione.
+const DBG_TERMINATE_PROCESS: u32 = 0x4001_0004;
+
 static STOP: AtomicBool = AtomicBool::new(false);
 static STATUS: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -129,6 +132,15 @@ fn run() -> Result<()> {
                 continue;
             }
             if let Some(code) = running.wait(Duration::from_millis(500)) {
+                if code == DBG_TERMINATE_PROCESS {
+                    // Chiuso da Windows: fine della sessione o spegnimento, che chiude le sessioni
+                    // prima di fermare i servizi. Non è un crash: se è uno spegnimento lo stop arriva
+                    // a breve, altrimenti si riparte nella nuova sessione.
+                    info!("agent chiuso da Windows (fine sessione o spegnimento)");
+                    agent = None;
+                    next_start = Instant::now() + Duration::from_secs(3);
+                    continue;
+                }
                 let lived = running.started.elapsed();
                 // Se è rimasto attivo a lungo si riparte subito, altrimenti si aspetta di più.
                 backoff = if lived > Duration::from_secs(60) { Duration::from_secs(1) } else { (backoff * 2).min(Duration::from_secs(30)) };
