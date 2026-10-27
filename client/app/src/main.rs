@@ -688,6 +688,7 @@ fn main() {
             start_update_checks(app.handle());
             start_agent(app.handle());
             address_book::restore(app.handle());
+            address_book::start_presence(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())

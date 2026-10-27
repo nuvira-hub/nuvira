@@ -57,6 +57,9 @@
   "address_book.not_found": "Aucune fiche trouvée.",
   "address_book.edit": "Modifier",
   "address_book.connect": "Connecter",
+  "address_book.online": "En ligne",
+  "address_book.last_seen": "Vu pour la dernière fois {when}",
+  "address_book.never_seen": "Jamais vu sur ce serveur",
 
   "entry.new": "Nouvelle fiche",
   "entry.edit": "Modifier la fiche",

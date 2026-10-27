@@ -58,6 +58,9 @@ func (s *Server) apiCall(c *client, req *pb.ApiRequest, resp *pb.ApiResponse) er
 		return s.accounts.ChangePassword(account, call.ChangePassword.OldPassword, call.ChangePassword.NewPassword)
 	case *pb.ApiRequest_GetBooks:
 		books, err := s.accounts.Books(account)
+		if err == nil {
+			s.presence(books)
+		}
 		resp.Result = &pb.ApiResponse_Books{Books: books}
 		return err
 	case *pb.ApiRequest_PutEntry:
@@ -106,4 +109,23 @@ func (c *client) currentSession() (*pb.Account, string) {
 		return nil, ""
 	}
 	return c.session.Account, c.session.Token
+}
+
+// presence fills in whether each device of the books is connected now, or when it
+// was last seen.
+func (s *Server) presence(books *pb.Books) {
+	s.mu.Lock()
+	online := make(map[string]bool, len(s.online))
+	for id := range s.online {
+		online[id] = true
+	}
+	s.mu.Unlock()
+	for _, book := range books.GetBooks() {
+		for _, e := range book.GetEntries() {
+			e.Online = online[e.GetDeviceId()]
+			if d, err := s.store.ByID(e.GetDeviceId()); err == nil && d != nil {
+				e.LastSeen = d.LastSeen.Unix()
+			}
+		}
+	}
 }

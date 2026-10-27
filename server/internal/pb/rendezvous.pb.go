@@ -1847,7 +1847,11 @@ type Entry struct {
 	// In clear only inside the encrypted connection; on the server it is encrypted.
 	Password string `protobuf:"bytes,10,opt,name=password,proto3" json:"password,omitempty"`
 	// Last change (seconds since 1970), set by the server.
-	Updated       int64 `protobuf:"varint,11,opt,name=updated,proto3" json:"updated,omitempty"`
+	Updated int64 `protobuf:"varint,11,opt,name=updated,proto3" json:"updated,omitempty"`
+	// Filled in by the server when the books are read: the device is connected to it
+	// now, or when it was last seen (seconds since 1970; 0 = never on this server).
+	Online        bool  `protobuf:"varint,12,opt,name=online,proto3" json:"online,omitempty"`
+	LastSeen      int64 `protobuf:"varint,13,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1955,6 +1959,20 @@ func (x *Entry) GetPassword() string {
 func (x *Entry) GetUpdated() int64 {
 	if x != nil {
 		return x.Updated
+	}
+	return 0
+}
+
+func (x *Entry) GetOnline() bool {
+	if x != nil {
+		return x.Online
+	}
+	return false
+}
+
+func (x *Entry) GetLastSeen() int64 {
+	if x != nil {
+		return x.LastSeen
 	}
 	return 0
 }
@@ -2428,7 +2446,7 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\bpersonal\x18\x03 \x01(\bR\bpersonal\x12\x1d\n" +
 	"\n" +
 	"member_ids\x18\x04 \x03(\x03R\tmemberIds\x12,\n" +
-	"\aentries\x18\x05 \x03(\v2\x12.nexodesk.v1.EntryR\aentries\"\x8d\x02\n" +
+	"\aentries\x18\x05 \x03(\v2\x12.nexodesk.v1.EntryR\aentries\"\xc2\x02\n" +
 	"\x05Entry\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\abook_id\x18\x02 \x01(\x03R\x06bookId\x12\x1b\n" +
@@ -2441,7 +2459,9 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\x05notes\x18\t \x01(\tR\x05notes\x12\x1a\n" +
 	"\bpassword\x18\n" +
 	" \x01(\tR\bpassword\x12\x18\n" +
-	"\aupdated\x18\v \x01(\x03R\aupdated\"\x1d\n" +
+	"\aupdated\x18\v \x01(\x03R\aupdated\x12\x16\n" +
+	"\x06online\x18\f \x01(\bR\x06online\x12\x1b\n" +
+	"\tlast_seen\x18\r \x01(\x03R\blastSeen\"\x1d\n" +
 	"\vDeleteEntry\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\x0e\n" +
 	"\fListAccounts\"<\n" +

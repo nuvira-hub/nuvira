@@ -123,12 +123,20 @@ function entryRow(entry) {
   const who = el("div", "who");
   who.append(el("strong", "", entryTitle(entry)), el("span", "", entryDetails(entry)));
   row.title = entry.notes || "";
+  const avatar = el("span", "avatar", initial);
+  const presence = el("span", entry.online ? "presence online" : "presence");
+  presence.title = entry.online
+    ? t("address_book.online")
+    : entry.last_seen
+      ? t("address_book.last_seen", { when: new Date(entry.last_seen * 1000).toLocaleString(document.documentElement.lang) })
+      : t("address_book.never_seen");
+  avatar.append(presence);
   const edit = el("button", "edit", t("address_book.edit"));
   edit.addEventListener("click", () => openEntry(entry));
   const connect = el("button", "primary", t("address_book.connect"));
   connect.addEventListener("click", () => connectEntry(entry));
   row.addEventListener("dblclick", () => connectEntry(entry));
-  row.append(el("span", "avatar", initial), who, edit, connect);
+  row.append(avatar, who, edit, connect);
   return row;
 }
 

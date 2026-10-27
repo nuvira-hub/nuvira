@@ -57,6 +57,9 @@
   "address_book.not_found": "Keine Einträge gefunden.",
   "address_book.edit": "Bearbeiten",
   "address_book.connect": "Verbinden",
+  "address_book.online": "Online",
+  "address_book.last_seen": "Zuletzt gesehen {when}",
+  "address_book.never_seen": "Auf diesem Server nie gesehen",
 
   "entry.new": "Neuer Eintrag",
   "entry.edit": "Eintrag bearbeiten",

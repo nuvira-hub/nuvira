@@ -57,6 +57,9 @@
   "address_book.not_found": "Nessuna scheda trovata.",
   "address_book.edit": "Modifica",
   "address_book.connect": "Collega",
+  "address_book.online": "Online",
+  "address_book.last_seen": "Visto l'ultima volta {when}",
+  "address_book.never_seen": "Mai visto su questo server",
 
   "entry.new": "Nuova scheda",
   "entry.edit": "Modifica scheda",

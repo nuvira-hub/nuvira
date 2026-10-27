@@ -210,6 +210,10 @@ message Entry {
   string password = 10;
   // Last change (seconds since 1970), set by the server.
   int64 updated = 11;
+  // Filled in by the server when the books are read: the device is connected to it
+  // now, or when it was last seen (seconds since 1970; 0 = never on this server).
+  bool online = 12;
+  int64 last_seen = 13;
 }
 
 message DeleteEntry {

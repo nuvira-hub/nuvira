@@ -56,6 +56,11 @@ pub struct EntryUi {
     pub notes: String,
     #[serde(default)]
     pub password: String,
+    /// From the server, read only: connected now, or last seen (seconds since 1970).
+    #[serde(default)]
+    pub online: bool,
+    #[serde(default)]
+    pub last_seen: i64,
 }
 
 impl From<pb::Entry> for EntryUi {
@@ -71,6 +76,8 @@ impl From<pb::Entry> for EntryUi {
             phone: e.phone,
             notes: e.notes,
             password: e.password,
+            online: e.online,
+            last_seen: e.last_seen,
         }
     }
 }
@@ -88,7 +95,7 @@ impl From<EntryUi> for pb::Entry {
             phone: e.phone,
             notes: e.notes,
             password: e.password,
-            updated: 0,
+            ..Default::default()
         }
     }
 }
@@ -186,6 +193,20 @@ pub fn restore(app: &AppHandle) {
         if let Err(e) = refresh(&app).await {
             warn!("address book not loaded: {e}");
             app.state::<NexoApp>().update(&app, |ui| ui.address_book_error = Some(e));
+        }
+    });
+}
+
+/// While signed in, the books are read again every 30 s: who is online changes.
+pub fn start_presence(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let signed_in = app.state::<NexoApp>().ui.lock().expect("state").account.is_some();
+            if signed_in && let Err(e) = refresh(&app).await {
+                tracing::debug!("address book not refreshed: {e}");
+            }
         }
     });
 }

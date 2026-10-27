@@ -57,6 +57,9 @@
   "address_book.not_found": "No se encontraron fichas.",
   "address_book.edit": "Editar",
   "address_book.connect": "Conectar",
+  "address_book.online": "En línea",
+  "address_book.last_seen": "Visto por última vez {when}",
+  "address_book.never_seen": "Nunca visto en este servidor",
 
   "entry.new": "Nueva ficha",
   "entry.edit": "Editar ficha",
