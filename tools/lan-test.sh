@@ -12,6 +12,7 @@
 # NEXODESK_VIEWER_LOG (viewer RUST_LOG, e.g. info,nexodesk_viewer=trace),
 # NEXODESK_AGENT_EXE (agent to test instead of target/release, for A/B comparisons),
 # NEXODESK_VIA_SERVER=1 (starts nexodesk-server here and the viewer connects by ID through the server),
+# NEXODESK_SERVER (with NEXODESK_VIA_SERVER: use this server, e.g. the NAS container, instead of one on this PC),
 # NEXODESK_FORCE_RELAY=1 (with NEXODESK_VIA_SERVER: no direct path, relay only),
 # NEXODESK_VIEWER_ARGS (extra viewer options, e.g. "--transport websocket"),
 # NEXODESK_VIEWER_SERVER (server address for the viewer, e.g. a wrong UDP port),
@@ -52,7 +53,9 @@ fi
 mkdir -p "$ROOT/dist"
 AGENT_ARGS=()
 if [ -n "${NEXODESK_VIA_SERVER:-}" ]; then
-    if tasklist //fi "imagename eq nexodesk-server.exe" | grep -qi nexodesk-server; then
+    if [ -n "${NEXODESK_SERVER:-}" ]; then
+        echo "== using nexodesk-server at $NEXODESK_SERVER"
+    elif tasklist //fi "imagename eq nexodesk-server.exe" | grep -qi nexodesk-server; then
         # Already started (e.g. for PC-LABORATORIO's service): that one is used.
         echo "== nexodesk-server already running on this PC"
     else
@@ -65,7 +68,8 @@ if [ -n "${NEXODESK_VIA_SERVER:-}" ]; then
         SERVER_PID=$!
         sleep 1
     fi
-    AGENT_ARGS=(--server "$AGENT_IP")
+    SERVER_ADDR="${NEXODESK_SERVER:-$AGENT_IP}"
+    AGENT_ARGS=(--server "$SERVER_ADDR")
 fi
 
 echo "== starting the agent ($*)"
@@ -82,7 +86,7 @@ FP="$(cat "$OUT/fingerprint.txt")"
 if [ -n "${NEXODESK_VIA_SERVER:-}" ]; then
     # In server mode the agent writes "ID password".
     read -r AGENT_ID PASSWORD <<<"$FP"
-    VIEWER_TARGET="--server ${NEXODESK_VIEWER_SERVER:-$AGENT_IP} $AGENT_ID --password $PASSWORD ${NEXODESK_VIEWER_ARGS:-}"
+    VIEWER_TARGET="--server ${NEXODESK_VIEWER_SERVER:-$SERVER_ADDR} $AGENT_ID --password $PASSWORD ${NEXODESK_VIEWER_ARGS:-}"
 else
     VIEWER_TARGET="$AGENT_IP --fingerprint $FP"
 fi
