@@ -16,3 +16,4 @@
 | 12 | [Fase 0: prototipo](12-fase0-prototipo.md) | Come provarlo, stato e misure di latenza |
 | 13 | [Fase 1: server e rete](13-fase1-rete.md) | Server, registrazione, relay, connessione per ID |
 | 14 | [Fase 3: servizio di sistema](14-fase3-servizio.md) | Accesso non presidiato, UAC e schermata di blocco |
+| 15 | [Barra degli strumenti](15-barra-strumenti.md) | Comandi della sessione, cambio schermo e qualità |

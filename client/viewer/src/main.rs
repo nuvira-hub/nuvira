@@ -163,12 +163,13 @@ fn main() -> Result<()> {
         proxy: event_loop.create_proxy(),
         input: None,
         net_thread: None,
-        feedback: None,
+        control: None,
         feedback_window: (Instant::now(), Vec::new()),
         view_only: args.view_only,
         window: None,
         renderer: None,
         toolbar: None,
+        quality: nexodesk_proto::v1::Quality::Balanced,
         agent: args.agent.clone(),
         stats: Stats::new(),
         clock_offset_us: None,
@@ -221,12 +222,14 @@ struct App {
     input: Option<UnboundedSender<InputEvent>>,
     net_thread: Option<std::thread::JoinHandle<()>>,
     /// Verso l'agent, per il bitrate adattivo: latenze dell'intervallo in corso.
-    feedback: Option<UnboundedSender<nexodesk_proto::v1::Feedback>>,
+    /// Messaggi di controllo verso l'agent (feedback, schermo, qualità).
+    control: Option<UnboundedSender<nexodesk_proto::v1::control_message::Msg>>,
     feedback_window: (Instant, Vec<u32>),
     view_only: bool,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     toolbar: Option<toolbar::Toolbar>,
+    quality: nexodesk_proto::v1::Quality,
     agent: String,
     stats: Stats,
     /// Orologio dell'agent meno il nostro (dalla misura con RTT minore).
@@ -258,11 +261,15 @@ impl App {
             frames: latencies.len() as u32,
             window_ms: window.as_millis() as u32,
         };
-        if let Some(tx) = &self.feedback {
-            let _ = tx.send(feedback);
-        }
         latencies.clear();
         *since = Instant::now();
+        self.send_control(nexodesk_proto::v1::control_message::Msg::Feedback(feedback));
+    }
+
+    fn send_control(&self, msg: nexodesk_proto::v1::control_message::Msg) {
+        if let Some(tx) = &self.control {
+            let _ = tx.send(msg);
+        }
     }
 
     fn ctrl_alt_held(&self) -> bool {
@@ -302,6 +309,7 @@ impl App {
     }
 
     fn handle_toolbar(&mut self, event_loop: &ActiveEventLoop, action: toolbar::Action) {
+        use nexodesk_proto::v1::control_message::Msg;
         use toolbar::Action;
         match action {
             Action::SecureAttention => self.send(Event::SecureAttention(SecureAttention {})),
@@ -318,6 +326,14 @@ impl App {
                     let full = window.fullscreen().is_none();
                     window.set_fullscreen(full.then_some(winit::window::Fullscreen::Borderless(None)));
                 }
+            }
+            Action::Display(index) => {
+                self.send_control(Msg::SelectDisplay(nexodesk_proto::v1::SelectDisplay { index }));
+            }
+            Action::Quality(quality) => {
+                self.quality = quality;
+                info!("qualità {quality:?}");
+                self.send_control(Msg::SetQuality(nexodesk_proto::v1::SetQuality { quality: quality as i32 }));
             }
             Action::Collapse | Action::Expand => {
                 if let Some(toolbar) = self.toolbar.as_mut() {
@@ -340,9 +356,10 @@ impl App {
     fn update_toolbar_state(&self) {
         let (Some(toolbar), Some(window)) = (&self.toolbar, &self.window) else { return };
         toolbar.update(&format!(
-            "{{viewOnly:{},fullscreen:{}}}",
+            "{{viewOnly:{},fullscreen:{},quality:{}}}",
             self.view_only,
-            window.fullscreen().is_some()
+            window.fullscreen().is_some(),
+            toolbar::js_string(toolbar::quality_name(self.quality))
         ));
     }
 }
@@ -389,10 +406,10 @@ impl ApplicationHandler<NetEvent> for App {
         // La connessione parte solo a finestra e rendering pronti: se la rete
         // arrivava prima, il canale video a volte non veniva mai accettato.
         if let Some((target, password)) = self.connect.take() {
-            let (input, feedback, thread) =
+            let (input, control, thread) =
                 net::start(target, password, self.proxy.clone(), self.slot.clone());
             self.input = Some(input);
-            self.feedback = Some(feedback);
+            self.control = Some(control);
             self.net_thread = Some(thread);
         }
     }
@@ -469,6 +486,11 @@ impl ApplicationHandler<NetEvent> for App {
                 self.exit_reason = Some("durata del test terminata".into());
                 self.release_keys();
                 event_loop.exit();
+            }
+            NetEvent::Displays { displays, current } => {
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&toolbar::displays_state(&displays, current));
+                }
             }
             NetEvent::Toolbar(action) => self.handle_toolbar(event_loop, action),
             NetEvent::Disconnected(reason) => {

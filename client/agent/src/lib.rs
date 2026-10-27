@@ -19,7 +19,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use nexodesk_capture::{Capturer, SyntheticCapturer};
 use nexodesk_codec::{EncoderPlan, EncoderSettings};
 use nexodesk_proto::v1::{
-    AuthResult, Codec, ControlMessage, Hello, InputEvent, Pong, VideoFormat, VideoFrame, control_message::Msg,
+    AuthResult, Codec, ControlMessage, DisplayInfo, Displays, Hello, InputEvent, Pong, Quality, VideoFormat,
+    VideoFrame, control_message::Msg,
 };
 use nexodesk_transport::signal::TransportMode;
 use nexodesk_transport::{Connection, Fingerprint, FramedRecv, FramedSend};
@@ -473,37 +474,26 @@ async fn session(
     // Si parte da metà del massimo: la rete ignota potrebbe non reggere di più.
     let mut abr = (!config.fixed_bitrate).then(|| abr::Abr::new(max_bps / 2, MIN_BITRATE, max_bps));
     let bitrate = Arc::new(AtomicU32::new(abr.as_ref().map_or(max_bps, |a| a.bitrate())));
+    let fps = Arc::new(AtomicU32::new(config.fps));
     let session_start = Instant::now();
     // Momento dell'ultimo frame inviato (ms dall'inizio): serve a capire se manca il feedback.
     let last_sent_ms = Arc::new(AtomicU64::new(0));
     let (frame_tx, mut frame_rx) = mpsc::channel::<VideoFrame>(1);
-    let (display, pipeline) = {
-        let (cap_config, keyframe, bitrate) = (config.clone(), keyframe.clone(), bitrate.clone());
-        // L'encoder parte dal bitrate iniziale del controllo adattivo.
-        let settings =
-            EncoderSettings { bitrate_bps: bitrate.load(Ordering::Relaxed), ..config.encoder_settings() };
-        let (plan, fps) = (config.plan, config.fps);
-        tokio::task::spawn_blocking(move || {
-            Pipeline::start(
-                move || cap_config.open_capturer(),
-                move |gpu| nexodesk_codec::create_encoder(plan, settings, gpu),
-                plan == EncoderPlan::HardwareGpu,
-                fps,
-                frame_tx,
-                keyframe,
-                bitrate,
-            )
-        })
-        .await?
-        .context("avvio di cattura e compressione")?
+    let source = VideoSource {
+        config: config.clone(),
+        frames: frame_tx,
+        keyframe: keyframe.clone(),
+        bitrate: bitrate.clone(),
+        fps: fps.clone(),
     };
-    ctrl_tx
-        .send(&control(Msg::VideoFormat(VideoFormat {
-            codec: Codec::H264 as i32,
-            width: display.width,
-            height: display.height,
-        })))
-        .await?;
+    let (mut display, first) = source.start(config.display).await?;
+    ctrl_tx.send(&video_format(&display)).await?;
+    if let Some(msg) = displays_message(config, &display) {
+        ctrl_tx.send(&msg).await?;
+    }
+    // Cattura in corso: il canale di controllo la sostituisce quando cambia lo schermo.
+    let pipeline = std::sync::Mutex::new(Some(first));
+    let (screen_tx, mut screen_rx) = tokio::sync::watch::channel(screen_rect(&display));
 
     let mut video_tx = FramedSend::new(conn.open_uni().await?);
     tracing::debug!("canale video aperto");
@@ -568,6 +558,41 @@ async fn session(
                         );
                     }
                 }
+                Some(Msg::SelectDisplay(select)) if config.synthetic.is_none() => {
+                    let index = select.index as usize;
+                    if index == display.index {
+                        continue;
+                    }
+                    // Prima si ferma la cattura attuale, poi si apre la nuova.
+                    let old = pipeline.lock().expect("pipeline").take();
+                    let _ = tokio::task::spawn_blocking(move || drop(old)).await;
+                    let (new_display, new_pipeline) = match source.start(Some(index)).await {
+                        Ok(started) => started,
+                        Err(e) => {
+                            warn!("schermo {index} non disponibile: {e:#}; resto sul precedente");
+                            source.start(Some(display.index)).await?
+                        }
+                    };
+                    *pipeline.lock().expect("pipeline") = Some(new_pipeline);
+                    display = new_display;
+                    ctrl_tx.send(&video_format(&display)).await?;
+                    if let Some(msg) = displays_message(config, &display) {
+                        ctrl_tx.send(&msg).await?;
+                    }
+                    let _ = screen_tx.send(screen_rect(&display));
+                }
+                Some(Msg::SetQuality(q)) => {
+                    let (limit_bps, limit_fps) = quality_limits(config, q.quality());
+                    fps.store(limit_fps, Ordering::Relaxed);
+                    let bps = match abr.as_mut() {
+                        Some(abr) => abr.set_max(limit_bps),
+                        None => Some(limit_bps),
+                    };
+                    if let Some(bps) = bps {
+                        bitrate.store(bps, Ordering::Relaxed);
+                    }
+                    info!("qualità {:?}: fino a {} kbit/s e {limit_fps} fps", q.quality(), limit_bps / 1000);
+                }
                 _ => {}
             }
         }
@@ -578,17 +603,22 @@ async fn session(
         let injector = if config.view_only || config.synthetic.is_some() {
             None
         } else {
-            let screen = nexodesk_input::ScreenRect {
-                left: display.left,
-                top: display.top,
-                width: display.width,
-                height: display.height,
-            };
+            let screen = *screen_rx.borrow_and_update();
             Some(input_thread(nexodesk_input::open(screen)?)?)
         };
-        while let Some(event) = rx.recv::<InputEvent>().await? {
-            if let Some(injector) = &injector {
-                injector.send(event).map_err(|_| anyhow!("thread dell'input terminato"))?;
+        let closed = || anyhow!("thread dell'input terminato");
+        loop {
+            tokio::select! {
+                event = rx.recv::<InputEvent>() => match event? {
+                    Some(event) => if let Some(injector) = &injector {
+                        injector.send(InputCmd::Event(event)).map_err(|_| closed())?;
+                    },
+                    None => break,
+                },
+                Ok(()) = screen_rx.changed() => if let Some(injector) = &injector {
+                    let screen = *screen_rx.borrow_and_update();
+                    injector.send(InputCmd::Screen(screen)).map_err(|_| closed())?;
+                },
             }
         }
         anyhow::Ok(())
@@ -599,8 +629,93 @@ async fn session(
         r = control_loop => r.context("canale di controllo"),
         r = input => r.context("canale input"),
     };
-    let _ = tokio::task::spawn_blocking(move || drop(pipeline)).await;
+    let last = pipeline.lock().expect("pipeline").take();
+    let _ = tokio::task::spawn_blocking(move || drop(last)).await;
     result
+}
+
+/// Cattura e compressione di uno schermo, riavviabili su un altro durante la sessione.
+struct VideoSource {
+    config: AgentConfig,
+    /// Copia del mittente: tiene aperto il canale video mentre si cambia schermo.
+    frames: mpsc::Sender<VideoFrame>,
+    keyframe: Arc<AtomicBool>,
+    bitrate: Arc<AtomicU32>,
+    fps: Arc<AtomicU32>,
+}
+
+impl VideoSource {
+    async fn start(&self, display: Option<usize>) -> Result<(nexodesk_capture::Display, Pipeline)> {
+        let mut cap_config = self.config.clone();
+        cap_config.display = display;
+        // L'encoder parte dal bitrate attuale del controllo adattivo.
+        let settings = EncoderSettings {
+            bitrate_bps: self.bitrate.load(Ordering::Relaxed),
+            max_fps: self.fps.load(Ordering::Relaxed),
+        };
+        let plan = self.config.plan;
+        // Un flusso nuovo deve iniziare con un keyframe.
+        self.keyframe.store(true, Ordering::Relaxed);
+        let (frames, keyframe, bitrate, fps) =
+            (self.frames.clone(), self.keyframe.clone(), self.bitrate.clone(), self.fps.clone());
+        tokio::task::spawn_blocking(move || {
+            Pipeline::start(
+                move || cap_config.open_capturer(),
+                move |gpu| nexodesk_codec::create_encoder(plan, settings, gpu),
+                plan == EncoderPlan::HardwareGpu,
+                fps,
+                frames,
+                keyframe,
+                bitrate,
+            )
+        })
+        .await?
+        .context("avvio di cattura e compressione")
+    }
+}
+
+fn video_format(display: &nexodesk_capture::Display) -> ControlMessage {
+    control(Msg::VideoFormat(VideoFormat { codec: Codec::H264 as i32, width: display.width, height: display.height }))
+}
+
+/// Elenco degli schermi per il viewer (niente con l'immagine sintetica dei test).
+fn displays_message(config: &AgentConfig, current: &nexodesk_capture::Display) -> Option<ControlMessage> {
+    if config.synthetic.is_some() {
+        return None;
+    }
+    let list = nexodesk_capture::displays().ok()?;
+    let displays = list
+        .into_iter()
+        .map(|d| DisplayInfo {
+            index: d.index as u32,
+            name: d.name,
+            width: d.width,
+            height: d.height,
+            primary: d.primary,
+        })
+        .collect();
+    Some(control(Msg::Displays(Displays { displays, current: current.index as u32 })))
+}
+
+fn screen_rect(display: &nexodesk_capture::Display) -> nexodesk_input::ScreenRect {
+    nexodesk_input::ScreenRect { left: display.left, top: display.top, width: display.width, height: display.height }
+}
+
+/// Tetto del bitrate (bit/s) e fps per la qualità scelta dal viewer.
+fn quality_limits(config: &AgentConfig, quality: Quality) -> (u32, u32) {
+    let (bps, fps) = (config.bitrate_kbps * 1000, config.fps);
+    match quality {
+        Quality::Sharp => (bps * 2, fps.min(30)),
+        Quality::Fast => ((bps / 2).max(MIN_BITRATE), fps),
+        Quality::Balanced | Quality::Unspecified => (bps, fps),
+    }
+}
+
+/// Cosa riceve il thread dell'input.
+enum InputCmd {
+    Event(InputEvent),
+    /// Cambio di schermo: le coordinate del mouse si riferiscono a questo.
+    Screen(nexodesk_input::ScreenRect),
 }
 
 /// Inietta l'input su un thread dedicato, che può seguire il desktop attivo
@@ -608,10 +723,17 @@ async fn session(
 /// canale il thread termina e rilascia i tasti ancora premuti.
 fn input_thread(
     mut injector: Box<dyn nexodesk_input::InputInjector>,
-) -> Result<std::sync::mpsc::Sender<InputEvent>> {
-    let (tx, rx) = std::sync::mpsc::channel::<InputEvent>();
+) -> Result<std::sync::mpsc::Sender<InputCmd>> {
+    let (tx, rx) = std::sync::mpsc::channel::<InputCmd>();
     std::thread::Builder::new().name("input".into()).spawn(move || {
-        for event in rx {
+        for cmd in rx {
+            let event = match cmd {
+                InputCmd::Event(event) => event,
+                InputCmd::Screen(screen) => {
+                    injector.set_screen(screen);
+                    continue;
+                }
+            };
             #[cfg(windows)]
             if let Some(name) = nexodesk_capture::desktop::follow_input_desktop() {
                 info!("input sul desktop {name}");

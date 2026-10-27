@@ -59,6 +59,12 @@ impl Abr {
         self.bitrate as u32
     }
 
+    /// Nuovo tetto (cambio di qualità). Restituisce il nuovo bitrate se cambia.
+    pub fn set_max(&mut self, max_bps: u32) -> Option<u32> {
+        self.max = (max_bps as f64).max(self.min);
+        self.set(self.bitrate.min(self.max))
+    }
+
     /// Nuovo feedback: latenza mediana e minima dell'ultimo intervallo (ms).
     /// Restituisce il nuovo bitrate se cambia.
     pub fn on_feedback(&mut self, now: Instant, p50_ms: f64, min_ms: f64) -> Option<u32> {

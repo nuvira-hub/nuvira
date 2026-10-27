@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use nexodesk_proto::v1::{DisplayInfo, Quality};
 use winit::event_loop::EventLoopProxy;
 use winit::window::Window;
 use wry::dpi::{LogicalPosition, LogicalSize};
@@ -18,7 +19,7 @@ use crate::net::NetEvent;
 
 const HTML: &str = include_str!("toolbar.html");
 /// Dimensioni in pixel logici: barra aperta e linguetta per riaprirla.
-const BAR: (f64, f64) = (640.0, 38.0);
+const BAR: (f64, f64) = (780.0, 38.0);
 const TAB: (f64, f64) = (56.0, 14.0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,9 @@ pub enum Action {
     SecureAttention,
     ViewOnly,
     Fullscreen,
+    /// Trasmetti lo schermo con questo indice.
+    Display(u32),
+    Quality(Quality),
     Collapse,
     Expand,
     Close,
@@ -33,6 +37,17 @@ pub enum Action {
 
 impl Action {
     fn parse(s: &str) -> Option<Self> {
+        if let Some(index) = s.strip_prefix("display:") {
+            return index.parse().ok().map(Self::Display);
+        }
+        if let Some(name) = s.strip_prefix("quality:") {
+            return Some(Self::Quality(match name {
+                "sharp" => Quality::Sharp,
+                "fast" => Quality::Fast,
+                "balanced" => Quality::Balanced,
+                _ => return None,
+            }));
+        }
         Some(match s {
             "sas" => Self::SecureAttention,
             "viewonly" => Self::ViewOnly,
@@ -108,6 +123,33 @@ fn bounds(window: &Window, (w, h): (f64, f64)) -> Rect {
     }
 }
 
+/// Nome della qualità usato dalla pagina.
+pub fn quality_name(quality: Quality) -> &'static str {
+    match quality {
+        Quality::Sharp => "sharp",
+        Quality::Fast => "fast",
+        Quality::Balanced | Quality::Unspecified => "balanced",
+    }
+}
+
+/// Stato degli schermi per `nexodesk.update`: i pulsanti compaiono solo se sono più di uno.
+pub fn displays_state(displays: &[DisplayInfo], current: u32) -> String {
+    let items: Vec<String> = displays
+        .iter()
+        .map(|d| {
+            let title = format!(
+                "Schermo {} · {}x{}{}",
+                d.index + 1,
+                d.width,
+                d.height,
+                if d.primary { " · principale" } else { "" }
+            );
+            format!("{{index:{},title:{}}}", d.index, js_string(&title))
+        })
+        .collect();
+    format!("{{displays:[{}],display:{current}}}", items.join(","))
+}
+
 /// Stringa JavaScript con le virgolette e i caratteri speciali protetti.
 pub fn js_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -135,6 +177,9 @@ mod tests {
     fn actions_and_escaping() {
         assert_eq!(Action::parse("sas"), Some(Action::SecureAttention));
         assert_eq!(Action::parse("altro"), None);
+        assert_eq!(Action::parse("display:1"), Some(Action::Display(1)));
+        assert_eq!(Action::parse("quality:sharp"), Some(Action::Quality(Quality::Sharp)));
+        assert_eq!(Action::parse("quality:x"), None);
         // "<" diventa <: il testo non può chiudere un tag <script>.
         let expected = concat!(r#""PC \"lab\"\u000a"#, r"\u", "003c", r#"/script>""#);
         assert_eq!(js_string("PC \"lab\"\n</script>"), expected);

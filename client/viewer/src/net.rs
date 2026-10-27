@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use nexodesk_codec::YuvFrame;
 use nexodesk_proto::v1::{
-    ControlMessage, Feedback, Hello, InputEvent, Ping, RequestKeyframe, VideoFrame, control_message::Msg,
+    ControlMessage, DisplayInfo, Hello, InputEvent, Ping, RequestKeyframe, VideoFrame, control_message::Msg,
 };
 use nexodesk_transport::{Fingerprint, FramedRecv, FramedSend};
 use tokio::sync::mpsc;
@@ -34,6 +34,11 @@ pub enum NetEvent {
     Disconnected(String),
     /// Scaduta la durata impostata con `--duration`.
     TestFinished,
+    /// Schermi dell'agent e quello trasmesso.
+    Displays {
+        displays: Vec<DisplayInfo>,
+        current: u32,
+    },
     /// Clic sulla barra degli strumenti.
     Toolbar(crate::toolbar::Action),
 }
@@ -97,28 +102,29 @@ pub enum Target {
 }
 
 /// Avvia la sessione su un thread dedicato. Restituisce il canale per l'input
-/// (chiuderlo termina la sessione) e il thread, da attendere prima di uscire.
+/// (chiuderlo termina la sessione), quello dei messaggi di controllo verso
+/// l'agent (feedback, schermo, qualità) e il thread, da attendere prima di uscire.
 pub fn start(
     target: Target,
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
-) -> (mpsc::UnboundedSender<InputEvent>, mpsc::UnboundedSender<Feedback>, std::thread::JoinHandle<()>) {
+) -> (mpsc::UnboundedSender<InputEvent>, mpsc::UnboundedSender<Msg>, std::thread::JoinHandle<()>) {
     let (input_tx, input_rx) = mpsc::unbounded_channel();
-    let (feedback_tx, feedback_rx) = mpsc::unbounded_channel();
+    let (control_tx, control_rx) = mpsc::unbounded_channel();
     let thread = std::thread::Builder::new()
         .name("rete".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
             let reason =
-                match rt.block_on(session(target, password, proxy.clone(), slot, input_rx, feedback_rx)) {
+                match rt.block_on(session(target, password, proxy.clone(), slot, input_rx, control_rx)) {
                     Ok(()) => "sessione terminata".to_string(),
                     Err(e) => format!("{e:#}"),
                 };
             let _ = proxy.send_event(NetEvent::Disconnected(reason));
         })
         .expect("thread di rete");
-    (input_tx, feedback_tx, thread)
+    (input_tx, control_tx, thread)
 }
 
 fn control(msg: Msg) -> ControlMessage {
@@ -179,7 +185,7 @@ async fn session(
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
     mut input_rx: mpsc::UnboundedReceiver<InputEvent>,
-    mut feedback_rx: mpsc::UnboundedReceiver<Feedback>,
+    mut control_rx: mpsc::UnboundedReceiver<Msg>,
 ) -> Result<()> {
     let (conn, direct) = open_connection(target).await?;
     let (send, recv) = conn.open_bi().await?;
@@ -254,8 +260,8 @@ async fn session(
                 _ = ping.tick() => {
                     ctrl_tx.send(&control(Msg::Ping(Ping { sent_us: nexodesk_proto::now_us() }))).await?;
                 }
-                Some(feedback) = feedback_rx.recv() => {
-                    ctrl_tx.send(&control(Msg::Feedback(feedback))).await?;
+                Some(msg) = control_rx.recv() => {
+                    ctrl_tx.send(&control(msg)).await?;
                 }
                 Some(()) = key_rx.recv() => {
                     ctrl_tx.send(&control(Msg::RequestKeyframe(RequestKeyframe {}))).await?;
@@ -268,6 +274,12 @@ async fn session(
                         let midpoint = (pong.ping_sent_us + now) / 2;
                         let offset_us = pong.agent_us as i64 - midpoint as i64;
                         let _ = proxy.send_event(NetEvent::Clock { rtt_us, offset_us });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::Displays(d)) }) => {
+                        let _ = proxy.send_event(NetEvent::Displays { displays: d.displays, current: d.current });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::VideoFormat(f)) }) => {
+                        info!(w = f.width, h = f.height, "nuovo formato video");
                     }
                     Some(_) => {}
                     None => return anyhow::Ok(()),

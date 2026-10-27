@@ -62,7 +62,7 @@ impl Pipeline {
         open_capturer: impl FnOnce() -> Result<Box<dyn Capturer>>,
         open_encoder: impl FnOnce(Option<GpuDevice>) -> Result<Box<dyn VideoEncoder>> + Send + 'static,
         gpu: bool,
-        max_fps: u32,
+        max_fps: Arc<AtomicU32>,
         frames: mpsc::Sender<VideoFrame>,
         keyframe: Arc<AtomicBool>,
         bitrate: Arc<AtomicU32>,
@@ -164,14 +164,13 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
 fn encode_loop(
     shared: &Shared,
     mut encoder: Box<dyn VideoEncoder>,
-    max_fps: u32,
+    max_fps: Arc<AtomicU32>,
     frames: &mpsc::Sender<VideoFrame>,
     keyframe: &AtomicBool,
     bitrate: &AtomicU32,
 ) {
     let mut applied_bitrate = bitrate.load(Ordering::Relaxed);
-    let min_interval = Duration::from_secs(1) / max_fps.max(1);
-    let mut last_encoded = Instant::now() - min_interval;
+    let mut last_encoded = Instant::now() - Duration::from_secs(1);
     // Ultima immagine compressa: serve a rifare un keyframe a schermo fermo.
     let mut last: Option<Captured> = None;
     let mut seq = 0u64;
@@ -180,6 +179,7 @@ fn encode_loop(
     while !shared.stop.load(Ordering::Relaxed) {
         // Limite di frame al secondo: nel frattempo lo slot si aggiorna con l'immagine più recente.
         let t_loop = Instant::now();
+        let min_interval = Duration::from_secs(1) / max_fps.load(Ordering::Relaxed).max(1);
         let wait = min_interval.saturating_sub(last_encoded.elapsed());
         if !wait.is_zero() && !keyframe.load(Ordering::Relaxed) {
             std::thread::sleep(wait);
@@ -337,7 +337,7 @@ mod tests {
             || Ok(Box::new(nexodesk_capture::SyntheticCapturer::new(320, 180, 60)) as Box<dyn Capturer>),
             |gpu| nexodesk_codec::create_encoder(nexodesk_codec::EncoderPlan::Software, Default::default(), gpu),
             false,
-            60,
+            Arc::new(AtomicU32::new(60)),
             tx,
             keyframe,
             Arc::new(AtomicU32::new(1_000_000)),

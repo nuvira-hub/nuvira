@@ -31,7 +31,47 @@ message ControlMessage {
     Auth auth = 6;
     AuthResult auth_result = 7;
     Feedback feedback = 8;
+    Displays displays = 9;
+    SelectDisplay select_display = 10;
+    SetQuality set_quality = 11;
   }
+}
+
+// Dall'agent, all'inizio della sessione e a ogni cambio: gli schermi disponibili
+// e quello trasmesso.
+message Displays {
+  repeated DisplayInfo displays = 1;
+  uint32 current = 2;
+}
+
+message DisplayInfo {
+  uint32 index = 1;
+  string name = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  bool primary = 5;
+}
+
+// Dal viewer: trasmetti questo schermo (indice di DisplayInfo). L'agent risponde
+// con VideoFormat e Displays aggiornati.
+message SelectDisplay {
+  uint32 index = 1;
+}
+
+// Dal viewer: compromesso tra nitidezza e fluidità. Il bitrate resta adattivo,
+// cambiano il tetto e i frame al secondo.
+enum Quality {
+  QUALITY_UNSPECIFIED = 0;
+  // Predefinita: bitrate massimo e fps dell'agent.
+  QUALITY_BALANCED = 1;
+  // Testo più nitido: bitrate massimo doppio, al più 30 fps.
+  QUALITY_SHARP = 2;
+  // Reti lente: bitrate massimo dimezzato, fps pieni.
+  QUALITY_FAST = 3;
+}
+
+message SetQuality {
+  Quality quality = 1;
 }
 
 // Dal viewer, ogni ~250 ms: cosa vede della sessione. L'agent lo usa per

@@ -112,8 +112,11 @@ pub(crate) fn provider() -> Arc<CryptoProvider> {
 
 pub(crate) fn transport_config() -> Arc<TransportConfig> {
     let mut t = TransportConfig::default();
-    t.keep_alive_interval(Some(Duration::from_secs(5)));
-    t.max_idle_timeout(Some(Duration::from_secs(20).try_into().expect("durata valida")));
+    // Se l'altra parte sparisce senza chiudere (viewer chiuso di forza, rete caduta)
+    // l'agent resta "occupato" fino al timeout: 10 s, con un pacchetto ogni 2 s perché
+    // una connessione viva non resti mai così a lungo in silenzio.
+    t.keep_alive_interval(Some(Duration::from_secs(2)));
+    t.max_idle_timeout(Some(Duration::from_secs(10).try_into().expect("durata valida")));
     // GSO (più datagrammi in un'unica chiamata di invio) su Windows perde i pacchetti
     // in loopback, e dopo la perdita la connessione non riceve più nulla: disattivato.
     // TODO: riprovare su LAN reale e riattivarlo dove funziona.

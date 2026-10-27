@@ -24,6 +24,9 @@ pub trait InputInjector: Send {
 
     /// Rilascia tasti e pulsanti ancora premuti (fine sessione, connessione persa).
     fn release_all(&mut self);
+
+    /// Lo schermo trasmesso è cambiato: le coordinate del mouse si riferiscono a questo.
+    fn set_screen(&mut self, screen: ScreenRect);
 }
 
 /// Apre l'iniezione di input sullo schermo indicato.

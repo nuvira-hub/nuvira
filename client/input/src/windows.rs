@@ -180,6 +180,10 @@ impl InputInjector for SendInputInjector {
         Ok(())
     }
 
+    fn set_screen(&mut self, screen: ScreenRect) {
+        self.screen = screen;
+    }
+
     fn release_all(&mut self) {
         for held in std::mem::take(&mut self.held) {
             match held {
