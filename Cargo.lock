@@ -2965,9 +2965,12 @@ dependencies = [
  "nu-ansi-term",
  "quinn",
  "ring",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows",
 ]
 
 [[package]]

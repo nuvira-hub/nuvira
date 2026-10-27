@@ -78,9 +78,15 @@ struct Args {
     #[arg(long, value_name = "URL")]
     server_ws: Option<String>,
 
-    /// Password di sessione (con --server). Senza, ne viene generata una a ogni avvio.
+    /// Password permanente (con --server): chi la usa entra senza conferma. In ogni caso
+    /// a ogni avvio viene generata anche una password temporanea.
     #[arg(long, env = "NEXODESK_PASSWORD", hide_env_values = true)]
     password: Option<String>,
+
+    /// Canale locale con l'app NexoDesk (usato da nexodesk-service): l'app mostra ID e
+    /// password temporanea, e chi entra con quella va confermato da chi usa il PC.
+    #[arg(long)]
+    ipc: bool,
 
     /// File con la chiave del dispositivo (predefinito: device.key nella cartella dati).
     #[arg(long, value_name = "FILE")]
@@ -176,8 +182,9 @@ fn main() -> Result<()> {
         return rt.block_on(nexodesk_agent::serve_direct(config, args.port, args.once, args.fingerprint_file));
     };
 
+    let ipc = args.ipc;
     let opts = ServerOptions {
-        server_name,
+        server_name: server_name.clone(),
         server_key: args.server_key.as_deref().map(nexodesk_transport::parse_fingerprint).transpose()?,
         transport: args.transport.into(),
         server_ws: args.server_ws.clone(),
@@ -185,29 +192,43 @@ fn main() -> Result<()> {
             .identity
             .clone()
             .unwrap_or_else(|| nexodesk_transport::identity::data_dir().join("device.key")),
-        // Da riga di comando non c'è nessuno a cui chiedere: si accetta chi ha la password.
-        confirm: false,
+        // Senza app non c'è nessuno a cui chiedere: basta la password.
+        confirm: ipc,
+        permanent_password: args.password.clone(),
         info_file: args.fingerprint_file.clone(),
     };
-    // Una password scelta (es. quella permanente del servizio) non finisce nei log.
-    let shown = match &args.password {
-        Some(_) => "impostata".to_string(),
-        None => nexodesk_agent::random_password(),
-    };
-    let password = args.password.clone().unwrap_or_else(|| shown.clone());
-    let shared_password = Arc::new(Mutex::new(password));
+    let password = Arc::new(Mutex::new(nexodesk_agent::random_password()));
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
-    // Il canale dei comandi resta aperto (nessuno li invia): chiuderlo fermerebbe l'agent.
-    let (_commands_tx, commands_rx) = mpsc::unbounded_channel();
+    // Il canale dei comandi deve restare aperto: chiuderlo fermerebbe l'agent.
+    let (commands_tx, commands_rx) = mpsc::unbounded_channel();
 
     rt.block_on(async move {
+        let (app_tx, app_rx) = mpsc::unbounded_channel::<AgentEvent>();
+        #[cfg(windows)]
+        if ipc {
+            let commands = commands_tx.clone();
+            tokio::spawn(async move {
+                if let Err(e) = nexodesk_agent::ipc::serve(server_name, app_rx, commands).await {
+                    tracing::warn!("canale con l'app chiuso: {e:#}");
+                }
+            });
+        }
+        #[cfg(not(windows))]
+        drop((app_rx, server_name));
         tokio::spawn(async move {
             while let Some(event) = events_rx.recv().await {
-                if let AgentEvent::Online { device_id: id, .. } = event {
-                    info!("ID {} {} {}, password {shown}", &id[..3], &id[3..6], &id[6..]);
+                match &event {
+                    AgentEvent::Online { device_id: id, .. } => info!("ID {} {} {}", &id[..3], &id[3..6], &id[6..]),
+                    // Con l'app la password temporanea la vede chi usa il PC, non il log.
+                    AgentEvent::Password { password } if !ipc => info!("password temporanea {password}"),
+                    _ => {}
+                }
+                if ipc {
+                    let _ = app_tx.send(event);
                 }
             }
         });
-        nexodesk_agent::serve_via_server(config, opts, shared_password, events_tx, commands_rx).await
+        let _commands = commands_tx;
+        nexodesk_agent::serve_via_server(config, opts, password, events_tx, commands_rx).await
     })
 }

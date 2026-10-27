@@ -6,6 +6,8 @@
 //! chi lo usa attraverso [`AgentEvent`] e [`AgentCommand`].
 
 mod abr;
+#[cfg(windows)]
+pub mod ipc;
 mod pipeline;
 
 use std::collections::HashMap;
@@ -84,14 +86,19 @@ pub struct ServerOptions {
     /// URL del ripiego WebSocket; senza, `ws://<server>:<porta>/nexodesk`.
     pub server_ws: Option<String>,
     pub identity_path: PathBuf,
-    /// Chiedere conferma (evento [`AgentEvent::Incoming`]) prima di accettare.
+    /// Chi entra con la password temporanea deve essere confermato da chi usa il PC
+    /// (evento [`AgentEvent::Incoming`]). Senza, basta la password.
     pub confirm: bool,
+    /// Password permanente per l'accesso non presidiato: mai confermata.
+    pub permanent_password: Option<String>,
     /// Test automatici: dove scrivere "ID password" appena registrati.
     pub info_file: Option<PathBuf>,
 }
 
-/// Cosa succede, per chi mostra lo stato all'utente.
-#[derive(Debug, Clone)]
+/// Cosa succede, per chi mostra lo stato all'utente (anche attraverso il canale
+/// locale tra servizio e app, vedi [`ipc`]).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
 pub enum AgentEvent {
     Connecting,
     /// Registrato sul server: si è raggiungibili con questo ID.
@@ -102,7 +109,12 @@ pub enum AgentEvent {
     Offline {
         reason: String,
     },
-    /// Qualcuno vuole collegarsi: rispondere con [`AgentCommand::Respond`] entro [`CONFIRM_TIMEOUT`].
+    /// Password temporanea attuale (all'avvio e dopo [`AgentCommand::NewPassword`]).
+    Password {
+        password: String,
+    },
+    /// Qualcuno ha inserito la password temporanea: rispondere con
+    /// [`AgentCommand::Respond`] entro [`CONFIRM_TIMEOUT`].
     Incoming {
         session_id: String,
         viewer_id: String,
@@ -123,10 +135,13 @@ pub enum AgentEvent {
 }
 
 /// Cosa chiede chi usa il PC.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case")]
 pub enum AgentCommand {
     Respond { session_id: String, accept: bool },
     EndSession,
+    /// Genera una nuova password temporanea (risposta: [`AgentEvent::Password`]).
+    NewPassword,
 }
 
 /// Password casuale di 8 caratteri facili da dettare (niente 0/O, 1/l/I).
@@ -201,10 +216,15 @@ pub async fn serve_via_server(
     let ctx = Arc::new(SessionContext {
         config,
         password,
+        permanent: opts.permanent_password.clone(),
+        confirm: opts.confirm,
+        pending: Mutex::new(HashMap::new()),
         events,
         busy: AtomicBool::new(false),
         end_session: Notify::new(),
     });
+    let current = ctx.password.lock().expect("password").clone();
+    let _ = ctx.events.send(AgentEvent::Password { password: current });
 
     loop {
         let _ = ctx.events.send(AgentEvent::Connecting);
@@ -224,13 +244,18 @@ pub async fn serve_via_server(
 /// Stato condiviso tra il ciclo di segnalazione e la sessione in corso.
 struct SessionContext {
     config: AgentConfig,
+    /// Password temporanea, mostrata a chi usa il PC.
     password: Arc<Mutex<String>>,
+    permanent: Option<String>,
+    confirm: bool,
+    /// Richieste in attesa della risposta di chi usa il PC, per sessione.
+    pending: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
     events: mpsc::UnboundedSender<AgentEvent>,
     busy: AtomicBool,
     end_session: Notify,
 }
 
-/// Richiesta in attesa di conferma o già accettata (in attesa del percorso).
+/// Richiesta accettata dal server, in attesa del percorso.
 struct Request {
     viewer_id: String,
     viewer_name: String,
@@ -277,9 +302,7 @@ async fn signal_loop(
     }
     let _ = ctx.events.send(AgentEvent::Online { device_id: id, websocket });
 
-    let mut waiting: HashMap<String, Request> = HashMap::new();
     let mut accepted: HashMap<String, Request> = HashMap::new();
-    let (expired_tx, mut expired_rx) = mpsc::unbounded_channel::<String>();
 
     loop {
         let reply = tokio::select! {
@@ -292,20 +315,8 @@ async fn signal_loop(
                             session_id: inc.session_id,
                             reason: "dispositivo occupato in un'altra sessione".into(),
                         }))
-                    } else if opts.confirm {
-                        let _ = ctx.events.send(AgentEvent::Incoming {
-                            session_id: inc.session_id.clone(),
-                            viewer_id: request.viewer_id.clone(),
-                            viewer_name: request.viewer_name.clone(),
-                        });
-                        let (session_id, expired_tx) = (inc.session_id.clone(), expired_tx.clone());
-                        tokio::spawn(async move {
-                            tokio::time::sleep(CONFIRM_TIMEOUT).await;
-                            let _ = expired_tx.send(session_id);
-                        });
-                        waiting.insert(inc.session_id, request);
-                        None
                     } else {
+                        // La conferma di chi usa il PC, se serve, arriva dopo la password.
                         accepted.insert(inc.session_id.clone(), request);
                         Some(client_message::Msg::Accept(Accept { session_id: inc.session_id }))
                     }
@@ -326,8 +337,9 @@ async fn signal_loop(
                     let request = request.unwrap_or(Request { viewer_id: route.peer_id, viewer_name: String::new() });
                     ctx.busy.store(true, Ordering::Relaxed);
                     let (ctx, identity) = (ctx.clone(), identity.clone());
+                    let session_id = route.session_id.clone();
                     tokio::spawn(async move {
-                        let result = relayed_session(&ctx, &identity, &p2p_route, &request).await;
+                        let result = relayed_session(&ctx, &identity, &p2p_route, &request, &session_id).await;
                         if let Err(e) = &result {
                             warn!("sessione terminata: {e:#}");
                         }
@@ -345,15 +357,16 @@ async fn signal_loop(
             },
             cmd = commands.recv() => match cmd {
                 Some(AgentCommand::Respond { session_id, accept }) => {
-                    let Some(request) = waiting.remove(&session_id) else { continue };
-                    let _ = ctx.events.send(AgentEvent::IncomingClosed { session_id: session_id.clone() });
-                    if accept && !ctx.busy.load(Ordering::Relaxed) {
-                        accepted.insert(session_id.clone(), request);
-                        Some(client_message::Msg::Accept(Accept { session_id }))
-                    } else {
-                        info!("collegamento rifiutato da chi usa il PC");
-                        Some(client_message::Msg::Reject(Reject { session_id, reason: "collegamento rifiutato".into() }))
+                    if let Some(answer) = ctx.pending.lock().expect("richieste").remove(&session_id) {
+                        let _ = answer.send(accept);
                     }
+                    None
+                }
+                Some(AgentCommand::NewPassword) => {
+                    let password = random_password();
+                    *ctx.password.lock().expect("password") = password.clone();
+                    let _ = ctx.events.send(AgentEvent::Password { password });
+                    None
                 }
                 Some(AgentCommand::EndSession) => {
                     ctx.end_session.notify_waiters();
@@ -361,14 +374,6 @@ async fn signal_loop(
                 }
                 None => return Ok(()),
             },
-            Some(session_id) = expired_rx.recv() => {
-                if waiting.remove(&session_id).is_none() {
-                    continue;
-                }
-                let _ = ctx.events.send(AgentEvent::IncomingClosed { session_id: session_id.clone() });
-                info!("nessuna risposta alla richiesta di collegamento: rifiutata");
-                Some(client_message::Msg::Reject(Reject { session_id, reason: "nessuna risposta dal dispositivo".into() }))
-            }
         };
         if let Some(reply) = reply {
             signal.tx.send(reply).await?;
@@ -381,6 +386,7 @@ async fn relayed_session(
     identity: &nexodesk_transport::identity::Identity,
     route: &nexodesk_transport::p2p::Route,
     request: &Request,
+    session_id: &str,
 ) -> Result<()> {
     let endpoint = nexodesk_transport::p2p::agent_endpoint(identity, route).await?;
     // Il viewer può aprire più connessioni (diretta e attraverso il relay): vale quella
@@ -411,14 +417,9 @@ async fn relayed_session(
         if direct { "in diretta" } else { "attraverso il relay" },
         conn.remote_address()
     );
-    let _ = ctx.events.send(AgentEvent::SessionStarted {
-        viewer_id: request.viewer_id.clone(),
-        viewer_name: request.viewer_name.clone(),
-        direct,
-    });
-    let password = ctx.password.lock().expect("password").clone();
+    let gate = Gate { ctx, session_id, request, direct };
     let result = tokio::select! {
-        r = session(conn.clone(), streams, &ctx.config, Some(&password)) => r,
+        r = session(conn.clone(), streams, &ctx.config, Some(&gate)) => r,
         _ = ctx.end_session.notified() => {
             info!("sessione terminata da chi usa il PC");
             Ok(())
@@ -434,13 +435,72 @@ async fn relayed_session(
     result
 }
 
-/// Una sessione con un viewer già collegato. Con `password` il viewer deve
-/// autenticarsi prima di ricevere qualunque immagine.
+/// Controllo d'accesso di una sessione arrivata dal server: password permanente
+/// (accesso non presidiato) oppure temporanea, con la conferma di chi usa il PC
+/// se richiesta.
+struct Gate<'a> {
+    ctx: &'a SessionContext,
+    session_id: &'a str,
+    request: &'a Request,
+    direct: bool,
+}
+
+impl Gate<'_> {
+    /// `Err` con il motivo da mostrare al viewer.
+    async fn authorize(&self, given: &str) -> Result<(), String> {
+        let ctx = self.ctx;
+        if ctx.permanent.as_deref().is_some_and(|p| same_secret(given, p)) {
+            info!("accesso con la password permanente");
+            return self.started();
+        }
+        let temporary = ctx.password.lock().expect("password").clone();
+        if !same_secret(given, &temporary) {
+            return Err("password errata".into());
+        }
+        if !ctx.confirm {
+            return self.started();
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        ctx.pending.lock().expect("richieste").insert(self.session_id.to_string(), tx);
+        let _ = ctx.events.send(AgentEvent::Incoming {
+            session_id: self.session_id.to_string(),
+            viewer_id: self.request.viewer_id.clone(),
+            viewer_name: self.request.viewer_name.clone(),
+        });
+        let answer = tokio::time::timeout(CONFIRM_TIMEOUT, rx).await;
+        ctx.pending.lock().expect("richieste").remove(self.session_id);
+        let _ = ctx.events.send(AgentEvent::IncomingClosed { session_id: self.session_id.to_string() });
+        match answer {
+            Ok(Ok(true)) => self.started(),
+            // Rifiutato da chi usa il PC, oppure nessuna app aperta per chiederglielo.
+            Ok(Ok(false)) => {
+                info!("collegamento non accettato sul dispositivo");
+                Err("collegamento non accettato sul dispositivo".into())
+            }
+            _ => {
+                info!("nessuna risposta alla richiesta di collegamento: rifiutata");
+                Err("nessuna risposta dal dispositivo".into())
+            }
+        }
+    }
+
+    fn started(&self) -> Result<(), String> {
+        let _ = self.ctx.events.send(AgentEvent::SessionStarted {
+            viewer_id: self.request.viewer_id.clone(),
+            viewer_name: self.request.viewer_name.clone(),
+            direct: self.direct,
+        });
+        Ok(())
+    }
+}
+
+/// Una sessione con un viewer già collegato. Con `gate` il viewer deve
+/// autenticarsi (ed essere eventualmente confermato) prima di ricevere qualunque immagine.
 async fn session(
     conn: Connection,
     (send, recv): (quinn::SendStream, quinn::RecvStream),
     config: &AgentConfig,
-    password: Option<&str>,
+    gate: Option<&Gate<'_>>,
 ) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -452,20 +512,25 @@ async fn session(
     if hello.protocol_version < nexodesk_proto::PROTOCOL_VERSION {
         bail!("versione del protocollo del viewer non supportata: {}", hello.protocol_version);
     }
-    let hello = Hello { password_required: password.is_some(), ..local_hello() };
+    let hello = Hello { password_required: gate.is_some(), ..local_hello() };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
-    if let Some(password) = password {
+    if let Some(gate) = gate {
         let given = match ctrl_rx.recv::<ControlMessage>().await? {
             Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth.password,
             _ => bail!("il viewer non ha inviato la password"),
         };
-        let ok = same_secret(&given, password);
-        let message = if ok { String::new() } else { "password errata".into() };
+        let verdict = gate.authorize(&given).await;
+        let (ok, message) = match &verdict {
+            Ok(()) => (true, String::new()),
+            Err(reason) => (false, reason.clone()),
+        };
         ctrl_tx.send(&control(Msg::AuthResult(AuthResult { ok, message }))).await?;
-        if !ok {
-            // Pausa contro i tentativi a raffica.
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            bail!("password errata");
+        if let Err(reason) = verdict {
+            // Il motivo deve arrivare al viewer prima che la connessione si chiuda; con la
+            // password errata la pausa è più lunga, contro i tentativi a raffica.
+            let pause = if reason == "password errata" { 2000 } else { 500 };
+            tokio::time::sleep(Duration::from_millis(pause)).await;
+            bail!("{reason}");
         }
     }
 

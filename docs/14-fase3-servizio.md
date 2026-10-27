@@ -64,9 +64,38 @@ Ctrl+Alt+Canc non si può inviare come tasti: il sistema del viewer lo intercett
 
 Prova del 2026-10-27: dal NUC con Ctrl+Alt+Fine compare su LABORATORIO la schermata di sicurezza in circa 240 ms; Esc riporta al desktop.
 
+## App e servizio sullo stesso PC
+
+Con il servizio installato l'app non avvia un proprio agent: mostra ID e password di quello del servizio e ne gestisce le richieste di conferma.
+
+**Due password:**
+
+| Password | Chi la vede | Conferma di chi usa il PC |
+|---|---|---|
+| Permanente (`install --password`, in `service.json`) | solo l'amministratore che installa | no: accesso non presidiato |
+| Temporanea (generata dall'agent, "Nuova" nell'app) | chi usa il PC, nell'app | sì, entro 30 s; senza app aperta la richiesta è rifiutata subito |
+
+La conferma arriva **dopo** il controllo della password: chi usa il PC non viene disturbato da chi sbaglia la password, e l'agent sa quale delle due è stata usata. Vale anche per l'app senza servizio (solo password temporanea, sempre con conferma). L'agent da riga di comando senza `--ipc` non chiede conferma, perché non c'è nessuno a cui chiedere.
+
+**Canale locale** (`client/agent/src/ipc.rs`):
+
+- l'agent del servizio (avviato con `--ipc`) crea la named pipe `\\.\pipe\nexodesk-agent-<sessione Windows>`, accessibile a SYSTEM e agli utenti interattivi (SDDL `D:P(A;;GA;;;SY)(A;;GRGW;;;IU)`); accetta solo app della propria sessione (`GetNamedPipeClientSessionId`);
+- la prima istanza si crea solo se il nome è libero (`FILE_FLAG_FIRST_PIPE_INSTANCE`); poi l'agent prepara sempre l'istanza successiva prima di usare quella collegata, così il nome resta suo anche quando l'app si scollega;
+- una riga JSON per messaggio: verso l'app `{"type":"info","server":...}` e `{"type":"event","event":{...}}` (gli `AgentEvent`), verso l'agent gli `AgentCommand` (`respond`, `end_session`, `new_password`);
+- un'app alla volta; appena collegata riceve lo stato attuale (registrazione, password, sessione e richiesta in corso);
+- l'app riconosce il servizio dal gestore servizi (consultabile anche da un utente normale) e, se il suo agent non risponde (avvio, cambio utente, aggiornamento), riprova ogni 2 s.
+
+Prove del 2026-10-27 su PC-LABORATORIO, viewer dal NUC:
+
+- l'app mostra ID del servizio, "Password temporanea" e la nota sull'accesso non presidiato;
+- password permanente: entra senza nessuna richiesta;
+- password temporanea: compare la richiesta nell'app, "Accetta" avvia la sessione;
+- password temporanea con l'app chiusa: rifiutata subito, il viewer mostra "collegamento non accettato sul dispositivo";
+- l'app si ricollega dopo un aggiornamento dell'agent e dopo due chiusure di fila. La prima versione non ricreava la pipe dopo la chiusura dell'app ("Accesso negato" con `FIRST_PIPE_INSTANCE`): corretto preparando l'istanza successiva in anticipo.
+
 ## Da fare
 
-- App e servizio sullo stesso PC: oggi l'app avvia un suo agent con un ID diverso. L'app dovrà riconoscere il servizio e mostrarne ID e richieste di conferma (canale locale tra app e servizio).
-- Conferma da parte dell'utente presente anche in modalità servizio (opzionale, per l'assistenza presidiata).
+- Verificare nel canale locale che dall'altra parte ci sia davvero l'agent del servizio (processo SYSTEM in Program Files) e non un programma che ha occupato il nome della pipe prima di lui.
+- Nel viewer, un messaggio "in attesa di conferma" mentre chi usa il PC decide (oggi la finestra resta in "connessione…").
 - Sessioni Desktop remoto (RDP): oggi si segue solo la console.
 - Password permanente salvata come hash invece che in chiaro (va cambiato anche il controllo nell'agent).

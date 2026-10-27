@@ -127,7 +127,7 @@ fn sas_listener() -> Option<std::thread::JoinHandle<()>> {
 
 fn agent_args(config: &ServiceConfig) -> String {
     let mut args = format!(
-        "--server \"{}\" --transport {} --identity \"{}\" --fingerprint-file \"{}\"",
+        "--ipc --server \"{}\" --transport {} --identity \"{}\" --fingerprint-file \"{}\"",
         config.server,
         config.transport,
         config::identity_path().display(),

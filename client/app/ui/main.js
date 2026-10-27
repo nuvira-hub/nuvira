@@ -26,7 +26,11 @@ function render(state) {
   let text = STATUS_TEXT[state.status] ?? state.status;
   if (state.status === "online" && state.websocket) text += " (via WebSocket)";
   if (state.status === "offline" && state.error) text += `: ${state.error}`;
+  // Con il servizio, finché il suo agent non risponde si mostra il motivo.
+  if (state.service && state.status === "connecting" && state.error) text = state.error;
   $("status-text").textContent = text;
+  $("service-note").classList.toggle("hidden", !state.service);
+  $("password-label").textContent = state.service ? "Password temporanea" : "Password";
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password;
   if (document.activeElement !== $("server")) $("server").value = state.server;

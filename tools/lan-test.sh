@@ -52,15 +52,20 @@ fi
 mkdir -p "$ROOT/dist"
 AGENT_ARGS=()
 if [ -n "${NEXODESK_VIA_SERVER:-}" ]; then
-    echo "== avvio di nexodesk-server su questo PC"
-    cp "$ROOT/target/nexodesk-server.exe" "$ROOT/dist/nexodesk-server.exe"
-    # Dati del server conservati tra le prove: agent e viewer ricordano l'impronta
-    # del suo certificato e rifiuterebbero un server con un certificato nuovo.
-    mkdir -p "$ROOT/target/lan-test-server"
-    NEXODESK_DATA_DIR="$ROOT/target/lan-test-server" "$ROOT/dist/nexodesk-server.exe" >"$OUT/server.log" 2>&1 &
-    SERVER_PID=$!
+    if tasklist //fi "imagename eq nexodesk-server.exe" | grep -qi nexodesk-server; then
+        # Già avviato (ad esempio per il servizio di PC-LABORATORIO): si usa quello.
+        echo "== nexodesk-server già in esecuzione su questo PC"
+    else
+        echo "== avvio di nexodesk-server su questo PC"
+        cp "$ROOT/target/nexodesk-server.exe" "$ROOT/dist/nexodesk-server.exe"
+        # Dati del server conservati tra le prove: agent e viewer ricordano l'impronta
+        # del suo certificato e rifiuterebbero un server con un certificato nuovo.
+        mkdir -p "$ROOT/target/lan-test-server"
+        NEXODESK_DATA_DIR="$ROOT/target/lan-test-server" "$ROOT/dist/nexodesk-server.exe" >"$OUT/server.log" 2>&1 &
+        SERVER_PID=$!
+        sleep 1
+    fi
     AGENT_ARGS=(--server "$AGENT_IP")
-    sleep 1
 fi
 
 echo "== avvio dell'agent ($*)"
