@@ -11,16 +11,22 @@ import (
 )
 
 // Impairment simulates a worse network on the traffic forwarded by the relay:
-// delay, delay variation, loss and limited bandwidth with a finite queue (like a
-// router with a buffer). For tests only: enabled with NEXODESK_RELAY_IMPAIR, e.g.
+// delay, delay variation, loss, limited bandwidth with a finite queue (like a
+// router with a buffer) and occasional stalls (like a mobile network, where
+// delivery pauses for hundreds of milliseconds every few seconds even with little
+// traffic). For tests only: enabled with NEXODESK_RELAY_IMPAIR, e.g.
 //
 //	NEXODESK_RELAY_IMPAIR="delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
+//	NEXODESK_RELAY_IMPAIR="delay=20ms,stall=300ms,every=3s"
 type Impairment struct {
 	Delay  time.Duration
 	Jitter time.Duration
 	Loss   float64 // 0..1
 	Rate   float64 // bit/s, 0 = unlimited
 	Queue  time.Duration
+	// Stall: delivery pauses for Stall, on average every StallEvery (0 = never).
+	Stall      time.Duration
+	StallEvery time.Duration
 }
 
 // ParseImpairment reads the specification; empty string = no simulation.
@@ -48,12 +54,19 @@ func ParseImpairment(spec string) (*Impairment, error) {
 			im.Loss = pct / 100
 		case "rate":
 			im.Rate, err = parseRate(value)
+		case "stall":
+			im.Stall, err = time.ParseDuration(value)
+		case "every":
+			im.StallEvery, err = time.ParseDuration(value)
 		default:
 			err = fmt.Errorf("unknown key")
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", key, err)
 		}
+	}
+	if im.Stall > 0 && im.StallEvery <= 0 {
+		im.StallEvery = 3 * time.Second
 	}
 	return im, nil
 }
@@ -73,8 +86,8 @@ func parseRate(v string) (float64, error) {
 }
 
 func (im *Impairment) String() string {
-	return fmt.Sprintf("delay %v ±%v, loss %.1f%%, bandwidth %.0f kbit/s, queue %v",
-		im.Delay, im.Jitter, im.Loss*100, im.Rate/1000, im.Queue)
+	return fmt.Sprintf("delay %v ±%v, loss %.1f%%, bandwidth %.0f kbit/s, queue %v, stall %v every ~%v",
+		im.Delay, im.Jitter, im.Loss*100, im.Rate/1000, im.Queue, im.Stall, im.StallEvery)
 }
 
 type delayed struct {
@@ -97,6 +110,8 @@ type impairedLink struct {
 	queue    chan delayed
 	nextFree time.Time // when the "link" will have finished sending what is queued
 	lastAt   time.Time // delivery of the last packet: jitter does not reorder
+	// Next stall and end of the current one.
+	nextStall, stallUntil time.Time
 }
 
 func newImpairer(im *Impairment, write func([]byte, net.Addr)) *impairer {
@@ -130,6 +145,19 @@ func (p *impairer) send(data []byte, to net.Addr) {
 	at := start.Add(p.im.Delay)
 	if p.im.Jitter > 0 {
 		at = at.Add(time.Duration(rand.Int64N(int64(2*p.im.Jitter))) - p.im.Jitter)
+	}
+	if p.im.Stall > 0 {
+		if l.nextStall.IsZero() {
+			l.nextStall = now.Add(p.im.StallEvery)
+		}
+		if !now.Before(l.nextStall) {
+			l.stallUntil = now.Add(p.im.Stall)
+			// Irregular interval: from half to one and a half times the average.
+			l.nextStall = now.Add(p.im.StallEvery/2 + time.Duration(rand.Int64N(int64(p.im.StallEvery))))
+		}
+		if at.Before(l.stallUntil.Add(p.im.Delay)) {
+			at = l.stallUntil.Add(p.im.Delay)
+		}
 	}
 	// As on a real link, the delay varies but the order stays the sending order.
 	if at.Before(l.lastAt) {

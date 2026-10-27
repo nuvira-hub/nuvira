@@ -2,38 +2,41 @@
 //!
 //! When the network is saturated packets queue up (in routers, in QUIC's
 //! buffer) and the network latency (end of encoding → arrival at the viewer, or
-//! capture→display with older viewers) rises well above its minimum.
-//! The controller compares the recent median latency with the minimum of the
-//! last 10 seconds (the "empty network" latency):
-//! - queue above 60 ms → bitrate × 0.8 (at most once per second);
-//! - queue below 25 ms for a while → bitrate × 1.08 (climbs back slowly).
+//! capture→display with older viewers) rises well above its minimum and stays there.
+//! The controller compares the median latency of the last second with the minimum
+//! of the last 10 seconds (the "empty network" latency):
+//! - queue above 60 ms for at least a second → bitrate × 0.8;
+//! - queue below 25 ms → bitrate × 1.15 (once a second, 3 s after a decrease).
 //!
-//! The thresholds are wide on purpose: on a slow link a larger frame also takes
-//! longer to get through, and an occasional retransmission raises latency by one
-//! RTT; neither is a queue to drain.
+//! Single peaks do not count: on mobile networks latency jumps by 150–600 ms every
+//! few seconds even with 0.3 Mbit/s sent on a 143 Mbit/s link (second Internet
+//! test, 2026-10-27). Reacting to each peak brought the bitrate to the minimum and
+//! the image became blurry, while the peaks stayed: they were not caused by us.
 //!
 //! Changes happen only while the video actually sends something: at least a quarter
 //! of the current bitrate, or 150 kbit/s (simple content may stay far below the
-//! bitrate and still fill a slow link). On a still screen almost nothing is sent: a latency
-//! rise is not a queue we cause (on mobile networks sparse traffic alone makes
-//! latency jump by 100 ms or more), lowering the bitrate would not help, and raising
-//! it would only be a guess. Measured in the first Internet test: with the screen
-//! still (1 kbit/s) the bitrate fell from 4 to 0.5 Mbit/s in 16 s.
+//! bitrate and still fill a slow link). On a still screen almost nothing is sent: a
+//! latency rise is not a queue we cause, lowering the bitrate would not help, and
+//! raising it would only be a guess.
 //!
 //! If a frame left more than 2 s ago and no feedback has arrived since, the
-//! network is probably stuck: the bitrate goes down as for a high queue.
+//! network is probably stuck: the bitrate goes down.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 const QUEUE_HIGH_MS: f64 = 60.0;
+/// How long the queue must stay high before the bitrate goes down.
+const HIGH_FOR: Duration = Duration::from_secs(1);
+/// Window of the recent latency (median of the reports in it).
+const RECENT_WINDOW: Duration = Duration::from_secs(1);
 const QUEUE_LOW_MS: f64 = 25.0;
 /// Latency counts when at least this share of the bitrate is actually sent...
 const BUSY_SHARE: f64 = 0.25;
 /// ...or at least this much (a still screen sends 1–90 kbit/s).
 const BUSY_BPS: f64 = 150_000.0;
 const DECREASE: f64 = 0.8;
-const INCREASE: f64 = 1.08;
+const INCREASE: f64 = 1.15;
 const DECREASE_INTERVAL: Duration = Duration::from_secs(1);
 const INCREASE_AFTER_DECREASE: Duration = Duration::from_secs(3);
 const INCREASE_INTERVAL: Duration = Duration::from_secs(1);
@@ -52,6 +55,10 @@ pub struct Abr {
     max: f64,
     /// Minimum latencies reported by the viewer, for the "empty network" baseline.
     mins: VecDeque<(Instant, f64)>,
+    /// Median latencies of the reports of the last second.
+    recent: VecDeque<(Instant, f64)>,
+    /// Since when the queue has been high without interruption.
+    high_since: Option<Instant>,
     last_decrease: Option<Instant>,
     last_increase: Instant,
     settle_until: Option<Instant>,
@@ -64,6 +71,8 @@ impl Abr {
             min: min_bps as f64,
             max: max_bps as f64,
             mins: VecDeque::new(),
+            recent: VecDeque::new(),
+            high_since: None,
             last_decrease: None,
             last_increase: Instant::now(),
             settle_until: None,
@@ -90,18 +99,29 @@ impl Abr {
         while self.mins.front().is_some_and(|(t, _)| now.duration_since(*t) > BASE_WINDOW) {
             self.mins.pop_front();
         }
-        let base = self.mins.iter().map(|(_, m)| *m).fold(f64::INFINITY, f64::min);
-        let queue = p50_ms - base;
         if sent_bps < (self.bitrate * BUSY_SHARE).min(BUSY_BPS) {
+            // Latency measured while idle says nothing about the queue we would cause.
+            self.recent.clear();
+            self.high_since = None;
             return None;
         }
-        if queue > QUEUE_HIGH_MS {
-            return self.decrease(now);
+        self.recent.push_back((now, p50_ms));
+        while self.recent.front().is_some_and(|(t, _)| now.duration_since(*t) > RECENT_WINDOW) {
+            self.recent.pop_front();
         }
+        let base = self.mins.iter().map(|(_, m)| *m).fold(f64::INFINITY, f64::min);
+        let mut recent: Vec<f64> = self.recent.iter().map(|(_, l)| *l).collect();
+        recent.sort_unstable_by(f64::total_cmp);
+        let queue = recent[recent.len() / 2] - base;
+        if queue > QUEUE_HIGH_MS {
+            let since = *self.high_since.get_or_insert(now);
+            return if now.duration_since(since) >= HIGH_FOR { self.decrease(now) } else { None };
+        }
+        self.high_since = None;
         let calm = self.last_decrease.is_none_or(|t| now.duration_since(t) > INCREASE_AFTER_DECREASE);
         if queue < QUEUE_LOW_MS && calm && now.duration_since(self.last_increase) > INCREASE_INTERVAL {
             self.last_increase = now;
-            return self.set(self.bitrate * INCREASE);
+            return self.set_at(now, self.bitrate * INCREASE);
         }
         None
     }
@@ -123,6 +143,18 @@ impl Abr {
         self.set_at(Instant::now(), bps)
     }
 
+    /// Feeds the same report every 250 ms (tests).
+    #[cfg(test)]
+    fn feed(&mut self, from: Instant, ms: std::ops::Range<u64>, p50: f64, min: f64, sent: f64) -> Option<u32> {
+        let mut changed = None;
+        for at in ms.step_by(250) {
+            if let Some(b) = self.on_feedback(from + Duration::from_millis(at), p50, min, sent) {
+                changed = Some(b);
+            }
+        }
+        changed
+    }
+
     fn set_at(&mut self, now: Instant, bps: f64) -> Option<u32> {
         let new = bps.clamp(self.min, self.max);
         if (new - self.bitrate).abs() < 1.0 {
@@ -130,6 +162,9 @@ impl Abr {
         }
         self.bitrate = new;
         self.settle_until = Some(now + SETTLE);
+        // Measurements from before the change no longer describe the network.
+        self.recent.clear();
+        self.high_since = None;
         Some(new as u32)
     }
 }
@@ -142,39 +177,48 @@ mod tests {
     const BUSY: f64 = 10_000_000.0;
 
     #[test]
-    fn decreases_on_queue_and_recovers() {
+    fn decreases_only_on_a_lasting_queue_and_recovers() {
         let t0 = Instant::now();
-        let mut abr = Abr::new(4_000_000, 300_000, 8_000_000);
-        // Free network: latency steady at 40 ms, the bitrate rises.
-        assert_eq!(abr.on_feedback(t0, 40.0, 35.0, BUSY), None);
         let t = |ms| t0 + Duration::from_millis(ms);
-        let up = abr.on_feedback(t(1100), 40.0, 35.0, BUSY);
-        assert_eq!(up, Some(4_320_000));
-        // While settling (1.5 s) measurements do not count, not even a peak.
-        assert_eq!(abr.on_feedback(t(1300), 500.0, 400.0, BUSY), None);
-        // Queue: the median rises to 120 ms with a historical minimum of 35 → down.
-        let down = abr.on_feedback(t(2700), 120.0, 100.0, BUSY);
-        assert_eq!(down, Some(3_456_000));
-        // After settling, down again if the queue stays.
-        assert!(abr.on_feedback(t(4300), 120.0, 100.0, BUSY).is_some());
+        let mut abr = Abr::new(4_000_000, 500_000, 8_000_000);
+        // Free network: latency steady at 20 ms, the bitrate rises by 15%.
+        assert_eq!(abr.feed(t0, 0..1300, 20.0, 15.0, BUSY), Some(4_600_000));
+        // While settling (1.5 s) measurements do not count.
+        assert_eq!(abr.feed(t0, 1300..2700, 500.0, 400.0, BUSY), None);
+        // Queue: 150 ms over a minimum of 15. Nothing for the first second...
+        assert_eq!(abr.feed(t0, 2750..3700, 150.0, 140.0, BUSY), None);
+        // ...then down.
+        assert_eq!(abr.on_feedback(t(3750), 150.0, 140.0, BUSY), Some(3_680_000));
         // After a decrease no increases for 3 s, even if the queue empties.
-        assert_eq!(abr.on_feedback(t(6000), 40.0, 35.0, BUSY), None);
-        assert!(abr.on_feedback(t(7400), 40.0, 35.0, BUSY).is_some());
+        assert_eq!(abr.feed(t0, 5300..6700, 20.0, 15.0, BUSY), None);
+        assert!(abr.feed(t0, 6800..7100, 20.0, 15.0, BUSY).is_some());
+    }
+
+    #[test]
+    fn mobile_peaks_are_not_a_queue() {
+        let t0 = Instant::now();
+        let mut abr = Abr::new(3_200_000, 500_000, 8_000_000);
+        // As measured on the mobile network: mostly 10–30 ms, one report out of
+        // three at 300 ms, while sending 0.3 Mbit/s.
+        for i in 0..40u64 {
+            let p50 = if i % 3 == 2 { 300.0 } else { 20.0 };
+            if let Some(b) = abr.on_feedback(t0 + Duration::from_millis(i * 250), p50, p50, 300_000.0) {
+                assert!(b > 3_200_000, "lowered to {b} on single peaks");
+            }
+        }
     }
 
     #[test]
     fn still_screen_changes_nothing() {
         let t0 = Instant::now();
-        let t = |ms| t0 + Duration::from_millis(ms);
         let mut abr = Abr::new(4_000_000, 500_000, 8_000_000);
-        assert_eq!(abr.on_feedback(t0, 100.0, 30.0, 1_000.0), None);
         // Latency jumps but only 1 kbit/s is sent: no decrease, no increase.
-        assert_eq!(abr.on_feedback(t(1100), 185.0, 185.0, 1_000.0), None);
-        assert_eq!(abr.on_feedback(t(2200), 40.0, 30.0, 1_000.0), None);
+        assert_eq!(abr.feed(t0, 0..3000, 185.0, 30.0, 1_000.0), None);
+        assert_eq!(abr.feed(t0, 3000..5000, 20.0, 15.0, 1_000.0), None);
         assert_eq!(abr.bitrate(), 4_000_000);
         // The screen moves: even simple content at 800 kbit/s (a fifth of the bitrate)
-        // can fill a slow link, so latency counts again.
-        assert_eq!(abr.on_feedback(t(3300), 185.0, 150.0, 800_000.0), Some(3_200_000));
+        // can fill a slow link, so a lasting queue counts again.
+        assert_eq!(abr.feed(t0, 5000..6300, 185.0, 150.0, 800_000.0), Some(3_200_000));
     }
 
     #[test]

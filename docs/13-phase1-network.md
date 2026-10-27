@@ -146,10 +146,11 @@ Simulation on the relay (`NEXODESK_RELAY_IMPAIR`, tests only), all traffic force
 
 What was done:
 - **Feedback from the viewer** every 250 ms: median and minimum latency of the displayed frames.
-- **Adaptive bitrate** in the agent (`client/agent/src/abr.rs`): it drops by 20% if latency exceeds the minimum of the last 10 s by 60 ms, rises by 8% if it stays close; 1.5 s of settling after every change. `--fixed-bitrate` disables it.
+- **Adaptive bitrate** in the agent (`client/agent/src/abr.rs`): it drops by 20% if the median latency of the last second exceeds the minimum of the last 10 s by 60 ms for at least a second, rises by 15% if it stays close; 1.5 s of settling after every change. `--fixed-bitrate` disables it.
 - The latency used is the **network part only** (end of encoding → arrival at the viewer, `Feedback.transit_ms_*`, `VideoFrame.encoded_us`): in the first Internet test (2026-10-27, mobile network through the relay) a slow encoding on the controlled PC (130 ms per frame) was taken for congestion and the bitrate fell to the minimum.
 - **No feedback**: the bitrate goes down only if a frame left more than 2 s ago with no feedback since. Before, it was measured from the last frame, and a still screen (one frame every few seconds) looked like a stuck network.
 - **Still screen**: the bitrate changes only while the video sends at least a quarter of the bitrate or 150 kbit/s. On a mobile network sparse traffic alone makes latency jump (30–185 ms with 1 kbit/s sent); before this rule the bitrate fell from 4 to 0.5 Mbit/s in 16 s with nothing moving.
+- **Single peaks**: with the screen moving, the mobile network still had 150–600 ms peaks every few seconds while 0.3 Mbit/s were sent on a 143 Mbit/s link; reacting to each one brought the bitrate to the minimum (blurry photos). Only a queue lasting a second counts now. Simulated on the relay (`stall=300ms,every=3s`): the bitrate climbs to the maximum with one 20% decrease; with `rate=1mbit` it goes down and latency returns to ~100 ms.
 - **Quick Sync ignores bitrate changes once the session has started** (Media Foundation): the new bitrate is applied by restarting the encoder (~0.3 s), with hysteresis (drops ≥ 15% at most once per second, rises ≥ 25% every 3 s). OpenH264 changes on the fly.
 - **BBR** as QUIC's congestion control: with random losses NewReno/Cubic used less than half of the bandwidth (`NEXODESK_CC_CUBIC=1` to compare).
 - **QUIC send buffer limited to 256 KB**: beyond that, the agent skips frames instead of queueing them.
