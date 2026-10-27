@@ -7,107 +7,192 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <img src="logo.svg" alt="" class="logo">
-    <h1>NexoDesk</h1>
-  </header>
+  <nav class="rail" aria-label="Sezioni">
+    <img src="logo.svg" alt="NexoDesk" class="rail-logo">
+    <button class="nav active" data-section="connect" title="Connessione" aria-label="Connessione">
+      <svg viewBox="0 0 24 24"><rect x="2" y="4" width="14" height="10" rx="2"/><path d="M6 18h6M9 14v4M18 10l4 3-4 3M14 13h8"/></svg>
+    </button>
+    <button class="nav" data-section="rubrica" title="Rubrica" aria-label="Rubrica">
+      <svg viewBox="0 0 24 24"><path d="M5 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5zM5 3v18M3 7h2M3 12h2M3 17h2"/><circle cx="12" cy="10" r="2.5"/><path d="M8.5 16a3.5 3.5 0 0 1 7 0"/></svg>
+    </button>
+    <button class="nav hidden" data-section="chat" id="nav-chat" title="Chat" aria-label="Chat">
+      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="badge-dot hidden" id="chat-unread"></span>
+    </button>
+    <button class="nav hidden" data-section="admin" id="nav-admin" title="Amministrazione" aria-label="Amministrazione">
+      <svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+    </button>
+    <span class="rail-space"></span>
+    <button class="nav" data-section="settings" title="Impostazioni" aria-label="Impostazioni">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
+    </button>
+    <button class="nav" data-section="info" title="Informazioni" aria-label="Informazioni">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01"/></svg>
+    </button>
+    <span id="rail-status" class="rail-status" title="…"><span id="status-dot" class="dot"></span></span>
+  </nav>
 
-  <main>
-   <div class="column">
-    <section id="session" class="banner hidden">
-      <div>
-        <strong>Sessione attiva</strong>
-        <span id="session-text"></span>
-      </div>
-      <button id="end-session" class="danger">Termina</button>
-    </section>
+  <div class="content">
+    <div id="session-strip" class="strip hidden" role="status">
+      <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      <span id="session-text"></span>
+      <button id="strip-chat" class="on-accent">Chat</button>
+      <button id="end-session" class="on-accent strong">Termina</button>
+    </div>
 
-    <section id="chat" class="card hidden">
-      <h2>Chat con chi ti assiste</h2>
-      <div id="chat-log" class="chat-log" aria-live="polite"></div>
-      <form id="chat-form" class="chat-form">
-        <input id="chat-text" autocomplete="off" placeholder="Scrivi un messaggio">
-        <button type="submit" class="primary">Invia</button>
-      </form>
-    </section>
-
-    <section class="card">
-      <h2>Questo dispositivo</h2>
-      <p class="status"><span id="status-dot" class="dot"></span><span id="status-text">…</span></p>
-      <div class="field">
-        <label>ID</label>
-        <div class="value-row">
-          <span id="device-id" class="big mono">— — —</span>
-          <button id="copy-id" class="ghost" title="Copia l'ID">Copia</button>
+    <main>
+      <!-- Connessione -->
+      <section id="sec-connect" class="page">
+        <div class="this-pc">
+          <div class="pc-field">
+            <span class="label">Il tuo ID</span>
+            <span class="value-row">
+              <span id="device-id" class="value mono">— — —</span>
+              <button id="copy-id" class="icon-btn" title="Copia l'ID" aria-label="Copia l'ID">
+                <svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
+              </button>
+            </span>
+          </div>
+          <div class="pc-field">
+            <span class="label" id="password-label">Password</span>
+            <span class="value-row">
+              <span id="password" class="value mono"></span>
+              <button id="copy-password" class="icon-btn" title="Copia la password" aria-label="Copia la password">
+                <svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
+              </button>
+              <button id="new-password" class="icon-btn" title="Genera una nuova password" aria-label="Nuova password">
+                <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg>
+              </button>
+            </span>
+          </div>
+          <div class="pc-notes">
+            <p class="status-line" id="status-text">…</p>
+            <p class="hint">Comunica ID e password a chi deve assisterti: ti verrà chiesto di confermare il collegamento.</p>
+            <p id="service-note" class="hint hidden">Accesso non presidiato attivo (servizio NexoDesk): chi ha la password permanente entra senza conferma.</p>
+          </div>
         </div>
-      </div>
-      <div class="field">
-        <label id="password-label">Password</label>
-        <div class="value-row">
-          <span id="password" class="big mono"></span>
-          <button id="copy-password" class="ghost" title="Copia la password">Copia</button>
-          <button id="new-password" class="ghost" title="Genera una nuova password">Nuova</button>
+
+        <form id="connect-form" class="hero" autocomplete="off">
+          <h1>Controlla un computer</h1>
+          <p class="hint" id="connect-hint">Scrivi l'ID del computer da controllare.</p>
+          <div class="combo">
+            <input id="remote-id" class="hero-input" placeholder="ID" aria-label="ID del computer" aria-autocomplete="list" aria-controls="suggestions">
+            <div id="suggestions" class="suggestions hidden" role="listbox"></div>
+          </div>
+          <input id="remote-password" class="hero-password" type="password" placeholder="Password" aria-label="Password">
+          <button type="submit" class="primary hero-button">Collega</button>
+          <p id="connect-message" class="message hidden"></p>
+        </form>
+      </section>
+
+      <!-- Rubrica -->
+      <section id="sec-rubrica" class="page hidden">
+        <header class="page-head">
+          <h1>Rubrica</h1>
+          <div id="rubrica-tools" class="tools hidden">
+            <input id="rubrica-search" type="search" autocomplete="off" placeholder="Cerca nome, azienda, ID…">
+            <button id="rubrica-new" class="primary">Nuova scheda</button>
+            <button id="rubrica-reload" class="icon-btn" title="Aggiorna" aria-label="Aggiorna">
+              <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg>
+            </button>
+          </div>
+        </header>
+        <form id="login-form" class="login hidden">
+          <p>Entra con il tuo account per vedere i computer salvati sul server NexoDesk.</p>
+          <input id="login-user" autocomplete="username" placeholder="Nome utente">
+          <input id="login-password" type="password" autocomplete="current-password" placeholder="Password">
+          <button type="submit" class="primary">Entra</button>
+        </form>
+        <p id="rubrica-message" class="message hidden"></p>
+        <div id="rubrica-list" class="rubrica-list hidden"></div>
+      </section>
+
+      <!-- Chat -->
+      <section id="sec-chat" class="page chat-page hidden">
+        <header class="page-head"><h1>Chat con chi ti assiste</h1></header>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <form id="chat-form" class="chat-form">
+          <input id="chat-text" autocomplete="off" placeholder="Scrivi un messaggio">
+          <button type="submit" class="primary">Invia</button>
+        </form>
+      </section>
+
+      <!-- Amministrazione -->
+      <section id="sec-admin" class="page hidden">
+        <header class="page-head"><h1>Amministrazione</h1></header>
+        <h2>Account</h2>
+        <div id="admin-accounts" class="list"></div>
+        <form id="account-form" class="inline-form">
+          <input id="account-user" autocomplete="off" placeholder="Nome utente" required>
+          <input id="account-password" type="password" autocomplete="new-password" placeholder="Password">
+          <label class="check"><input id="account-admin" type="checkbox"> Amministratore</label>
+          <button type="submit" class="primary" id="account-save">Aggiungi</button>
+          <button type="button" id="account-cancel" class="hidden">Annulla</button>
+        </form>
+        <p class="hint">Nuovo account: password di almeno 8 caratteri. In modifica lasciala vuota per non cambiarla.</p>
+        <h2>Rubriche condivise</h2>
+        <div id="admin-books" class="list"></div>
+        <form id="book-form" class="book-form">
+          <input id="book-name" autocomplete="off" placeholder="Nome della rubrica condivisa" required>
+          <span class="label">Account che la vedono</span>
+          <div id="book-members" class="members"></div>
+          <div class="actions">
+            <button type="button" id="book-cancel" class="hidden">Annulla</button>
+            <button type="submit" class="primary" id="book-save">Crea rubrica</button>
+          </div>
+        </form>
+        <p id="admin-message" class="message hidden"></p>
+      </section>
+
+      <!-- Impostazioni -->
+      <section id="sec-settings" class="page hidden">
+        <header class="page-head"><h1>Impostazioni</h1></header>
+        <h2>Server</h2>
+        <form id="server-form" class="inline-form">
+          <input id="server" class="mono" autocomplete="off" placeholder="es. 192.168.1.10 o nexodesk.esempio.it" aria-label="Server NexoDesk">
+          <button type="submit" class="primary">Salva</button>
+        </form>
+        <p class="hint">Server NexoDesk a cui si registra questo computer e su cui si trova la rubrica.</p>
+        <p id="server-message" class="message hidden"></p>
+
+        <h2>Account</h2>
+        <div id="account-out">
+          <p class="hint">Non hai effettuato l'accesso alla rubrica.</p>
+          <button type="button" id="goto-login">Entra dalla Rubrica</button>
         </div>
-      </div>
-      <p class="hint">Comunica ID e password a chi deve assisterti: ti verrà chiesto di confermare il collegamento.</p>
-      <p id="service-note" class="hint hidden">Accesso non presidiato attivo (servizio NexoDesk): chi ha la password permanente entra senza conferma.</p>
-    </section>
-
-    <section class="card">
-      <h2>Controlla un altro dispositivo</h2>
-      <form id="connect-form">
-        <input id="remote-id" class="mono" inputmode="numeric" autocomplete="off" placeholder="ID (9 cifre)">
-        <input id="remote-password" type="password" autocomplete="off" placeholder="Password">
-        <button type="submit" class="primary">Collega</button>
-      </form>
-      <p id="connect-message" class="message hidden"></p>
-    </section>
-
-    <details class="card" id="settings">
-      <summary>Impostazioni</summary>
-      <form id="server-form">
-        <label for="server">Server NexoDesk</label>
-        <div class="value-row">
-          <input id="server" class="mono" autocomplete="off" placeholder="es. 192.168.1.10 o nexodesk.esempio.it">
-          <button type="submit">Salva</button>
+        <div id="account-in" class="hidden">
+          <p>Accesso effettuato come <strong id="account-name"></strong>.</p>
+          <form id="password-form" class="stack">
+            <input id="pw-old" type="password" autocomplete="current-password" placeholder="Password attuale" required>
+            <input id="pw-new" type="password" autocomplete="new-password" placeholder="Nuova password (almeno 8 caratteri)" required>
+            <input id="pw-confirm" type="password" autocomplete="new-password" placeholder="Ripeti la nuova password" required>
+            <div class="actions">
+              <button type="button" id="rubrica-logout">Esci</button>
+              <span class="spacer"></span>
+              <button type="submit" class="primary">Cambia password</button>
+            </div>
+          </form>
+          <p id="password-message" class="message hidden"></p>
         </div>
-      </form>
-    </details>
-   </div>
+      </section>
 
-   <div class="column">
-    <section class="card rubrica" id="rubrica">
-      <div class="rubrica-head">
-        <h2>Rubrica</h2>
-        <div id="rubrica-tools" class="tools hidden">
-          <span id="rubrica-user" class="chip"></span>
-          <button id="rubrica-new" class="ghost" title="Nuova scheda">Nuova</button>
-          <button id="rubrica-reload" class="ghost" title="Aggiorna la rubrica">Aggiorna</button>
-          <button id="rubrica-admin" class="ghost hidden" title="Account e rubriche condivise">Gestione</button>
-          <button id="rubrica-password" class="ghost" title="Cambia la tua password">Password</button>
-          <button id="rubrica-logout" class="ghost" title="Esci dalla rubrica">Esci</button>
+      <!-- Informazioni -->
+      <section id="sec-info" class="page hidden">
+        <div class="about">
+          <img src="logo.svg" alt="" class="about-logo">
+          <h1>NexoDesk</h1>
+          <p class="hint" id="app-version"></p>
+          <p>Controllo remoto open source: server proprio, collegamenti diretti cifrati end-to-end, accesso non presidiato.</p>
+          <p>NexoDesk © 2026 Alessandro Blason<br>Licenza AGPL-3.0 con i termini aggiuntivi sui crediti.</p>
+          <button type="button" id="source-button">Codice sorgente</button>
         </div>
-      </div>
+      </section>
+    </main>
 
-      <form id="login-form" class="hidden">
-        <p class="hint">Entra con il tuo account per vedere i dispositivi salvati sul server NexoDesk.</p>
-        <input id="login-user" autocomplete="username" placeholder="Nome utente">
-        <input id="login-password" type="password" autocomplete="current-password" placeholder="Password">
-        <button type="submit" class="primary">Entra</button>
-      </form>
-
-      <div id="rubrica-body" class="hidden">
-        <input id="rubrica-search" type="search" autocomplete="off" placeholder="Cerca per nome, azienda, ID, referente…">
-        <div id="rubrica-list" class="rubrica-list"></div>
-      </div>
-      <p id="rubrica-message" class="message hidden"></p>
-    </section>
-   </div>
-  </main>
-
-  <footer>
-    NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · <a href="#" id="source">Codice sorgente</a>
-  </footer>
+    <footer>
+      NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · <a href="#" id="source">Codice sorgente</a>
+    </footer>
+  </div>
 
   <div id="incoming" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="incoming-title">
     <div class="dialog">
@@ -145,50 +230,6 @@
         <button type="submit" class="primary">Salva</button>
       </div>
     </form>
-  </div>
-
-  <div id="password-dialog" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="password-title">
-    <form id="password-form" class="dialog">
-      <h2 id="password-title">Cambia la tua password</h2>
-      <input id="pw-old" type="password" autocomplete="current-password" placeholder="Password attuale" required>
-      <input id="pw-new" type="password" autocomplete="new-password" placeholder="Nuova password (almeno 8 caratteri)" required>
-      <input id="pw-confirm" type="password" autocomplete="new-password" placeholder="Ripeti la nuova password" required>
-      <p id="password-message" class="message hidden"></p>
-      <div class="actions">
-        <button type="button" id="password-cancel">Annulla</button>
-        <button type="submit" class="primary">Cambia</button>
-      </div>
-    </form>
-  </div>
-
-  <div id="admin-dialog" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="admin-title">
-    <div class="dialog wide">
-      <h2 id="admin-title">Account e rubriche condivise</h2>
-      <h3>Account</h3>
-      <div id="admin-accounts" class="admin-list"></div>
-      <form id="account-form" class="inline-form">
-        <input id="account-user" autocomplete="off" placeholder="Nome utente" required>
-        <input id="account-password" type="password" autocomplete="new-password" placeholder="Password">
-        <label class="check"><input id="account-admin" type="checkbox"> Amministratore</label>
-        <button type="submit" class="primary" id="account-save">Aggiungi</button>
-        <button type="button" id="account-cancel" class="hidden">Annulla</button>
-      </form>
-      <p class="hint" id="account-hint">Nuovo account: password di almeno 8 caratteri. In modifica lasciala vuota per non cambiarla.</p>
-      <h3>Rubriche condivise</h3>
-      <div id="admin-books" class="admin-list"></div>
-      <form id="book-form" class="book-form">
-        <input id="book-name" autocomplete="off" placeholder="Nome della rubrica condivisa" required>
-        <div id="book-members" class="members"></div>
-        <div class="actions">
-          <button type="button" id="book-cancel" class="hidden">Annulla</button>
-          <button type="submit" class="primary" id="book-save">Crea rubrica</button>
-        </div>
-      </form>
-      <p id="admin-message" class="message hidden"></p>
-      <div class="actions">
-        <button type="button" id="admin-close">Chiudi</button>
-      </div>
-    </div>
   </div>
 
   <script src="main.js"></script>

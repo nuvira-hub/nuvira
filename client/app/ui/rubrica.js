@@ -1,10 +1,13 @@
-// Rubrica sul server: accesso con l'account, schede dei dispositivi e, per gli
-// amministratori, gestione di account e rubriche condivise. Usa $, invoke e
-// formatId di main.js; render() chiama renderRubrica() a ogni stato nuovo.
+// Rubrica sul server: accesso con l'account, schede dei computer, suggerimenti
+// nel campo "Controlla un computer" e, per gli amministratori, gestione di
+// account e rubriche condivise. Usa $, invoke, formatId e showSection di main.js;
+// render() chiama renderRubrica() a ogni stato nuovo.
 
 let rubrica = null; // ultimo stato ricevuto (account, books, rubrica_error)
 let editingEntry = null; // scheda nella finestra di modifica (null = nuova)
+let suggested = null; // scheda scelta dai suggerimenti del collegamento
 let adminAccounts = [];
+let adminLoaded = false;
 let editingAccount = null;
 let editingBook = null;
 
@@ -46,20 +49,45 @@ async function call(command, args, messageId) {
   }
 }
 
-// --- elenco ---
+function allEntries() {
+  return (rubrica?.books ?? []).flatMap((b) => b.entries);
+}
+
+function entryTitle(entry) {
+  return entry.name || formatId(entry.device_id);
+}
+
+function entryDetails(entry) {
+  return [entry.company, formatId(entry.device_id), entry.contact].filter(Boolean).join(" · ");
+}
+
+// --- stato ---
 
 function renderRubrica(state) {
   rubrica = state;
-  const logged = Boolean(state.account);
-  $("login-form").classList.toggle("hidden", logged);
-  $("rubrica-body").classList.toggle("hidden", !logged);
-  $("rubrica-tools").classList.toggle("hidden", !logged);
-  $("rubrica-admin").classList.toggle("hidden", !state.account?.admin);
-  if (logged) $("rubrica-user").textContent = state.account.username;
+  const account = state.account;
+  $("login-form").classList.toggle("hidden", Boolean(account));
+  $("rubrica-list").classList.toggle("hidden", !account);
+  $("rubrica-tools").classList.toggle("hidden", !account);
+  $("nav-admin").classList.toggle("hidden", !account?.admin);
+  $("account-out").classList.toggle("hidden", Boolean(account));
+  $("account-in").classList.toggle("hidden", !account);
+  if (account) $("account-name").textContent = account.username;
   if (state.rubrica_error) showMessage("rubrica-message", state.rubrica_error);
+  $("connect-hint").textContent = account
+    ? "Scrivi l'ID oppure il nome, l'azienda o il referente: i suggerimenti arrivano dalla rubrica."
+    : "Scrivi l'ID del computer da controllare.";
+  $("remote-id").placeholder = account ? "ID o nome dalla rubrica" : "ID";
   renderEntries();
-  if (!$("admin-dialog").classList.contains("hidden")) renderAdmin();
+  if (account?.admin && !adminLoaded) loadAccounts();
+  if (!account) {
+    adminLoaded = false;
+    adminAccounts = [];
+  }
+  renderAdmin();
 }
+
+// --- elenco della rubrica ---
 
 function matches(entry, query) {
   if (!query) return true;
@@ -75,8 +103,9 @@ function renderEntries() {
   for (const book of books) {
     const entries = book.entries.filter((e) => matches(e, query));
     if (query && entries.length === 0) continue;
-    children.push(el("p", "book-title", `${book.name} (${book.entries.length})`));
-    if (entries.length === 0) children.push(el("p", "empty", "Nessuna scheda: aggiungine una con «Nuova»."));
+    const label = book.personal ? `${book.name} · solo tua` : `${book.name} · condivisa`;
+    children.push(el("p", "book-title", `${label} (${book.entries.length})`));
+    if (entries.length === 0) children.push(el("p", "empty", "Nessuna scheda: aggiungine una con «Nuova scheda»."));
     for (const entry of entries) children.push(entryRow(entry));
   }
   if (books.length && children.length === 0) children.push(el("p", "empty", "Nessuna scheda trovata."));
@@ -85,27 +114,26 @@ function renderEntries() {
 
 function entryRow(entry) {
   const row = el("div", "entry");
+  const initial = (entry.name || entry.company || "#").trim().charAt(0).toUpperCase();
   const who = el("div", "who");
-  who.append(el("strong", "", entry.name || formatId(entry.device_id)));
-  const details = [entry.company, formatId(entry.device_id), entry.contact].filter(Boolean).join(" · ");
-  who.append(el("span", "", details));
+  who.append(el("strong", "", entryTitle(entry)), el("span", "", entryDetails(entry)));
   row.title = entry.notes || "";
-  const connect = el("button", "primary", "Collega");
-  connect.title = entry.password ? "Collega con la password salvata" : "Nessuna password salvata: verrà chiesta la conferma o la password";
-  connect.addEventListener("click", () => connectEntry(entry));
-  const edit = el("button", "ghost", "Modifica");
+  const edit = el("button", "edit", "Modifica");
   edit.addEventListener("click", () => openEntry(entry));
+  const connect = el("button", "primary", "Collega");
+  connect.addEventListener("click", () => connectEntry(entry));
   row.addEventListener("dblclick", () => connectEntry(entry));
-  row.append(who, connect, edit);
+  row.append(el("span", "avatar", initial), who, edit, connect);
   return row;
 }
 
 async function connectEntry(entry) {
   if (!entry.password) {
-    // Senza password salvata la si chiede nel modulo di collegamento.
-    $("remote-id").value = formatId(entry.device_id);
+    // Senza password salvata la si chiede nella sezione Connessione.
+    choose(entry);
+    showSection("connect");
     $("remote-password").focus();
-    showMessage("rubrica-message", "Nessuna password salvata per questa scheda: inseriscila e premi Collega.");
+    showMessage("connect-message", "Nessuna password salvata per questa scheda: inseriscila e premi Collega.");
     return;
   }
   try {
@@ -114,6 +142,77 @@ async function connectEntry(entry) {
     // Messaggio già mostrato.
   }
 }
+
+// --- suggerimenti nel campo "Controlla un computer" ---
+
+// Scheda scelta, se l'ID nel campo è ancora il suo (usata da main.js al Collega).
+function chosenEntry() {
+  const digits = $("remote-id").value.replace(/\D/g, "");
+  return suggested && suggested.device_id === digits ? suggested : null;
+}
+
+function choose(entry) {
+  suggested = entry;
+  $("remote-id").value = formatId(entry.device_id);
+  $("remote-password").value = "";
+  $("remote-password").placeholder = entry.password ? "Password salvata in rubrica" : "Password";
+  hideSuggestions();
+}
+
+function hideSuggestions() {
+  $("suggestions").classList.add("hidden");
+}
+
+function renderSuggestions() {
+  const query = $("remote-id").value.trim().toLowerCase();
+  if (!chosenEntry()) $("remote-password").placeholder = "Password";
+  if (!rubrica?.account || query.length < 2) {
+    hideSuggestions();
+    return;
+  }
+  const found = allEntries()
+    .filter((e) => matches(e, query))
+    .slice(0, 6);
+  if (found.length === 0 || (found.length === 1 && chosenEntry() === found[0])) {
+    hideSuggestions();
+    return;
+  }
+  $("suggestions").replaceChildren(
+    ...found.map((entry, i) => {
+      const item = el("div", i === 0 ? "suggestion selected" : "suggestion");
+      item.setAttribute("role", "option");
+      item.append(el("strong", "", entryTitle(entry)), el("span", "", entryDetails(entry)));
+      // mousedown: arriva prima che il campo perda il fuoco e chiuda l'elenco.
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        choose(entry);
+        $("remote-password").focus();
+      });
+      item.entry = entry;
+      return item;
+    }),
+  );
+  $("suggestions").classList.remove("hidden");
+}
+
+$("remote-id").addEventListener("input", renderSuggestions);
+$("remote-id").addEventListener("blur", hideSuggestions);
+$("remote-id").addEventListener("keydown", (e) => {
+  const items = [...$("suggestions").children];
+  if ($("suggestions").classList.contains("hidden") || items.length === 0) return;
+  const index = items.findIndex((i) => i.classList.contains("selected"));
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const next = (index + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+    items.forEach((item, i) => item.classList.toggle("selected", i === next));
+  } else if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault();
+    choose(items[Math.max(index, 0)].entry);
+    $("remote-password").focus();
+  } else if (e.key === "Escape") {
+    hideSuggestions();
+  }
+});
 
 // --- scheda ---
 
@@ -174,7 +273,7 @@ $("entry-delete").addEventListener("click", (e) =>
 );
 $("entry-cancel").addEventListener("click", closeEntry);
 
-// --- accesso ---
+// --- accesso e account ---
 
 $("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -187,19 +286,14 @@ $("login-form").addEventListener("submit", async (e) => {
 });
 
 $("rubrica-logout").addEventListener("click", () => invoke("rubrica_logout"));
+$("goto-login").addEventListener("click", () => {
+  showSection("rubrica");
+  $("login-user").focus();
+});
 $("rubrica-reload").addEventListener("click", () => call("rubrica_refresh", {}, "rubrica-message").catch(() => {}));
 $("rubrica-new").addEventListener("click", () => openEntry(null));
 $("rubrica-search").addEventListener("input", renderEntries);
 
-// --- cambio password ---
-
-$("rubrica-password").addEventListener("click", () => {
-  for (const id of ["pw-old", "pw-new", "pw-confirm"]) $(id).value = "";
-  showMessage("password-message", null);
-  $("password-dialog").classList.remove("hidden");
-  $("pw-old").focus();
-});
-$("password-cancel").addEventListener("click", () => $("password-dialog").classList.add("hidden"));
 $("password-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if ($("pw-new").value !== $("pw-confirm").value) {
@@ -208,24 +302,17 @@ $("password-form").addEventListener("submit", async (e) => {
   }
   try {
     await call("rubrica_change_password", { old: $("pw-old").value, new: $("pw-new").value }, "password-message");
-    $("password-dialog").classList.add("hidden");
+    $("password-form").reset();
+    showMessage("password-message", null);
   } catch {
     // Messaggio già mostrato.
   }
 });
 
-// --- gestione (amministratori) ---
-
-$("rubrica-admin").addEventListener("click", async () => {
-  showMessage("admin-message", null);
-  resetAccountForm();
-  resetBookForm();
-  $("admin-dialog").classList.remove("hidden");
-  await loadAccounts();
-});
-$("admin-close").addEventListener("click", () => $("admin-dialog").classList.add("hidden"));
+// --- amministrazione ---
 
 async function loadAccounts() {
+  adminLoaded = true;
   try {
     adminAccounts = await call("rubrica_accounts", {}, "admin-message");
   } catch {
@@ -241,7 +328,8 @@ function renderAdmin() {
       const row = el("div", "row");
       const name = el("span", "", account.username);
       if (account.admin) name.append(el("span", "badge", "amministratore"));
-      const edit = el("button", "ghost", "Modifica");
+      if (account.id === myId) name.append(el("span", "badge", "tu"));
+      const edit = el("button", "", "Modifica");
       edit.addEventListener("click", () => editAccount(account));
       row.append(name, edit);
       if (account.id !== myId) {
@@ -263,7 +351,7 @@ function renderAdmin() {
     const row = el("div", "row");
     const members = book.member_ids.length;
     row.append(el("span", "", `${book.name} · ${members === 1 ? "1 account" : `${members} account`} · ${book.entries.length} schede`));
-    const edit = el("button", "ghost", "Modifica");
+    const edit = el("button", "", "Modifica");
     edit.addEventListener("click", () => editBook(book));
     const remove = el("button", "danger", "Elimina");
     remove.addEventListener("click", () =>
@@ -278,13 +366,17 @@ function renderAdmin() {
 }
 
 function renderMembers() {
-  const selected = new Set(editingBook?.member_ids ?? []);
+  const checked = new Set(
+    [...$("book-members").querySelectorAll("input:checked")].map((b) => Number(b.value)),
+  );
+  const selected = editingBook && !$("book-members").dataset.touched ? new Set(editingBook.member_ids) : checked;
   const boxes = adminAccounts.map((account) => {
     const label = el("label", "check");
     const box = document.createElement("input");
     box.type = "checkbox";
     box.value = account.id;
     box.checked = selected.has(account.id);
+    box.addEventListener("change", () => ($("book-members").dataset.touched = "1"));
     label.append(box, ` ${account.username}`);
     return label;
   });
@@ -328,6 +420,7 @@ $("account-form").addEventListener("submit", async (e) => {
 
 function editBook(book) {
   editingBook = book;
+  delete $("book-members").dataset.touched;
   $("book-name").value = book.name;
   $("book-save").textContent = "Salva rubrica";
   $("book-cancel").classList.remove("hidden");
@@ -337,6 +430,7 @@ function editBook(book) {
 
 function resetBookForm() {
   editingBook = null;
+  delete $("book-members").dataset.touched;
   $("book-form").reset();
   $("book-save").textContent = "Crea rubrica";
   $("book-cancel").classList.add("hidden");
@@ -356,6 +450,5 @@ $("book-form").addEventListener("submit", async (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
-  for (const id of ["entry-dialog", "password-dialog", "admin-dialog"]) $(id).classList.add("hidden");
+  if (e.key === "Escape") closeEntry();
 });

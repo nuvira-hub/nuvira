@@ -18,6 +18,7 @@ Ogni decisione presa resta qui con data e motivazione. Quelle aperte sono in fon
 | D8 | 2026-10-26 | Nessuna funzione innovativa nella prima versione | Prima una base funzionante e stabile; le innovazioni di [05-innovazioni.md](05-innovazioni.md) si aggiungono dopo la 1.0 |
 | D9 | 2026-10-26 | Architettura predisposta per un futuro client web (solo controllo): crate condivisi compilabili in WebAssembly, trasporto astratto, relay con WebTransport/WebSocket, H.264 sempre disponibile | Il client web potrà riusare interfaccia di gestione e finestra di sessione (wgpu/egui in WASM); vedi [03-architettura.md](03-architettura.md#35-predisposizione-per-un-futuro-client-web) |
 | D14 | 2026-10-26 | Nome definitivo: **NexoDesk** (cartella, repository, programmi `nexodesk*`, protocollo `nexodesk.v1`, variabili `NEXODESK_*`) | "Nexo" è già un marchio noto (Nexo.com, servizi finanziari; NEXO S.A., audio, con un software chiamato "NEXO Remote"); "Nexora" ha domande di marchio nelle classi 9 e 42. NexoDesk è composto e descrittivo (come AnyDesk/RustDesk) e nessun prodotto con questo nome è emerso; resta da verificare su TMview (classi 9 e 42) |
+| D15 | 2026-10-27 | Lingue: **inglese predefinito**, più italiano, francese, tedesco e spagnolo, in tutte le interfacce (app, viewer e barra, chat, messaggi di errore mostrati all'utente, servizio) | Richiesta dell'utente. Lingua scelta automaticamente da quella di Windows se è una delle cinque, altrimenti inglese; modificabile nelle Impostazioni. Log e documentazione tecnica restano in italiano |
 
 ## Aperte
 
