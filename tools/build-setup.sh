@@ -28,7 +28,8 @@ echo "== building nexodesk.exe"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 mkdir -p "$ROOT/dist"
 echo "== building the setup ($VERSION)"
-(cd "$ROOT/deploy/windows" && "$MAKENSIS" -V2 \
+# The script is UTF-8 (accented strings): without this NSIS reads it in the Windows codepage.
+(cd "$ROOT/deploy/windows" && "$MAKENSIS" -V2 -INPUTCHARSET UTF8 \
     -DPROGRAM="$(cygpath -w "$ROOT/target/release/nexodesk.exe")" \
     -DVERSION="$VERSION" \
     -DOUTFILE="$(cygpath -w "$ROOT/dist/nexodesk-setup.exe")" \
