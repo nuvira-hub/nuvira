@@ -570,6 +570,8 @@ async fn session(
     // whether feedback is missing. Measuring from the last frame instead would make a
     // still screen (one frame every few seconds) look like a stuck network.
     let unanswered_since_ms = Arc::new(AtomicU64::new(0));
+    // Video bytes sent since the start: the adaptive bitrate needs the rate actually used.
+    let sent_bytes = Arc::new(AtomicU64::new(0));
     let (frame_tx, mut frame_rx) = mpsc::channel::<VideoFrame>(1);
     let source = VideoSource {
         config: config.clone(),
@@ -613,10 +615,12 @@ async fn session(
     tracing::debug!("video channel open");
     let video = {
         let unanswered_since_ms = unanswered_since_ms.clone();
+        let sent_bytes = sent_bytes.clone();
         async move {
             while let Some(frame) = frame_rx.recv().await {
                 tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "sending frame");
                 video_tx.send(&frame).await?;
+                sent_bytes.fetch_add(frame.data.len() as u64, Ordering::Relaxed);
                 let now_ms = session_start.elapsed().as_millis().max(1) as u64;
                 let _ = unanswered_since_ms.compare_exchange(0, now_ms, Ordering::Relaxed, Ordering::Relaxed);
             }
@@ -626,6 +630,8 @@ async fn session(
 
     let control_loop = async {
         let mut tick = tokio::time::interval(Duration::from_millis(250));
+        // Samples (time, bytes sent) of the last 2 s, for the rate actually used.
+        let mut sent_samples = std::collections::VecDeque::<(Instant, u64)>::new();
         loop {
             let msg = tokio::select! {
                 msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
@@ -645,6 +651,11 @@ async fn session(
                     continue;
                 }
                 _ = tick.tick() => {
+                    let now = Instant::now();
+                    sent_samples.push_back((now, sent_bytes.load(Ordering::Relaxed)));
+                    while sent_samples.front().is_some_and(|(t, _)| now.duration_since(*t) > Duration::from_secs(2)) {
+                        sent_samples.pop_front();
+                    }
                     // A frame left long ago and no feedback since: the network is probably stuck.
                     let now_ms = session_start.elapsed().as_millis() as u64;
                     let since = unanswered_since_ms.load(Ordering::Relaxed);
@@ -673,15 +684,23 @@ async fn session(
                         (Some(p50), Some(min)) => (p50, min),
                         _ => (fb.latency_ms_p50, fb.latency_ms_min),
                     };
+                    let sent_bps = match (sent_samples.front(), sent_samples.back()) {
+                        (Some((t0, b0)), Some((t1, b1))) if t1 > t0 => {
+                            (b1 - b0) as f64 * 8.0 / t1.duration_since(*t0).as_secs_f64()
+                        }
+                        // Start of the session: no measurement yet, latency counts.
+                        _ => f64::INFINITY,
+                    };
                     if let Some(abr) = abr.as_mut()
                         && fb.frames > 0
-                        && let Some(bps) = abr.on_feedback(Instant::now(), p50 as f64, min as f64)
+                        && let Some(bps) = abr.on_feedback(Instant::now(), p50 as f64, min as f64, sent_bps)
                     {
                         bitrate.store(bps, Ordering::Relaxed);
                         info!(
-                            "bitrate {} kbit/s (network {p50} ms, minimum {min} ms; total latency {} ms)",
+                            "bitrate {} kbit/s (network {p50} ms, minimum {min} ms; total latency {} ms; sending {} kbit/s)",
                             bps / 1000,
-                            fb.latency_ms_p50
+                            fb.latency_ms_p50,
+                            (sent_bps.min(1e12) / 1000.0) as u64
                         );
                     }
                 }
