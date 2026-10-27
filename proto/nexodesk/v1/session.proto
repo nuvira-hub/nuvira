@@ -63,6 +63,9 @@ message FileChunk {
   string name = 1;
   uint64 size = 2;
   bytes data = 3;
+  // In the first chunk: the stream carries an image copied to the clipboard (PNG),
+  // to be written to the other side's clipboard instead of a file.
+  bool clipboard_image = 4;
 }
 
 // Chat message between the controlling side and the person at the PC (both directions).
@@ -71,7 +74,8 @@ message Chat {
 }
 
 // Text copied to the clipboard on one side, to be written to the other's
-// clipboard (both directions, at most 1 MB).
+// clipboard (both directions, at most 1 MB). Images travel on their own stream
+// (FileChunk with clipboard_image), not to hold up the control channel.
 message Clipboard {
   string text = 1;
 }

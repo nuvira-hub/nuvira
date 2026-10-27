@@ -1,6 +1,6 @@
 [package]
 name = "nexodesk-clipboard"
-description = "Clipboard shared between viewer and agent (text)"
+description = "Clipboard shared between viewer and agent (text and images)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,7 +8,8 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-arboard = { version = "3.4", default-features = false }
+arboard = { version = "3.4", default-features = false, features = ["image-data"] }
+png.workspace = true
 tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies.windows]

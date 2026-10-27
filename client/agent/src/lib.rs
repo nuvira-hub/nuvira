@@ -605,12 +605,12 @@ async fn session(
     });
     // Outcome of the received files, to report to the viewer.
     let (file_tx, mut file_rx) = mpsc::unbounded_channel::<nexodesk_proto::v1::FileReceived>();
-    // Shared clipboard: text copied here goes to the viewer, text copied there arrives here.
-    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<String>();
+    // Shared clipboard: what is copied here goes to the viewer, what is copied there arrives here.
+    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nexodesk_clipboard::Content>();
     let clipboard = if config.view_only || config.synthetic.is_some() {
         None
     } else {
-        match nexodesk_clipboard::spawn_sync(move |text| clip_tx.send(text).is_ok()) {
+        match nexodesk_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
             Ok(tx) => Some(tx),
             Err(e) => {
                 warn!("clipboard not shared: {e:#}");
@@ -618,6 +618,8 @@ async fn session(
             }
         }
     };
+    // Images arrive on their own streams, received with the files.
+    let clipboard_in = clipboard.clone();
 
     let mut video_tx = FramedSend::new(conn.open_uni().await?);
     tracing::debug!("video channel open");
@@ -646,8 +648,22 @@ async fn session(
                     Some(msg) => msg,
                     None => return anyhow::Ok(()),
                 },
-                Some(text) = clip_rx.recv() => {
-                    ctrl_tx.send(&control(Msg::Clipboard(nexodesk_proto::v1::Clipboard { text }))).await?;
+                Some(content) = clip_rx.recv() => {
+                    match content {
+                        nexodesk_clipboard::Content::Text(text) => {
+                            ctrl_tx.send(&control(Msg::Clipboard(nexodesk_proto::v1::Clipboard { text }))).await?;
+                        }
+                        // On its own stream, not to hold up the control channel.
+                        nexodesk_clipboard::Content::Image(png) => {
+                            let conn = conn.clone();
+                            tokio::spawn(async move {
+                                let header = nexodesk_proto::v1::FileChunk { clipboard_image: true, ..Default::default() };
+                                if let Err(e) = nexodesk_transport::send_stream(&conn, header, &png).await {
+                                    warn!("clipboard image not sent: {e:#}");
+                                }
+                            });
+                        }
+                    }
                     continue;
                 }
                 Some(text) = chat_rx.recv() => {
@@ -737,7 +753,7 @@ async fn session(
                 }
                 Some(Msg::Clipboard(clip)) => {
                     if let Some(clipboard) = &clipboard {
-                        let _ = clipboard.send(clip.text);
+                        let _ = clipboard.send(nexodesk_clipboard::Content::Text(clip.text));
                     }
                 }
                 Some(Msg::Chat(chat)) => match &events {
@@ -784,7 +800,8 @@ async fn session(
                     let screen = *screen_rx.borrow_and_update();
                     injector.send(InputCmd::Screen(screen)).map_err(|_| closed())?;
                 },
-                // After the input one, every unidirectional stream of the viewer is a file.
+                // After the input one, every unidirectional stream of the viewer is a file
+                // or an image copied to the clipboard.
                 stream = conn.accept_uni() => {
                     let mut stream = stream?;
                     if injector.is_none() {
@@ -792,9 +809,23 @@ async fn session(
                         let _ = stream.stop(0u32.into());
                         continue;
                     }
-                    let (file_tx, events) = (file_tx.clone(), events.clone());
+                    let (file_tx, events, clipboard) = (file_tx.clone(), events.clone(), clipboard_in.clone());
                     tokio::spawn(async move {
-                        let done = match files::receive(stream).await {
+                        let mut rx = FramedRecv::new(stream);
+                        let first = match rx.recv::<nexodesk_proto::v1::FileChunk>().await {
+                            Ok(Some(first)) => first,
+                            _ => return,
+                        };
+                        if first.clipboard_image {
+                            match nexodesk_transport::read_stream(&mut rx, &first, nexodesk_clipboard::MAX_IMAGE_PNG as u64).await {
+                                Ok(png) => if let Some(clipboard) = clipboard {
+                                    let _ = clipboard.send(nexodesk_clipboard::Content::Image(png));
+                                },
+                                Err(e) => warn!("clipboard image not received: {e:#}"),
+                            }
+                            return;
+                        }
+                        let done = match files::receive(first, rx).await {
                             Ok((name, path)) => {
                                 if let Some(events) = &events {
                                     let path = path.display().to_string();

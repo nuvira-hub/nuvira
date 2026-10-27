@@ -3,6 +3,8 @@
 //! This crate depends on neither the operating system nor the network: it must
 //! also build for `wasm32-unknown-unknown` (decision D9).
 
+// Generated code: message sizes are the protocol's, not something to box by hand.
+#[allow(clippy::large_enum_variant)]
 pub mod v1 {
     include!(concat!(env!("OUT_DIR"), "/nexodesk.v1.rs"));
 }

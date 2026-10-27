@@ -298,13 +298,42 @@ async fn session(
         anyhow::Ok(())
     };
 
-    // Shared clipboard: text copied here goes to the agent, text copied there arrives here.
-    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<String>();
-    let clipboard = match nexodesk_clipboard::spawn_sync(move |text| clip_tx.send(text).is_ok()) {
+    // Shared clipboard: what is copied here goes to the agent, what is copied there arrives here.
+    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nexodesk_clipboard::Content>();
+    let clipboard = match nexodesk_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
         Ok(tx) => Some(tx),
         Err(e) => {
             warn!("clipboard not shared: {e:#}");
             None
+        }
+    };
+
+    // After the video one, the agent's unidirectional streams carry images copied to
+    // its clipboard.
+    let streams = {
+        let clipboard = clipboard.clone();
+        let conn = conn.clone();
+        async move {
+            loop {
+                let mut rx = FramedRecv::new(conn.accept_uni().await?);
+                let clipboard = clipboard.clone();
+                tokio::spawn(async move {
+                    let Ok(Some(first)) = rx.recv::<FileChunk>().await else { return };
+                    if !first.clipboard_image {
+                        return;
+                    }
+                    match nexodesk_transport::read_stream(&mut rx, &first, nexodesk_clipboard::MAX_IMAGE_PNG as u64).await {
+                        Ok(png) => {
+                            if let Some(clipboard) = clipboard {
+                                let _ = clipboard.send(nexodesk_clipboard::Content::Image(png));
+                            }
+                        }
+                        Err(e) => warn!("clipboard image not received: {e:#}"),
+                    }
+                });
+            }
+            #[allow(unreachable_code)]
+            anyhow::Ok(())
         }
     };
 
@@ -318,9 +347,21 @@ async fn session(
                 Some(msg) = control_rx.recv() => {
                     ctrl_tx.send(&control(msg)).await?;
                 }
-                Some(text) = clip_rx.recv() => {
-                    ctrl_tx.send(&control(Msg::Clipboard(nexodesk_proto::v1::Clipboard { text }))).await?;
-                }
+                Some(content) = clip_rx.recv() => match content {
+                    nexodesk_clipboard::Content::Text(text) => {
+                        ctrl_tx.send(&control(Msg::Clipboard(nexodesk_proto::v1::Clipboard { text }))).await?;
+                    }
+                    // On its own stream, not to hold up the control channel.
+                    nexodesk_clipboard::Content::Image(png) => {
+                        let conn = conn.clone();
+                        tokio::spawn(async move {
+                            let header = FileChunk { clipboard_image: true, ..Default::default() };
+                            if let Err(e) = nexodesk_transport::send_stream(&conn, header, &png).await {
+                                warn!("clipboard image not sent: {e:#}");
+                            }
+                        });
+                    }
+                },
                 Some(()) = key_rx.recv() => {
                     ctrl_tx.send(&control(Msg::RequestKeyframe(RequestKeyframe {}))).await?;
                 }
@@ -344,7 +385,7 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::Clipboard(clip)) }) => {
                         if let Some(clipboard) = &clipboard {
-                            let _ = clipboard.send(clip.text);
+                            let _ = clipboard.send(nexodesk_clipboard::Content::Text(clip.text));
                         }
                     }
                     Some(ControlMessage { msg: Some(Msg::VideoFormat(f)) }) => {
@@ -375,6 +416,7 @@ async fn session(
         r = video => r.context("receiving video"),
         r = input => r.context("sending input"),
         r = control_loop => r.context("control channel"),
+        r = streams => r.context("streams from the agent"),
     };
     conn.close(0u32.into(), b"end of session");
     // Give the close message time to leave: without it the agent would notice only
@@ -411,7 +453,7 @@ async fn send_file(
     let total = file.metadata().await?.len();
     info!("sending {name} ({total} bytes)");
     let mut tx = FramedSend::new(conn.open_uni().await?);
-    tx.send(&FileChunk { name: name.clone(), size: total, data: Vec::new() }).await?;
+    tx.send(&FileChunk { name: name.clone(), size: total, ..Default::default() }).await?;
     let mut buf = vec![0u8; 256 * 1024];
     let (mut sent, mut last) = (0u64, Instant::now());
     let _ = proxy.send_event(NetEvent::FileProgress { name: name.clone(), sent, total });

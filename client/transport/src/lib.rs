@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use nexodesk_proto::v1::FileChunk;
 use prost::Message;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{ClientConfig, RecvStream, SendStream, ServerConfig, TransportConfig};
@@ -279,6 +280,36 @@ impl FramedRecv {
             }
         }
     }
+}
+
+/// Sends `data` on a new unidirectional stream: `header` (name, size, kind) then
+/// the data in 256 KB chunks, as for files (`FileChunk`).
+pub async fn send_stream(conn: &quinn::Connection, header: FileChunk, data: &[u8]) -> Result<()> {
+    let mut tx = FramedSend::new(conn.open_uni().await?);
+    tx.send(&FileChunk { size: data.len() as u64, data: Vec::new(), ..header }).await?;
+    for chunk in data.chunks(256 * 1024) {
+        tx.send(&FileChunk { data: chunk.to_vec(), ..Default::default() }).await?;
+    }
+    tx.finish()
+}
+
+/// Reads the rest of a stream whose `header` was already read: at most `limit`
+/// bytes, and exactly the announced size.
+pub async fn read_stream(rx: &mut FramedRecv, header: &FileChunk, limit: u64) -> Result<Vec<u8>> {
+    if header.size > limit {
+        bail!("{} bytes, more than the {limit} accepted", header.size);
+    }
+    let mut data = header.data.clone();
+    while let Some(chunk) = rx.recv::<FileChunk>().await? {
+        data.extend_from_slice(&chunk.data);
+        if data.len() as u64 > header.size {
+            bail!("more data than announced");
+        }
+    }
+    if data.len() as u64 != header.size {
+        bail!("incomplete: received {} bytes out of {}", data.len(), header.size);
+    }
+    Ok(data)
 }
 
 #[cfg(test)]

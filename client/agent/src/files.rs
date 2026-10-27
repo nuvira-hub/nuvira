@@ -14,13 +14,8 @@ use tokio::io::AsyncWriteExt;
 use tracing::info;
 
 /// Receives a file from the stream; returns its name and final path.
-pub async fn receive(stream: quinn::RecvStream) -> Result<(String, PathBuf), (String, anyhow::Error)> {
-    let mut rx = FramedRecv::new(stream);
-    let first = match rx.recv::<FileChunk>().await {
-        Ok(Some(first)) => first,
-        Ok(None) => return Err((String::new(), anyhow::anyhow!("empty file stream"))),
-        Err(e) => return Err((String::new(), e)),
-    };
+/// Saves the file of a stream whose first chunk (`first`, with name and size) was already read.
+pub async fn receive(first: FileChunk, mut rx: FramedRecv) -> Result<(String, PathBuf), (String, anyhow::Error)> {
     let name = safe_name(&first.name);
     let result = async {
         let dir = downloads_dir()?;
