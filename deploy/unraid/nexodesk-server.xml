@@ -12,7 +12,7 @@
   <Category>Network:Other Tools:</Category>
   <WebUI/>
   <TemplateURL/>
-  <Icon/>
+  <Icon>https://raw.githubusercontent.com/alexbn71/NexoDesk/main/deploy/unraid/nexodesk-server.png</Icon>
   <!-- Unraid appdata belongs to nobody:users; the image's default user (65532) could not write there. -->
   <ExtraParams>--user 99:100</ExtraParams>
   <PostArgs/>

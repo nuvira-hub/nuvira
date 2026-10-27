@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- The app logo (client/app/ui/logo.svg) with a server badge. -->
+  <rect width="64" height="64" rx="13" fill="#136e8c"/>
+  <path d="M13 38V13l18 25V13" fill="none" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="36" y="36" width="24" height="24" rx="6" fill="#fff"/>
+  <rect x="40.5" y="41.5" width="15" height="5" rx="1.5" fill="#136e8c"/>
+  <rect x="40.5" y="50" width="15" height="5" rx="1.5" fill="#136e8c"/>
+  <circle cx="52.5" cy="44" r="1.2" fill="#fff"/>
+  <circle cx="52.5" cy="52.5" r="1.2" fill="#fff"/>
+</svg>
