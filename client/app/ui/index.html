@@ -124,6 +124,15 @@
       <!-- Administration -->
       <section id="sec-admin" class="page hidden">
         <header class="page-head"><h1 data-i18n="admin.title">Administration</h1></header>
+        <h2 data-i18n="admin.policy">Rules for all the computers</h2>
+        <form id="policy-form" class="stack">
+          <label class="check"><input id="policy-confirm" type="checkbox"> <span data-i18n="admin.policy_confirm">The person at the computer must always accept, also with the permanent password</span></label>
+          <label class="check"><input id="policy-files" type="checkbox"> <span data-i18n="admin.policy_files">No file transfers</span></label>
+          <label class="check"><input id="policy-clipboard" type="checkbox"> <span data-i18n="admin.policy_clipboard">No shared clipboard</span></label>
+          <div class="actions"><span class="spacer"></span><button type="submit" class="primary" data-i18n="admin.policy_save">Apply to all</button></div>
+        </form>
+        <p id="policy-message" class="message hidden"></p>
+
         <h2 data-i18n="admin.accounts">Accounts</h2>
         <div id="admin-accounts" class="list"></div>
         <form id="account-form" class="inline-form">

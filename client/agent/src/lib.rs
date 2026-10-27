@@ -247,6 +247,7 @@ pub async fn serve_via_server(
         chat: Mutex::new(None),
         busy: AtomicBool::new(false),
         end_session: Notify::new(),
+        policy: Default::default(),
     });
     let current = ctx.password.lock().expect("password").clone();
     let _ = ctx.events.send(AgentEvent::Password { password: current });
@@ -280,6 +281,18 @@ struct SessionContext {
     chat: Mutex<Option<mpsc::UnboundedSender<String>>>,
     busy: AtomicBool,
     end_session: Notify,
+    /// Rules of the server (confirmation always, no files, no clipboard).
+    policy: Mutex<nexodesk_proto::v1::Policy>,
+}
+
+fn set_policy(ctx: &SessionContext, policy: nexodesk_proto::v1::Policy) {
+    info!(
+        confirm_always = policy.confirm_always,
+        no_files = policy.no_files,
+        no_clipboard = policy.no_clipboard,
+        "rules of the server"
+    );
+    *ctx.policy.lock().expect("policy") = policy;
 }
 
 /// Request accepted by the server, waiting for the route.
@@ -324,6 +337,7 @@ async fn signal_loop(
     }
     let id = signal.device_id.clone();
     info!("registered on {}: ID {} {} {}", opts.server_name, &id[..3], &id[3..6], &id[6..]);
+    set_policy(ctx, signal.policy);
     if let Some(path) = &opts.info_file {
         // In automated tests the viewer reads ID and password from here.
         let password = ctx.password.lock().expect("password").clone();
@@ -336,6 +350,10 @@ async fn signal_loop(
     loop {
         let reply = tokio::select! {
             msg = signal.rx.recv() => match msg? {
+                Some(server_message::Msg::Policy(policy)) => {
+                    set_policy(ctx, policy);
+                    None
+                }
                 Some(server_message::Msg::Incoming(inc)) => {
                     let request = Request { viewer_id: inc.viewer_id, viewer_name: inc.viewer_name };
                     info!("connection request from {} ({})", request.viewer_name, request.viewer_id);
@@ -484,16 +502,21 @@ impl Gate<'_> {
     /// `Err` with the reason to show to the viewer.
     async fn authorize(&self, given: &str, pending: Option<&mut FramedSend>) -> Result<(), String> {
         let ctx = self.ctx;
+        let confirm_always = ctx.policy.lock().expect("policy").confirm_always;
         if ctx.permanent.as_deref().is_some_and(|hash| nexodesk_secret::verify(given, hash)) {
             info!("access with the permanent password");
-            return self.started();
-        }
-        let temporary = ctx.password.lock().expect("password").clone();
-        if !same_secret(given, &temporary) {
-            return Err(WRONG_PASSWORD.into());
-        }
-        if !ctx.confirm {
-            return self.started();
+            if !confirm_always {
+                return self.started();
+            }
+            info!("the server's rules require confirmation also with the permanent password");
+        } else {
+            let temporary = ctx.password.lock().expect("password").clone();
+            if !same_secret(given, &temporary) {
+                return Err(WRONG_PASSWORD.into());
+            }
+            if !ctx.confirm && !confirm_always {
+                return self.started();
+            }
         }
         if let Some(ctrl_tx) = pending {
             let waiting =
@@ -544,6 +567,8 @@ async fn session(
 ) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
+    // Rules of the server at the start of the session (none without a server).
+    let policy = gate.map(|g| *g.ctx.policy.lock().expect("policy")).unwrap_or_default();
 
     let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = ctrl_rx.recv().await? else {
         bail!("the viewer did not introduce itself");
@@ -555,7 +580,7 @@ async fn session(
     let viewer_protocol = hello.protocol_version;
     let hello = Hello {
         password_required: gate.is_some(),
-        file_manager: !config.view_only && config.synthetic.is_none(),
+        file_manager: !config.view_only && config.synthetic.is_none() && !policy.no_files,
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -624,7 +649,7 @@ async fn session(
     let (fs_tx, mut fs_rx) = mpsc::unbounded_channel::<nexodesk_proto::v1::FsResponse>();
     // Shared clipboard: what is copied here goes to the viewer, what is copied there arrives here.
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nexodesk_clipboard::Content>();
-    let clipboard = if config.view_only || config.synthetic.is_some() {
+    let clipboard = if config.view_only || config.synthetic.is_some() || policy.no_clipboard {
         None
     } else {
         match nexodesk_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
@@ -723,8 +748,10 @@ async fn session(
                 Some(Msg::RequestKeyframe(_)) => keyframe.store(true, Ordering::Relaxed),
                 Some(Msg::FsRequest(request)) => {
                     let fs_tx = fs_tx.clone();
-                    if config.view_only || config.synthetic.is_some() {
-                        let error = "@agent.files_view_only".to_string();
+                    if config.view_only || config.synthetic.is_some() || policy.no_files {
+                        let key =
+                            if policy.no_files { "@agent.files_disabled" } else { "@agent.files_view_only" };
+                        let error = key.to_string();
                         let _ = fs_tx.send(nexodesk_proto::v1::FsResponse {
                             id: request.id,
                             error,
@@ -847,12 +874,24 @@ async fn session(
                         continue;
                     }
                     let (file_tx, events, clipboard) = (file_tx.clone(), events.clone(), clipboard_in.clone());
+                    let no_files = policy.no_files;
                     tokio::spawn(async move {
                         let mut rx = FramedRecv::new(stream);
                         let first = match rx.recv::<nexodesk_proto::v1::FileChunk>().await {
                             Ok(Some(first)) => first,
                             _ => return,
                         };
+                        // Rules of the server: no files (images of the clipboard are refused
+                        // by having no clipboard, see above).
+                        if no_files && !first.clipboard_image {
+                            let _ = file_tx.send(nexodesk_proto::v1::FileReceived {
+                                name: first.name,
+                                transfer_id: first.transfer_id,
+                                message: "@agent.files_disabled".into(),
+                                ..Default::default()
+                            });
+                            return;
+                        }
                         // File manager: into the chosen folder, with resume.
                         if first.transfer_id != 0 {
                             let (name, transfer_id) = (first.name.clone(), first.transfer_id);

@@ -86,6 +86,12 @@
   "chat.file_received": "Vous avez reçu le fichier « {name} » dans le dossier Téléchargements",
 
   "admin.title": "Administration",
+  "admin.policy": "Règles pour tous les ordinateurs",
+  "admin.policy_confirm": "La personne à l'ordinateur doit toujours accepter, même avec le mot de passe permanent",
+  "admin.policy_files": "Pas de transfert de fichiers",
+  "admin.policy_clipboard": "Pas de presse-papiers partagé",
+  "admin.policy_save": "Appliquer à tous",
+  "admin.policy_saved": "Règles appliquées : les ordinateurs connectés les ont reçues aussitôt.",
   "admin.accounts": "Comptes",
   "admin.username": "Nom d'utilisateur",
   "admin.password": "Mot de passe",
@@ -219,6 +225,7 @@
   "agent.downloads": "Téléchargements",
   "agent.no_user": "aucun utilisateur connecté sur l'ordinateur distant pour recevoir le fichier",
   "agent.files_view_only": "l'ordinateur distant est en affichage seul",
+  "agent.files_disabled": "les règles du serveur n'autorisent pas le transfert de fichiers",
 
   "server.denied": "accès refusé",
   "server.password_too_short": "le mot de passe doit comporter au moins 8 caractères",

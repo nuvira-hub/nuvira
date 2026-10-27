@@ -86,6 +86,12 @@
   "chat.file_received": "You received the file “{name}” in the Downloads folder",
 
   "admin.title": "Administration",
+  "admin.policy": "Rules for all the computers",
+  "admin.policy_confirm": "The person at the computer must always accept, also with the permanent password",
+  "admin.policy_files": "No file transfers",
+  "admin.policy_clipboard": "No shared clipboard",
+  "admin.policy_save": "Apply to all",
+  "admin.policy_saved": "Rules applied: the computers connected received them at once.",
   "admin.accounts": "Accounts",
   "admin.username": "Username",
   "admin.password": "Password",
@@ -219,6 +225,7 @@
   "agent.downloads": "Downloads",
   "agent.no_user": "no user is signed in on the remote computer to receive the file",
   "agent.files_view_only": "the remote computer is in view-only mode",
+  "agent.files_disabled": "the rules of the server do not allow file transfers",
 
   "server.denied": "access denied",
   "server.password_too_short": "the password must have at least 8 characters",

@@ -356,6 +356,42 @@ pub async fn address_book_save_book(
     refresh(&app).await
 }
 
+/// Rules of the server for all its devices.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PolicyUi {
+    pub confirm_always: bool,
+    pub no_files: bool,
+    pub no_clipboard: bool,
+}
+
+impl From<pb::Policy> for PolicyUi {
+    fn from(p: pb::Policy) -> Self {
+        Self { confirm_always: p.confirm_always, no_files: p.no_files, no_clipboard: p.no_clipboard }
+    }
+}
+
+#[tauri::command]
+pub async fn address_book_policy(app: AppHandle) -> Result<PolicyUi, String> {
+    match call(&app, Call::GetPolicy(pb::GetPolicy {})).await? {
+        Some(ApiResult::Policy(policy)) => Ok(policy.into()),
+        _ => Err(t("err.unexpected")),
+    }
+}
+
+/// Administrators only; the server sends the new rules to every device connected.
+#[tauri::command]
+pub async fn address_book_save_policy(app: AppHandle, policy: PolicyUi) -> Result<PolicyUi, String> {
+    let policy = pb::Policy {
+        confirm_always: policy.confirm_always,
+        no_files: policy.no_files,
+        no_clipboard: policy.no_clipboard,
+    };
+    match call(&app, Call::PutPolicy(policy)).await? {
+        Some(ApiResult::Policy(policy)) => Ok(policy.into()),
+        _ => Err(t("err.unexpected")),
+    }
+}
+
 #[tauri::command]
 pub async fn address_book_delete_book(app: AppHandle, id: i64) -> Result<(), String> {
     call(&app, Call::DeleteBook(pb::DeleteBook { id })).await?;

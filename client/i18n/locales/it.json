@@ -86,6 +86,12 @@
   "chat.file_received": "Hai ricevuto il file «{name}» nella cartella Download",
 
   "admin.title": "Amministrazione",
+  "admin.policy": "Regole per tutti i computer",
+  "admin.policy_confirm": "La persona al computer deve sempre accettare, anche con la password permanente",
+  "admin.policy_files": "Niente trasferimento di file",
+  "admin.policy_clipboard": "Niente appunti condivisi",
+  "admin.policy_save": "Applica a tutti",
+  "admin.policy_saved": "Regole applicate: i computer collegati le hanno ricevute subito.",
   "admin.accounts": "Account",
   "admin.username": "Nome utente",
   "admin.password": "Password",
@@ -219,6 +225,7 @@
   "agent.downloads": "Download",
   "agent.no_user": "nessun utente collegato al computer remoto a cui consegnare il file",
   "agent.files_view_only": "il computer remoto è in sola visualizzazione",
+  "agent.files_disabled": "le regole del server non consentono il trasferimento di file",
 
   "server.denied": "accesso negato",
   "server.password_too_short": "la password deve avere almeno 8 caratteri",

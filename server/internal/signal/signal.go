@@ -188,7 +188,13 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 		return nil, err
 	}
 	c.device = device
-	err = c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Registered{Registered: &pb.Registered{DeviceId: device.ID}}})
+	registered := &pb.Registered{DeviceId: device.ID}
+	if s.accounts != nil {
+		if registered.Policy, err = s.accounts.Policy(); err != nil {
+			return nil, err
+		}
+	}
+	err = c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Registered{Registered: registered}})
 	return c, err
 }
 

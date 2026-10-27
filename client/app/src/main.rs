@@ -693,6 +693,8 @@ fn main() {
             address_book::address_book_delete_account,
             address_book::address_book_save_book,
             address_book::address_book_delete_book,
+            address_book::address_book_policy,
+            address_book::address_book_save_policy,
             end_session,
             connect,
             open_source,

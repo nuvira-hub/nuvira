@@ -31,6 +31,8 @@ message ServerMessage {
     Route route = 4;
     Error error = 5;
     ApiResponse api = 6;
+    // The rules changed (to every device connected).
+    Policy policy = 7;
   }
 }
 
@@ -60,6 +62,20 @@ message Proof {
 // 9-digit ID assigned to the public key (the same at every reconnection).
 message Registered {
   string device_id = 1;
+  // Rules of this server for its devices (see Policy).
+  Policy policy = 2;
+}
+
+// Rules the server's administrator sets for all its devices, sent at registration
+// and whenever they change. They can only restrict: a device never allows more
+// than its own settings because of them.
+message Policy {
+  // The person at the PC must accept every session, also with the permanent password.
+  bool confirm_always = 1;
+  // No file transfers (send files, file manager).
+  bool no_files = 2;
+  // No shared clipboard.
+  bool no_clipboard = 3;
 }
 
 // The viewer asks to connect to a device.
@@ -130,8 +146,13 @@ message ApiRequest {
     DeleteBook delete_book = 13;
     // Adds the device to the personal address book if it is in no visible address book.
     Entry auto_add = 14;
+    // Rules for the devices: anyone signed in reads them, administrators change them.
+    GetPolicy get_policy = 15;
+    Policy put_policy = 16;
   }
 }
+
+message GetPolicy {}
 
 message ApiResponse {
   uint32 id = 1;
@@ -144,6 +165,7 @@ message ApiResponse {
     Accounts accounts = 6;
     Book book = 7;
     Account account = 8;
+    Policy policy = 9;
   }
 }
 

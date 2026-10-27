@@ -91,6 +91,17 @@ func (s *Server) apiCall(c *client, req *pb.ApiRequest, resp *pb.ApiResponse) er
 		return err
 	case *pb.ApiRequest_DeleteBook:
 		return s.accounts.DeleteBook(account, call.DeleteBook.Id)
+	case *pb.ApiRequest_GetPolicy:
+		policy, err := s.accounts.Policy()
+		resp.Result = &pb.ApiResponse_Policy{Policy: policy}
+		return err
+	case *pb.ApiRequest_PutPolicy:
+		policy, err := s.accounts.PutPolicy(account, call.PutPolicy)
+		if err == nil {
+			s.broadcastPolicy(policy)
+		}
+		resp.Result = &pb.ApiResponse_Policy{Policy: policy}
+		return err
 	default:
 		return errors.New("unknown request")
 	}
@@ -127,5 +138,18 @@ func (s *Server) presence(books *pb.Books) {
 				e.LastSeen = d.LastSeen.Unix()
 			}
 		}
+	}
+}
+
+// broadcastPolicy sends the new rules to every device connected.
+func (s *Server) broadcastPolicy(policy *pb.Policy) {
+	s.mu.Lock()
+	devices := make([]*client, 0, len(s.online))
+	for _, c := range s.online {
+		devices = append(devices, c)
+	}
+	s.mu.Unlock()
+	for _, c := range devices {
+		_ = c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Policy{Policy: policy}})
 	}
 }

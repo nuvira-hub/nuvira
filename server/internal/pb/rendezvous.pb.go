@@ -234,6 +234,7 @@ type ServerMessage struct {
 	//	*ServerMessage_Route
 	//	*ServerMessage_Error
 	//	*ServerMessage_Api
+	//	*ServerMessage_Policy
 	Msg           isServerMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -330,6 +331,15 @@ func (x *ServerMessage) GetApi() *ApiResponse {
 	return nil
 }
 
+func (x *ServerMessage) GetPolicy() *Policy {
+	if x != nil {
+		if x, ok := x.Msg.(*ServerMessage_Policy); ok {
+			return x.Policy
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Msg interface {
 	isServerMessage_Msg()
 }
@@ -358,6 +368,11 @@ type ServerMessage_Api struct {
 	Api *ApiResponse `protobuf:"bytes,6,opt,name=api,proto3,oneof"`
 }
 
+type ServerMessage_Policy struct {
+	// The rules changed (to every device connected).
+	Policy *Policy `protobuf:"bytes,7,opt,name=policy,proto3,oneof"`
+}
+
 func (*ServerMessage_Challenge) isServerMessage_Msg() {}
 
 func (*ServerMessage_Registered) isServerMessage_Msg() {}
@@ -369,6 +384,8 @@ func (*ServerMessage_Route) isServerMessage_Msg() {}
 func (*ServerMessage_Error) isServerMessage_Msg() {}
 
 func (*ServerMessage_Api) isServerMessage_Msg() {}
+
+func (*ServerMessage_Policy) isServerMessage_Msg() {}
 
 // First message of every device: its Ed25519 public key (32 bytes).
 type Register struct {
@@ -550,8 +567,10 @@ func (x *Proof) GetSignature() []byte {
 
 // 9-digit ID assigned to the public key (the same at every reconnection).
 type Registered struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DeviceId      string                 `protobuf:"bytes,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	DeviceId string                 `protobuf:"bytes,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	// Rules of this server for its devices (see Policy).
+	Policy        *Policy `protobuf:"bytes,2,opt,name=policy,proto3" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -593,6 +612,79 @@ func (x *Registered) GetDeviceId() string {
 	return ""
 }
 
+func (x *Registered) GetPolicy() *Policy {
+	if x != nil {
+		return x.Policy
+	}
+	return nil
+}
+
+// Rules the server's administrator sets for all its devices, sent at registration
+// and whenever they change. They can only restrict: a device never allows more
+// than its own settings because of them.
+type Policy struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The person at the PC must accept every session, also with the permanent password.
+	ConfirmAlways bool `protobuf:"varint,1,opt,name=confirm_always,json=confirmAlways,proto3" json:"confirm_always,omitempty"`
+	// No file transfers (send files, file manager).
+	NoFiles bool `protobuf:"varint,2,opt,name=no_files,json=noFiles,proto3" json:"no_files,omitempty"`
+	// No shared clipboard.
+	NoClipboard   bool `protobuf:"varint,3,opt,name=no_clipboard,json=noClipboard,proto3" json:"no_clipboard,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Policy) Reset() {
+	*x = Policy{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Policy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Policy) ProtoMessage() {}
+
+func (x *Policy) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Policy.ProtoReflect.Descriptor instead.
+func (*Policy) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Policy) GetConfirmAlways() bool {
+	if x != nil {
+		return x.ConfirmAlways
+	}
+	return false
+}
+
+func (x *Policy) GetNoFiles() bool {
+	if x != nil {
+		return x.NoFiles
+	}
+	return false
+}
+
+func (x *Policy) GetNoClipboard() bool {
+	if x != nil {
+		return x.NoClipboard
+	}
+	return false
+}
+
 // The viewer asks to connect to a device.
 type Connect struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -603,7 +695,7 @@ type Connect struct {
 
 func (x *Connect) Reset() {
 	*x = Connect{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[6]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -615,7 +707,7 @@ func (x *Connect) String() string {
 func (*Connect) ProtoMessage() {}
 
 func (x *Connect) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[6]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -628,7 +720,7 @@ func (x *Connect) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Connect.ProtoReflect.Descriptor instead.
 func (*Connect) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{6}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Connect) GetDeviceId() string {
@@ -651,7 +743,7 @@ type Incoming struct {
 
 func (x *Incoming) Reset() {
 	*x = Incoming{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[7]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -663,7 +755,7 @@ func (x *Incoming) String() string {
 func (*Incoming) ProtoMessage() {}
 
 func (x *Incoming) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[7]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +768,7 @@ func (x *Incoming) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Incoming.ProtoReflect.Descriptor instead.
 func (*Incoming) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{7}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Incoming) GetSessionId() string {
@@ -716,7 +808,7 @@ type Accept struct {
 
 func (x *Accept) Reset() {
 	*x = Accept{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[8]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -728,7 +820,7 @@ func (x *Accept) String() string {
 func (*Accept) ProtoMessage() {}
 
 func (x *Accept) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[8]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -741,7 +833,7 @@ func (x *Accept) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Accept.ProtoReflect.Descriptor instead.
 func (*Accept) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{8}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Accept) GetSessionId() string {
@@ -761,7 +853,7 @@ type Reject struct {
 
 func (x *Reject) Reset() {
 	*x = Reject{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[9]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -773,7 +865,7 @@ func (x *Reject) String() string {
 func (*Reject) ProtoMessage() {}
 
 func (x *Reject) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[9]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -786,7 +878,7 @@ func (x *Reject) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Reject.ProtoReflect.Descriptor instead.
 func (*Reject) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{9}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Reject) GetSessionId() string {
@@ -819,7 +911,7 @@ type Route struct {
 
 func (x *Route) Reset() {
 	*x = Route{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[10]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +923,7 @@ func (x *Route) String() string {
 func (*Route) ProtoMessage() {}
 
 func (x *Route) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[10]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +936,7 @@ func (x *Route) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Route.ProtoReflect.Descriptor instead.
 func (*Route) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{10}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Route) GetSessionId() string {
@@ -893,7 +985,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[11]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -905,7 +997,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[11]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -918,7 +1010,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{11}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Error) GetMessage() string {
@@ -953,6 +1045,8 @@ type ApiRequest struct {
 	//	*ApiRequest_PutBook
 	//	*ApiRequest_DeleteBook
 	//	*ApiRequest_AutoAdd
+	//	*ApiRequest_GetPolicy
+	//	*ApiRequest_PutPolicy
 	Call          isApiRequest_Call `protobuf_oneof:"call"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -960,7 +1054,7 @@ type ApiRequest struct {
 
 func (x *ApiRequest) Reset() {
 	*x = ApiRequest{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[12]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -972,7 +1066,7 @@ func (x *ApiRequest) String() string {
 func (*ApiRequest) ProtoMessage() {}
 
 func (x *ApiRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[12]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -985,7 +1079,7 @@ func (x *ApiRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApiRequest.ProtoReflect.Descriptor instead.
 func (*ApiRequest) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{12}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ApiRequest) GetId() uint32 {
@@ -1119,6 +1213,24 @@ func (x *ApiRequest) GetAutoAdd() *Entry {
 	return nil
 }
 
+func (x *ApiRequest) GetGetPolicy() *GetPolicy {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_GetPolicy); ok {
+			return x.GetPolicy
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetPutPolicy() *Policy {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_PutPolicy); ok {
+			return x.PutPolicy
+		}
+	}
+	return nil
+}
+
 type isApiRequest_Call interface {
 	isApiRequest_Call()
 }
@@ -1177,6 +1289,15 @@ type ApiRequest_AutoAdd struct {
 	AutoAdd *Entry `protobuf:"bytes,14,opt,name=auto_add,json=autoAdd,proto3,oneof"`
 }
 
+type ApiRequest_GetPolicy struct {
+	// Rules for the devices: anyone signed in reads them, administrators change them.
+	GetPolicy *GetPolicy `protobuf:"bytes,15,opt,name=get_policy,json=getPolicy,proto3,oneof"`
+}
+
+type ApiRequest_PutPolicy struct {
+	PutPolicy *Policy `protobuf:"bytes,16,opt,name=put_policy,json=putPolicy,proto3,oneof"`
+}
+
 func (*ApiRequest_Login) isApiRequest_Call() {}
 
 func (*ApiRequest_LoginToken) isApiRequest_Call() {}
@@ -1203,6 +1324,46 @@ func (*ApiRequest_DeleteBook) isApiRequest_Call() {}
 
 func (*ApiRequest_AutoAdd) isApiRequest_Call() {}
 
+func (*ApiRequest_GetPolicy) isApiRequest_Call() {}
+
+func (*ApiRequest_PutPolicy) isApiRequest_Call() {}
+
+type GetPolicy struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPolicy) Reset() {
+	*x = GetPolicy{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPolicy) ProtoMessage() {}
+
+func (x *GetPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPolicy.ProtoReflect.Descriptor instead.
+func (*GetPolicy) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{14}
+}
+
 type ApiResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1216,6 +1377,7 @@ type ApiResponse struct {
 	//	*ApiResponse_Accounts
 	//	*ApiResponse_Book
 	//	*ApiResponse_Account
+	//	*ApiResponse_Policy
 	Result        isApiResponse_Result `protobuf_oneof:"result"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1223,7 +1385,7 @@ type ApiResponse struct {
 
 func (x *ApiResponse) Reset() {
 	*x = ApiResponse{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[13]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1235,7 +1397,7 @@ func (x *ApiResponse) String() string {
 func (*ApiResponse) ProtoMessage() {}
 
 func (x *ApiResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[13]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1248,7 +1410,7 @@ func (x *ApiResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApiResponse.ProtoReflect.Descriptor instead.
 func (*ApiResponse) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{13}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ApiResponse) GetId() uint32 {
@@ -1326,6 +1488,15 @@ func (x *ApiResponse) GetAccount() *Account {
 	return nil
 }
 
+func (x *ApiResponse) GetPolicy() *Policy {
+	if x != nil {
+		if x, ok := x.Result.(*ApiResponse_Policy); ok {
+			return x.Policy
+		}
+	}
+	return nil
+}
+
 type isApiResponse_Result interface {
 	isApiResponse_Result()
 }
@@ -1354,6 +1525,10 @@ type ApiResponse_Account struct {
 	Account *Account `protobuf:"bytes,8,opt,name=account,proto3,oneof"`
 }
 
+type ApiResponse_Policy struct {
+	Policy *Policy `protobuf:"bytes,9,opt,name=policy,proto3,oneof"`
+}
+
 func (*ApiResponse_Session) isApiResponse_Result() {}
 
 func (*ApiResponse_Books) isApiResponse_Result() {}
@@ -1366,6 +1541,8 @@ func (*ApiResponse_Book) isApiResponse_Result() {}
 
 func (*ApiResponse_Account) isApiResponse_Result() {}
 
+func (*ApiResponse_Policy) isApiResponse_Result() {}
+
 type Login struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
@@ -1376,7 +1553,7 @@ type Login struct {
 
 func (x *Login) Reset() {
 	*x = Login{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[14]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1388,7 +1565,7 @@ func (x *Login) String() string {
 func (*Login) ProtoMessage() {}
 
 func (x *Login) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[14]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1401,7 +1578,7 @@ func (x *Login) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Login.ProtoReflect.Descriptor instead.
 func (*Login) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{14}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *Login) GetUsername() string {
@@ -1428,7 +1605,7 @@ type LoginToken struct {
 
 func (x *LoginToken) Reset() {
 	*x = LoginToken{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[15]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1440,7 +1617,7 @@ func (x *LoginToken) String() string {
 func (*LoginToken) ProtoMessage() {}
 
 func (x *LoginToken) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[15]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1453,7 +1630,7 @@ func (x *LoginToken) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoginToken.ProtoReflect.Descriptor instead.
 func (*LoginToken) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{15}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *LoginToken) GetToken() string {
@@ -1472,7 +1649,7 @@ type Logout struct {
 
 func (x *Logout) Reset() {
 	*x = Logout{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[16]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1484,7 +1661,7 @@ func (x *Logout) String() string {
 func (*Logout) ProtoMessage() {}
 
 func (x *Logout) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[16]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1497,7 +1674,7 @@ func (x *Logout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Logout.ProtoReflect.Descriptor instead.
 func (*Logout) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{16}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{18}
 }
 
 type Session struct {
@@ -1512,7 +1689,7 @@ type Session struct {
 
 func (x *Session) Reset() {
 	*x = Session{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[17]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1524,7 +1701,7 @@ func (x *Session) String() string {
 func (*Session) ProtoMessage() {}
 
 func (x *Session) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[17]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1537,7 +1714,7 @@ func (x *Session) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Session.ProtoReflect.Descriptor instead.
 func (*Session) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{17}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Session) GetToken() string {
@@ -1572,7 +1749,7 @@ type Account struct {
 
 func (x *Account) Reset() {
 	*x = Account{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[18]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1584,7 +1761,7 @@ func (x *Account) String() string {
 func (*Account) ProtoMessage() {}
 
 func (x *Account) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[18]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1597,7 +1774,7 @@ func (x *Account) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Account.ProtoReflect.Descriptor instead.
 func (*Account) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{18}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *Account) GetId() int64 {
@@ -1631,7 +1808,7 @@ type ChangePassword struct {
 
 func (x *ChangePassword) Reset() {
 	*x = ChangePassword{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[19]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1643,7 +1820,7 @@ func (x *ChangePassword) String() string {
 func (*ChangePassword) ProtoMessage() {}
 
 func (x *ChangePassword) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[19]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1656,7 +1833,7 @@ func (x *ChangePassword) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePassword.ProtoReflect.Descriptor instead.
 func (*ChangePassword) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{19}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ChangePassword) GetOldPassword() string {
@@ -1682,7 +1859,7 @@ type GetBooks struct {
 
 func (x *GetBooks) Reset() {
 	*x = GetBooks{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[20]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1694,7 +1871,7 @@ func (x *GetBooks) String() string {
 func (*GetBooks) ProtoMessage() {}
 
 func (x *GetBooks) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[20]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1707,7 +1884,7 @@ func (x *GetBooks) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBooks.ProtoReflect.Descriptor instead.
 func (*GetBooks) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{20}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{22}
 }
 
 type Books struct {
@@ -1719,7 +1896,7 @@ type Books struct {
 
 func (x *Books) Reset() {
 	*x = Books{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[21]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1731,7 +1908,7 @@ func (x *Books) String() string {
 func (*Books) ProtoMessage() {}
 
 func (x *Books) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[21]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1744,7 +1921,7 @@ func (x *Books) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Books.ProtoReflect.Descriptor instead.
 func (*Books) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{21}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Books) GetBooks() []*Book {
@@ -1769,7 +1946,7 @@ type Book struct {
 
 func (x *Book) Reset() {
 	*x = Book{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[22]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1781,7 +1958,7 @@ func (x *Book) String() string {
 func (*Book) ProtoMessage() {}
 
 func (x *Book) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[22]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1794,7 +1971,7 @@ func (x *Book) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Book.ProtoReflect.Descriptor instead.
 func (*Book) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{22}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *Book) GetId() int64 {
@@ -1861,7 +2038,7 @@ type Entry struct {
 
 func (x *Entry) Reset() {
 	*x = Entry{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[23]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1873,7 +2050,7 @@ func (x *Entry) String() string {
 func (*Entry) ProtoMessage() {}
 
 func (x *Entry) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[23]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1886,7 +2063,7 @@ func (x *Entry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Entry.ProtoReflect.Descriptor instead.
 func (*Entry) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{23}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Entry) GetId() int64 {
@@ -2003,7 +2180,7 @@ type DeleteEntry struct {
 
 func (x *DeleteEntry) Reset() {
 	*x = DeleteEntry{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[24]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2015,7 +2192,7 @@ func (x *DeleteEntry) String() string {
 func (*DeleteEntry) ProtoMessage() {}
 
 func (x *DeleteEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[24]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2028,7 +2205,7 @@ func (x *DeleteEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteEntry.ProtoReflect.Descriptor instead.
 func (*DeleteEntry) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{24}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DeleteEntry) GetId() int64 {
@@ -2046,7 +2223,7 @@ type ListAccounts struct {
 
 func (x *ListAccounts) Reset() {
 	*x = ListAccounts{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[25]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2058,7 +2235,7 @@ func (x *ListAccounts) String() string {
 func (*ListAccounts) ProtoMessage() {}
 
 func (x *ListAccounts) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[25]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2071,7 +2248,7 @@ func (x *ListAccounts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAccounts.ProtoReflect.Descriptor instead.
 func (*ListAccounts) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{25}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{27}
 }
 
 type Accounts struct {
@@ -2083,7 +2260,7 @@ type Accounts struct {
 
 func (x *Accounts) Reset() {
 	*x = Accounts{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[26]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2095,7 +2272,7 @@ func (x *Accounts) String() string {
 func (*Accounts) ProtoMessage() {}
 
 func (x *Accounts) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[26]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2108,7 +2285,7 @@ func (x *Accounts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Accounts.ProtoReflect.Descriptor instead.
 func (*Accounts) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{26}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *Accounts) GetAccounts() []*Account {
@@ -2131,7 +2308,7 @@ type PutAccount struct {
 
 func (x *PutAccount) Reset() {
 	*x = PutAccount{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[27]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2143,7 +2320,7 @@ func (x *PutAccount) String() string {
 func (*PutAccount) ProtoMessage() {}
 
 func (x *PutAccount) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[27]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2156,7 +2333,7 @@ func (x *PutAccount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutAccount.ProtoReflect.Descriptor instead.
 func (*PutAccount) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{27}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *PutAccount) GetId() int64 {
@@ -2196,7 +2373,7 @@ type DeleteAccount struct {
 
 func (x *DeleteAccount) Reset() {
 	*x = DeleteAccount{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[28]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2208,7 +2385,7 @@ func (x *DeleteAccount) String() string {
 func (*DeleteAccount) ProtoMessage() {}
 
 func (x *DeleteAccount) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[28]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2221,7 +2398,7 @@ func (x *DeleteAccount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteAccount.ProtoReflect.Descriptor instead.
 func (*DeleteAccount) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{28}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *DeleteAccount) GetId() int64 {
@@ -2243,7 +2420,7 @@ type PutBook struct {
 
 func (x *PutBook) Reset() {
 	*x = PutBook{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[29]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2255,7 +2432,7 @@ func (x *PutBook) String() string {
 func (*PutBook) ProtoMessage() {}
 
 func (x *PutBook) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[29]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2268,7 +2445,7 @@ func (x *PutBook) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutBook.ProtoReflect.Descriptor instead.
 func (*PutBook) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{29}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *PutBook) GetId() int64 {
@@ -2301,7 +2478,7 @@ type DeleteBook struct {
 
 func (x *DeleteBook) Reset() {
 	*x = DeleteBook{}
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[30]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2313,7 +2490,7 @@ func (x *DeleteBook) String() string {
 func (*DeleteBook) ProtoMessage() {}
 
 func (x *DeleteBook) ProtoReflect() protoreflect.Message {
-	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[30]
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2326,7 +2503,7 @@ func (x *DeleteBook) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBook.ProtoReflect.Descriptor instead.
 func (*DeleteBook) Descriptor() ([]byte, []int) {
-	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{30}
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *DeleteBook) GetId() int64 {
@@ -2348,7 +2525,7 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\x06accept\x18\x04 \x01(\v2\x13.nexodesk.v1.AcceptH\x00R\x06accept\x12-\n" +
 	"\x06reject\x18\x05 \x01(\v2\x13.nexodesk.v1.RejectH\x00R\x06reject\x12+\n" +
 	"\x03api\x18\x06 \x01(\v2\x17.nexodesk.v1.ApiRequestH\x00R\x03apiB\x05\n" +
-	"\x03msg\"\xc4\x02\n" +
+	"\x03msg\"\xf3\x02\n" +
 	"\rServerMessage\x126\n" +
 	"\tchallenge\x18\x01 \x01(\v2\x16.nexodesk.v1.ChallengeH\x00R\tchallenge\x129\n" +
 	"\n" +
@@ -2357,7 +2534,8 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\bincoming\x18\x03 \x01(\v2\x15.nexodesk.v1.IncomingH\x00R\bincoming\x12*\n" +
 	"\x05route\x18\x04 \x01(\v2\x12.nexodesk.v1.RouteH\x00R\x05route\x12*\n" +
 	"\x05error\x18\x05 \x01(\v2\x12.nexodesk.v1.ErrorH\x00R\x05error\x12,\n" +
-	"\x03api\x18\x06 \x01(\v2\x18.nexodesk.v1.ApiResponseH\x00R\x03apiB\x05\n" +
+	"\x03api\x18\x06 \x01(\v2\x18.nexodesk.v1.ApiResponseH\x00R\x03api\x12-\n" +
+	"\x06policy\x18\a \x01(\v2\x13.nexodesk.v1.PolicyH\x00R\x06policyB\x05\n" +
 	"\x03msg\"\xc1\x01\n" +
 	"\bRegister\x12\x1d\n" +
 	"\n" +
@@ -2372,10 +2550,15 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\tChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"%\n" +
 	"\x05Proof\x12\x1c\n" +
-	"\tsignature\x18\x01 \x01(\fR\tsignature\")\n" +
+	"\tsignature\x18\x01 \x01(\fR\tsignature\"V\n" +
 	"\n" +
 	"Registered\x12\x1b\n" +
-	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\"&\n" +
+	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12+\n" +
+	"\x06policy\x18\x02 \x01(\v2\x13.nexodesk.v1.PolicyR\x06policy\"m\n" +
+	"\x06Policy\x12%\n" +
+	"\x0econfirm_always\x18\x01 \x01(\bR\rconfirmAlways\x12\x19\n" +
+	"\bno_files\x18\x02 \x01(\bR\anoFiles\x12!\n" +
+	"\fno_clipboard\x18\x03 \x01(\bR\vnoClipboard\"&\n" +
 	"\aConnect\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\"\x93\x01\n" +
 	"\bIncoming\x12\x1d\n" +
@@ -2403,7 +2586,7 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\x05Error\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x02 \x01(\tR\tsessionId\"\x8e\x06\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"\xfd\x06\n" +
 	"\n" +
 	"ApiRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12*\n" +
@@ -2423,8 +2606,13 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\bput_book\x18\f \x01(\v2\x14.nexodesk.v1.PutBookH\x00R\aputBook\x12:\n" +
 	"\vdelete_book\x18\r \x01(\v2\x17.nexodesk.v1.DeleteBookH\x00R\n" +
 	"deleteBook\x12/\n" +
-	"\bauto_add\x18\x0e \x01(\v2\x12.nexodesk.v1.EntryH\x00R\aautoAddB\x06\n" +
-	"\x04call\"\xd7\x02\n" +
+	"\bauto_add\x18\x0e \x01(\v2\x12.nexodesk.v1.EntryH\x00R\aautoAdd\x127\n" +
+	"\n" +
+	"get_policy\x18\x0f \x01(\v2\x16.nexodesk.v1.GetPolicyH\x00R\tgetPolicy\x124\n" +
+	"\n" +
+	"put_policy\x18\x10 \x01(\v2\x13.nexodesk.v1.PolicyH\x00R\tputPolicyB\x06\n" +
+	"\x04call\"\v\n" +
+	"\tGetPolicy\"\x86\x03\n" +
 	"\vApiResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x120\n" +
@@ -2433,7 +2621,8 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\x05entry\x18\x05 \x01(\v2\x12.nexodesk.v1.EntryH\x00R\x05entry\x123\n" +
 	"\baccounts\x18\x06 \x01(\v2\x15.nexodesk.v1.AccountsH\x00R\baccounts\x12'\n" +
 	"\x04book\x18\a \x01(\v2\x11.nexodesk.v1.BookH\x00R\x04book\x120\n" +
-	"\aaccount\x18\b \x01(\v2\x14.nexodesk.v1.AccountH\x00R\aaccountB\b\n" +
+	"\aaccount\x18\b \x01(\v2\x14.nexodesk.v1.AccountH\x00R\aaccount\x12-\n" +
+	"\x06policy\x18\t \x01(\v2\x13.nexodesk.v1.PolicyH\x00R\x06policyB\b\n" +
 	"\x06result\"?\n" +
 	"\x05Login\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
@@ -2521,7 +2710,7 @@ func file_nexodesk_v1_rendezvous_proto_rawDescGZIP() []byte {
 }
 
 var file_nexodesk_v1_rendezvous_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_nexodesk_v1_rendezvous_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_nexodesk_v1_rendezvous_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_nexodesk_v1_rendezvous_proto_goTypes = []any{
 	(Role)(0),              // 0: nexodesk.v1.Role
 	(*ClientMessage)(nil),  // 1: nexodesk.v1.ClientMessage
@@ -2530,74 +2719,81 @@ var file_nexodesk_v1_rendezvous_proto_goTypes = []any{
 	(*Challenge)(nil),      // 4: nexodesk.v1.Challenge
 	(*Proof)(nil),          // 5: nexodesk.v1.Proof
 	(*Registered)(nil),     // 6: nexodesk.v1.Registered
-	(*Connect)(nil),        // 7: nexodesk.v1.Connect
-	(*Incoming)(nil),       // 8: nexodesk.v1.Incoming
-	(*Accept)(nil),         // 9: nexodesk.v1.Accept
-	(*Reject)(nil),         // 10: nexodesk.v1.Reject
-	(*Route)(nil),          // 11: nexodesk.v1.Route
-	(*Error)(nil),          // 12: nexodesk.v1.Error
-	(*ApiRequest)(nil),     // 13: nexodesk.v1.ApiRequest
-	(*ApiResponse)(nil),    // 14: nexodesk.v1.ApiResponse
-	(*Login)(nil),          // 15: nexodesk.v1.Login
-	(*LoginToken)(nil),     // 16: nexodesk.v1.LoginToken
-	(*Logout)(nil),         // 17: nexodesk.v1.Logout
-	(*Session)(nil),        // 18: nexodesk.v1.Session
-	(*Account)(nil),        // 19: nexodesk.v1.Account
-	(*ChangePassword)(nil), // 20: nexodesk.v1.ChangePassword
-	(*GetBooks)(nil),       // 21: nexodesk.v1.GetBooks
-	(*Books)(nil),          // 22: nexodesk.v1.Books
-	(*Book)(nil),           // 23: nexodesk.v1.Book
-	(*Entry)(nil),          // 24: nexodesk.v1.Entry
-	(*DeleteEntry)(nil),    // 25: nexodesk.v1.DeleteEntry
-	(*ListAccounts)(nil),   // 26: nexodesk.v1.ListAccounts
-	(*Accounts)(nil),       // 27: nexodesk.v1.Accounts
-	(*PutAccount)(nil),     // 28: nexodesk.v1.PutAccount
-	(*DeleteAccount)(nil),  // 29: nexodesk.v1.DeleteAccount
-	(*PutBook)(nil),        // 30: nexodesk.v1.PutBook
-	(*DeleteBook)(nil),     // 31: nexodesk.v1.DeleteBook
+	(*Policy)(nil),         // 7: nexodesk.v1.Policy
+	(*Connect)(nil),        // 8: nexodesk.v1.Connect
+	(*Incoming)(nil),       // 9: nexodesk.v1.Incoming
+	(*Accept)(nil),         // 10: nexodesk.v1.Accept
+	(*Reject)(nil),         // 11: nexodesk.v1.Reject
+	(*Route)(nil),          // 12: nexodesk.v1.Route
+	(*Error)(nil),          // 13: nexodesk.v1.Error
+	(*ApiRequest)(nil),     // 14: nexodesk.v1.ApiRequest
+	(*GetPolicy)(nil),      // 15: nexodesk.v1.GetPolicy
+	(*ApiResponse)(nil),    // 16: nexodesk.v1.ApiResponse
+	(*Login)(nil),          // 17: nexodesk.v1.Login
+	(*LoginToken)(nil),     // 18: nexodesk.v1.LoginToken
+	(*Logout)(nil),         // 19: nexodesk.v1.Logout
+	(*Session)(nil),        // 20: nexodesk.v1.Session
+	(*Account)(nil),        // 21: nexodesk.v1.Account
+	(*ChangePassword)(nil), // 22: nexodesk.v1.ChangePassword
+	(*GetBooks)(nil),       // 23: nexodesk.v1.GetBooks
+	(*Books)(nil),          // 24: nexodesk.v1.Books
+	(*Book)(nil),           // 25: nexodesk.v1.Book
+	(*Entry)(nil),          // 26: nexodesk.v1.Entry
+	(*DeleteEntry)(nil),    // 27: nexodesk.v1.DeleteEntry
+	(*ListAccounts)(nil),   // 28: nexodesk.v1.ListAccounts
+	(*Accounts)(nil),       // 29: nexodesk.v1.Accounts
+	(*PutAccount)(nil),     // 30: nexodesk.v1.PutAccount
+	(*DeleteAccount)(nil),  // 31: nexodesk.v1.DeleteAccount
+	(*PutBook)(nil),        // 32: nexodesk.v1.PutBook
+	(*DeleteBook)(nil),     // 33: nexodesk.v1.DeleteBook
 }
 var file_nexodesk_v1_rendezvous_proto_depIdxs = []int32{
 	3,  // 0: nexodesk.v1.ClientMessage.register:type_name -> nexodesk.v1.Register
 	5,  // 1: nexodesk.v1.ClientMessage.proof:type_name -> nexodesk.v1.Proof
-	7,  // 2: nexodesk.v1.ClientMessage.connect:type_name -> nexodesk.v1.Connect
-	9,  // 3: nexodesk.v1.ClientMessage.accept:type_name -> nexodesk.v1.Accept
-	10, // 4: nexodesk.v1.ClientMessage.reject:type_name -> nexodesk.v1.Reject
-	13, // 5: nexodesk.v1.ClientMessage.api:type_name -> nexodesk.v1.ApiRequest
+	8,  // 2: nexodesk.v1.ClientMessage.connect:type_name -> nexodesk.v1.Connect
+	10, // 3: nexodesk.v1.ClientMessage.accept:type_name -> nexodesk.v1.Accept
+	11, // 4: nexodesk.v1.ClientMessage.reject:type_name -> nexodesk.v1.Reject
+	14, // 5: nexodesk.v1.ClientMessage.api:type_name -> nexodesk.v1.ApiRequest
 	4,  // 6: nexodesk.v1.ServerMessage.challenge:type_name -> nexodesk.v1.Challenge
 	6,  // 7: nexodesk.v1.ServerMessage.registered:type_name -> nexodesk.v1.Registered
-	8,  // 8: nexodesk.v1.ServerMessage.incoming:type_name -> nexodesk.v1.Incoming
-	11, // 9: nexodesk.v1.ServerMessage.route:type_name -> nexodesk.v1.Route
-	12, // 10: nexodesk.v1.ServerMessage.error:type_name -> nexodesk.v1.Error
-	14, // 11: nexodesk.v1.ServerMessage.api:type_name -> nexodesk.v1.ApiResponse
-	0,  // 12: nexodesk.v1.Route.role:type_name -> nexodesk.v1.Role
-	15, // 13: nexodesk.v1.ApiRequest.login:type_name -> nexodesk.v1.Login
-	16, // 14: nexodesk.v1.ApiRequest.login_token:type_name -> nexodesk.v1.LoginToken
-	17, // 15: nexodesk.v1.ApiRequest.logout:type_name -> nexodesk.v1.Logout
-	21, // 16: nexodesk.v1.ApiRequest.get_books:type_name -> nexodesk.v1.GetBooks
-	24, // 17: nexodesk.v1.ApiRequest.put_entry:type_name -> nexodesk.v1.Entry
-	25, // 18: nexodesk.v1.ApiRequest.delete_entry:type_name -> nexodesk.v1.DeleteEntry
-	20, // 19: nexodesk.v1.ApiRequest.change_password:type_name -> nexodesk.v1.ChangePassword
-	26, // 20: nexodesk.v1.ApiRequest.list_accounts:type_name -> nexodesk.v1.ListAccounts
-	28, // 21: nexodesk.v1.ApiRequest.put_account:type_name -> nexodesk.v1.PutAccount
-	29, // 22: nexodesk.v1.ApiRequest.delete_account:type_name -> nexodesk.v1.DeleteAccount
-	30, // 23: nexodesk.v1.ApiRequest.put_book:type_name -> nexodesk.v1.PutBook
-	31, // 24: nexodesk.v1.ApiRequest.delete_book:type_name -> nexodesk.v1.DeleteBook
-	24, // 25: nexodesk.v1.ApiRequest.auto_add:type_name -> nexodesk.v1.Entry
-	18, // 26: nexodesk.v1.ApiResponse.session:type_name -> nexodesk.v1.Session
-	22, // 27: nexodesk.v1.ApiResponse.books:type_name -> nexodesk.v1.Books
-	24, // 28: nexodesk.v1.ApiResponse.entry:type_name -> nexodesk.v1.Entry
-	27, // 29: nexodesk.v1.ApiResponse.accounts:type_name -> nexodesk.v1.Accounts
-	23, // 30: nexodesk.v1.ApiResponse.book:type_name -> nexodesk.v1.Book
-	19, // 31: nexodesk.v1.ApiResponse.account:type_name -> nexodesk.v1.Account
-	19, // 32: nexodesk.v1.Session.account:type_name -> nexodesk.v1.Account
-	23, // 33: nexodesk.v1.Books.books:type_name -> nexodesk.v1.Book
-	24, // 34: nexodesk.v1.Book.entries:type_name -> nexodesk.v1.Entry
-	19, // 35: nexodesk.v1.Accounts.accounts:type_name -> nexodesk.v1.Account
-	36, // [36:36] is the sub-list for method output_type
-	36, // [36:36] is the sub-list for method input_type
-	36, // [36:36] is the sub-list for extension type_name
-	36, // [36:36] is the sub-list for extension extendee
-	0,  // [0:36] is the sub-list for field type_name
+	9,  // 8: nexodesk.v1.ServerMessage.incoming:type_name -> nexodesk.v1.Incoming
+	12, // 9: nexodesk.v1.ServerMessage.route:type_name -> nexodesk.v1.Route
+	13, // 10: nexodesk.v1.ServerMessage.error:type_name -> nexodesk.v1.Error
+	16, // 11: nexodesk.v1.ServerMessage.api:type_name -> nexodesk.v1.ApiResponse
+	7,  // 12: nexodesk.v1.ServerMessage.policy:type_name -> nexodesk.v1.Policy
+	7,  // 13: nexodesk.v1.Registered.policy:type_name -> nexodesk.v1.Policy
+	0,  // 14: nexodesk.v1.Route.role:type_name -> nexodesk.v1.Role
+	17, // 15: nexodesk.v1.ApiRequest.login:type_name -> nexodesk.v1.Login
+	18, // 16: nexodesk.v1.ApiRequest.login_token:type_name -> nexodesk.v1.LoginToken
+	19, // 17: nexodesk.v1.ApiRequest.logout:type_name -> nexodesk.v1.Logout
+	23, // 18: nexodesk.v1.ApiRequest.get_books:type_name -> nexodesk.v1.GetBooks
+	26, // 19: nexodesk.v1.ApiRequest.put_entry:type_name -> nexodesk.v1.Entry
+	27, // 20: nexodesk.v1.ApiRequest.delete_entry:type_name -> nexodesk.v1.DeleteEntry
+	22, // 21: nexodesk.v1.ApiRequest.change_password:type_name -> nexodesk.v1.ChangePassword
+	28, // 22: nexodesk.v1.ApiRequest.list_accounts:type_name -> nexodesk.v1.ListAccounts
+	30, // 23: nexodesk.v1.ApiRequest.put_account:type_name -> nexodesk.v1.PutAccount
+	31, // 24: nexodesk.v1.ApiRequest.delete_account:type_name -> nexodesk.v1.DeleteAccount
+	32, // 25: nexodesk.v1.ApiRequest.put_book:type_name -> nexodesk.v1.PutBook
+	33, // 26: nexodesk.v1.ApiRequest.delete_book:type_name -> nexodesk.v1.DeleteBook
+	26, // 27: nexodesk.v1.ApiRequest.auto_add:type_name -> nexodesk.v1.Entry
+	15, // 28: nexodesk.v1.ApiRequest.get_policy:type_name -> nexodesk.v1.GetPolicy
+	7,  // 29: nexodesk.v1.ApiRequest.put_policy:type_name -> nexodesk.v1.Policy
+	20, // 30: nexodesk.v1.ApiResponse.session:type_name -> nexodesk.v1.Session
+	24, // 31: nexodesk.v1.ApiResponse.books:type_name -> nexodesk.v1.Books
+	26, // 32: nexodesk.v1.ApiResponse.entry:type_name -> nexodesk.v1.Entry
+	29, // 33: nexodesk.v1.ApiResponse.accounts:type_name -> nexodesk.v1.Accounts
+	25, // 34: nexodesk.v1.ApiResponse.book:type_name -> nexodesk.v1.Book
+	21, // 35: nexodesk.v1.ApiResponse.account:type_name -> nexodesk.v1.Account
+	7,  // 36: nexodesk.v1.ApiResponse.policy:type_name -> nexodesk.v1.Policy
+	21, // 37: nexodesk.v1.Session.account:type_name -> nexodesk.v1.Account
+	25, // 38: nexodesk.v1.Books.books:type_name -> nexodesk.v1.Book
+	26, // 39: nexodesk.v1.Book.entries:type_name -> nexodesk.v1.Entry
+	21, // 40: nexodesk.v1.Accounts.accounts:type_name -> nexodesk.v1.Account
+	41, // [41:41] is the sub-list for method output_type
+	41, // [41:41] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_nexodesk_v1_rendezvous_proto_init() }
@@ -2620,8 +2816,9 @@ func file_nexodesk_v1_rendezvous_proto_init() {
 		(*ServerMessage_Route)(nil),
 		(*ServerMessage_Error)(nil),
 		(*ServerMessage_Api)(nil),
+		(*ServerMessage_Policy)(nil),
 	}
-	file_nexodesk_v1_rendezvous_proto_msgTypes[12].OneofWrappers = []any{
+	file_nexodesk_v1_rendezvous_proto_msgTypes[13].OneofWrappers = []any{
 		(*ApiRequest_Login)(nil),
 		(*ApiRequest_LoginToken)(nil),
 		(*ApiRequest_Logout)(nil),
@@ -2635,14 +2832,17 @@ func file_nexodesk_v1_rendezvous_proto_init() {
 		(*ApiRequest_PutBook)(nil),
 		(*ApiRequest_DeleteBook)(nil),
 		(*ApiRequest_AutoAdd)(nil),
+		(*ApiRequest_GetPolicy)(nil),
+		(*ApiRequest_PutPolicy)(nil),
 	}
-	file_nexodesk_v1_rendezvous_proto_msgTypes[13].OneofWrappers = []any{
+	file_nexodesk_v1_rendezvous_proto_msgTypes[15].OneofWrappers = []any{
 		(*ApiResponse_Session)(nil),
 		(*ApiResponse_Books)(nil),
 		(*ApiResponse_Entry)(nil),
 		(*ApiResponse_Accounts)(nil),
 		(*ApiResponse_Book)(nil),
 		(*ApiResponse_Account)(nil),
+		(*ApiResponse_Policy)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -2650,7 +2850,7 @@ func file_nexodesk_v1_rendezvous_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nexodesk_v1_rendezvous_proto_rawDesc), len(file_nexodesk_v1_rendezvous_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   31,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

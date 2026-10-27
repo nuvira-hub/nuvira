@@ -86,6 +86,12 @@
   "chat.file_received": "Sie haben die Datei „{name}“ im Ordner Downloads erhalten",
 
   "admin.title": "Verwaltung",
+  "admin.policy": "Regeln für alle Computer",
+  "admin.policy_confirm": "Die Person am Computer muss immer annehmen, auch mit dem dauerhaften Passwort",
+  "admin.policy_files": "Keine Dateiübertragungen",
+  "admin.policy_clipboard": "Keine geteilte Zwischenablage",
+  "admin.policy_save": "Auf alle anwenden",
+  "admin.policy_saved": "Regeln angewendet: Die verbundenen Computer haben sie sofort erhalten.",
   "admin.accounts": "Konten",
   "admin.username": "Benutzername",
   "admin.password": "Passwort",
@@ -219,6 +225,7 @@
   "agent.downloads": "Downloads",
   "agent.no_user": "am entfernten Computer ist kein Benutzer angemeldet, der die Datei empfangen kann",
   "agent.files_view_only": "der entfernte Computer ist im Nur-ansehen-Modus",
+  "agent.files_disabled": "die Regeln des Servers erlauben keine Dateiübertragungen",
 
   "server.denied": "Zugriff verweigert",
   "server.password_too_short": "das Passwort muss mindestens 8 Zeichen haben",

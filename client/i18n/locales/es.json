@@ -86,6 +86,12 @@
   "chat.file_received": "Ha recibido el archivo «{name}» en la carpeta Descargas",
 
   "admin.title": "Administración",
+  "admin.policy": "Reglas para todos los equipos",
+  "admin.policy_confirm": "La persona del equipo siempre debe aceptar, también con la contraseña permanente",
+  "admin.policy_files": "Sin transferencia de archivos",
+  "admin.policy_clipboard": "Sin portapapeles compartido",
+  "admin.policy_save": "Aplicar a todos",
+  "admin.policy_saved": "Reglas aplicadas: los equipos conectados las recibieron al instante.",
   "admin.accounts": "Cuentas",
   "admin.username": "Nombre de usuario",
   "admin.password": "Contraseña",
@@ -219,6 +225,7 @@
   "agent.downloads": "Descargas",
   "agent.no_user": "no hay ningún usuario con sesión iniciada en el equipo remoto para recibir el archivo",
   "agent.files_view_only": "el equipo remoto está en modo solo ver",
+  "agent.files_disabled": "las reglas del servidor no permiten transferir archivos",
 
   "server.denied": "acceso denegado",
   "server.password_too_short": "la contraseña debe tener al menos 8 caracteres",

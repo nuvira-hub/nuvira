@@ -63,6 +63,12 @@ The app opens a signalling connection with `Register.api_only` (it does not appe
 - `server/internal/accounts/accounts_test.go`: sign-in, tokens, personal and shared books, visibility between accounts, administrator rights, encryption of the passwords, automatic add.
 - Test of 2026-10-27 between the NUC and PC-LABORATORIO: sign-in, automatic add at the first connection, connection from the address book with the saved password, shared book seen by a second account, account management. Tested by the user.
 
+## Rules for all the devices (policy)
+
+Administration → "Rules for all the computers" (phase 5, 2026-10-27): the person at the computer must always accept (also with the permanent password), no file transfers, no shared clipboard. Stored by the server (`policy` table), sent to each device at registration (`Registered.policy`) and to every connected device as soon as an administrator changes them (`ServerMessage.policy`); applied by the agent at the start of each session. They can only restrict: a device never allows more than its own settings because of them. With "always accept" and no app open on the PC (service only), sessions are refused.
+
+Tested on the NUC test server: rules received at registration; with the permanent password the viewer showed "waiting for the person to accept", then "no answer" after 30 s.
+
 ## To do
 
 - Groups or folders inside a book, online status of the devices in the list.

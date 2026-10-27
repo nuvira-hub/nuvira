@@ -342,8 +342,32 @@ $("password-form").addEventListener("submit", async (e) => {
 
 // --- administration ---
 
+function showPolicy(policy) {
+  $("policy-confirm").checked = policy.confirm_always;
+  $("policy-files").checked = policy.no_files;
+  $("policy-clipboard").checked = policy.no_clipboard;
+}
+
+$("policy-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const policy = {
+    confirm_always: $("policy-confirm").checked,
+    no_files: $("policy-files").checked,
+    no_clipboard: $("policy-clipboard").checked,
+  };
+  try {
+    showPolicy(await call("address_book_save_policy", { policy }, "policy-message"));
+    $("policy-message").textContent = t("admin.policy_saved");
+    $("policy-message").classList.add("ok");
+    $("policy-message").classList.remove("hidden");
+  } catch {
+    $("policy-message").classList.remove("ok");
+  }
+});
+
 async function loadAccounts() {
   adminLoaded = true;
+  call("address_book_policy", {}, "policy-message").then(showPolicy).catch(() => {});
   try {
     adminAccounts = await call("address_book_accounts", {}, "admin-message");
   } catch {
