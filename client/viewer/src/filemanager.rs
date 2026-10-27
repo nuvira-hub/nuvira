@@ -83,15 +83,35 @@ impl FileManager {
         self.ui.as_ref().is_some_and(|ui| ui.window.id() == id)
     }
 
-    /// Opens the window, or brings it to the front.
-    pub fn open(&mut self, event_loop: &ActiveEventLoop, proxy: EventLoopProxy<NetEvent>) -> Result<()> {
+    /// Opens the window, or brings it to the front. It belongs to the session window
+    /// (`owner`): it stays above it, also in full screen, and closes with it.
+    pub fn open(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        proxy: EventLoopProxy<NetEvent>,
+        owner: Option<&Window>,
+    ) -> Result<()> {
         if let Some(ui) = &self.ui {
             ui.window.focus_window();
             return Ok(());
         }
-        let attrs = Window::default_attributes()
+        let mut attrs = Window::default_attributes()
             .with_title(nexodesk_i18n::t("fm.title"))
             .with_inner_size(winit::dpi::LogicalSize::new(1000.0, 640.0));
+        #[cfg(windows)]
+        {
+            let hwnd = owner
+                .and_then(|o| winit::raw_window_handle::HasWindowHandle::window_handle(o).ok())
+                .and_then(|h| match h.as_raw() {
+                    winit::raw_window_handle::RawWindowHandle::Win32(win32) => Some(win32.hwnd.get()),
+                    _ => None,
+                });
+            tracing::info!(owner = ?hwnd, "opening the file manager");
+            if let Some(hwnd) = hwnd {
+                use winit::platform::windows::WindowAttributesExtWindows;
+                attrs = attrs.with_owner_window(hwnd);
+            }
+        }
         let window = Arc::new(event_loop.create_window(attrs).context("file manager window")?);
         let data_dir =
             std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("NexoDesk").join("WebView2"));
@@ -109,6 +129,7 @@ impl FileManager {
                 .build_as_child(&window)
         })
         .context("file manager WebView")?;
+        window.focus_window();
         self.ui = Some(Ui { window, webview, _context: context });
         Ok(())
     }

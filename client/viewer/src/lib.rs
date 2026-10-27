@@ -441,9 +441,12 @@ impl App {
                 return;
             }
             Action::FileManager => {
-                if let Err(e) = self.fm.open(event_loop, self.proxy.clone()) {
+                if let Err(e) = self.fm.open(event_loop, self.proxy.clone(), self.window.as_deref()) {
                     error!("file manager not available: {e:#}");
                 }
+                // The keyboard stays with the file manager: giving it back to the session
+                // brought the session window in front of the new one.
+                return;
             }
             Action::SendFile => {
                 // The file picker blocks its own thread, not the session.
