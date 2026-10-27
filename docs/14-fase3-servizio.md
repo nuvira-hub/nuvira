@@ -53,9 +53,19 @@ Servizio installato su PC-LABORATORIO, viewer sul NUC:
 - riavvio: LABORATORIO riavviato alle 08:11:18, servizio avviato alle 08:11:33, agent registrato alle 08:11:39 senza nessun utente entrato. Dal NUC si vede la schermata di accesso; l'utente ha inserito il PIN da remoto e la sessione è proseguita sul desktop (l'accesso non cambia la sessione della console).
 - spegnimento: Windows chiude le sessioni (e l'agent, codice `0x40010004`) prima di fermare i servizi. Il servizio lo trattava come un crash e programmava un riavvio; ora lo riconosce e riparte senza avvisi solo se la sessione continua.
 
+## Ctrl+Alt+Canc
+
+Ctrl+Alt+Canc non si può inviare come tasti: il sistema del viewer lo intercetta sempre. Nel viewer si usa **Ctrl+Alt+Fine** (come in Desktop remoto); in futuro anche il pulsante della barra degli strumenti.
+
+- Il viewer invia `InputEvent.secure_attention` (protocollo `session.proto`).
+- Windows esegue `SendSAS` solo se lo chiama un **servizio** (l'agent, pur essendo SYSTEM, viene ignorato in silenzio) e se il criterio `SoftwareSASGeneration` (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`) lo consente ai servizi. `install` aggiunge il valore 1 senza togliere quelli già presenti.
+- L'agent segnala l'evento `Global\NexoDeskSAS`, creato dal servizio: con la sicurezza predefinita di un oggetto creato da SYSTEM solo SYSTEM può segnalarlo. Il servizio esegue `SendSAS(FALSE)`.
+- Senza servizio (agent avviato dall'app) Ctrl+Alt+Canc non è disponibile e l'agent lo scrive nel log.
+
+Prova del 2026-10-27: dal NUC con Ctrl+Alt+Fine compare su LABORATORIO la schermata di sicurezza in circa 240 ms; Esc riporta al desktop.
+
 ## Da fare
 
-- Ctrl+Alt+Canc da remoto (`SendSAS`, richiede il criterio "Software Secure Attention Sequence").
 - App e servizio sullo stesso PC: oggi l'app avvia un suo agent con un ID diverso. L'app dovrà riconoscere il servizio e mostrarne ID e richieste di conferma (canale locale tra app e servizio).
 - Conferma da parte dell'utente presente anche in modalità servizio (opzionale, per l'assistenza presidiata).
 - Sessioni Desktop remoto (RDP): oggi si segue solo la console.
