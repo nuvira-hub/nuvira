@@ -205,6 +205,12 @@ label.check { display: inline-flex; align-items: center; gap: 6px; }
 .entry .who { flex: 1; min-width: 0; }
 .entry .who strong, .entry .who span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .entry .who span { font-size: 12px; color: var(--muted); }
+.entry .who .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.entry .who .tag {
+  display: inline-block; padding: 1px 7px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); font-size: 11px;
+}
+.group-title { margin: 10px 14px 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .entry button { padding: 5px 12px; font-size: 13px; }
 .entry .edit { opacity: 0; }
 .entry:hover .edit, .entry .edit:focus-visible { opacity: 1; }

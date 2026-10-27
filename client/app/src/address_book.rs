@@ -57,6 +57,11 @@ pub struct EntryUi {
     #[serde(default)]
     pub password: String,
     /// From the server, read only: connected now, or last seen (seconds since 1970).
+    /// Folder inside the book and free labels.
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
     #[serde(default)]
     pub online: bool,
     #[serde(default)]
@@ -76,6 +81,8 @@ impl From<pb::Entry> for EntryUi {
             phone: e.phone,
             notes: e.notes,
             password: e.password,
+            group: e.group,
+            tags: e.tags,
             online: e.online,
             last_seen: e.last_seen,
         }
@@ -95,6 +102,8 @@ impl From<EntryUi> for pb::Entry {
             phone: e.phone,
             notes: e.notes,
             password: e.password,
+            group: e.group,
+            tags: e.tags,
             ..Default::default()
         }
     }

@@ -1850,8 +1850,11 @@ type Entry struct {
 	Updated int64 `protobuf:"varint,11,opt,name=updated,proto3" json:"updated,omitempty"`
 	// Filled in by the server when the books are read: the device is connected to it
 	// now, or when it was last seen (seconds since 1970; 0 = never on this server).
-	Online        bool  `protobuf:"varint,12,opt,name=online,proto3" json:"online,omitempty"`
-	LastSeen      int64 `protobuf:"varint,13,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	Online   bool  `protobuf:"varint,12,opt,name=online,proto3" json:"online,omitempty"`
+	LastSeen int64 `protobuf:"varint,13,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	// Folder inside the book ("" = none) and free labels, for sorting and searching.
+	Group         string   `protobuf:"bytes,14,opt,name=group,proto3" json:"group,omitempty"`
+	Tags          []string `protobuf:"bytes,15,rep,name=tags,proto3" json:"tags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1975,6 +1978,20 @@ func (x *Entry) GetLastSeen() int64 {
 		return x.LastSeen
 	}
 	return 0
+}
+
+func (x *Entry) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *Entry) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
 }
 
 type DeleteEntry struct {
@@ -2446,7 +2463,7 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\bpersonal\x18\x03 \x01(\bR\bpersonal\x12\x1d\n" +
 	"\n" +
 	"member_ids\x18\x04 \x03(\x03R\tmemberIds\x12,\n" +
-	"\aentries\x18\x05 \x03(\v2\x12.nexodesk.v1.EntryR\aentries\"\xc2\x02\n" +
+	"\aentries\x18\x05 \x03(\v2\x12.nexodesk.v1.EntryR\aentries\"\xec\x02\n" +
 	"\x05Entry\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\abook_id\x18\x02 \x01(\x03R\x06bookId\x12\x1b\n" +
@@ -2461,7 +2478,9 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	" \x01(\tR\bpassword\x12\x18\n" +
 	"\aupdated\x18\v \x01(\x03R\aupdated\x12\x16\n" +
 	"\x06online\x18\f \x01(\bR\x06online\x12\x1b\n" +
-	"\tlast_seen\x18\r \x01(\x03R\blastSeen\"\x1d\n" +
+	"\tlast_seen\x18\r \x01(\x03R\blastSeen\x12\x14\n" +
+	"\x05group\x18\x0e \x01(\tR\x05group\x12\x12\n" +
+	"\x04tags\x18\x0f \x03(\tR\x04tags\"\x1d\n" +
 	"\vDeleteEntry\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\x0e\n" +
 	"\fListAccounts\"<\n" +

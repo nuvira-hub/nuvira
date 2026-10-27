@@ -92,7 +92,7 @@ function renderAddressBook(state) {
 function matches(entry, query) {
   if (!query) return true;
   const digits = query.replace(/\s/g, "");
-  const text = [entry.name, entry.company, entry.contact, entry.email, entry.phone, entry.notes];
+  const text = [entry.name, entry.company, entry.contact, entry.email, entry.phone, entry.notes, entry.group, ...entry.tags];
   return text.some((v) => v.toLowerCase().includes(query)) || (/^\d+$/.test(digits) && entry.device_id.includes(digits));
 }
 
@@ -106,7 +106,13 @@ function renderEntries() {
     const label = book.personal ? t("address_book.personal", { name: bookName(book) }) : t("address_book.shared", { name: book.name });
     children.push(el("p", "book-title", `${label} (${book.entries.length})`));
     if (entries.length === 0) children.push(el("p", "empty", t("address_book.empty_book")));
-    for (const entry of entries) children.push(entryRow(entry));
+    // The server sends them sorted by group: a heading where the group changes.
+    let group = null;
+    for (const entry of entries) {
+      if (entry.group && entry.group !== group) children.push(el("p", "group-title", entry.group));
+      group = entry.group;
+      children.push(entryRow(entry));
+    }
   }
   if (books.length && children.length === 0) children.push(el("p", "empty", t("address_book.not_found")));
   $("address-book-list").replaceChildren(...children);
@@ -122,6 +128,11 @@ function entryRow(entry) {
   const initial = (entry.name || entry.company || "#").trim().charAt(0).toUpperCase();
   const who = el("div", "who");
   who.append(el("strong", "", entryTitle(entry)), el("span", "", entryDetails(entry)));
+  if (entry.tags.length) {
+    const tags = el("span", "tags");
+    tags.append(...entry.tags.map((tag) => el("span", "tag", tag)));
+    who.append(tags);
+  }
   row.title = entry.notes || "";
   const avatar = el("span", "avatar", initial);
   const presence = el("span", entry.online ? "presence online" : "presence");
@@ -242,6 +253,11 @@ function openEntry(entry) {
   $("entry-title").textContent = t(entry ? "entry.edit" : "entry.new");
   $("entry-book").value = entry ? entry.book_id : (books.find((b) => b.personal) ?? books[0])?.id;
   $("entry-device").value = entry ? formatId(entry.device_id) : "";
+  $("entry-group").value = entry ? entry.group : "";
+  $("entry-tags").value = entry ? entry.tags.join(", ") : "";
+  // Groups already used, as suggestions.
+  const groups = [...new Set(books.flatMap((b) => b.entries.map((e) => e.group)).filter(Boolean))].sort();
+  $("entry-groups").replaceChildren(...groups.map((g) => new Option(g)));
   for (const field of ["name", "company", "contact", "phone", "email", "password", "notes"]) {
     $(`entry-${field}`).value = entry ? entry[field] : "";
   }
@@ -266,6 +282,8 @@ $("entry-form").addEventListener("submit", async (e) => {
   for (const field of ["name", "company", "contact", "phone", "email", "password", "notes"]) {
     entry[field] = $(`entry-${field}`).value;
   }
+  entry.group = $("entry-group").value;
+  entry.tags = $("entry-tags").value.split(",").map((tag) => tag.trim()).filter(Boolean);
   try {
     await call("address_book_save_entry", { entry }, "entry-message");
     closeEntry();

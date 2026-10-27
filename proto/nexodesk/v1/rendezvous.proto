@@ -214,6 +214,9 @@ message Entry {
   // now, or when it was last seen (seconds since 1970; 0 = never on this server).
   bool online = 12;
   int64 last_seen = 13;
+  // Folder inside the book ("" = none) and free labels, for sorting and searching.
+  string group = 14;
+  repeated string tags = 15;
 }
 
 message DeleteEntry {
