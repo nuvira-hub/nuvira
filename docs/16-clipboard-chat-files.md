@@ -15,7 +15,7 @@ During the session text and images copied on one of the two PCs can be pasted on
 
 Test of 2026-10-27: NUC ↔ PC-LABORATORIO (service agent), copy and paste in both directions, tested by the user.
 
-Images (2026-10-27): copied images travel as PNG (fast compression, at most 8192x8192 pixels and 32 MB) on their own unidirectional stream, like files (`FileChunk.clipboard_image`), so a large image does not hold up the control channel; echo is avoided with a hash of the pixels. Not yet tested by the user between two PCs.
+Images (2026-10-27): copied images travel as PNG (fast compression, at most 8192x8192 pixels and 32 MB) on their own unidirectional stream, like files (`FileChunk.clipboard_image`), so a large image does not hold up the control channel; echo is avoided with a hash of the pixels. Tested by the user between the NUC and PC-LABORATORIO in both directions (2026-10-27).
 
 ## Chat
 
