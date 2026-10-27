@@ -86,6 +86,66 @@ struct Settings {
     /// Interface language ("auto" or a code from `nexodesk_i18n::LANGUAGES`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
+    /// Server certificate fingerprint, when it came with the server in the file name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    server_key: Option<String>,
+}
+
+/// Server written in the program's file name, e.g. `nexodesk-host=nexodesk.example.com.exe`
+/// or `nexodesk-host=example.com,port=21117,key=<fingerprint>.exe`: whoever hosts a
+/// server hands out the same program, renamed, and it connects there with no setup.
+/// Windows does not allow `:` in file names, hence `port=`. A copy saved twice by a
+/// browser (`... (1).exe`) still works.
+#[derive(Debug, Default, PartialEq)]
+struct FileConfig {
+    server: Option<String>,
+    server_key: Option<String>,
+}
+
+fn file_config(file_name: &str) -> FileConfig {
+    let stem = file_name.strip_suffix(".exe").or_else(|| file_name.strip_suffix(".EXE")).unwrap_or(file_name);
+    // " (1)" added by browsers to a repeated download.
+    let stem = match stem.rsplit_once(" (") {
+        Some((head, tail)) if tail.strip_suffix(')').is_some_and(|n| n.chars().all(|c| c.is_ascii_digit())) => head,
+        _ => stem,
+    };
+    let Some((_, options)) = stem.split_once('-') else { return FileConfig::default() };
+    let (mut host, mut port, mut key) = (None, None, None);
+    for option in options.split(',') {
+        match option.trim().split_once('=') {
+            Some(("host", v)) if !v.is_empty() => host = Some(v.to_string()),
+            Some(("port", v)) if v.parse::<u16>().is_ok() => port = Some(v.to_string()),
+            Some(("key", v)) if nexodesk_transport::parse_fingerprint(v).is_ok() => key = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    let Some(host) = host else { return FileConfig::default() };
+    FileConfig {
+        server: Some(match port {
+            Some(port) => format!("{host}:{port}"),
+            None => host,
+        }),
+        server_key: key,
+    }
+}
+
+/// Applies the server in the file name, if any, to the saved settings.
+fn apply_file_config(settings: &mut Settings) {
+    let name = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let FileConfig { server: Some(server), server_key } = file_config(&name.unwrap_or_default()) else { return };
+    if settings.server == server && settings.server_key == server_key {
+        return;
+    }
+    info!("server from the file name: {server}");
+    if settings.server != server {
+        // The address book sign-in applies to the server it was made on.
+        settings.token = None;
+    }
+    settings.server = server;
+    settings.server_key = server_key;
+    if let Err(e) = save_settings(settings) {
+        tracing::warn!("settings not saved: {e:#}");
+    }
 }
 
 fn settings_path() -> PathBuf {
@@ -203,7 +263,7 @@ fn start_agent(app: &AppHandle) {
         };
         let opts = ServerOptions {
             server_name: server,
-            server_key: None,
+            server_key: load_settings().server_key.and_then(|k| nexodesk_transport::parse_fingerprint(&k).ok()),
             transport: nexodesk_transport::signal::TransportMode::Auto,
             server_ws: None,
             identity_path: nexodesk_transport::identity::data_dir().join("device.key"),
@@ -356,8 +416,10 @@ fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(
     let changed = settings.server != server;
     settings.server = server.clone();
     if changed {
-        // The address book sign-in applies to the server it was made on.
+        // The address book sign-in applies to the server it was made on, and so does the
+        // fingerprint that came with it in the file name.
         settings.token = None;
+        settings.server_key = None;
     }
     save_settings(&settings).map_err(|e| e.to_string())?;
     state.update(&app, |ui| {
@@ -435,8 +497,12 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // The password goes in the process environment, not on the command line
     // (which other programs on the same PC can read).
-    let mut child = std::process::Command::new(&exe)
-        .args(["viewer", "--server", &server, &device_id])
+    let mut command = std::process::Command::new(&exe);
+    command.args(["viewer", "--server", &server, &device_id]);
+    if let Some(key) = load_settings().server_key {
+        command.args(["--server-key", &key]);
+    }
+    let mut child = command
         .env("NEXODESK_PASSWORD", &password)
         // The session window uses the app's language.
         .env("NEXODESK_LANG", nexodesk_i18n::lang())
@@ -558,7 +624,8 @@ fn main() {
     }
     init_logging();
     nexodesk_input::set_dpi_awareness();
-    let settings = load_settings();
+    let mut settings = load_settings();
+    apply_file_config(&mut settings);
     nexodesk_i18n::init(settings.language.as_deref());
     let password = nexodesk_agent::random_password();
     let state = NexoApp {
@@ -657,5 +724,28 @@ fn run_subcommand(sub: &str, rest: &[std::ffi::OsString]) -> i32 {
             eprintln!("error: {e:#}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KEY: &str = "eb4a40cdaac1e2d3948c053723f7a42f9aa6bcbcc7520f228cea427a15070fe3";
+
+    #[test]
+    fn server_from_the_file_name() {
+        let server = |name: &str| file_config(name).server;
+        assert_eq!(server("nexodesk.exe"), None);
+        assert_eq!(server("nexodesk-host=alexbn.ddns.net.exe").as_deref(), Some("alexbn.ddns.net"));
+        assert_eq!(server("NexoDesk-host=10.0.0.5,port=21117.EXE").as_deref(), Some("10.0.0.5:21117"));
+        // Repeated download.
+        assert_eq!(server("nexodesk-host=alexbn.ddns.net (2).exe").as_deref(), Some("alexbn.ddns.net"));
+        // A bad port or key is ignored, the rest is kept.
+        let c = file_config(&format!("nexodesk-host=a.example,port=99999,key={KEY}.exe"));
+        assert_eq!((c.server.as_deref(), c.server_key.as_deref()), (Some("a.example"), Some(KEY)));
+        assert_eq!(file_config("nexodesk-host=a.example,key=123.exe").server_key, None);
+        // Without host nothing applies.
+        assert_eq!(file_config(&format!("nexodesk-key={KEY}.exe")), FileConfig::default());
     }
 }
