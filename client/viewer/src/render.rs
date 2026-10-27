@@ -2,7 +2,12 @@
 //!
 //! The three planes Y, U, V are uploaded as R8 textures and converted to RGB by
 //! the shader (BT.601, limited range). The image is fitted to the window keeping
-//! its proportions.
+//! its proportions, or shown at its real size (1:1) and panned with the mouse.
+//!
+//! When the image is shrunk each window pixel averages several samples spread over
+//! the source pixels it covers: a single bilinear sample skips pixels and thin text
+//! (1-pixel strokes) breaks up. Measured case: a 1280x1024 screen on a 1366x768
+//! laptop, shrunk to 75%.
 
 use std::sync::Arc;
 
@@ -32,11 +37,38 @@ fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
 @group(0) @binding(2) var tex_v: texture_2d<f32>;
 @group(0) @binding(3) var samp: sampler;
 
+struct Params {
+    // Part of the image shown (texture coordinates of the corners).
+    uv0: vec2<f32>,
+    uv1: vec2<f32>,
+    // Size of one window pixel in texture coordinates.
+    pixel: vec2<f32>,
+    // Samples per side averaged for each window pixel (1 = no shrinking).
+    taps: u32,
+    _pad: u32,
+};
+@group(0) @binding(4) var<uniform> params: Params;
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let y = (textureSample(tex_y, samp, in.uv).r - 16.0 / 255.0) * 1.164383;
-    let u = textureSample(tex_u, samp, in.uv).r - 0.5;
-    let v = textureSample(tex_v, samp, in.uv).r - 0.5;
+    let uv = mix(params.uv0, params.uv1, in.uv);
+    var yuv = vec3<f32>(0.0);
+    let n = max(params.taps, 1u);
+    for (var i = 0u; i < n; i++) {
+        for (var j = 0u; j < n; j++) {
+            let offset = (vec2<f32>(f32(i), f32(j)) + 0.5) / f32(n) - 0.5;
+            let at = uv + offset * params.pixel;
+            yuv += vec3<f32>(
+                textureSampleLevel(tex_y, samp, at, 0.0).r,
+                textureSampleLevel(tex_u, samp, at, 0.0).r,
+                textureSampleLevel(tex_v, samp, at, 0.0).r,
+            );
+        }
+    }
+    yuv /= f32(n * n);
+    let y = (yuv.x - 16.0 / 255.0) * 1.164383;
+    let u = yuv.y - 0.5;
+    let v = yuv.z - 0.5;
     let rgb = vec3<f32>(
         y + 1.596027 * v,
         y - 0.391762 * u - 0.812968 * v,
@@ -46,7 +78,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Rectangle the image takes in the window, in physical pixels.
+/// Rectangle the image takes in the window, in physical pixels. At real size it
+/// can be larger than the window and start before it (negative `x`/`y`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Viewport {
     pub x: f32,
@@ -65,6 +98,31 @@ impl Viewport {
         let y = (py as f32 - self.y) / self.height;
         ((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y)).then_some((x, y))
     }
+
+    /// Part inside a `sw`x`sh` window: the visible rectangle and the matching
+    /// texture coordinates (top-left and bottom-right corners).
+    pub fn visible(&self, sw: u32, sh: u32) -> Option<(Viewport, [f32; 2], [f32; 2])> {
+        let x0 = self.x.max(0.0);
+        let y0 = self.y.max(0.0);
+        let x1 = (self.x + self.width).min(sw as f32);
+        let y1 = (self.y + self.height).min(sh as f32);
+        if self.width <= 0.0 || self.height <= 0.0 || x1 <= x0 || y1 <= y0 {
+            return None;
+        }
+        let u = |x: f32| (x - self.x) / self.width;
+        let v = |y: f32| (y - self.y) / self.height;
+        Some((Viewport { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }, [u(x0), v(y0)], [u(x1), v(y1)]))
+    }
+}
+
+/// How the image is placed in the window.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct View {
+    /// Real size (1:1) instead of fitting the window.
+    pub actual: bool,
+    /// At real size, which part is shown when the image is larger than the window:
+    /// 0..1 per axis, from the mouse position (left edge → left side of the image).
+    pub pan: (f32, f32),
 }
 
 /// Logs at trace level how long the block it lives in takes.
@@ -89,6 +147,29 @@ fn native_backends() -> wgpu::Backends {
     }
 }
 
+/// Where the `fw`x`fh` image goes in the `sw`x`sh` window.
+pub fn place(fw: u32, fh: u32, sw: u32, sh: u32, view: View) -> Viewport {
+    if !view.actual {
+        return fit(fw, fh, sw, sh);
+    }
+    // Centred if it fits, otherwise moved by the pan.
+    let axis = |f: u32, s: u32, pan: f32| {
+        let (f, s) = (f as f32, s as f32);
+        if f <= s { ((s - f) / 2.0).floor() } else { -((f - s) * pan.clamp(0.0, 1.0)).round() }
+    };
+    Viewport {
+        x: axis(fw, sw, view.pan.0),
+        y: axis(fh, sh, view.pan.1),
+        width: fw as f32,
+        height: fh as f32,
+    }
+}
+
+/// Samples per side to average when `fw` image pixels go into `vw` window pixels.
+pub fn taps(fw: u32, vw: f32) -> u32 {
+    if vw <= 0.0 { 1 } else { (fw as f32 / vw).ceil().clamp(1.0, 4.0) as u32 }
+}
+
 /// Rectangle in which the `fw`x`fh` image fits into the `sw`x`sh` window
 /// keeping its proportions, centred.
 pub fn fit(fw: u32, fh: u32, sw: u32, sh: u32) -> Viewport {
@@ -100,6 +181,9 @@ pub fn fit(fw: u32, fh: u32, sw: u32, sh: u32) -> Viewport {
     let (w, h) = ((fw as f32 * scale).floor(), (fh as f32 * scale).floor());
     Viewport { x: ((sw - w) / 2.0).floor(), y: ((sh - h) / 2.0).floor(), width: w, height: h }
 }
+
+/// Size of the shader's `Params`: six f32 and two u32.
+const PARAMS_SIZE: u64 = 32;
 
 struct Planes {
     width: u32,
@@ -118,7 +202,10 @@ pub struct GpuRenderer {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// `Params` of the shader.
+    params: wgpu::Buffer,
     planes: Option<Planes>,
+    view: View,
     pub adapter_info: String,
     pub backend: wgpu::Backend,
 }
@@ -196,6 +283,16 @@ impl GpuRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -229,6 +326,12 @@ impl GpuRenderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("params"),
+            size: PARAMS_SIZE,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         Ok(Self {
             surface,
@@ -238,7 +341,9 @@ impl GpuRenderer {
             pipeline,
             layout,
             sampler,
+            params,
             planes: None,
+            view: View::default(),
             adapter_info,
             backend,
         })
@@ -278,6 +383,7 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&vu) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&vv) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry { binding: 4, resource: self.params.as_entire_binding() },
             ],
         });
         Planes { width, height, y, u, v, bind_group }
@@ -306,10 +412,14 @@ impl GpuRenderer {
         }
     }
 
-    /// Where the image ends up in the window (proportions kept, centred).
+    /// Where the image ends up in the window.
     pub fn viewport(&self) -> Viewport {
         let Some(p) = &self.planes else { return Viewport::default() };
-        fit(p.width, p.height, self.config.width, self.config.height)
+        place(p.width, p.height, self.config.width, self.config.height, self.view)
+    }
+
+    pub fn set_view(&mut self, view: View) {
+        self.view = view;
     }
 
     pub fn render(&mut self) {
@@ -338,8 +448,18 @@ impl GpuRenderer {
                 })],
                 ..Default::default()
             });
-            if let Some(planes) = &self.planes {
-                let vp = self.viewport();
+            if let Some(planes) = &self.planes
+                && let Some((vp, uv0, uv1)) = self.viewport().visible(self.config.width, self.config.height)
+            {
+                let n = taps(planes.width, self.viewport().width);
+                let pixel = [(uv1[0] - uv0[0]) / vp.width, (uv1[1] - uv0[1]) / vp.height];
+                let mut data = Vec::with_capacity(PARAMS_SIZE as usize);
+                for f in [uv0[0], uv0[1], uv1[0], uv1[1], pixel[0], pixel[1]] {
+                    data.extend_from_slice(&f.to_le_bytes());
+                }
+                data.extend_from_slice(&n.to_le_bytes());
+                data.extend_from_slice(&0u32.to_le_bytes());
+                self.queue.write_buffer(&self.params, 0, &data);
                 pass.set_viewport(vp.x, vp.y, vp.width, vp.height, 0.0, 1.0);
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &planes.bind_group, &[]);
@@ -411,5 +531,42 @@ impl Renderer {
             Renderer::Gpu(r) => r.viewport(),
             Renderer::Cpu(r) => r.viewport(),
         }
+    }
+
+    pub fn set_view(&mut self, view: View) {
+        match self {
+            Renderer::Gpu(r) => r.set_view(view),
+            Renderer::Cpu(r) => r.set_view(view),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn real_size_follows_the_pan() {
+        // 1280x1024 screen in a 1366x768 window (the test laptop).
+        let at = |pan| place(1280, 1024, 1366, 768, View { actual: true, pan });
+        let top = at((0.0, 0.0));
+        assert_eq!((top.x, top.y, top.width, top.height), (43.0, 0.0, 1280.0, 1024.0));
+        let bottom = at((1.0, 1.0));
+        assert_eq!((bottom.x, bottom.y), (43.0, -256.0));
+        // The mouse at the bottom of the window points at the bottom of the screen.
+        assert_eq!(bottom.normalize(700.0, 768.0).map(|(_, y)| y), Some(1.0));
+        let (vis, uv0, uv1) = bottom.visible(1366, 768).expect("visible");
+        assert_eq!((vis.x, vis.y, vis.width, vis.height), (43.0, 0.0, 1280.0, 768.0));
+        assert_eq!((uv0, uv1), ([0.0, 0.25], [1.0, 1.0]));
+    }
+
+    #[test]
+    fn shrinking_averages_samples() {
+        // Fitted: 1024 rows into 768, 75%: two samples per side.
+        let fitted = place(1280, 1024, 1366, 768, View::default());
+        assert_eq!(fitted.height, 768.0);
+        assert_eq!(taps(1280, fitted.width), 2);
+        assert_eq!(taps(1280, 1280.0), 1);
+        assert_eq!(taps(3840, 640.0), 4);
     }
 }

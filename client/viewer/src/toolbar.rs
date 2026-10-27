@@ -33,6 +33,8 @@ const TAB: (f64, f64) = (56.0, 14.0);
 pub enum Action {
     SecureAttention,
     ViewOnly,
+    /// Real size (1:1) or fitted to the window.
+    ActualSize,
     Fullscreen,
     /// Stream the screen with this index.
     Display(u32),
@@ -67,6 +69,7 @@ impl Action {
         Some(match s {
             "sas" => Self::SecureAttention,
             "viewonly" => Self::ViewOnly,
+            "actual" => Self::ActualSize,
             "fullscreen" => Self::Fullscreen,
             "collapse" => Self::Collapse,
             "expand" => Self::Expand,

@@ -165,6 +165,8 @@
   "tb.sas": "Strg+Alt+Entf senden (auch Strg+Alt+Ende)",
   "tb.sas_label": "Strg+Alt+Entf",
   "tb.view_only": "Nur ansehen: Maus und Tastatur werden nicht gesendet",
+  "tb.actual_size": "Originalgröße (1:1): Maus bewegen, um den Rest des Bildschirms zu sehen",
+  "tb.fit_window": "An Fenster anpassen",
   "tb.fullscreen": "Vollbild",
   "tb.exit_fullscreen": "Vollbild beenden",
   "tb.collapse": "Leiste einklappen",

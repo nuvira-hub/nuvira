@@ -165,6 +165,8 @@
   "tb.sas": "Invia Ctrl+Alt+Canc (anche Ctrl+Alt+Fine)",
   "tb.sas_label": "Ctrl+Alt+Canc",
   "tb.view_only": "Solo visualizzazione: mouse e tastiera non vengono inviati",
+  "tb.actual_size": "Dimensione reale (1:1): muovi il mouse per vedere il resto dello schermo",
+  "tb.fit_window": "Adatta alla finestra",
   "tb.fullscreen": "Schermo intero",
   "tb.exit_fullscreen": "Esci dallo schermo intero",
   "tb.collapse": "Riduci la barra",

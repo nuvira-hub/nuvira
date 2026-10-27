@@ -165,6 +165,8 @@
   "tb.sas": "Send Ctrl+Alt+Del (also Ctrl+Alt+End)",
   "tb.sas_label": "Ctrl+Alt+Del",
   "tb.view_only": "View only: mouse and keyboard are not sent",
+  "tb.actual_size": "Real size (1:1): move the mouse to see the rest of the screen",
+  "tb.fit_window": "Fit to the window",
   "tb.fullscreen": "Full screen",
   "tb.exit_fullscreen": "Exit full screen",
   "tb.collapse": "Collapse the toolbar",

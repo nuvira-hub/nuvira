@@ -94,6 +94,10 @@ struct Args {
     #[arg(long)]
     view_only: bool,
 
+    /// Starts at real size (1:1) instead of fitting the window (also from the toolbar).
+    #[arg(long)]
+    actual_size: bool,
+
     /// Closes the session after this many seconds (automated tests).
     #[arg(long, value_name = "SECONDS")]
     duration: Option<u64>,
@@ -175,6 +179,7 @@ fn main() -> Result<()> {
         pending_files: args.send_file.clone(),
         feedback_window: (Instant::now(), Vec::new(), Vec::new()),
         view_only: args.view_only,
+        view: render::View { actual: args.actual_size, ..Default::default() },
         window: None,
         renderer: None,
         toolbar: None,
@@ -247,6 +252,8 @@ struct App {
     /// latencies (ms) of the frames shown since then.
     feedback_window: (Instant, Vec<u32>, Vec<u32>),
     view_only: bool,
+    /// Fit or real size, and the pan at real size.
+    view: render::View,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     toolbar: Option<toolbar::Toolbar>,
@@ -354,6 +361,15 @@ impl App {
                 self.view_only = !self.view_only;
                 info!("view only: {}", self.view_only);
             }
+            Action::ActualSize => {
+                self.view.actual = !self.view.actual;
+                info!("real size: {}", self.view.actual);
+                if let Some(r) = self.renderer.as_mut() {
+                    r.set_view(self.view);
+                    r.render();
+                }
+                self.update_toolbar_state();
+            }
             Action::Fullscreen => {
                 if let Some(window) = &self.window {
                     let full = window.fullscreen().is_none();
@@ -436,8 +452,9 @@ impl App {
     fn update_toolbar_state(&self) {
         let (Some(toolbar), Some(window)) = (&self.toolbar, &self.window) else { return };
         toolbar.update(&format!(
-            "{{viewOnly:{},fullscreen:{},quality:{}}}",
+            "{{viewOnly:{},actualSize:{},fullscreen:{},quality:{}}}",
             self.view_only,
+            self.view.actual,
             window.fullscreen().is_some(),
             toolbar::js_string(toolbar::quality_name(self.quality))
         ));
@@ -461,9 +478,10 @@ impl ApplicationHandler<NetEvent> for App {
             }
         };
         match Renderer::new(window.clone()) {
-            Ok((r, info)) => {
+            Ok((mut r, info)) => {
                 info!("rendering with {info}");
                 self.report.renderer = Some(info);
+                r.set_view(self.view);
                 self.renderer = Some(r);
             }
             Err(e) => {
@@ -657,6 +675,24 @@ impl ApplicationHandler<NetEvent> for App {
             WindowEvent::Focused(false) => self.release_keys(),
             WindowEvent::DroppedFile(path) => self.send_file(path),
             WindowEvent::CursorMoved { position, .. } => {
+                // Real size: the image follows the mouse, so that moving it from one edge
+                // of the window to the other crosses the whole remote screen.
+                if self.view.actual
+                    && let (Some(r), Some(window)) = (self.renderer.as_mut(), &self.window)
+                {
+                    let size = window.inner_size();
+                    let pan = (
+                        (position.x / size.width.max(1) as f64) as f32,
+                        (position.y / size.height.max(1) as f64) as f32,
+                    );
+                    let before = r.viewport();
+                    self.view.pan = pan;
+                    r.set_view(self.view);
+                    let after = r.viewport();
+                    if (before.x, before.y) != (after.x, after.y) {
+                        window.request_redraw();
+                    }
+                }
                 let Some(r) = &self.renderer else { return };
                 if let Some((x, y)) = r.viewport().normalize(position.x, position.y) {
                     self.send(Event::MouseMove(MouseMove { x, y }));

@@ -165,6 +165,8 @@
   "tb.sas": "Envoyer Ctrl+Alt+Suppr (aussi Ctrl+Alt+Fin)",
   "tb.sas_label": "Ctrl+Alt+Suppr",
   "tb.view_only": "Affichage seul : la souris et le clavier ne sont pas envoyés",
+  "tb.actual_size": "Taille réelle (1:1) : déplacez la souris pour voir le reste de l'écran",
+  "tb.fit_window": "Adapter à la fenêtre",
   "tb.fullscreen": "Plein écran",
   "tb.exit_fullscreen": "Quitter le plein écran",
   "tb.collapse": "Réduire la barre",

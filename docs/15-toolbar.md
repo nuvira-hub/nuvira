@@ -22,6 +22,7 @@ Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs`
 | Ctrl+Alt+Del | Same as Ctrl+Alt+End (see [14-phase3-service.md](14-phase3-service.md)) | service |
 | Eye | View only: mouse and keyboard are not sent | viewer |
 | Chat, Send file | See [16-clipboard-chat-files.md](16-clipboard-chat-files.md) | viewer, agent |
+| Real size | 1:1 instead of fitting the window; the image follows the mouse, so moving it from one edge of the window to the other crosses the whole remote screen. `--actual-size` starts in this mode | viewer |
 | Full screen | Enters and leaves | viewer |
 | Arrow | Shrinks the bar to a tab; a click opens it again | viewer |
 | X | Closes the session | viewer |
@@ -39,6 +40,10 @@ Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs`
 | Smooth | half | the agent's |
 
 The bitrate stays adaptive: the quality only moves its ceiling.
+
+## Shrinking
+
+When the remote screen is larger than the window each window pixel averages several source samples (GPU: up to 4x4 in the shader; CPU: the brightness at the corners of the area it covers). A single sample per pixel skipped strokes and broke up thin text: the case that showed it was a 1280x1024 screen on a 1366x768 laptop, shrunk to 75%. Cost on the CPU path: 6 ms per 1080p frame on PC-LABORATORIO, as before.
 
 ## Tests of 2026-10-27
 
