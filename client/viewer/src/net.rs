@@ -253,6 +253,16 @@ async fn session(
         anyhow::Ok(())
     };
 
+    // Appunti condivisi: il testo copiato qui va all'agent, quello copiato là arriva qui.
+    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<String>();
+    let clipboard = match nexodesk_clipboard::spawn_sync(move |text| clip_tx.send(text).is_ok()) {
+        Ok(tx) => Some(tx),
+        Err(e) => {
+            warn!("appunti non condivisi: {e:#}");
+            None
+        }
+    };
+
     let control_loop = async {
         let mut ping = tokio::time::interval(Duration::from_secs(1));
         loop {
@@ -262,6 +272,9 @@ async fn session(
                 }
                 Some(msg) = control_rx.recv() => {
                     ctrl_tx.send(&control(msg)).await?;
+                }
+                Some(text) = clip_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::Clipboard(nexodesk_proto::v1::Clipboard { text }))).await?;
                 }
                 Some(()) = key_rx.recv() => {
                     ctrl_tx.send(&control(Msg::RequestKeyframe(RequestKeyframe {}))).await?;
@@ -277,6 +290,11 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::Displays(d)) }) => {
                         let _ = proxy.send_event(NetEvent::Displays { displays: d.displays, current: d.current });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::Clipboard(clip)) }) => {
+                        if let Some(clipboard) = &clipboard {
+                            let _ = clipboard.send(clip.text);
+                        }
                     }
                     Some(ControlMessage { msg: Some(Msg::VideoFormat(f)) }) => {
                         info!(w = f.width, h = f.height, "nuovo formato video");

@@ -10,6 +10,7 @@ members = [
     "client/viewer",
     "client/app",
     "client/service",
+    "client/clipboard",
 ]
 
 [workspace.package]
@@ -25,6 +26,7 @@ nexodesk-transport = { path = "client/transport" }
 nexodesk-capture = { path = "client/capture" }
 nexodesk-codec = { path = "client/codec" }
 nexodesk-input = { path = "client/input" }
+nexodesk-clipboard = { path = "client/clipboard" }
 
 anyhow = "1"
 bytes = "1"

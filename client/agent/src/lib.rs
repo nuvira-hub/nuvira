@@ -560,6 +560,20 @@ async fn session(
     let pipeline = std::sync::Mutex::new(Some(first));
     let (screen_tx, mut screen_rx) = tokio::sync::watch::channel(screen_rect(&display));
 
+    // Appunti condivisi: il testo copiato qui va al viewer, quello copiato là arriva qui.
+    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<String>();
+    let clipboard = if config.view_only || config.synthetic.is_some() {
+        None
+    } else {
+        match nexodesk_clipboard::spawn_sync(move |text| clip_tx.send(text).is_ok()) {
+            Ok(tx) => Some(tx),
+            Err(e) => {
+                warn!("appunti non condivisi: {e:#}");
+                None
+            }
+        }
+    };
+
     let mut video_tx = FramedSend::new(conn.open_uni().await?);
     tracing::debug!("canale video aperto");
     let video = {
@@ -583,6 +597,10 @@ async fn session(
                     Some(msg) => msg,
                     None => return anyhow::Ok(()),
                 },
+                Some(text) = clip_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::Clipboard(nexodesk_proto::v1::Clipboard { text }))).await?;
+                    continue;
+                }
                 _ = tick.tick() => {
                     // Frame inviati di recente ma nessun feedback: la rete è probabilmente bloccata.
                     let now_ms = session_start.elapsed().as_millis() as u64;
@@ -645,6 +663,11 @@ async fn session(
                         ctrl_tx.send(&msg).await?;
                     }
                     let _ = screen_tx.send(screen_rect(&display));
+                }
+                Some(Msg::Clipboard(clip)) => {
+                    if let Some(clipboard) = &clipboard {
+                        let _ = clipboard.send(clip.text);
+                    }
                 }
                 Some(Msg::SetQuality(q)) => {
                     let (limit_bps, limit_fps) = quality_limits(config, q.quality());

@@ -17,3 +17,4 @@
 | 13 | [Fase 1: server e rete](13-fase1-rete.md) | Server, registrazione, relay, connessione per ID |
 | 14 | [Fase 3: servizio di sistema](14-fase3-servizio.md) | Accesso non presidiato, UAC e schermata di blocco |
 | 15 | [Barra degli strumenti](15-barra-strumenti.md) | Comandi della sessione, cambio schermo e qualità |
+| 16 | [Appunti, chat e file](16-appunti-chat-file.md) | Fase 2: appunti condivisi, chat, trasferimento file |

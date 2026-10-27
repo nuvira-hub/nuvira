@@ -18,6 +18,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 nexodesk-capture.workspace = true
+nexodesk-clipboard.workspace = true
 nexodesk-codec.workspace = true
 nexodesk-input.workspace = true
 nexodesk-proto.workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "nexodesk-clipboard"
+description = "Appunti condivisi tra viewer e agent (testo)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+arboard = { version = "3.4", default-features = false }
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = ["Win32_System_DataExchange"]

@@ -34,7 +34,14 @@ message ControlMessage {
     Displays displays = 9;
     SelectDisplay select_display = 10;
     SetQuality set_quality = 11;
+    Clipboard clipboard = 12;
   }
+}
+
+// Testo copiato negli appunti da una delle due parti, da scrivere negli appunti
+// dell'altra (in entrambe le direzioni, al massimo 1 MB).
+message Clipboard {
+  string text = 1;
 }
 
 // Dall'agent, all'inizio della sessione e a ogni cambio: gli schermi disponibili
