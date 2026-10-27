@@ -161,6 +161,14 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
     }
 }
 
+/// After the screen stops changing, the last image is encoded again this many times
+/// (one every ~100 ms, while no new image arrives). Each pass spends the bitrate on
+/// what the previous one left out, so text that came out blurry while things were
+/// moving becomes sharp; once the image matches, the passes cost almost nothing.
+/// Without this a still screen kept the quality of its first, hurried encoding
+/// (first Internet test: unreadable text on a still screen).
+const REFINE_FRAMES: u32 = 15;
+
 fn encode_loop(
     shared: &Shared,
     mut encoder: Box<dyn VideoEncoder>,
@@ -175,6 +183,8 @@ fn encode_loop(
     let mut last: Option<Captured> = None;
     let mut seq = 0u64;
     let mut stats = Stats::default();
+    // Frames left to refine a still screen (see REFINE_FRAMES).
+    let mut refine_left = 0u32;
 
     while !shared.stop.load(Ordering::Relaxed) {
         // Frames-per-second limit: meanwhile the slot is updated with the most recent image.
@@ -215,14 +225,19 @@ fn encode_loop(
             encoder.set_bitrate(target);
             applied_bitrate = target;
         }
+        let repeat = fresh.is_none();
         if let Some(fresh) = fresh {
             if let Some(old) = last.replace(fresh) {
                 shared.recycle(old.data);
             }
-        } else if !force_key {
+            refine_left = REFINE_FRAMES;
+        } else if force_key {
+            // Still screen and keyframe requested: the last image is encoded again.
+        } else if refine_left > 0 {
+            refine_left -= 1;
+        } else {
             continue;
         }
-        // Still screen and keyframe requested: the last image is encoded again.
         let Some(image) = &last else { continue };
 
         let t = Instant::now();
@@ -259,7 +274,8 @@ fn encode_loop(
         seq += 1;
         let msg = VideoFrame {
             seq,
-            capture_us: image.captured_us,
+            // A repeated image is still what is on screen now.
+            capture_us: if repeat { nexodesk_proto::now_us() } else { image.captured_us },
             encode_us,
             encoded_us: nexodesk_proto::now_us(),
             keyframe: encoded.keyframe,

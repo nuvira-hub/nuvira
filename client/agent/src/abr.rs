@@ -7,7 +7,9 @@
 //! of the last 10 seconds (the "empty network" latency):
 //! - queue above 60 ms for at least a second → bitrate × 0.8, or 85% of the rate
 //!   actually sent if lower (the encoder often stays well below the bitrate: lowering
-//!   only the cap would change nothing);
+//!   only the cap would change nothing), but never below half the bitrate in one
+//!   step (third Internet test: a light screen sending 0.2 Mbit/s went from 8 to
+//!   0.5 Mbit/s at once and stayed there);
 //! - queue below 25 ms → bitrate × 1.15 (once a second, 3 s after a decrease).
 //!
 //! Single peaks do not count: on mobile networks latency jumps by 150–600 ms every
@@ -38,8 +40,10 @@ const BUSY_SHARE: f64 = 0.25;
 /// ...or at least this much (a still screen sends 1–90 kbit/s).
 const BUSY_BPS: f64 = 150_000.0;
 const DECREASE: f64 = 0.8;
-/// On congestion the bitrate goes at most to this share of the rate actually sent.
+/// On congestion the bitrate goes at most to this share of the rate actually sent...
 const DECREASE_SENT: f64 = 0.85;
+/// ...but never below this share of the current bitrate in one step.
+const DECREASE_MAX: f64 = 0.5;
 const INCREASE: f64 = 1.15;
 const DECREASE_INTERVAL: Duration = Duration::from_secs(1);
 const INCREASE_AFTER_DECREASE: Duration = Duration::from_secs(3);
@@ -120,7 +124,8 @@ impl Abr {
         if queue > QUEUE_HIGH_MS {
             let since = *self.high_since.get_or_insert(now);
             return if now.duration_since(since) >= HIGH_FOR {
-                self.decrease(now, (self.bitrate * DECREASE).min(sent_bps * DECREASE_SENT))
+                let to = (self.bitrate * DECREASE).min(sent_bps * DECREASE_SENT);
+                self.decrease(now, to.max(self.bitrate * DECREASE_MAX))
             } else {
                 None
             };
@@ -225,9 +230,17 @@ mod tests {
         assert_eq!(abr.feed(t0, 3000..5000, 20.0, 15.0, 1_000.0), None);
         assert_eq!(abr.bitrate(), 4_000_000);
         // The screen moves: even simple content at 800 kbit/s (a fifth of the bitrate)
-        // can fill a slow link, so a lasting queue counts again, and the bitrate goes
-        // below what is actually sent (85% of 800 kbit/s), not just to 80% of the cap.
-        assert_eq!(abr.feed(t0, 5000..6300, 185.0, 150.0, 800_000.0), Some(680_000));
+        // can fill a slow link, so a lasting queue counts again. 85% of what is sent
+        // would be 680 kbit/s, but one step goes at most to half the bitrate.
+        assert_eq!(abr.feed(t0, 5000..6300, 185.0, 150.0, 800_000.0), Some(2_000_000));
+    }
+
+    #[test]
+    fn decrease_follows_the_rate_sent() {
+        let t0 = Instant::now();
+        let mut abr = Abr::new(2_000_000, 500_000, 8_000_000);
+        // 1.2 Mbit/s actually sent into a lasting queue: 85% of it, below the 80% cap.
+        assert_eq!(abr.feed(t0, 0..1300, 200.0, 20.0, 1_200_000.0), Some(1_020_000));
     }
 
     #[test]
