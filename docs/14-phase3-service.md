@@ -95,7 +95,11 @@ Tests of 2026-10-27 on PC-LABORATORIO, viewer from the NUC:
 
 ## Remote Desktop sessions
 
-When a user connects to the PC with Remote Desktop their session leaves the console, which is left on the sign-in screen. The service follows the console when someone is signed in there, otherwise the first Remote Desktop session in use with a user (`choose_session` in `launch.rs`, unit-tested); the agent is restarted when the choice changes, as for a user switch. Where DXGI Desktop Duplication is not available (some Remote Desktop sessions, virtual machines) capture falls back to GDI (`client/capture/src/gdi.rs`): a copy of the screen every 33 ms, reported only when it changed; `NEXODESK_CAPTURE=gdi` forces it. On the NUC, forced: 1920x1080, ~14 fps, 17 ms. Not yet tested with a real Remote Desktop session.
+When a user connects to the PC with Remote Desktop their session leaves the console, which is left on the sign-in screen. The service follows the console when someone is signed in there, otherwise the first Remote Desktop session in use with a user (`choose_session` in `launch.rs`, unit-tested); the agent is restarted when the choice changes, as for a user switch. Where DXGI Desktop Duplication is not available (some Remote Desktop sessions, virtual machines) capture falls back to GDI (`client/capture/src/gdi.rs`): a copy of the screen every 33 ms, reported only when it changed; `NEXODESK_CAPTURE=gdi` forces it. On the NUC, forced: 1920x1080, ~14 fps, 17 ms.
+
+Test of 2026-10-27 with a real Remote Desktop session (NUC → PC-LABORATORIO, Microsoft account): the service moved the agent into the Remote Desktop session within a second; there DXGI `DuplicateOutput` is refused (access denied) and the GDI capture took over at the session's 1920x1080; image, mouse and keyboard worked from NexoDesk (user). The first start of the agent in the new session failed once with `AssignProcessToJobObject: access denied` while Windows was moving the session, and succeeded at the retry 5 s later.
+
+Remote Desktop with a Microsoft account needs its password stored on the PC: with "only Windows Hello sign-in for Microsoft accounts" on, or after signing in only with the PIN, sign-ins fail with `0xC000006A` (wrong password) until one sign-in with the password at the PC.
 
 ## Done since the first version
 
