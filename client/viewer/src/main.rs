@@ -2,12 +2,14 @@
 //!
 //! Prototipo della fase 0: si collega direttamente a un agent in LAN, mostra lo
 //! schermo con wgpu e invia mouse e tastiera. Nel titolo della finestra:
-//! frame al secondo, latenza cattura→visualizzazione, RTT e banda.
+//! frame al secondo, latenza cattura→visualizzazione, RTT e banda. In alto la
+//! barra degli strumenti (`toolbar.rs`).
 
 mod cpu;
 mod net;
 mod render;
 mod report;
+mod toolbar;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -166,6 +168,7 @@ fn main() -> Result<()> {
         view_only: args.view_only,
         window: None,
         renderer: None,
+        toolbar: None,
         agent: args.agent.clone(),
         stats: Stats::new(),
         clock_offset_us: None,
@@ -196,8 +199,9 @@ fn main() -> Result<()> {
     if let (Some(path), Some(frame)) = (&args.snapshot, &app.last_frame) {
         cpu::write_png(frame, path).with_context(|| format!("scrittura di {}", path.display()))?;
     }
-    // Chiusura in ordine: prima la superficie wgpu, poi la finestra, poi il resto.
+    // Chiusura in ordine: barra e superficie wgpu, poi la finestra, poi il resto.
     // Lasciata all'ordine implicito, il viewer andava talvolta in crash in uscita.
+    drop(app.toolbar.take());
     drop(app.renderer.take());
     drop(app.window.take());
     drop(app);
@@ -222,6 +226,7 @@ struct App {
     view_only: bool,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
+    toolbar: Option<toolbar::Toolbar>,
     agent: String,
     stats: Stats,
     /// Orologio dell'agent meno il nostro (dalla misura con RTT minore).
@@ -290,6 +295,55 @@ impl App {
         );
         debug!("{title}");
         window.set_title(&title);
+        if let Some(toolbar) = &self.toolbar {
+            let stats = format!("{:.0} fps · {latency}", s.fps());
+            toolbar.update(&format!("{{stats:{}}}", toolbar::js_string(&stats)));
+        }
+    }
+
+    fn handle_toolbar(&mut self, event_loop: &ActiveEventLoop, action: toolbar::Action) {
+        use toolbar::Action;
+        match action {
+            Action::SecureAttention => self.send(Event::SecureAttention(SecureAttention {})),
+            Action::ViewOnly => {
+                if !self.view_only {
+                    // Prima di smettere di inviare, si rilascia ciò che è premuto.
+                    self.release_keys();
+                }
+                self.view_only = !self.view_only;
+                info!("solo visualizzazione: {}", self.view_only);
+            }
+            Action::Fullscreen => {
+                if let Some(window) = &self.window {
+                    let full = window.fullscreen().is_none();
+                    window.set_fullscreen(full.then_some(winit::window::Fullscreen::Borderless(None)));
+                }
+            }
+            Action::Collapse | Action::Expand => {
+                if let Some(toolbar) = self.toolbar.as_mut() {
+                    toolbar.set_collapsed(action == Action::Collapse);
+                }
+            }
+            Action::Close => {
+                self.release_keys();
+                self.exit_reason = Some("Sessione chiusa dall'utente".into());
+                event_loop.exit();
+                return;
+            }
+        }
+        self.update_toolbar_state();
+        if let Some(toolbar) = &self.toolbar {
+            toolbar.focus_session();
+        }
+    }
+
+    fn update_toolbar_state(&self) {
+        let (Some(toolbar), Some(window)) = (&self.toolbar, &self.window) else { return };
+        toolbar.update(&format!(
+            "{{viewOnly:{},fullscreen:{}}}",
+            self.view_only,
+            window.fullscreen().is_some()
+        ));
     }
 }
 
@@ -322,7 +376,16 @@ impl ApplicationHandler<NetEvent> for App {
                 return;
             }
         }
+        match toolbar::Toolbar::new(window.clone(), self.proxy.clone()) {
+            Ok(toolbar) => {
+                toolbar.update(&format!("{{name:{}}}", toolbar::js_string(&self.agent)));
+                self.toolbar = Some(toolbar);
+            }
+            // La sessione resta usabile (Ctrl+Alt+Fine, chiusura della finestra).
+            Err(e) => error!("barra degli strumenti non disponibile: {e:#}"),
+        }
         self.window = Some(window);
+        self.update_toolbar_state();
         // La connessione parte solo a finestra e rendering pronti: se la rete
         // arrivava prima, il canale video a volte non veniva mai accettato.
         if let Some((target, password)) = self.connect.take() {
@@ -336,8 +399,13 @@ impl ApplicationHandler<NetEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
         match event {
-            NetEvent::Connected { agent, width, height } => {
+            NetEvent::Connected { agent, direct, width, height } => {
                 info!("schermo remoto {width}x{height}");
+                if let Some(toolbar) = &self.toolbar {
+                    let name = if agent.is_empty() { &self.agent } else { &agent };
+                    let path = if direct { "direct" } else { "relay" };
+                    toolbar.update(&format!("{{name:{},path:\"{path}\"}}", toolbar::js_string(name)));
+                }
                 self.report.agent = Some(agent.clone());
                 self.report.resolution = Some((width, height));
                 if !agent.is_empty() {
@@ -402,6 +470,7 @@ impl ApplicationHandler<NetEvent> for App {
                 self.release_keys();
                 event_loop.exit();
             }
+            NetEvent::Toolbar(action) => self.handle_toolbar(event_loop, action),
             NetEvent::Disconnected(reason) => {
                 info!("disconnesso: {reason}");
                 self.exit_reason = Some(format!("Sessione chiusa: {reason}"));
@@ -421,6 +490,10 @@ impl ApplicationHandler<NetEvent> for App {
                     r.resize(size.width, size.height);
                     r.render();
                 }
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.layout();
+                }
+                self.update_toolbar_state();
             }
             WindowEvent::RedrawRequested => {
                 if let Some(r) = self.renderer.as_mut() {

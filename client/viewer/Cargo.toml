@@ -27,4 +27,5 @@ nu-ansi-term.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
+wry = "0.57"
 png.workspace = true

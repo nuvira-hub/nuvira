@@ -20,6 +20,8 @@ use winit::event_loop::EventLoopProxy;
 pub enum NetEvent {
     Connected {
         agent: String,
+        /// Percorso diretto; altrimenti attraverso il relay del server.
+        direct: bool,
         width: u32,
         height: u32,
     },
@@ -32,6 +34,8 @@ pub enum NetEvent {
     Disconnected(String),
     /// Scaduta la durata impostata con `--duration`.
     TestFinished,
+    /// Clic sulla barra degli strumenti.
+    Toolbar(crate::toolbar::Action),
 }
 
 pub struct DecodedFrame {
@@ -122,11 +126,12 @@ fn control(msg: Msg) -> ControlMessage {
 }
 
 /// Connessione all'agent: diretta oppure chiedendo il percorso a nexodesk-server.
-async fn open_connection(target: Target) -> Result<nexodesk_transport::Connection> {
+/// Restituisce anche se il percorso è diretto (`false`: attraverso il relay del server).
+async fn open_connection(target: Target) -> Result<(nexodesk_transport::Connection, bool)> {
     use nexodesk_proto::v1::{Connect, Role, client_message, server_message};
     use nexodesk_transport::{identity::Identity, p2p, signal};
     match target {
-        Target::Direct { addr, fingerprint } => nexodesk_transport::connect(addr, fingerprint).await,
+        Target::Direct { addr, fingerprint } => Ok((nexodesk_transport::connect(addr, fingerprint).await?, true)),
         Target::Server { server, server_name, server_key, transport, server_ws, device_id, identity } => {
             let identity = Identity::load_or_create(&identity)?;
             let expected = server_key.or_else(|| signal::known_server::get(&server_name));
@@ -163,7 +168,7 @@ async fn open_connection(target: Target) -> Result<nexodesk_transport::Connectio
             };
             let (conn, path) = p2p::viewer_connect(&identity, &route).await?;
             info!(?path, remote = %conn.remote_address(), "percorso");
-            Ok(conn)
+            Ok((conn, path == p2p::Path::Direct))
         }
     }
 }
@@ -176,7 +181,7 @@ async fn session(
     mut input_rx: mpsc::UnboundedReceiver<InputEvent>,
     mut feedback_rx: mpsc::UnboundedReceiver<Feedback>,
 ) -> Result<()> {
-    let conn = open_connection(target).await?;
+    let (conn, direct) = open_connection(target).await?;
     let (send, recv) = conn.open_bi().await?;
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -208,6 +213,7 @@ async fn session(
     info!(agent = agent.device_name, w = format.width, h = format.height, "collegato");
     let _ = proxy.send_event(NetEvent::Connected {
         agent: agent.device_name,
+        direct,
         width: format.width,
         height: format.height,
     });

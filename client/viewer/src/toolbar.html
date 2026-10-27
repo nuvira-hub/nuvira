@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<style>
+  /* Sempre scura: sta sopra lo schermo remoto, qualunque colore abbia. */
+  :root {
+    --bar: #1f252b;
+    --hover: #323a42;
+    --text: #e6eaee;
+    --muted: #9aa6b1;
+    --accent: #3aa7cc;
+    --on: #0b1a20;
+    --danger: #f2b8b5;
+    --ok: #6dd58c;
+    --warn: #ffb74d;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bar);
+    color: var(--text);
+    font: 13px/1 "Segoe UI", system-ui, sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  .bar { display: flex; align-items: center; gap: 2px; height: 100%; padding: 0 6px; }
+  .info { display: flex; align-items: center; gap: 7px; padding: 0 8px 0 4px; min-width: 0; flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.direct { background: var(--ok); }
+  .dot.relay { background: var(--warn); }
+  .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stats { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sep { width: 1px; height: 20px; background: var(--hover); margin: 0 4px; flex: none; }
+  button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 28px; min-width: 32px; padding: 0 8px; flex: none;
+    border: 0; border-radius: 6px;
+    background: transparent; color: var(--text);
+    font: inherit; cursor: pointer;
+  }
+  button:hover { background: var(--hover); }
+  button:active { transform: translateY(1px); }
+  button.on { background: var(--accent); color: var(--on); }
+  button.close:hover { background: var(--danger); color: #3a0d0b; }
+  svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .tab { display: none; width: 100%; height: 100%; padding: 0; border-radius: 0; }
+  body.collapsed .bar { display: none; }
+  body.collapsed .tab { display: flex; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <div class="info" title="">
+    <span class="dot" id="dot"></span>
+    <span class="name" id="name">Connessione…</span>
+    <span class="stats" id="stats"></span>
+  </div>
+  <div class="sep"></div>
+  <button id="sas" title="Invia Ctrl+Alt+Canc (anche Ctrl+Alt+Fine)">
+    <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
+    Ctrl+Alt+Canc
+  </button>
+  <button id="viewonly" title="Solo visualizzazione: mouse e tastiera non vengono inviati">
+    <svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+  </button>
+  <button id="fullscreen" title="Schermo intero">
+    <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+  </button>
+  <button id="collapse" title="Riduci la barra">
+    <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
+  </button>
+  <div class="sep"></div>
+  <button id="close" class="close" title="Chiudi la sessione">
+    <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+  </button>
+</div>
+<button class="tab" id="expand" title="Mostra la barra">
+  <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+</button>
+<script>
+  const send = (action) => window.ipc.postMessage(action);
+  for (const id of ["sas", "viewonly", "fullscreen", "collapse", "expand", "close"]) {
+    document.getElementById(id).addEventListener("click", () => send(id));
+  }
+
+  // Chiamata dal viewer con lo stato aggiornato.
+  window.nexodesk = {
+    update(state) {
+      if ("name" in state) document.getElementById("name").textContent = state.name;
+      if ("stats" in state) document.getElementById("stats").textContent = state.stats;
+      if ("path" in state) {
+        const dot = document.getElementById("dot");
+        dot.className = "dot " + state.path;
+        dot.parentElement.title = { direct: "Collegamento diretto", relay: "Collegamento tramite il server" }[state.path] || "";
+      }
+      if ("viewOnly" in state) document.getElementById("viewonly").classList.toggle("on", state.viewOnly);
+      if ("fullscreen" in state) {
+        const b = document.getElementById("fullscreen");
+        b.classList.toggle("on", state.fullscreen);
+        b.title = state.fullscreen ? "Esci dallo schermo intero" : "Schermo intero";
+      }
+      if ("collapsed" in state) document.body.classList.toggle("collapsed", state.collapsed);
+    },
+  };
+</script>
+</body>
+</html>
