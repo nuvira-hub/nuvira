@@ -158,7 +158,14 @@ impl Abr {
 
     /// Feeds the same report every 250 ms (tests).
     #[cfg(test)]
-    fn feed(&mut self, from: Instant, ms: std::ops::Range<u64>, p50: f64, min: f64, sent: f64) -> Option<u32> {
+    fn feed(
+        &mut self,
+        from: Instant,
+        ms: std::ops::Range<u64>,
+        p50: f64,
+        min: f64,
+        sent: f64,
+    ) -> Option<u32> {
         let mut changed = None;
         for at in ms.step_by(250) {
             if let Some(b) = self.on_feedback(from + Duration::from_millis(at), p50, min, sent) {

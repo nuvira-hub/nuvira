@@ -46,7 +46,8 @@ impl ServiceConfig {
     pub fn load() -> Result<Self> {
         let path = config_path();
         let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        let mut config: Self = serde_json::from_str(&text).with_context(|| format!("{} is not valid", path.display()))?;
+        let mut config: Self =
+            serde_json::from_str(&text).with_context(|| format!("{} is not valid", path.display()))?;
         if !nexodesk_secret::is_hash(&config.password_hash) {
             // Written by an earlier version: from now on only the hash is kept.
             config.password_hash = nexodesk_secret::hash(&config.password_hash);

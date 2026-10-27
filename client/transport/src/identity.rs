@@ -34,10 +34,8 @@ impl Identity {
             }
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
-        let public_key: PublicKey = key
-            .public_key_raw()
-            .try_into()
-            .map_err(|_| anyhow!("the device key is not Ed25519"))?;
+        let public_key: PublicKey =
+            key.public_key_raw().try_into().map_err(|_| anyhow!("the device key is not Ed25519"))?;
         let cert = CertificateParams::new(vec!["nexodesk-device".to_string()])?.self_signed(&key)?;
         Ok(Self { cert: cert.der().clone(), key, public_key })
     }

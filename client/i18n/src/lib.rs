@@ -138,8 +138,11 @@ mod tests {
             // Same placeholders as English.
             for (key, text) in table {
                 let names = |s: &str| {
-                    let mut v: Vec<String> =
-                        s.split('{').skip(1).filter_map(|p| p.split_once('}').map(|(n, _)| n.to_string())).collect();
+                    let mut v: Vec<String> = s
+                        .split('{')
+                        .skip(1)
+                        .filter_map(|p| p.split_once('}').map(|(n, _)| n.to_string()))
+                        .collect();
                     v.sort();
                     v
                 };

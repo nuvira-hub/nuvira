@@ -15,7 +15,10 @@ use tracing::info;
 
 /// Receives a file from the stream; returns its name and final path.
 /// Saves the file of a stream whose first chunk (`first`, with name and size) was already read.
-pub async fn receive(first: FileChunk, mut rx: FramedRecv) -> Result<(String, PathBuf), (String, anyhow::Error)> {
+pub async fn receive(
+    first: FileChunk,
+    mut rx: FramedRecv,
+) -> Result<(String, PathBuf), (String, anyhow::Error)> {
     let name = safe_name(&first.name);
     let result = async {
         let dir = downloads_dir()?;
@@ -43,7 +46,8 @@ pub async fn receive(first: FileChunk, mut rx: FramedRecv) -> Result<(String, Pa
 }
 
 async fn write(path: &Path, first: Vec<u8>, rx: &mut FramedRecv) -> Result<u64> {
-    let mut file = tokio::fs::File::create(path).await.with_context(|| format!("creating {}", path.display()))?;
+    let mut file =
+        tokio::fs::File::create(path).await.with_context(|| format!("creating {}", path.display()))?;
     file.write_all(&first).await?;
     let mut size = first.len() as u64;
     while let Some(chunk) = rx.recv::<FileChunk>().await? {
@@ -57,10 +61,8 @@ async fn write(path: &Path, first: Vec<u8>, rx: &mut FramedRecv) -> Result<u64> 
 /// Only the file name, without folders or characters Windows does not accept.
 pub(crate) fn safe_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
-    let clean: String = base
-        .chars()
-        .map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c })
-        .collect();
+    let clean: String =
+        base.chars().map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c }).collect();
     let clean = clean.trim().trim_end_matches(['.', ' ']).to_string();
     if clean.is_empty() || clean == "." || clean == ".." { "file".into() } else { clean }
 }

@@ -76,7 +76,9 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
     {
         if index == Some(ALL_DISPLAYS) {
             let screens = displays()?;
-            let open = |i| -> anyhow::Result<Box<dyn Capturer>> { Ok(Box::new(windows::DxgiCapturer::new(Some(i))?)) };
+            let open = |i| -> anyhow::Result<Box<dyn Capturer>> {
+                Ok(Box::new(windows::DxgiCapturer::new(Some(i))?))
+            };
             return Ok(Box::new(AllCapturer::new(open, &screens)?));
         }
         Ok(Box::new(windows::DxgiCapturer::new(index)?))

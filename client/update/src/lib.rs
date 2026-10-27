@@ -71,7 +71,8 @@ impl Manifest {
     }
 
     fn signed_message(&self) -> Vec<u8> {
-        format!("nexodesk-update\n{}\n{}\n{}\n{}", self.version, self.platform, self.size, self.sha256).into_bytes()
+        format!("nexodesk-update\n{}\n{}\n{}\n{}", self.version, self.platform, self.size, self.sha256)
+            .into_bytes()
     }
 
     /// Makes a signed manifest for `program` (used by `nexodesk-release`).
@@ -120,8 +121,13 @@ pub fn base_url(server: &str, server_ws: Option<&str>, default_port: u16) -> Str
         let http = ws.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1);
         return format!("{}/update", http.trim_end_matches('/'));
     }
-    let has_port = server.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()) && !server.ends_with(']');
-    if has_port { format!("http://{server}/nexodesk/update") } else { format!("http://{server}:{default_port}/nexodesk/update") }
+    let has_port =
+        server.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()) && !server.ends_with(']');
+    if has_port {
+        format!("http://{server}/nexodesk/update")
+    } else {
+        format!("http://{server}:{default_port}/nexodesk/update")
+    }
 }
 
 /// The version offered by the server, if newer than this program and correctly
@@ -143,7 +149,9 @@ pub async fn download(base: &str, manifest: &Manifest, dest: &Path) -> Result<()
     let url = format!("{base}/{}", manifest.program_path());
     let partial = dest.with_extension("part");
     let result = async {
-        let mut file = tokio::fs::File::create(&partial).await.with_context(|| format!("creating {}", partial.display()))?;
+        let mut file = tokio::fs::File::create(&partial)
+            .await
+            .with_context(|| format!("creating {}", partial.display()))?;
         let mut hash = Sha256::new();
         get(&url, MAX_PROGRAM.min(manifest.size), Some((&mut file, &mut hash)))
             .await?
@@ -196,10 +204,13 @@ async fn get(
         "GET {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: NexoDesk/{CURRENT}\r\nConnection: close\r\n\r\n"
     );
     if tls {
-        let config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_safe_default_protocol_versions()?
-            .with_root_certificates(rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned()))
-            .with_no_client_auth();
+        let config =
+            rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                .with_safe_default_protocol_versions()?
+                .with_root_certificates(rustls::RootCertStore::from_iter(
+                    webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
+                ))
+                .with_no_client_auth();
         let name = rustls::pki_types::ServerName::try_from(host.to_string())?;
         let stream = tokio_rustls::TlsConnector::from(Arc::new(config)).connect(name, tcp).await?;
         exchange(stream, &request, url, limit, sink).await
@@ -230,7 +241,8 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
         head.push(byte[0]);
     }
     let head = String::from_utf8_lossy(&head);
-    let status: u16 = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).context("not an HTTP response")?;
+    let status: u16 =
+        head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).context("not an HTTP response")?;
     if status == 404 {
         return Ok(None);
     }
@@ -259,7 +271,8 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
         if want == 0 {
             break;
         }
-        let n = tokio::time::timeout(TIMEOUT, stream.read(&mut buffer[..want])).await.context("timed out")??;
+        let n =
+            tokio::time::timeout(TIMEOUT, stream.read(&mut buffer[..want])).await.context("timed out")??;
         if n == 0 {
             if length.is_some() {
                 bail!("{url}: connection closed after {total} bytes");

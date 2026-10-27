@@ -26,9 +26,9 @@ const CHUNK: usize = 256 * 1024;
 /// then sent on its own stream.
 pub async fn handle(id: u32, op: Option<fs_request::Op>, conn: Connection) -> FsResponse {
     let result = match op {
-        Some(fs_request::Op::List(path)) => {
-            as_user(move || list(&path)).await.map(|(path, entries)| FsResponse { path, entries, ..Default::default() })
-        }
+        Some(fs_request::Op::List(path)) => as_user(move || list(&path))
+            .await
+            .map(|(path, entries)| FsResponse { path, entries, ..Default::default() }),
         Some(fs_request::Op::UploadOffset(FsUploadOffset { dir, name })) => {
             let part = Path::new(&dir).join(format!("{}.part", safe_name(&name)));
             as_user(move || Ok(std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0)))
@@ -40,7 +40,8 @@ pub async fn handle(id: u32, op: Option<fs_request::Op>, conn: Connection) -> Fs
             let opened = {
                 let path = path.clone();
                 as_user(move || {
-                    let file = std::fs::File::open(&path).with_context(|| format!("opening {}", path.display()))?;
+                    let file =
+                        std::fs::File::open(&path).with_context(|| format!("opening {}", path.display()))?;
                     let size = file.metadata()?.len();
                     Ok((file, size))
                 })
@@ -64,7 +65,14 @@ pub async fn handle(id: u32, op: Option<fs_request::Op>, conn: Connection) -> Fs
 }
 
 /// Sends `file` from `offset` on: header (name, total size, offset, id) then data.
-async fn send(conn: Connection, id: u32, path: &Path, mut file: std::fs::File, size: u64, offset: u64) -> Result<()> {
+async fn send(
+    conn: Connection,
+    id: u32,
+    path: &Path,
+    mut file: std::fs::File,
+    size: u64,
+    offset: u64,
+) -> Result<()> {
     if offset > size {
         bail!("resume point beyond the end of the file");
     }
@@ -145,10 +153,15 @@ fn list(path: &str) -> Result<(String, Vec<FsEntry>)> {
         return Ok((String::new(), roots()));
     }
     let mut entries = Vec::new();
-    for item in std::fs::read_dir(path).with_context(|| format!("reading {path}"))?.flatten().take(MAX_ENTRIES) {
+    for item in
+        std::fs::read_dir(path).with_context(|| format!("reading {path}"))?.flatten().take(MAX_ENTRIES)
+    {
         let Ok(meta) = item.metadata() else { continue };
-        let modified =
-            meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs());
         entries.push(FsEntry {
             name: item.file_name().to_string_lossy().into_owned(),
             path: item.path().to_string_lossy().into_owned(),
@@ -172,7 +185,12 @@ fn roots() -> Vec<FsEntry> {
             ..Default::default()
         })
         .collect();
-    entries.extend(drives().into_iter().map(|d| FsEntry { name: d.trim_end_matches('\\').into(), path: d, dir: true, ..Default::default() }));
+    entries.extend(drives().into_iter().map(|d| FsEntry {
+        name: d.trim_end_matches('\\').into(),
+        path: d,
+        dir: true,
+        ..Default::default()
+    }));
     entries
 }
 
@@ -190,7 +208,9 @@ fn drives() -> Vec<String> {
 #[cfg(windows)]
 fn known_folders() -> Vec<PathBuf> {
     use windows::Win32::System::Com::CoTaskMemFree;
-    use windows::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
+    use windows::Win32::UI::Shell::{
+        FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+    };
 
     // Called while impersonating: the folders of the user signed in.
     [FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads]

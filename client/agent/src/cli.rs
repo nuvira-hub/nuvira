@@ -6,9 +6,9 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::{AgentConfig, AgentEvent, ServerOptions};
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use crate::{AgentConfig, AgentEvent, ServerOptions};
 use nexodesk_codec::EncoderChoice;
 use tokio::sync::mpsc;
 use tracing::info;
@@ -256,7 +256,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
                     }
                 }
                 match &event {
-                    AgentEvent::Online { device_id: id, .. } => info!("ID {} {} {}", &id[..3], &id[3..6], &id[6..]),
+                    AgentEvent::Online { device_id: id, .. } => {
+                        info!("ID {} {} {}", &id[..3], &id[3..6], &id[6..])
+                    }
                     // With the app the temporary password is seen by the person at the PC, not the log.
                     AgentEvent::Password { password } if !ipc => info!("temporary password {password}"),
                     _ => {}

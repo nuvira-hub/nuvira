@@ -99,11 +99,19 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
                 }
                 None => password,
             };
-            let result = install::install(install::InstallOptions { server, server_key, password, transport, server_ws });
+            let result = install::install(install::InstallOptions {
+                server,
+                server_key,
+                password,
+                transport,
+                server_ws,
+            });
             if let Some(report) = report {
                 let json = match &result {
                     // The password only when generated: shown once, then only its hash exists.
-                    Ok(done) => serde_json::json!({ "ok": true, "id": done.id, "password": done.generated_password }),
+                    Ok(done) => {
+                        serde_json::json!({ "ok": true, "id": done.id, "password": done.generated_password })
+                    }
                     Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
                 };
                 std::fs::write(report, json.to_string())?;

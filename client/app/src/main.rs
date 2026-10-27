@@ -18,11 +18,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nexodesk_agent::{AgentCommand, AgentConfig, AgentEvent, ServerOptions};
 use nexodesk_codec::{EncoderChoice, EncoderPlan};
+use nexodesk_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::mpsc;
-use nexodesk_i18n::{t, tf};
 use tracing::{info, warn};
 
 const SOURCE_URL: &str = "https://github.com/alexbn71/NexoDesk";
@@ -109,7 +109,11 @@ fn file_config(file_name: &str) -> FileConfig {
     let stem = file_name.strip_suffix(".exe").or_else(|| file_name.strip_suffix(".EXE")).unwrap_or(file_name);
     // " (1)" added by browsers to a repeated download.
     let stem = match stem.rsplit_once(" (") {
-        Some((head, tail)) if tail.strip_suffix(')').is_some_and(|n| n.chars().all(|c| c.is_ascii_digit())) => head,
+        Some((head, tail))
+            if tail.strip_suffix(')').is_some_and(|n| n.chars().all(|c| c.is_ascii_digit())) =>
+        {
+            head
+        }
         _ => stem,
     };
     let Some((_, options)) = stem.split_once('-') else { return FileConfig::default() };
@@ -134,8 +138,11 @@ fn file_config(file_name: &str) -> FileConfig {
 
 /// Applies the server in the file name, if any, to the saved settings.
 fn apply_file_config(settings: &mut Settings) {
-    let name = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
-    let FileConfig { server: Some(server), server_key } = file_config(&name.unwrap_or_default()) else { return };
+    let name =
+        std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let FileConfig { server: Some(server), server_key } = file_config(&name.unwrap_or_default()) else {
+        return;
+    };
     if settings.server == server && settings.server_key == server_key {
         return;
     }
@@ -266,7 +273,9 @@ fn start_agent(app: &AppHandle) {
         };
         let opts = ServerOptions {
             server_name: server,
-            server_key: load_settings().server_key.and_then(|k| nexodesk_transport::parse_fingerprint(&k).ok()),
+            server_key: load_settings()
+                .server_key
+                .and_then(|k| nexodesk_transport::parse_fingerprint(&k).ok()),
             transport: nexodesk_transport::signal::TransportMode::Auto,
             server_ws: None,
             identity_path: nexodesk_transport::identity::data_dir().join("device.key"),
@@ -282,7 +291,8 @@ fn start_agent(app: &AppHandle) {
             }
         });
         if let Err(e) =
-            nexodesk_agent::serve_via_server(config, opts, state.password.clone(), events_tx, commands_rx).await
+            nexodesk_agent::serve_via_server(config, opts, state.password.clone(), events_tx, commands_rx)
+                .await
         {
             warn!("agent ended: {e:#}");
             state.update(&app, |ui| {
@@ -494,7 +504,12 @@ fn connect_entry(app: AppHandle, state: State<NexoApp>, id: i64) -> Result<(), S
     launch_viewer(&app, &state, entry.device_id, entry.password)
 }
 
-fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: String) -> Result<(), String> {
+fn launch_viewer(
+    app: &AppHandle,
+    state: &NexoApp,
+    device_id: String,
+    password: String,
+) -> Result<(), String> {
     let device_id: String = device_id.chars().filter(|c| c.is_ascii_digit()).collect();
     if device_id.len() != 9 {
         return Err(t("err.id_digits"));
@@ -532,7 +547,8 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
             use std::io::BufRead;
             for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
                 if line == "@pending" {
-                    app.state::<NexoApp>().update(&app, |ui| ui.viewer_message = Some("@app.waiting_confirmation".into()));
+                    app.state::<NexoApp>()
+                        .update(&app, |ui| ui.viewer_message = Some("@app.waiting_confirmation".into()));
                 } else if let Some(name) = line.strip_prefix("@connected\t") {
                     app.state::<NexoApp>().update(&app, |ui| ui.viewer_message = None);
                     address_book::auto_add(&app, device_id.clone(), name.to_string(), password.clone());
@@ -570,7 +586,6 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
     });
     Ok(())
 }
-
 
 /// Strings for the interface in the current language.
 #[derive(Serialize)]
@@ -715,7 +730,15 @@ fn attach_console() {
         return;
     }
     let Ok(console) = (unsafe {
-        CreateFileW(w!("CONOUT$"), (GENERIC_READ | GENERIC_WRITE).0, FILE_SHARE_WRITE, None, OPEN_EXISTING, Default::default(), None)
+        CreateFileW(
+            w!("CONOUT$"),
+            (GENERIC_READ | GENERIC_WRITE).0,
+            FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            Default::default(),
+            None,
+        )
     }) else {
         return;
     };
@@ -746,9 +769,11 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
         let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
             let temp = std::env::temp_dir();
             let tag = nexodesk_agent::random_password();
-            let (password_file, report) = (temp.join(format!("nexodesk-{tag}.pw")), temp.join(format!("nexodesk-{tag}.json")));
+            let (password_file, report) =
+                (temp.join(format!("nexodesk-{tag}.pw")), temp.join(format!("nexodesk-{tag}.json")));
             let quote = |p: &std::path::Path| format!("\"{}\"", p.display());
-            let mut params = format!("service install --server \"{}\" --report {}", settings.server, quote(&report));
+            let mut params =
+                format!("service install --server \"{}\" --report {}", settings.server, quote(&report));
             if let Some(key) = &settings.server_key {
                 params += &format!(" --server-key {key}");
             }
@@ -766,8 +791,10 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
                 Err(e) => return Err(format!("{e:#}")),
                 Ok(Some(_)) => {}
             }
-            let report: serde_json::Value =
-                text.ok().and_then(|t| serde_json::from_str(&t).ok()).ok_or_else(|| t("install.no_report"))?;
+            let report: serde_json::Value = text
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .ok_or_else(|| t("install.no_report"))?;
             if report["ok"] != true {
                 return Err(report["error"].as_str().unwrap_or_default().to_string());
             }

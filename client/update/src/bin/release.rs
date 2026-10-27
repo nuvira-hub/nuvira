@@ -84,10 +84,14 @@ fn main() -> Result<()> {
         }
         Cmd::Sign { program, version, platform, key, out } => {
             let path = key.unwrap_or_else(default_key);
-            let pkcs8 = std::fs::read(&path).with_context(|| format!("reading the release key {}", path.display()))?;
-            let key = Ed25519KeyPair::from_pkcs8(&pkcs8).map_err(|_| anyhow::anyhow!("not an Ed25519 PKCS#8 key"))?;
+            let pkcs8 = std::fs::read(&path)
+                .with_context(|| format!("reading the release key {}", path.display()))?;
+            let key = Ed25519KeyPair::from_pkcs8(&pkcs8)
+                .map_err(|_| anyhow::anyhow!("not an Ed25519 PKCS#8 key"))?;
             if public_key_of(&pkcs8)? != nexodesk_update::PUBLIC_KEY {
-                bail!("this key does not match the public key built into the program (client/update/src/lib.rs)");
+                bail!(
+                    "this key does not match the public key built into the program (client/update/src/lib.rs)"
+                );
             }
             let version = version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
             let data = std::fs::read(&program).with_context(|| format!("reading {}", program.display()))?;

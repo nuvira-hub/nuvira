@@ -33,7 +33,8 @@ impl CpuRenderer {
         let size = window.inner_size();
         let context = softbuffer::Context::new(window.clone()).map_err(|e| anyhow!("{e}"))?;
         let surface = softbuffer::Surface::new(&context, window).map_err(|e| anyhow!("{e}"))?;
-        let mut r = Self { surface, width: 0, height: 0, last: None, pixels: Vec::new(), view: View::default() };
+        let mut r =
+            Self { surface, width: 0, height: 0, last: None, pixels: Vec::new(), view: View::default() };
         r.resize(size.width, size.height);
         Ok(r)
     }
@@ -163,7 +164,8 @@ fn yuv_to_rgb_scaled(
                     let v_row = &frame.v[(ya / 2) * cw..][..cw];
                     for (dst, &(xa, xb)) in line[x0..x0 + cols.len()].iter_mut().zip(cols) {
                         let luma =
-                            (row_a[xa] as i32 + row_a[xb] as i32 + row_b[xa] as i32 + row_b[xb] as i32 + 2) >> 2;
+                            (row_a[xa] as i32 + row_a[xb] as i32 + row_b[xa] as i32 + row_b[xb] as i32 + 2)
+                                >> 2;
                         let c = 298 * (luma - 16);
                         let d = u_row[xa / 2] as i32 - 128;
                         let e = v_row[xa / 2] as i32 - 128;

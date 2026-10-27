@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use anyhow::{Result, anyhow, bail};
-use nexodesk_proto::v1::{ApiRequest, ApiResponse, api_request, api_response, client_message, server_message};
+use nexodesk_proto::v1::{
+    ApiRequest, ApiResponse, api_request, api_response, client_message, server_message,
+};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::identity::Identity;

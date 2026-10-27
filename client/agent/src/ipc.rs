@@ -35,8 +35,12 @@ use crate::{AgentCommand, AgentEvent};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToApp {
     /// First message: server the agent is registered on.
-    Info { server: String },
-    Event { event: AgentEvent },
+    Info {
+        server: String,
+    },
+    Event {
+        event: AgentEvent,
+    },
 }
 
 /// Windows session of the current process.
@@ -53,7 +57,9 @@ fn pipe_name(session: u32) -> String {
 /// The NexoDesk service is installed (a normal user can check this too).
 pub fn service_installed() -> bool {
     unsafe {
-        let Ok(scm) = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) else { return false };
+        let Ok(scm) = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) else {
+            return false;
+        };
         let service = OpenServiceW(scm, &HSTRING::from("NexoDesk"), SERVICE_QUERY_STATUS);
         if let Ok(service) = service {
             let _ = CloseServiceHandle(service);
@@ -75,7 +81,9 @@ struct Snapshot {
 impl Snapshot {
     fn apply(&mut self, event: &AgentEvent) {
         let slot = match event {
-            AgentEvent::Connecting | AgentEvent::Online { .. } | AgentEvent::Offline { .. } => &mut self.status,
+            AgentEvent::Connecting | AgentEvent::Online { .. } | AgentEvent::Offline { .. } => {
+                &mut self.status
+            }
             AgentEvent::Password { .. } => &mut self.password,
             AgentEvent::SessionStarted { .. } => &mut self.session,
             AgentEvent::Incoming { .. } => &mut self.incoming,
@@ -242,7 +250,9 @@ fn create_pipe(name: &str, first: bool) -> Result<NamedPipeServer> {
     };
     // SAFETY: the attributes are valid for the whole call.
     let pipe = unsafe {
-        ServerOptions::new().first_pipe_instance(first).create_with_security_attributes_raw(name, (&raw mut attributes).cast())
+        ServerOptions::new()
+            .first_pipe_instance(first)
+            .create_with_security_attributes_raw(name, (&raw mut attributes).cast())
     };
     unsafe { LocalFree(Some(HLOCAL(descriptor.0))) };
     Ok(pipe?)
@@ -258,7 +268,8 @@ async fn send_line(write: &mut (impl AsyncWrite + Unpin), msg: &impl Serialize) 
 /// App side: connection to the service's agent in its own Windows session.
 /// The message channel closes when the agent disconnects.
 pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSender<AgentCommand>)> {
-    let pipe = ClientOptions::new().open(pipe_name(current_session())).context("service agent not reachable")?;
+    let pipe =
+        ClientOptions::new().open(pipe_name(current_session())).context("service agent not reachable")?;
     check_server(&pipe)?;
     let (read, mut write) = tokio::io::split(pipe);
     let (to_app_tx, to_app_rx) = mpsc::unbounded_channel();
@@ -296,7 +307,9 @@ pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSende
 fn check_server(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> Result<()> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED};
-    use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser, WinLocalSystemSid};
+    use windows::Win32::Security::{
+        GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser, WinLocalSystemSid,
+    };
     use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
     use windows::Win32::System::Threading::{
         OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -304,7 +317,8 @@ fn check_server(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> Resu
     };
 
     let mut pid = 0u32;
-    unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid) }.context("agent process")?;
+    unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid) }
+        .context("agent process")?;
     let process = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
         Ok(process) => process,
         Err(e) if e.code() == ERROR_ACCESS_DENIED.to_hresult() => return Ok(()),
@@ -314,7 +328,12 @@ fn check_server(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> Resu
         let mut buffer = [0u16; 1024];
         let mut len = buffer.len() as u32;
         unsafe {
-            QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, windows::core::PWSTR(buffer.as_mut_ptr()), &mut len)
+            QueryFullProcessImageNameW(
+                process,
+                PROCESS_NAME_WIN32,
+                windows::core::PWSTR(buffer.as_mut_ptr()),
+                &mut len,
+            )
         }
         .context("agent program")?;
         let image = std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..len as usize]));
@@ -332,12 +351,20 @@ fn check_server(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> Resu
                 let mut info = [0u8; 256];
                 let mut size = 0u32;
                 let ok = unsafe {
-                    GetTokenInformation(token, TokenUser, Some(info.as_mut_ptr().cast()), info.len() as u32, &mut size)
+                    GetTokenInformation(
+                        token,
+                        TokenUser,
+                        Some(info.as_mut_ptr().cast()),
+                        info.len() as u32,
+                        &mut size,
+                    )
                 };
                 let _ = unsafe { CloseHandle(token) };
                 ok.context("agent account")?;
                 let user = unsafe { &*(info.as_ptr() as *const TOKEN_USER) };
-                if !unsafe { windows::Win32::Security::IsWellKnownSid(user.User.Sid, WinLocalSystemSid) }.as_bool() {
+                if !unsafe { windows::Win32::Security::IsWellKnownSid(user.User.Sid, WinLocalSystemSid) }
+                    .as_bool()
+                {
                     anyhow::bail!("the local channel is held by a program not running as SYSTEM");
                 }
                 Ok(())
@@ -356,11 +383,16 @@ mod tests {
 
     #[test]
     fn messages_round_trip() {
-        let msg = ToApp::Event { event: AgentEvent::Online { device_id: "123456789".into(), websocket: false } };
+        let msg =
+            ToApp::Event { event: AgentEvent::Online { device_id: "123456789".into(), websocket: false } };
         let json = serde_json::to_string(&msg).unwrap();
-        assert_eq!(json, r#"{"type":"event","event":{"event":"online","device_id":"123456789","websocket":false}}"#);
+        assert_eq!(
+            json,
+            r#"{"type":"event","event":{"event":"online","device_id":"123456789","websocket":false}}"#
+        );
         assert!(matches!(serde_json::from_str::<ToApp>(&json).unwrap(), ToApp::Event { .. }));
-        let command: AgentCommand = serde_json::from_str(r#"{"command":"respond","session_id":"s","accept":true}"#).unwrap();
+        let command: AgentCommand =
+            serde_json::from_str(r#"{"command":"respond","session_id":"s","accept":true}"#).unwrap();
         assert!(matches!(command, AgentCommand::Respond { accept: true, .. }));
     }
 }

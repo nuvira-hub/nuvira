@@ -133,8 +133,12 @@ pub fn decode_png(png: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
     buffer.truncate(frame.buffer_size());
     let rgba = match frame.color_type {
         png::ColorType::Rgba => buffer,
-        png::ColorType::Rgb => buffer.as_chunks::<3>().0.iter().flat_map(|&[r, g, b]| [r, g, b, 255]).collect(),
-        png::ColorType::GrayscaleAlpha => buffer.as_chunks::<2>().0.iter().flat_map(|&[g, a]| [g, g, g, a]).collect(),
+        png::ColorType::Rgb => {
+            buffer.as_chunks::<3>().0.iter().flat_map(|&[r, g, b]| [r, g, b, 255]).collect()
+        }
+        png::ColorType::GrayscaleAlpha => {
+            buffer.as_chunks::<2>().0.iter().flat_map(|&[g, a]| [g, g, g, a]).collect()
+        }
         png::ColorType::Grayscale => buffer.iter().flat_map(|&g| [g, g, g, 255]).collect(),
         png::ColorType::Indexed => bail!("palette images are expanded by the decoder"),
     };

@@ -49,7 +49,11 @@ pub fn spawn(stop: &'static AtomicBool) -> Option<std::thread::JoinHandle<()>> {
 
 fn check_and_apply(stop: &AtomicBool) -> Result<()> {
     let service = ServiceConfig::load()?;
-    let base = nexodesk_update::base_url(&service.server, service.server_ws.as_deref(), nexodesk_update::DEFAULT_PORT);
+    let base = nexodesk_update::base_url(
+        &service.server,
+        service.server_ws.as_deref(),
+        nexodesk_update::DEFAULT_PORT,
+    );
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let Some(manifest) = rt.block_on(nexodesk_update::check(&base, &nexodesk_update::PUBLIC_KEY))? else {
         return Ok(());

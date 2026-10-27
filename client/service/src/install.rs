@@ -8,12 +8,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::ERROR_SERVICE_DOES_NOT_EXIST;
 use windows::Win32::System::Services::{
-    ChangeServiceConfig2W, ChangeServiceConfigW, CloseServiceHandle, ENUM_SERVICE_TYPE, SERVICE_ERROR,
-    SERVICE_NO_CHANGE, SERVICE_START_TYPE, ControlService, CreateServiceW, DeleteService, OpenSCManagerW,
-    OpenServiceW, QueryServiceStatus, SC_ACTION, SC_ACTION_RESTART, SC_HANDLE, SC_MANAGER_ALL_ACCESS,
-    SC_MANAGER_CONNECT, SERVICE_ALL_ACCESS, SERVICE_AUTO_START, SERVICE_CONFIG_DESCRIPTION,
-    SERVICE_CONFIG_FAILURE_ACTIONS, SERVICE_CONTROL_STOP, SERVICE_DESCRIPTIONW, SERVICE_ERROR_NORMAL,
-    SERVICE_FAILURE_ACTIONSW, SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE,
+    ChangeServiceConfig2W, ChangeServiceConfigW, CloseServiceHandle, ControlService, CreateServiceW,
+    DeleteService, ENUM_SERVICE_TYPE, OpenSCManagerW, OpenServiceW, QueryServiceStatus, SC_ACTION,
+    SC_ACTION_RESTART, SC_HANDLE, SC_MANAGER_ALL_ACCESS, SC_MANAGER_CONNECT, SERVICE_ALL_ACCESS,
+    SERVICE_AUTO_START, SERVICE_CONFIG_DESCRIPTION, SERVICE_CONFIG_FAILURE_ACTIONS, SERVICE_CONTROL_STOP,
+    SERVICE_DESCRIPTIONW, SERVICE_ERROR, SERVICE_ERROR_NORMAL, SERVICE_FAILURE_ACTIONSW, SERVICE_NO_CHANGE,
+    SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_START_TYPE, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE,
     SERVICE_STOPPED, SERVICE_WIN32_OWN_PROCESS, StartServiceW,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
@@ -163,9 +163,9 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
 
     // Inbound rule for the direct (UDP) path towards the agent.
     let agent = &program;
-    let _ = run(Command::new("netsh").raw_arg(format!(
-        "advfirewall firewall delete rule name=\"{FIREWALL_RULE}\""
-    )));
+    let _ =
+        run(Command::new("netsh")
+            .raw_arg(format!("advfirewall firewall delete rule name=\"{FIREWALL_RULE}\"")));
     run(Command::new("netsh").raw_arg(format!(
         "advfirewall firewall add rule name=\"{FIREWALL_RULE}\" dir=in action=allow program=\"{}\" enable=yes profile=any",
         agent.display()
@@ -329,7 +329,8 @@ fn replace_program(src: &Path, program: &Path) -> Result<()> {
         return Ok(());
     }
     std::fs::rename(program, &aside).with_context(|| format!("moving aside {}", program.display()))?;
-    std::fs::copy(src, program).with_context(|| format!("copying {} to {}", src.display(), program.display()))?;
+    std::fs::copy(src, program)
+        .with_context(|| format!("copying {} to {}", src.display(), program.display()))?;
     Ok(())
 }
 
@@ -396,7 +397,9 @@ fn create(scm: &Sc, exe: &Path) -> Result<Sc> {
 
     let mut description: Vec<u16> = config::SERVICE_DESCRIPTION.encode_utf16().chain(Some(0)).collect();
     let info = SERVICE_DESCRIPTIONW { lpDescription: PWSTR(description.as_mut_ptr()) };
-    let _ = unsafe { ChangeServiceConfig2W(service.0, SERVICE_CONFIG_DESCRIPTION, Some((&raw const info).cast())) };
+    let _ = unsafe {
+        ChangeServiceConfig2W(service.0, SERVICE_CONFIG_DESCRIPTION, Some((&raw const info).cast()))
+    };
 
     // If the service crashes, Windows restarts it after 5 s (the counter resets every day).
     let mut actions = [SC_ACTION { Type: SC_ACTION_RESTART, Delay: 5_000 }; 3];
@@ -407,7 +410,9 @@ fn create(scm: &Sc, exe: &Path) -> Result<Sc> {
         cActions: actions.len() as u32,
         lpsaActions: actions.as_mut_ptr(),
     };
-    let _ = unsafe { ChangeServiceConfig2W(service.0, SERVICE_CONFIG_FAILURE_ACTIONS, Some((&raw const failure).cast())) };
+    let _ = unsafe {
+        ChangeServiceConfig2W(service.0, SERVICE_CONFIG_FAILURE_ACTIONS, Some((&raw const failure).cast()))
+    };
     Ok(service)
 }
 
@@ -439,9 +444,9 @@ pub fn uninstall(remove_program: bool) -> Result<()> {
         }
         None => println!("the service is not installed"),
     }
-    let _ = run(Command::new("netsh").raw_arg(format!(
-        "advfirewall firewall delete rule name=\"{FIREWALL_RULE}\""
-    )));
+    let _ =
+        run(Command::new("netsh")
+            .raw_arg(format!("advfirewall firewall delete rule name=\"{FIREWALL_RULE}\"")));
     if !remove_program {
         println!(
             "the program remains in {} and the data in {} (with the device ID, reused if you reinstall)",
@@ -467,7 +472,8 @@ pub fn uninstall(remove_program: bool) -> Result<()> {
 fn remove_program_dir() {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-    let command = format!("/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{}\"", config::program_dir().display());
+    let command =
+        format!("/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{}\"", config::program_dir().display());
     let spawn = |flags| Command::new("cmd").raw_arg(&command).creation_flags(flags).spawn();
     if spawn(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB).is_err() {
         let _ = spawn(CREATE_NO_WINDOW);

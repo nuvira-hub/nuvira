@@ -352,7 +352,9 @@ mod tests {
         let keyframe = Arc::new(AtomicBool::new(true));
         let (display, pipeline) = Pipeline::start(
             || Ok(Box::new(nexodesk_capture::SyntheticCapturer::new(320, 180, 60)) as Box<dyn Capturer>),
-            |gpu| nexodesk_codec::create_encoder(nexodesk_codec::EncoderPlan::Software, Default::default(), gpu),
+            |gpu| {
+                nexodesk_codec::create_encoder(nexodesk_codec::EncoderPlan::Software, Default::default(), gpu)
+            },
             false,
             Arc::new(AtomicU32::new(60)),
             tx,

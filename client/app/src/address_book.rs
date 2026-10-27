@@ -5,10 +5,10 @@
 //! The connection with the server opens at first use and reopens by itself if it
 //! drops; the sign-in is remembered with the token saved in `app.json`, never the password.
 
+use nexodesk_i18n::{t, tf};
 use nexodesk_proto::v1::{self as pb, api_request::Call, api_response::Result as ApiResult};
 use nexodesk_transport::api::ApiClient;
 use serde::{Deserialize, Serialize};
-use nexodesk_i18n::{t, tf};
 use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
 
@@ -117,7 +117,9 @@ pub struct Link {
 
 impl Link {
     /// Access without waiting (from synchronous commands): fails if it is in use.
-    pub fn client_slot(&self) -> Result<tokio::sync::MutexGuard<'_, Option<ApiClient>>, tokio::sync::TryLockError> {
+    pub fn client_slot(
+        &self,
+    ) -> Result<tokio::sync::MutexGuard<'_, Option<ApiClient>>, tokio::sync::TryLockError> {
         self.client.try_lock()
     }
 }
@@ -154,8 +156,8 @@ async fn open(app: &AppHandle) -> Result<ApiClient, String> {
     let server = nexodesk_transport::resolve_addr(&server_name, nexodesk_transport::signal::DEFAULT_PORT)
         .map_err(|e| format!("{e:#}"))?;
     let identity_path = nexodesk_transport::identity::data_dir().join("app.key");
-    let identity =
-        nexodesk_transport::identity::Identity::load_or_create(&identity_path).map_err(|e| format!("{e:#}"))?;
+    let identity = nexodesk_transport::identity::Identity::load_or_create(&identity_path)
+        .map_err(|e| format!("{e:#}"))?;
     let ws_url = nexodesk_transport::ws::default_url(&server_name, server);
     let name = std::env::var("COMPUTERNAME").unwrap_or_default();
     ApiClient::connect(&server_name, server, &ws_url, Default::default(), &identity, &name)
@@ -266,10 +268,8 @@ pub fn auto_add(app: &AppHandle, device_id: String, name: String, password: Stri
 #[tauri::command]
 pub async fn address_book_login(app: AppHandle, username: String, password: String) -> Result<(), String> {
     let client = open(&app).await?;
-    let Some(ApiResult::Session(session)) = client
-        .call(Call::Login(pb::Login { username, password }))
-        .await
-        .map_err(|e| format!("{e:#}"))?
+    let Some(ApiResult::Session(session)) =
+        client.call(Call::Login(pb::Login { username, password })).await.map_err(|e| format!("{e:#}"))?
     else {
         return Err(t("err.unexpected"));
     };
@@ -307,9 +307,11 @@ pub async fn address_book_delete_entry(app: AppHandle, id: i64) -> Result<(), St
 
 #[tauri::command]
 pub async fn address_book_change_password(app: AppHandle, old: String, new: String) -> Result<(), String> {
-    call(&app, Call::ChangePassword(pb::ChangePassword { old_password: old, new_password: new.clone() })).await?;
+    call(&app, Call::ChangePassword(pb::ChangePassword { old_password: old, new_password: new.clone() }))
+        .await?;
     // The server closes the remembered sign-ins: signing in again with the new password.
-    let username = app.state::<NexoApp>().ui.lock().expect("state").account.as_ref().map(|a| a.username.clone());
+    let username =
+        app.state::<NexoApp>().ui.lock().expect("state").account.as_ref().map(|a| a.username.clone());
     *app.state::<NexoApp>().address_book.client.lock().await = None;
     match username {
         Some(username) => address_book_login(app, username, new).await,
@@ -344,7 +346,12 @@ pub async fn address_book_delete_account(app: AppHandle, id: i64) -> Result<(), 
 }
 
 #[tauri::command]
-pub async fn address_book_save_book(app: AppHandle, id: i64, name: String, member_ids: Vec<i64>) -> Result<(), String> {
+pub async fn address_book_save_book(
+    app: AppHandle,
+    id: i64,
+    name: String,
+    member_ids: Vec<i64>,
+) -> Result<(), String> {
     call(&app, Call::PutBook(pb::PutBook { id, name, member_ids })).await?;
     refresh(&app).await
 }

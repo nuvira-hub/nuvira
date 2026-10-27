@@ -145,7 +145,8 @@ pub async fn connect(
         .connect(server, "nexodesk-server")?
         .await
         .with_context(|| format!("connecting to nexodesk-server {server}"))?;
-    let server_fingerprint = seen.lock().expect("fingerprint").expect("fingerprint stored during the handshake");
+    let server_fingerprint =
+        seen.lock().expect("fingerprint").expect("fingerprint stored during the handshake");
 
     let (send, recv) = conn.open_bi().await?;
     let (mut tx, mut rx) = (SignalSender(FramedSend::new(send)), SignalReceiver(FramedRecv::new(recv)));

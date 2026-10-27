@@ -16,7 +16,8 @@ use windows::Win32::Foundation::{
     CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0,
 };
 use windows::Win32::Security::{
-    DuplicateTokenEx, SecurityImpersonation, SetTokenInformation, TOKEN_ALL_ACCESS, TokenPrimary, TokenSessionId,
+    DuplicateTokenEx, SecurityImpersonation, SetTokenInformation, TOKEN_ALL_ACCESS, TokenPrimary,
+    TokenSessionId,
 };
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -25,8 +26,8 @@ use windows::Win32::System::JobObjects::{
 use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
 use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessAsUserW, GetCurrentProcess, GetExitCodeProcess,
-    OpenProcessToken, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOW, TerminateProcess,
-    WaitForSingleObject,
+    OpenProcessToken, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOW,
+    TerminateProcess, WaitForSingleObject,
 };
 use windows::core::{HSTRING, PWSTR};
 
@@ -146,11 +147,14 @@ impl AgentProcess {
 /// Changing a token's session needs SeTcbPrivilege, which SYSTEM has.
 fn system_token_for(session: u32) -> Result<Owned> {
     let mut own = HANDLE::default();
-    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &mut own) }.context("OpenProcessToken")?;
+    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &mut own) }
+        .context("OpenProcessToken")?;
     let own = Owned(own);
     let mut primary = HANDLE::default();
-    unsafe { DuplicateTokenEx(own.0, TOKEN_ALL_ACCESS, None, SecurityImpersonation, TokenPrimary, &mut primary) }
-        .context("DuplicateTokenEx")?;
+    unsafe {
+        DuplicateTokenEx(own.0, TOKEN_ALL_ACCESS, None, SecurityImpersonation, TokenPrimary, &mut primary)
+    }
+    .context("DuplicateTokenEx")?;
     let primary = Owned(primary);
     unsafe {
         SetTokenInformation(primary.0, TokenSessionId, (&raw const session).cast(), size_of::<u32>() as u32)

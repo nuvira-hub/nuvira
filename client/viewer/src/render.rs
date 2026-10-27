@@ -157,12 +157,7 @@ pub fn place(fw: u32, fh: u32, sw: u32, sh: u32, view: View) -> Viewport {
         let (f, s) = (f as f32, s as f32);
         if f <= s { ((s - f) / 2.0).floor() } else { -((f - s) * pan.clamp(0.0, 1.0)).round() }
     };
-    Viewport {
-        x: axis(fw, sw, view.pan.0),
-        y: axis(fh, sh, view.pan.1),
-        width: fw as f32,
-        height: fh as f32,
-    }
+    Viewport { x: axis(fw, sw, view.pan.0), y: axis(fh, sh, view.pan.1), width: fw as f32, height: fh as f32 }
 }
 
 /// Samples per side to average when `fw` image pixels go into `vw` window pixels.

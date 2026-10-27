@@ -154,12 +154,17 @@ pub enum AgentEvent {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum AgentCommand {
-    Respond { session_id: String, accept: bool },
+    Respond {
+        session_id: String,
+        accept: bool,
+    },
     EndSession,
     /// Generates a new temporary password (answer: [`AgentEvent::Password`]).
     NewPassword,
     /// Chat message for the controlling side (session in progress).
-    Chat { text: String },
+    Chat {
+        text: String,
+    },
 }
 
 /// Random 8-character password that is easy to dictate (no 0/O, 1/l/I).
@@ -229,7 +234,8 @@ pub async fn serve_via_server(
     events: mpsc::UnboundedSender<AgentEvent>,
     mut commands: mpsc::UnboundedReceiver<AgentCommand>,
 ) -> Result<()> {
-    let server = nexodesk_transport::resolve_addr(&opts.server_name, nexodesk_transport::signal::DEFAULT_PORT)?;
+    let server =
+        nexodesk_transport::resolve_addr(&opts.server_name, nexodesk_transport::signal::DEFAULT_PORT)?;
     let identity = Arc::new(nexodesk_transport::identity::Identity::load_or_create(&opts.identity_path)?);
     let ctx = Arc::new(SessionContext {
         config,
@@ -292,8 +298,10 @@ async fn signal_loop(
 ) -> Result<()> {
     use nexodesk_proto::v1::{Accept, Reject, client_message, server_message};
     let device_name = std::env::var("COMPUTERNAME").unwrap_or_default();
-    let ws_url =
-        opts.server_ws.clone().unwrap_or_else(|| nexodesk_transport::ws::default_url(&opts.server_name, server));
+    let ws_url = opts
+        .server_ws
+        .clone()
+        .unwrap_or_else(|| nexodesk_transport::ws::default_url(&opts.server_name, server));
     let mut signal = nexodesk_transport::signal::connect_auto(
         server,
         &ws_url,
@@ -488,7 +496,8 @@ impl Gate<'_> {
             return self.started();
         }
         if let Some(ctrl_tx) = pending {
-            let waiting = nexodesk_proto::v1::ConfirmationPending { timeout_s: CONFIRM_TIMEOUT.as_secs() as u32 };
+            let waiting =
+                nexodesk_proto::v1::ConfirmationPending { timeout_s: CONFIRM_TIMEOUT.as_secs() as u32 };
             let _ = ctrl_tx.send(&control(Msg::ConfirmationPending(waiting))).await;
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -556,7 +565,8 @@ async fn session(
             _ => bail!("the viewer did not send the password"),
         };
         // Viewers that know it are told when the person at the PC is being asked.
-        let pending = (viewer_protocol >= nexodesk_proto::v1::ProtocolVersion::ConfirmationPending as u32).then_some(&mut ctrl_tx);
+        let pending = (viewer_protocol >= nexodesk_proto::v1::ProtocolVersion::ConfirmationPending as u32)
+            .then_some(&mut ctrl_tx);
         let verdict = gate.authorize(&given, pending).await;
         let (ok, message) = match &verdict {
             Ok(()) => (true, String::new()),
@@ -715,7 +725,11 @@ async fn session(
                     let fs_tx = fs_tx.clone();
                     if config.view_only || config.synthetic.is_some() {
                         let error = "@agent.files_view_only".to_string();
-                        let _ = fs_tx.send(nexodesk_proto::v1::FsResponse { id: request.id, error, ..Default::default() });
+                        let _ = fs_tx.send(nexodesk_proto::v1::FsResponse {
+                            id: request.id,
+                            error,
+                            ..Default::default()
+                        });
                         continue;
                     }
                     let conn = conn.clone();
@@ -943,7 +957,11 @@ impl VideoSource {
 }
 
 fn video_format(display: &nexodesk_capture::Display) -> ControlMessage {
-    control(Msg::VideoFormat(VideoFormat { codec: Codec::H264 as i32, width: display.width, height: display.height }))
+    control(Msg::VideoFormat(VideoFormat {
+        codec: Codec::H264 as i32,
+        width: display.width,
+        height: display.height,
+    }))
 }
 
 /// List of screens for the viewer (none with the tests' synthetic image).
@@ -967,7 +985,12 @@ fn displays_message(config: &AgentConfig, current: &nexodesk_capture::Display) -
 }
 
 fn screen_rect(display: &nexodesk_capture::Display) -> nexodesk_input::ScreenRect {
-    nexodesk_input::ScreenRect { left: display.left, top: display.top, width: display.width, height: display.height }
+    nexodesk_input::ScreenRect {
+        left: display.left,
+        top: display.top,
+        width: display.width,
+        height: display.height,
+    }
 }
 
 /// Bitrate cap (bit/s) and fps for the quality chosen by the viewer.

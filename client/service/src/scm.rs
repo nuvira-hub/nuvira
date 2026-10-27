@@ -14,13 +14,13 @@ use anyhow::{Context, Result};
 use tracing::{error, info, warn};
 use windows::Win32::Foundation::{CloseHandle, ERROR_CALL_NOT_IMPLEMENTED, HANDLE, NO_ERROR, WAIT_OBJECT_0};
 use windows::Win32::Security::Authentication::Identity::SendSAS;
-use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::Win32::System::Services::{
     RegisterServiceCtrlHandlerExW, SERVICE_ACCEPT_SHUTDOWN, SERVICE_ACCEPT_STOP, SERVICE_CONTROL_INTERROGATE,
     SERVICE_CONTROL_SHUTDOWN, SERVICE_CONTROL_STOP, SERVICE_RUNNING, SERVICE_START_PENDING, SERVICE_STATUS,
     SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE, SERVICE_STOP_PENDING, SERVICE_STOPPED,
     SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS, SetServiceStatus, StartServiceCtrlDispatcherW,
 };
+use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::core::{HSTRING, PWSTR};
 
 use crate::config::{self, ServiceConfig};
@@ -44,14 +44,15 @@ pub fn dispatch() -> Result<()> {
 }
 
 unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
-    let handle =
-        match unsafe { RegisterServiceCtrlHandlerExW(&HSTRING::from(config::SERVICE_NAME), Some(handler), None) } {
-            Ok(h) => h,
-            Err(e) => {
-                error!("RegisterServiceCtrlHandlerEx: {e}");
-                return;
-            }
-        };
+    let handle = match unsafe {
+        RegisterServiceCtrlHandlerExW(&HSTRING::from(config::SERVICE_NAME), Some(handler), None)
+    } {
+        Ok(h) => h,
+        Err(e) => {
+            error!("RegisterServiceCtrlHandlerEx: {e}");
+            return;
+        }
+    };
     STATUS.store(handle.0, Ordering::Relaxed);
     set_status(SERVICE_START_PENDING, 0);
     set_status(SERVICE_RUNNING, 0);
@@ -67,7 +68,12 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
     set_status(SERVICE_STOPPED, code);
 }
 
-unsafe extern "system" fn handler(control: u32, _event: u32, _data: *mut c_void, _context: *mut c_void) -> u32 {
+unsafe extern "system" fn handler(
+    control: u32,
+    _event: u32,
+    _data: *mut c_void,
+    _context: *mut c_void,
+) -> u32 {
     match control {
         SERVICE_CONTROL_STOP | SERVICE_CONTROL_SHUTDOWN => {
             STOP.store(true, Ordering::Relaxed);
@@ -84,7 +90,11 @@ fn set_status(state: SERVICE_STATUS_CURRENT_STATE, exit_code: u32) {
     let status = SERVICE_STATUS {
         dwServiceType: SERVICE_WIN32_OWN_PROCESS,
         dwCurrentState: state,
-        dwControlsAccepted: if state == SERVICE_RUNNING { SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN } else { 0 },
+        dwControlsAccepted: if state == SERVICE_RUNNING {
+            SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN
+        } else {
+            0
+        },
         dwWin32ExitCode: exit_code,
         dwServiceSpecificExitCode: 0,
         dwCheckPoint: 0,
@@ -177,8 +187,16 @@ fn run() -> Result<()> {
                 }
                 let lived = running.started.elapsed();
                 // If it ran for a long time it restarts right away, otherwise it waits longer.
-                backoff = if lived > Duration::from_secs(60) { Duration::from_secs(1) } else { (backoff * 2).min(Duration::from_secs(30)) };
-                warn!("agent ended with code {code} after {} s: restarting in {} s", lived.as_secs(), backoff.as_secs());
+                backoff = if lived > Duration::from_secs(60) {
+                    Duration::from_secs(1)
+                } else {
+                    (backoff * 2).min(Duration::from_secs(30))
+                };
+                warn!(
+                    "agent ended with code {code} after {} s: restarting in {} s",
+                    lived.as_secs(),
+                    backoff.as_secs()
+                );
                 agent = None;
                 next_start = Instant::now() + backoff;
             }

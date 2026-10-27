@@ -67,9 +67,17 @@ pub enum NetEvent {
     /// File manager: answer of the agent to a request.
     Fs(nexodesk_proto::v1::FsResponse),
     /// File manager: progress of a transfer (both directions).
-    Transfer { id: u32, done: u64, total: u64 },
+    Transfer {
+        id: u32,
+        done: u64,
+        total: u64,
+    },
     /// File manager: end of a transfer; with `ok` the final path, otherwise the reason.
-    TransferDone { id: u32, ok: bool, message: String },
+    TransferDone {
+        id: u32,
+        ok: bool,
+        message: String,
+    },
     /// Message of the file manager page.
     FileManager(String),
 }
@@ -178,11 +186,10 @@ pub fn start(
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             let channels = (input_rx, control_rx, files_rx, session_downloads);
-            let reason =
-                match rt.block_on(session(target, password, proxy.clone(), slot, channels)) {
-                    Ok(()) => "session ended".to_string(),
-                    Err(e) => format!("{e:#}"),
-                };
+            let reason = match rt.block_on(session(target, password, proxy.clone(), slot, channels)) {
+                Ok(()) => "session ended".to_string(),
+                Err(e) => format!("{e:#}"),
+            };
             let _ = proxy.send_event(NetEvent::Disconnected(reason));
         })
         .expect("network thread");
@@ -199,14 +206,17 @@ async fn open_connection(target: Target) -> Result<(nexodesk_transport::Connecti
     use nexodesk_proto::v1::{Connect, Role, client_message, server_message};
     use nexodesk_transport::{identity::Identity, p2p, signal};
     match target {
-        Target::Direct { addr, fingerprint } => Ok((nexodesk_transport::connect(addr, fingerprint).await?, true)),
+        Target::Direct { addr, fingerprint } => {
+            Ok((nexodesk_transport::connect(addr, fingerprint).await?, true))
+        }
         Target::Server { server, server_name, server_key, transport, server_ws, device_id, identity } => {
             let identity = Identity::load_or_create(&identity)?;
             let expected = server_key.or_else(|| signal::known_server::get(&server_name));
             let name = std::env::var("COMPUTERNAME").unwrap_or_default();
             // The viewer receives no connections: several session windows can coexist.
             let device = signal::DeviceInfo { name: &name, reachable: false };
-            let ws_url = server_ws.unwrap_or_else(|| nexodesk_transport::ws::default_url(&server_name, server));
+            let ws_url =
+                server_ws.unwrap_or_else(|| nexodesk_transport::ws::default_url(&server_name, server));
             let mut sig =
                 signal::connect_auto(server, &ws_url, transport, expected, &identity, &device).await?;
             if let nexodesk_transport::ServerTransport::WebSocket(url) = &sig.transport {
@@ -229,11 +239,7 @@ async fn open_connection(target: Target) -> Result<(nexodesk_transport::Connecti
                 relay: server,
                 transport: sig.transport.clone(),
                 token: route.relay_token.as_slice().try_into().context("invalid relay token")?,
-                peer_public_key: route
-                    .peer_public_key
-                    .as_slice()
-                    .try_into()
-                    .context("invalid agent key")?,
+                peer_public_key: route.peer_public_key.as_slice().try_into().context("invalid agent key")?,
                 role: p2p::Role::Viewer,
             };
             let (conn, path) = p2p::viewer_connect(&identity, &route).await?;
@@ -284,7 +290,13 @@ async fn session(
         match answer {
             Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) if r.ok => {}
             Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) => {
-                bail!("{}", nexodesk_i18n::tf("viewer.access_denied", &[("reason", &nexodesk_i18n::message(&r.message))]))
+                bail!(
+                    "{}",
+                    nexodesk_i18n::tf(
+                        "viewer.access_denied",
+                        &[("reason", &nexodesk_i18n::message(&r.message))]
+                    )
+                )
             }
             _ => bail!("no answer to the password"),
         }
@@ -368,7 +380,13 @@ async fn session(
                     if !first.clipboard_image {
                         return;
                     }
-                    match nexodesk_transport::read_stream(&mut rx, &first, nexodesk_clipboard::MAX_IMAGE_PNG as u64).await {
+                    match nexodesk_transport::read_stream(
+                        &mut rx,
+                        &first,
+                        nexodesk_clipboard::MAX_IMAGE_PNG as u64,
+                    )
+                    .await
+                    {
                         Ok(png) => {
                             if let Some(clipboard) = clipboard {
                                 let _ = clipboard.send(nexodesk_clipboard::Content::Image(png));
@@ -463,14 +481,22 @@ async fn session(
                     if let Err(e) = send_file(&conn, &path, &proxy).await {
                         warn!("sending {} failed: {e:#}", path.display());
                         let name = file_name(&path);
-                        let _ = proxy.send_event(NetEvent::FileDone { name, ok: false, message: format!("{e:#}") });
+                        let _ = proxy.send_event(NetEvent::FileDone {
+                            name,
+                            ok: false,
+                            message: format!("{e:#}"),
+                        });
                     }
                 }
                 Outgoing::Upload { id, local, dir, offset } => {
                     // The outcome comes from the agent (FileReceived with the id).
                     if let Err(e) = send_upload(&conn, id, &local, dir, offset, &proxy).await {
                         warn!("sending {} failed: {e:#}", local.display());
-                        let _ = proxy.send_event(NetEvent::TransferDone { id, ok: false, message: format!("{e:#}") });
+                        let _ = proxy.send_event(NetEvent::TransferDone {
+                            id,
+                            ok: false,
+                            message: format!("{e:#}"),
+                        });
                     }
                 }
             }
@@ -511,14 +537,23 @@ async fn send_upload(
     proxy: &EventLoopProxy<NetEvent>,
 ) -> Result<()> {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
-    let mut file = tokio::fs::File::open(local).await.with_context(|| format!("opening {}", local.display()))?;
+    let mut file =
+        tokio::fs::File::open(local).await.with_context(|| format!("opening {}", local.display()))?;
     let total = file.metadata().await?.len();
     if offset > total {
         bail!("resume point beyond the end of the file");
     }
     file.seek(std::io::SeekFrom::Start(offset)).await?;
     let mut tx = FramedSend::new(conn.open_uni().await?);
-    tx.send(&FileChunk { name: file_name(local), size: total, dir, offset, transfer_id: id, ..Default::default() }).await?;
+    tx.send(&FileChunk {
+        name: file_name(local),
+        size: total,
+        dir,
+        offset,
+        transfer_id: id,
+        ..Default::default()
+    })
+    .await?;
     let mut buf = vec![0u8; 256 * 1024];
     let (mut done, mut last) = (offset, Instant::now());
     loop {
@@ -553,7 +588,8 @@ async fn receive_download(
     let mut file = if offset == 0 {
         tokio::fs::File::create(&part).await.with_context(|| format!("creating {}", part.display()))?
     } else {
-        let file = tokio::fs::OpenOptions::new().append(true).open(&part).await.context("nothing to resume")?;
+        let file =
+            tokio::fs::OpenOptions::new().append(true).open(&part).await.context("nothing to resume")?;
         let have = file.metadata().await?.len();
         if have != offset {
             bail!("cannot resume: {have} bytes there, not {offset}");
@@ -582,7 +618,9 @@ async fn receive_download(
         bail!("interrupted at {done} bytes out of {size}");
     }
     let final_path = free_path(target);
-    tokio::fs::rename(&part, &final_path).await.with_context(|| format!("saving {}", final_path.display()))?;
+    tokio::fs::rename(&part, &final_path)
+        .await
+        .with_context(|| format!("saving {}", final_path.display()))?;
     info!("downloaded {} ({size} bytes, from {offset})", final_path.display());
     Ok(final_path)
 }
@@ -601,7 +639,10 @@ fn free_path(target: &std::path::Path) -> std::path::PathBuf {
     }
     let stem = target.file_stem().unwrap_or_default().to_string_lossy().into_owned();
     let ext = target.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-    (1..).map(|i| target.with_file_name(format!("{stem} ({i}){ext}"))).find(|p| !p.exists()).expect("a free name")
+    (1..)
+        .map(|i| target.with_file_name(format!("{stem} ({i}){ext}")))
+        .find(|p| !p.exists())
+        .expect("a free name")
 }
 
 fn file_name(path: &std::path::Path) -> String {
@@ -620,7 +661,8 @@ async fn send_file(
     if tokio::fs::metadata(path).await.is_ok_and(|m| m.is_dir()) {
         bail!("{}", nexodesk_i18n::t("viewer.folder_not_supported"));
     }
-    let mut file = tokio::fs::File::open(path).await.with_context(|| format!("opening {}", path.display()))?;
+    let mut file =
+        tokio::fs::File::open(path).await.with_context(|| format!("opening {}", path.display()))?;
     let total = file.metadata().await?.len();
     info!("sending {name} ({total} bytes)");
     let mut tx = FramedSend::new(conn.open_uni().await?);

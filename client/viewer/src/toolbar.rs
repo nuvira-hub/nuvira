@@ -132,8 +132,8 @@ pub struct ChatPanel {
 
 impl ChatPanel {
     pub fn new(window: Arc<Window>, proxy: EventLoopProxy<NetEvent>) -> Result<Self> {
-        let (webview, context) = child_webview(&window, proxy, CHAT_HTML, chat_bounds(&window), false)
-            .context("chat WebView")?;
+        let (webview, context) =
+            child_webview(&window, proxy, CHAT_HTML, chat_bounds(&window), false).context("chat WebView")?;
         Ok(Self { webview, window, visible: false, _context: context })
     }
 
@@ -159,16 +159,18 @@ impl ChatPanel {
 
     /// Adds a message; `mine`: written by the controlling side.
     pub fn add(&self, mine: bool, text: &str) {
-        let _ = self
-            .webview
-            .evaluate_script(&format!("window.nexodesk && nexodesk.add({{mine:{mine},text:{}}})", js_string(text)));
+        let _ = self.webview.evaluate_script(&format!(
+            "window.nexodesk && nexodesk.add({{mine:{mine},text:{}}})",
+            js_string(text)
+        ));
     }
 
     /// Viewer notice (e.g. file sent), not a message.
     pub fn notice(&self, text: &str) {
-        let _ = self
-            .webview
-            .evaluate_script(&format!("window.nexodesk && nexodesk.add({{system:true,text:{}}})", js_string(text)));
+        let _ = self.webview.evaluate_script(&format!(
+            "window.nexodesk && nexodesk.add({{system:true,text:{}}})",
+            js_string(text)
+        ));
     }
 
     /// Click on the image: the keyboard goes back to the session.
@@ -187,24 +189,45 @@ fn child_webview(
 ) -> Result<(WebView, WebContext)> {
     // WebView2 data in the user's folder: next to the program (e.g. Program Files)
     // it often cannot write.
-    let data_dir =
-        std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("NexoDesk").join("WebView2"));
+    let data_dir = std::env::var_os("LOCALAPPDATA")
+        .map(|d| std::path::PathBuf::from(d).join("NexoDesk").join("WebView2"));
     let mut context = WebContext::new(data_dir);
-    let webview = WebViewBuilder::new_with_web_context(&mut context)
-        .with_html(html)
-        // Same colour as the pages: no white flash while loading.
-        .with_background_color((0x1f, 0x25, 0x2b, 0xff))
-        .with_bounds(bounds)
-        .with_visible(visible)
-        // Strings in the session's language, available to the page before it runs.
-        .with_initialization_script(format!("window.I18N = {};", nexodesk_i18n::json()))
-        .with_ipc_handler(move |request| {
-            if let Some(action) = Action::parse(request.body()) {
-                let _ = proxy.send_event(NetEvent::Toolbar(action));
-            }
-        })
-        .build_as_child(window)?;
+    let html = html.to_string();
+    let webview = retry_in_use(|| {
+        let proxy = proxy.clone();
+        WebViewBuilder::new_with_web_context(&mut context)
+            .with_html(&html)
+            // Same colour as the pages: no white flash while loading.
+            .with_background_color((0x1f, 0x25, 0x2b, 0xff))
+            .with_bounds(bounds)
+            .with_visible(visible)
+            // Strings in the session's language, available to the page before it runs.
+            .with_initialization_script(format!("window.I18N = {};", nexodesk_i18n::json()))
+            .with_ipc_handler(move |request| {
+                if let Some(action) = Action::parse(request.body()) {
+                    let _ = proxy.send_event(NetEvent::Toolbar(action));
+                }
+            })
+            .build_as_child(window)
+    })?;
     Ok((webview, context))
+}
+
+/// Builds a WebView, trying again for a couple of seconds while WebView2 answers
+/// "resource in use" (0x800700AA): the data folder is shared, and a session window
+/// closed just before is still shutting down its WebView2 processes.
+pub fn retry_in_use(mut build: impl FnMut() -> wry::Result<WebView>) -> wry::Result<WebView> {
+    let mut attempts = 0;
+    loop {
+        match build() {
+            Err(e) if attempts < 8 && format!("{e:?}").contains("800700AA") => {
+                attempts += 1;
+                tracing::debug!("WebView2 data folder in use, trying again");
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            result => return result,
+        }
+    }
 }
 
 /// On the right, below the toolbar.
@@ -246,7 +269,11 @@ pub fn displays_state(displays: &[DisplayInfo], current: u32, all_available: boo
             let key = if d.primary { "tb.display_primary" } else { "tb.display" };
             let title = nexodesk_i18n::tf(
                 key,
-                &[("n", &(d.index + 1).to_string()), ("w", &d.width.to_string()), ("h", &d.height.to_string())],
+                &[
+                    ("n", &(d.index + 1).to_string()),
+                    ("w", &d.width.to_string()),
+                    ("h", &d.height.to_string()),
+                ],
             );
             format!("{{index:{},title:{}}}", d.index, js_string(&title))
         })

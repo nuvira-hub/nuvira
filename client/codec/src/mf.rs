@@ -175,12 +175,7 @@ impl Session {
                 VARIANT::from(settings.bitrate_bps),
                 "bitrate",
             );
-            set_codec_value(
-                api,
-                &CODECAPI_AVEncMPVDefaultBPictureCount,
-                VARIANT::from(0u32),
-                "no B-frames",
-            );
+            set_codec_value(api, &CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0u32), "no B-frames");
             // Periodic keyframe every 10 s as a safety net; the others on request.
             set_codec_value(api, &CODECAPI_AVEncMPVGOPSize, VARIANT::from((fps * 10) as u32), "GOP");
         }

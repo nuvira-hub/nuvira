@@ -5,7 +5,6 @@ use std::collections::HashSet;
 use anyhow::Result;
 use nexodesk_proto::v1::{Button, InputEvent, input_event::Event};
 use tracing::{debug, info, warn};
-use windows::core::HSTRING;
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
@@ -20,6 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, XBUTTON1,
     XBUTTON2,
 };
+use windows::core::HSTRING;
 
 use crate::{InputInjector, ScreenRect, keys};
 

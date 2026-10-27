@@ -96,16 +96,19 @@ impl FileManager {
         let data_dir =
             std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("NexoDesk").join("WebView2"));
         let mut context = WebContext::new(data_dir);
-        let webview = WebViewBuilder::new_with_web_context(&mut context)
-            .with_html(HTML)
-            .with_background_color((0x1f, 0x25, 0x2b, 0xff))
-            .with_bounds(full(&window))
-            .with_initialization_script(format!("window.I18N = {};", nexodesk_i18n::json()))
-            .with_ipc_handler(move |request| {
-                let _ = proxy.send_event(NetEvent::FileManager(request.body().clone()));
-            })
-            .build_as_child(&window)
-            .context("file manager WebView")?;
+        let webview = crate::toolbar::retry_in_use(|| {
+            let proxy = proxy.clone();
+            WebViewBuilder::new_with_web_context(&mut context)
+                .with_html(HTML)
+                .with_background_color((0x1f, 0x25, 0x2b, 0xff))
+                .with_bounds(full(&window))
+                .with_initialization_script(format!("window.I18N = {};", nexodesk_i18n::json()))
+                .with_ipc_handler(move |request| {
+                    let _ = proxy.send_event(NetEvent::FileManager(request.body().clone()));
+                })
+                .build_as_child(&window)
+        })
+        .context("file manager WebView")?;
         self.ui = Some(Ui { window, webview, _context: context });
         Ok(())
     }
@@ -188,7 +191,11 @@ impl FileManager {
             message: String::new(),
         });
         if resume {
-            self.request_as(id, fs_request::Op::UploadOffset(FsUploadOffset { dir, name }), Pending::UploadOffset(id));
+            self.request_as(
+                id,
+                fs_request::Op::UploadOffset(FsUploadOffset { dir, name }),
+                Pending::UploadOffset(id),
+            );
         } else {
             self.start_upload(id, 0);
         }
@@ -210,7 +217,8 @@ impl FileManager {
         let id = self.next();
         let name = remote.rsplit(['\\', '/']).next().unwrap_or_default().to_string();
         let local = dir.join(&name);
-        let offset = if resume { std::fs::metadata(part_path(&local)).map(|m| m.len()).unwrap_or(0) } else { 0 };
+        let offset =
+            if resume { std::fs::metadata(part_path(&local)).map(|m| m.len()).unwrap_or(0) } else { 0 };
         info!("download {remote} to {} (from {offset})", local.display());
         self.transfers.push(Transfer {
             id,
@@ -226,7 +234,11 @@ impl FileManager {
         if let Some(link) = &self.link {
             link.downloads.lock().expect("downloads").insert(id, local);
         }
-        self.request_as(id, fs_request::Op::Download(FsDownload { path: remote, offset }), Pending::Download(id));
+        self.request_as(
+            id,
+            fs_request::Op::Download(FsDownload { path: remote, offset }),
+            Pending::Download(id),
+        );
         self.push_transfers();
     }
 
@@ -238,7 +250,9 @@ impl FileManager {
             Pending::List => {
                 let update = match error {
                     Some(error) => json!({ "remote": { "path": answer.path, "error": error } }),
-                    None => json!({ "remote": { "path": answer.path, "entries": entries_json(&answer.entries) } }),
+                    None => {
+                        json!({ "remote": { "path": answer.path, "entries": entries_json(&answer.entries) } })
+                    }
                 };
                 self.push(&update);
             }
@@ -316,7 +330,10 @@ impl FileManager {
 
 fn full(window: &Window) -> Rect {
     let size = window.inner_size().to_logical::<f64>(window.scale_factor());
-    Rect { position: LogicalPosition::new(0.0, 0.0).into(), size: LogicalSize::new(size.width, size.height).into() }
+    Rect {
+        position: LogicalPosition::new(0.0, 0.0).into(),
+        size: LogicalSize::new(size.width, size.height).into(),
+    }
 }
 
 fn entries_json(entries: &[FsEntry]) -> Value {
@@ -336,22 +353,35 @@ fn list_local(path: &str) -> Result<Value> {
             for name in ["Desktop", "Documents", "Downloads"] {
                 let p = home.join(name);
                 if p.is_dir() {
-                    entries.push(FsEntry { name: name.into(), path: p.to_string_lossy().into(), dir: true, ..Default::default() });
+                    entries.push(FsEntry {
+                        name: name.into(),
+                        path: p.to_string_lossy().into(),
+                        dir: true,
+                        ..Default::default()
+                    });
                 }
             }
         }
         for letter in b'A'..=b'Z' {
             let drive = format!("{}:\\", letter as char);
             if Path::new(&drive).exists() {
-                entries.push(FsEntry { name: drive.trim_end_matches('\\').into(), path: drive, dir: true, ..Default::default() });
+                entries.push(FsEntry {
+                    name: drive.trim_end_matches('\\').into(),
+                    path: drive,
+                    dir: true,
+                    ..Default::default()
+                });
             }
         }
         return Ok(entries_json(&entries));
     }
     for item in std::fs::read_dir(path).with_context(|| format!("reading {path}"))?.flatten() {
         let Ok(meta) = item.metadata() else { continue };
-        let modified =
-            meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs());
         entries.push(FsEntry {
             name: item.file_name().to_string_lossy().into_owned(),
             path: item.path().to_string_lossy().into_owned(),

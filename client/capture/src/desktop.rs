@@ -14,8 +14,8 @@ use std::cell::Cell;
 use tracing::debug;
 use windows::Win32::Foundation::{GENERIC_ALL, HANDLE};
 use windows::Win32::System::StationsAndDesktops::{
-    CloseDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, GetThreadDesktop, GetUserObjectInformationW, HDESK,
-    OpenInputDesktop, SetThreadDesktop, UOI_NAME,
+    CloseDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, GetThreadDesktop, GetUserObjectInformationW,
+    HDESK, OpenInputDesktop, SetThreadDesktop, UOI_NAME,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 
@@ -27,7 +27,9 @@ thread_local! {
 /// Moves the current thread to the desktop receiving input, if it changed.
 /// Returns the name of the new desktop when a switch happened.
 pub fn follow_input_desktop() -> Option<String> {
-    let input = match unsafe { OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(GENERIC_ALL.0)) } {
+    let input = match unsafe {
+        OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(GENERIC_ALL.0))
+    } {
         Ok(desk) => desk,
         Err(e) => {
             // Normal for a non-SYSTEM process while the secure desktop is active.

@@ -19,11 +19,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use nexodesk_i18n::{t, tf};
 use nexodesk_proto::v1::{
     Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, SecureAttention, input_event::Event,
 };
 use tokio::sync::mpsc::UnboundedSender;
-use nexodesk_i18n::{t, tf};
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
@@ -171,7 +171,11 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         },
         None => net::Target::Direct {
             addr: nexodesk_transport::resolve_addr(&args.agent, nexodesk_transport::DEFAULT_PORT)?,
-            fingerprint: args.fingerprint.as_deref().map(nexodesk_transport::parse_fingerprint).transpose()?,
+            fingerprint: args
+                .fingerprint
+                .as_deref()
+                .map(nexodesk_transport::parse_fingerprint)
+                .transpose()?,
         },
     };
     println!("{COPYRIGHT}");
@@ -417,7 +421,9 @@ impl App {
             Action::Quality(quality) => {
                 self.quality = quality;
                 info!("quality {quality:?}");
-                self.send_control(Msg::SetQuality(nexodesk_proto::v1::SetQuality { quality: quality as i32 }));
+                self.send_control(Msg::SetQuality(nexodesk_proto::v1::SetQuality {
+                    quality: quality as i32,
+                }));
             }
             Action::Chat => {
                 let open = !self.chat.as_ref().is_some_and(|c| c.visible());
@@ -578,7 +584,8 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.update(&format!("{{fileManager:{file_manager}}}"));
                 }
-                let (downloads, download_dir, uploads, upload_dir, resume) = std::mem::take(&mut self.cli_transfers);
+                let (downloads, download_dir, uploads, upload_dir, resume) =
+                    std::mem::take(&mut self.cli_transfers);
                 self.cli_started = !downloads.is_empty() || !uploads.is_empty();
                 for remote in downloads {
                     // The size comes with the data.
@@ -698,9 +705,15 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::FileDone { name, ok, message } => {
                 let text = if ok {
-                    tf("viewer.file_arrived", &[("name", &name), ("folder", &nexodesk_i18n::message(&message))])
+                    tf(
+                        "viewer.file_arrived",
+                        &[("name", &name), ("folder", &nexodesk_i18n::message(&message))],
+                    )
                 } else {
-                    tf("viewer.file_failed", &[("name", &name), ("reason", &nexodesk_i18n::message(&message))])
+                    tf(
+                        "viewer.file_failed",
+                        &[("name", &name), ("reason", &nexodesk_i18n::message(&message))],
+                    )
                 };
                 info!("{text}");
                 self.notice(&text, false);
