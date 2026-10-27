@@ -79,7 +79,7 @@ struct Args {
     server_ws: Option<String>,
 
     /// Password di sessione (con --server). Senza, ne viene generata una a ogni avvio.
-    #[arg(long)]
+    #[arg(long, env = "NEXODESK_PASSWORD", hide_env_values = true)]
     password: Option<String>,
 
     /// File con la chiave del dispositivo (predefinito: device.key nella cartella dati).
@@ -189,8 +189,13 @@ fn main() -> Result<()> {
         confirm: false,
         info_file: args.fingerprint_file.clone(),
     };
-    let password = args.password.clone().unwrap_or_else(nexodesk_agent::random_password);
-    let shared_password = Arc::new(Mutex::new(password.clone()));
+    // Una password scelta (es. quella permanente del servizio) non finisce nei log.
+    let shown = match &args.password {
+        Some(_) => "impostata".to_string(),
+        None => nexodesk_agent::random_password(),
+    };
+    let password = args.password.clone().unwrap_or_else(|| shown.clone());
+    let shared_password = Arc::new(Mutex::new(password));
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
     // Il canale dei comandi resta aperto (nessuno li invia): chiuderlo fermerebbe l'agent.
     let (_commands_tx, commands_rx) = mpsc::unbounded_channel();
@@ -199,7 +204,7 @@ fn main() -> Result<()> {
         tokio::spawn(async move {
             while let Some(event) = events_rx.recv().await {
                 if let AgentEvent::Online { device_id: id, .. } = event {
-                    info!("ID {} {} {}, password {password}", &id[..3], &id[3..6], &id[6..]);
+                    info!("ID {} {} {}, password {shown}", &id[..3], &id[3..6], &id[6..]);
                 }
             }
         });

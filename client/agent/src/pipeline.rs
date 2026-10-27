@@ -120,17 +120,25 @@ impl Drop for Pipeline {
 }
 
 fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
+    let mut failing = false;
     while !shared.stop.load(Ordering::Relaxed) {
         let frame = match capturer.next_frame(Duration::from_millis(100)) {
             Ok(Some(frame)) => frame,
             Ok(None) => continue,
             Err(e) => {
-                // Es. desktop sicuro o schermo bloccato: si riprova senza chiudere la sessione.
-                warn!("cattura non riuscita: {e:#}");
+                // Es. desktop sicuro senza nexodesk-service: si riprova senza chiudere la
+                // sessione, segnalandolo una volta sola.
+                if !failing {
+                    warn!("cattura non riuscita, riprovo ogni mezzo secondo: {e:#}");
+                    failing = true;
+                }
                 std::thread::sleep(Duration::from_millis(500));
                 continue;
             }
         };
+        if std::mem::take(&mut failing) {
+            info!("cattura ripresa");
+        }
         let mut data = shared.spare.lock().expect("spare").pop().unwrap_or_default();
         data.clear();
         data.extend_from_slice(&frame.data);

@@ -3032,6 +3032,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexodesk-service"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ring",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
 name = "nexodesk-transport"
 version = "0.0.1"
 dependencies = [

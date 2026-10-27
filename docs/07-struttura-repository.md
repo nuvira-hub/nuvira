@@ -12,7 +12,7 @@ NexoDesk/
 │  ├─ capture/             # Rust: cattura schermo per piattaforma
 │  ├─ codec/               # Rust: encoder/decoder HW e SW
 │  ├─ input/               # Rust: iniezione input per piattaforma
-│  ├─ service/             # Rust: servizio di sistema
+│  ├─ service/             # Rust: servizio di sistema (nexodesk-service, Windows)
 │  ├─ drivers/             # IddCx (Windows) per monitor virtuale
 │  ├─ viewer/              # Rust: finestra sessione nativa (wgpu + egui)
 │  └─ app/                 # Tauri v2: finestre di gestione

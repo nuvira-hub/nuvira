@@ -7,6 +7,8 @@
 
 use std::time::Duration;
 
+#[cfg(windows)]
+pub mod desktop;
 mod synthetic;
 #[cfg(windows)]
 mod windows;

@@ -1,0 +1,27 @@
+[package]
+name = "nexodesk-service"
+description = "NexoDesk: servizio di sistema per l'accesso non presidiato"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Services",
+    "Win32_System_Threading",
+]

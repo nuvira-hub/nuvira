@@ -15,3 +15,4 @@
 | 11 | [Protocollo](11-protocollo.md) | Bozza dei flussi di registrazione e connessione |
 | 12 | [Fase 0: prototipo](12-fase0-prototipo.md) | Come provarlo, stato e misure di latenza |
 | 13 | [Fase 1: server e rete](13-fase1-rete.md) | Server, registrazione, relay, connessione per ID |
+| 14 | [Fase 3: servizio di sistema](14-fase3-servizio.md) | Accesso non presidiato, UAC e schermata di blocco |

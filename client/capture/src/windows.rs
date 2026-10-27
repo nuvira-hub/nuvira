@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
 use windows::Win32::Graphics::Direct3D11::{
@@ -151,6 +151,10 @@ impl DxgiCapturer {
 
     fn duplicate(&mut self) -> Result<()> {
         self.duplication = None;
+        // Dopo un passaggio a UAC o schermata di blocco la duplicazione va creata sul nuovo desktop.
+        if let Some(name) = crate::desktop::follow_input_desktop() {
+            info!("cattura sul desktop {name}");
+        }
         let dup = unsafe { self.output.DuplicateOutput(&self.device) }
             .context("DuplicateOutput (schermo protetto o sessione non interattiva?)")?;
         let desc = unsafe { dup.GetDesc() };

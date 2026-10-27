@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use nexodesk_capture::{Capturer, SyntheticCapturer};
 use nexodesk_codec::{EncoderPlan, EncoderSettings};
 use nexodesk_proto::v1::{
@@ -575,7 +575,7 @@ async fn session(
 
     let input = async {
         let mut rx = FramedRecv::new(conn.accept_uni().await?);
-        let mut injector = if config.view_only || config.synthetic.is_some() {
+        let injector = if config.view_only || config.synthetic.is_some() {
             None
         } else {
             let screen = nexodesk_input::ScreenRect {
@@ -584,11 +584,11 @@ async fn session(
                 width: display.width,
                 height: display.height,
             };
-            Some(nexodesk_input::open(screen)?)
+            Some(input_thread(nexodesk_input::open(screen)?)?)
         };
         while let Some(event) = rx.recv::<InputEvent>().await? {
-            if let Some(injector) = injector.as_mut() {
-                injector.inject(&event)?;
+            if let Some(injector) = &injector {
+                injector.send(event).map_err(|_| anyhow!("thread dell'input terminato"))?;
             }
         }
         anyhow::Ok(())
@@ -601,6 +601,27 @@ async fn session(
     };
     let _ = tokio::task::spawn_blocking(move || drop(pipeline)).await;
     result
+}
+
+/// Inietta l'input su un thread dedicato, che può seguire il desktop attivo
+/// (UAC, schermata di blocco) senza toccare i thread di tokio. Chiudendo il
+/// canale il thread termina e rilascia i tasti ancora premuti.
+fn input_thread(
+    mut injector: Box<dyn nexodesk_input::InputInjector>,
+) -> Result<std::sync::mpsc::Sender<InputEvent>> {
+    let (tx, rx) = std::sync::mpsc::channel::<InputEvent>();
+    std::thread::Builder::new().name("input".into()).spawn(move || {
+        for event in rx {
+            #[cfg(windows)]
+            if let Some(name) = nexodesk_capture::desktop::follow_input_desktop() {
+                info!("input sul desktop {name}");
+            }
+            if let Err(e) = injector.inject(&event) {
+                warn!("input non iniettato: {e:#}");
+            }
+        }
+    })?;
+    Ok(tx)
 }
 
 fn control(msg: Msg) -> ControlMessage {
