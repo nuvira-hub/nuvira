@@ -22,8 +22,9 @@ struct Args {
     #[arg(long, default_value_t = nexodesk_transport::DEFAULT_PORT)]
     port: u16,
 
-    /// Screen to stream (see --list-displays). Default: the primary one.
-    #[arg(long)]
+    /// Screen to stream (see --list-displays), or "all" for all of them at once.
+    /// Default: the primary one.
+    #[arg(long, value_parser = parse_display)]
     display: Option<usize>,
 
     /// Lists the screens and exits.
@@ -145,6 +146,13 @@ fn ansi_colors() -> bool {
         && nu_ansi_term::enable_ansi_support().is_ok();
     #[cfg(not(windows))]
     std::io::IsTerminal::is_terminal(&std::io::stderr())
+}
+
+fn parse_display(text: &str) -> Result<usize, String> {
+    if text.eq_ignore_ascii_case("all") {
+        return Ok(nexodesk_capture::ALL_DISPLAYS);
+    }
+    text.parse().map_err(|_| format!("{text}: a screen number or \"all\""))
 }
 
 /// The agent's command line: `args` as from `std::env::args_os()` (program name first).

@@ -41,6 +41,8 @@ pub enum NetEvent {
     Displays {
         displays: Vec<DisplayInfo>,
         current: u32,
+        /// The agent can stream all the screens at once.
+        all_available: bool,
     },
     /// Progress of a file being sent.
     FileProgress {
@@ -375,7 +377,11 @@ async fn session(
                         let _ = proxy.send_event(NetEvent::Clock { rtt_us, offset_us });
                     }
                     Some(ControlMessage { msg: Some(Msg::Displays(d)) }) => {
-                        let _ = proxy.send_event(NetEvent::Displays { displays: d.displays, current: d.current });
+                        let _ = proxy.send_event(NetEvent::Displays {
+                            displays: d.displays,
+                            current: d.current,
+                            all_available: d.all_available,
+                        });
                     }
                     Some(ControlMessage { msg: Some(Msg::FileReceived(f)) }) => {
                         let _ = proxy.send_event(NetEvent::FileDone { name: f.name, ok: f.ok, message: f.message });

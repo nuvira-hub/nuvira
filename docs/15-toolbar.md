@@ -17,7 +17,7 @@ Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs`
 | Item | Function | Where it acts |
 |---|---|---|
 | Dot, name, fps and latency | Green: direct connection; orange: through the server's relay | viewer |
-| 1, 2, … | Screen to transmit (only if the agent has more than one) | agent: `SelectDisplay` |
+| 1, 2, …, All | Screen to transmit (only if the agent has more than one); "All" streams every screen at once, laid out as in the remote virtual desktop (gaps black). Composed in RAM: on the NUC two 1080p screens make 3840x1080 at ~19 fps with software encoding | agent: `SelectDisplay` (65535 = all) |
 | Quality | Balanced → Sharp → Smooth at each click | agent: `SetQuality` |
 | Ctrl+Alt+Del | Same as Ctrl+Alt+End (see [14-phase3-service.md](14-phase3-service.md)) | service |
 | Eye | View only: mouse and keyboard are not sent | viewer |

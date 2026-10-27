@@ -186,6 +186,8 @@
   "tb.close": "Terminar la sesión",
   "tb.display": "Pantalla {n} · {w}x{h}",
   "tb.display_primary": "Pantalla {n} · {w}x{h} · principal",
+  "tb.display_all": "Todas",
+  "tb.display_all_hint": "Todas las pantallas a la vez, colocadas como en el equipo remoto",
 
   "chatpanel.title": "Chat",
   "chatpanel.close": "Cerrar el chat",

@@ -609,9 +609,9 @@ impl ApplicationHandler<NetEvent> for App {
                 self.release_keys();
                 event_loop.exit();
             }
-            NetEvent::Displays { displays, current } => {
+            NetEvent::Displays { displays, current, all_available } => {
                 if let Some(toolbar) = &self.toolbar {
-                    toolbar.update(&toolbar::displays_state(&displays, current));
+                    toolbar.update(&toolbar::displays_state(&displays, current, all_available));
                 }
             }
             NetEvent::FilesPicked(paths) => {

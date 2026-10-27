@@ -179,6 +179,16 @@
             b.addEventListener("click", () => send("display:" + d.index));
             box.append(b);
           }
+          if (state.all) {
+            // All the screens at once, laid out as on the remote computer.
+            const ALL = 65535;
+            const b = document.createElement("button");
+            b.textContent = t("tb.display_all");
+            b.title = t("tb.display_all_hint");
+            b.classList.toggle("on", state.display === ALL);
+            b.addEventListener("click", () => send("display:" + ALL));
+            box.append(b);
+          }
         }
       }
       if ("chat" in state) document.getElementById("chat").classList.toggle("on", state.chat);

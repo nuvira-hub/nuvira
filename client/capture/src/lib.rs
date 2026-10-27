@@ -7,12 +7,14 @@
 
 use std::time::Duration;
 
+mod all;
 #[cfg(windows)]
 pub mod desktop;
 mod synthetic;
 #[cfg(windows)]
 mod windows;
 
+pub use all::{ALL_DISPLAYS, AllCapturer};
 pub use synthetic::SyntheticCapturer;
 
 /// A screen connected to the system.
@@ -67,10 +69,18 @@ pub fn displays() -> anyhow::Result<Vec<Display>> {
     anyhow::bail!("screen capture is not available on this system yet");
 }
 
-/// Opens capture of the given screen (the primary one if `None`).
+/// Opens capture of the given screen (the primary one if `None`, all of them with
+/// [`ALL_DISPLAYS`]).
 pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
     #[cfg(windows)]
-    return Ok(Box::new(windows::DxgiCapturer::new(index)?));
+    {
+        if index == Some(ALL_DISPLAYS) {
+            let screens = displays()?;
+            let open = |i| -> anyhow::Result<Box<dyn Capturer>> { Ok(Box::new(windows::DxgiCapturer::new(Some(i))?)) };
+            return Ok(Box::new(AllCapturer::new(open, &screens)?));
+        }
+        Ok(Box::new(windows::DxgiCapturer::new(index)?))
+    }
     #[cfg(not(windows))]
     {
         let _ = index;

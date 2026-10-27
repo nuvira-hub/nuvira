@@ -236,7 +236,7 @@ pub fn quality_name(quality: Quality) -> &'static str {
 }
 
 /// Screens state for `nexodesk.update`: the buttons appear only if there is more than one.
-pub fn displays_state(displays: &[DisplayInfo], current: u32) -> String {
+pub fn displays_state(displays: &[DisplayInfo], current: u32, all_available: bool) -> String {
     let items: Vec<String> = displays
         .iter()
         .map(|d| {
@@ -248,7 +248,7 @@ pub fn displays_state(displays: &[DisplayInfo], current: u32) -> String {
             format!("{{index:{},title:{}}}", d.index, js_string(&title))
         })
         .collect();
-    format!("{{displays:[{}],display:{current}}}", items.join(","))
+    format!("{{displays:[{}],display:{current},all:{all_available}}}", items.join(","))
 }
 
 /// JavaScript string with quotes and special characters escaped.

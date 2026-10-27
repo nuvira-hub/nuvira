@@ -42,6 +42,13 @@ impl SyntheticCapturer {
         }
     }
 
+    /// Place in the virtual desktop, as a screen (tests of the composed capture).
+    pub fn set_position(&mut self, left: i32, top: i32, index: usize) {
+        self.display.left = left;
+        self.display.top = top;
+        self.display.index = index;
+    }
+
     /// Colour of the static background at (x, y).
     fn background(x: usize, y: usize) -> [u8; 4] {
         [(x % 256) as u8, (y % 256) as u8, 96, 255]

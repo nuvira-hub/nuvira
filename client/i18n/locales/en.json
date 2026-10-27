@@ -186,6 +186,8 @@
   "tb.close": "End the session",
   "tb.display": "Screen {n} · {w}x{h}",
   "tb.display_primary": "Screen {n} · {w}x{h} · primary",
+  "tb.display_all": "All",
+  "tb.display_all_hint": "All the screens at once, as they are arranged on the remote computer",
 
   "chatpanel.title": "Chat",
   "chatpanel.close": "Close the chat",

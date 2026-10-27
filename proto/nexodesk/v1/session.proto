@@ -84,7 +84,10 @@ message Clipboard {
 // screens and the one being streamed.
 message Displays {
   repeated DisplayInfo displays = 1;
+  // Index of the screen streamed, or 65535 for all the screens at once.
   uint32 current = 2;
+  // The agent can stream all the screens at once (SelectDisplay 65535).
+  bool all_available = 3;
 }
 
 message DisplayInfo {

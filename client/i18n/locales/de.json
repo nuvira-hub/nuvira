@@ -186,6 +186,8 @@
   "tb.close": "Sitzung beenden",
   "tb.display": "Bildschirm {n} · {w}x{h}",
   "tb.display_primary": "Bildschirm {n} · {w}x{h} · Hauptbildschirm",
+  "tb.display_all": "Alle",
+  "tb.display_all_hint": "Alle Bildschirme gleichzeitig, angeordnet wie am entfernten Computer",
 
   "chatpanel.title": "Chat",
   "chatpanel.close": "Chat schließen",

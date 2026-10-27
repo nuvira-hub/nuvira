@@ -910,6 +910,7 @@ fn displays_message(config: &AgentConfig, current: &nexodesk_capture::Display) -
         return None;
     }
     let list = nexodesk_capture::displays().ok()?;
+    let all_available = list.len() > 1;
     let displays = list
         .into_iter()
         .map(|d| DisplayInfo {
@@ -920,7 +921,7 @@ fn displays_message(config: &AgentConfig, current: &nexodesk_capture::Display) -
             primary: d.primary,
         })
         .collect();
-    Some(control(Msg::Displays(Displays { displays, current: current.index as u32 })))
+    Some(control(Msg::Displays(Displays { displays, current: current.index as u32, all_available })))
 }
 
 fn screen_rect(display: &nexodesk_capture::Display) -> nexodesk_input::ScreenRect {
