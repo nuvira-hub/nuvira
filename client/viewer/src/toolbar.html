@@ -19,6 +19,8 @@
     --warn: #ffc56b;
   }
   * { box-sizing: border-box; }
+  /* The display rules below would otherwise override the hidden attribute. */
+  [hidden] { display: none !important; }
   html, body {
     margin: 0;
     height: 100%;
