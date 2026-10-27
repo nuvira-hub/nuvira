@@ -3029,7 +3029,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nexodesk-agent"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -3052,7 +3052,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-app"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "nexodesk-agent",
@@ -3077,7 +3077,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-capture"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "nexodesk-proto",
@@ -3087,7 +3087,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-clipboard"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3097,7 +3097,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-codec"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "openh264",
@@ -3109,7 +3109,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-i18n"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "serde_json",
  "windows",
@@ -3117,7 +3117,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-input"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "nexodesk-proto",
@@ -3127,7 +3127,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-proto"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "bytes",
  "prost",
@@ -3137,7 +3137,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-service"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -3153,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-transport"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -3173,7 +3173,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-update"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -3190,7 +3190,7 @@ dependencies = [
 
 [[package]]
 name = "nexodesk-viewer"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "bytemuck",

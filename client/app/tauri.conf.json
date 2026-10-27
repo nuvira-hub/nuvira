@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "NexoDesk",
-  "version": "0.0.1",
   "identifier": "io.github.alexbn71.nexodesk",
   "build": {
     "frontendDist": "ui"

@@ -131,6 +131,9 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
 
     // Reinstalling without --password keeps the one already set.
     let previous = ServiceConfig::load().ok();
+    // Shown only when generated here: whoever chose it knows it, and the output of an
+    // automatic update goes to a log, where passwords never go.
+    let generated = opts.password.is_none() && previous.is_none();
     let password = opts
         .password
         .or_else(|| previous.map(|c| c.password))
@@ -175,7 +178,8 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     println!("service installed and started");
     let id = wait_online(Duration::from_secs(30));
     match &id {
-        Some(id) => println!("ID {id}, password {password}"),
+        Some(id) if generated => println!("ID {id}, permanent password {password}"),
+        Some(id) => println!("ID {id}"),
         None => println!(
             "the agent has not registered on {} yet: check {}",
             service_config.server,
