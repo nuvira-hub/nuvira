@@ -22,6 +22,7 @@ use nexodesk_proto::v1::{
     Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, SecureAttention, input_event::Event,
 };
 use tokio::sync::mpsc::UnboundedSender;
+use nexodesk_i18n::{t, tf};
 use tracing::{debug, error, info};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
@@ -128,6 +129,8 @@ fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
+    // Language passed by the app (NEXODESK_LANG), else the system one.
+    nexodesk_i18n::init(None);
     let target = match &args.server {
         Some(server_name) => net::Target::Server {
             server: nexodesk_transport::resolve_addr(server_name, nexodesk_transport::signal::DEFAULT_PORT)?,
@@ -184,6 +187,7 @@ fn main() -> Result<()> {
         rtt_us: 0,
         pressed_keys: HashSet::new(),
         exit_reason: None,
+        closed_message: None,
     };
     event_loop.run_app(&mut app)?;
     // Chiudere il canale dell'input termina la sessione: si attende (poco) che la
@@ -197,6 +201,10 @@ fn main() -> Result<()> {
     }
     if let Some(reason) = &app.exit_reason {
         println!("{reason}");
+    }
+    // For the NexoDesk app, which shows it to the user (already translated).
+    if let Some(message) = &app.closed_message {
+        println!("@closed\t{message}");
     }
     if let Some(path) = &args.stats_file {
         app.report.exit_reason = app.exit_reason.clone();
@@ -251,6 +259,8 @@ struct App {
     rtt_us: u64,
     pressed_keys: HashSet<String>,
     exit_reason: Option<String>,
+    /// Why the session ended, for the user (translated); printed as `@closed` for the app.
+    closed_message: Option<String>,
 }
 
 impl App {
@@ -304,14 +314,17 @@ impl App {
         } else {
             "…".into()
         };
-        let title = format!(
-            "NexoDesk — {} · {:.0} fps · latenza {latency} · RTT {:.1} ms · {:.1} Mbit/s · comp. {:.1} ms · decomp. {:.1} ms",
-            self.agent,
-            s.fps(),
-            self.rtt_us as f64 / 1000.0,
-            s.mbps(),
-            s.encode_us as f64 / s.frames.max(1) as f64 / 1000.0,
-            s.decode_us as f64 / s.frames.max(1) as f64 / 1000.0,
+        let title = tf(
+            "viewer.title",
+            &[
+                ("agent", &self.agent),
+                ("fps", &format!("{:.0}", s.fps())),
+                ("latency", &latency),
+                ("rtt", &format!("{:.1}", self.rtt_us as f64 / 1000.0)),
+                ("mbps", &format!("{:.1}", s.mbps())),
+                ("enc", &format!("{:.1}", s.encode_us as f64 / s.frames.max(1) as f64 / 1000.0)),
+                ("dec", &format!("{:.1}", s.decode_us as f64 / s.frames.max(1) as f64 / 1000.0)),
+            ],
         );
         debug!("{title}");
         window.set_title(&title);
@@ -367,7 +380,7 @@ impl App {
                 // La finestra di scelta blocca il suo thread, non la sessione.
                 let proxy = self.proxy.clone();
                 std::thread::spawn(move || {
-                    let picked = rfd::FileDialog::new().set_title("Invia file al computer remoto").pick_files();
+                    let picked = rfd::FileDialog::new().set_title(t("viewer.file_dialog")).pick_files();
                     if let Some(paths) = picked {
                         let _ = proxy.send_event(NetEvent::FilesPicked(paths));
                     }
@@ -380,7 +393,7 @@ impl App {
             }
             Action::Close => {
                 self.release_keys();
-                self.exit_reason = Some("Sessione chiusa dall'utente".into());
+                self.exit_reason = Some("session closed by the user".into());
                 event_loop.exit();
                 return;
             }
@@ -430,7 +443,7 @@ impl ApplicationHandler<NetEvent> for App {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title(format!("NexoDesk — connessione a {}…", self.agent))
+            .with_title(tf("viewer.title_connecting", &[("agent", &self.agent)]))
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -552,7 +565,7 @@ impl ApplicationHandler<NetEvent> for App {
             NetEvent::TestFinished => {
                 info!("durata del test terminata");
                 self.report.completed = true;
-                self.exit_reason = Some("durata del test terminata".into());
+                self.exit_reason = Some("test duration over".into());
                 self.release_keys();
                 event_loop.exit();
             }
@@ -569,17 +582,17 @@ impl ApplicationHandler<NetEvent> for App {
             NetEvent::FileProgress { name, sent, total } => {
                 let percent = (sent * 100).checked_div(total).unwrap_or(100);
                 let text = if sent < total {
-                    format!("Invio «{name}» {percent}%")
+                    tf("viewer.file_sending", &[("name", &name), ("percent", &percent.to_string())])
                 } else {
-                    format!("«{name}» inviato, in attesa di conferma…")
+                    tf("viewer.file_sent_waiting", &[("name", &name)])
                 };
                 self.notice(&text, true);
             }
             NetEvent::FileDone { name, ok, message } => {
                 let text = if ok {
-                    format!("«{name}» arrivato nella cartella {message} del computer remoto")
+                    tf("viewer.file_arrived", &[("name", &name), ("folder", &nexodesk_i18n::message(&message))])
                 } else {
-                    format!("«{name}» non inviato: {message}")
+                    tf("viewer.file_failed", &[("name", &name), ("reason", &nexodesk_i18n::message(&message))])
                 };
                 info!("{text}");
                 self.notice(&text, false);
@@ -599,7 +612,8 @@ impl ApplicationHandler<NetEvent> for App {
             NetEvent::Toolbar(action) => self.handle_toolbar(event_loop, action),
             NetEvent::Disconnected(reason) => {
                 info!("disconnesso: {reason}");
-                self.exit_reason = Some(format!("Sessione chiusa: {reason}"));
+                self.exit_reason = Some(format!("disconnected: {reason}"));
+                self.closed_message = Some(tf("viewer.session_closed", &[("reason", &reason)]));
                 event_loop.exit();
             }
         }

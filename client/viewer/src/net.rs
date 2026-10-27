@@ -186,7 +186,7 @@ async fn open_connection(target: Target) -> Result<(nexodesk_transport::Connecti
             let route = loop {
                 match sig.rx.recv().await? {
                     Some(server_message::Msg::Route(r)) if r.role() == Role::Viewer => break r,
-                    Some(server_message::Msg::Error(e)) => bail!("{}", e.message),
+                    Some(server_message::Msg::Error(e)) => bail!("{}", nexodesk_i18n::message(&e.message)),
                     Some(_) => {}
                     None => bail!("nexodesk-server ha chiuso la connessione"),
                 }
@@ -236,11 +236,13 @@ async fn session(
         bail!("l'agent non si è presentato");
     };
     if agent.password_required {
-        let password = password.context("il dispositivo richiede la password (--password)")?;
+        let password = password.with_context(|| nexodesk_i18n::t("viewer.password_required"))?;
         ctrl_tx.send(&control(Msg::Auth(nexodesk_proto::v1::Auth { password }))).await?;
         match ctrl_rx.recv().await? {
             Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) if r.ok => {}
-            Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) => bail!("accesso negato: {}", r.message),
+            Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) => {
+                bail!("{}", nexodesk_i18n::tf("viewer.access_denied", &[("reason", &nexodesk_i18n::message(&r.message))]))
+            }
             _ => bail!("nessuna risposta alla password"),
         }
     }
@@ -391,7 +393,7 @@ async fn send_file(
 
     let name = file_name(path);
     if tokio::fs::metadata(path).await.is_ok_and(|m| m.is_dir()) {
-        bail!("le cartelle non si possono ancora inviare");
+        bail!("{}", nexodesk_i18n::t("viewer.folder_not_supported"));
     }
     let mut file = tokio::fs::File::open(path).await.with_context(|| format!("apertura di {}", path.display()))?;
     let total = file.metadata().await?.len();

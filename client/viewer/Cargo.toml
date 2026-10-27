@@ -16,6 +16,7 @@ bytemuck.workspace = true
 clap.workspace = true
 nexodesk-clipboard.workspace = true
 nexodesk-codec.workspace = true
+nexodesk-i18n.workspace = true
 nexodesk-proto.workspace = true
 nexodesk-transport.workspace = true
 pollster.workspace = true

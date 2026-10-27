@@ -35,6 +35,10 @@ use crate::pipeline::Pipeline;
 /// Bitrate minimo del controllo adattivo.
 const MIN_BITRATE: u32 = 500_000;
 
+/// Rejection reasons sent to the viewer are translation keys (`@key`, see
+/// nexodesk-i18n): the viewer shows them in its own language.
+const WRONG_PASSWORD: &str = "@agent.wrong_password";
+
 /// Tempo concesso a chi usa il PC per accettare una richiesta di collegamento.
 pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -328,7 +332,7 @@ async fn signal_loop(
                     if ctx.busy.load(Ordering::Relaxed) {
                         Some(client_message::Msg::Reject(Reject {
                             session_id: inc.session_id,
-                            reason: "dispositivo occupato in un'altra sessione".into(),
+                            reason: "@agent.busy".into(),
                         }))
                     } else {
                         // La conferma di chi usa il PC, se serve, arriva dopo la password.
@@ -476,7 +480,7 @@ impl Gate<'_> {
         }
         let temporary = ctx.password.lock().expect("password").clone();
         if !same_secret(given, &temporary) {
-            return Err("password errata".into());
+            return Err(WRONG_PASSWORD.into());
         }
         if !ctx.confirm {
             return self.started();
@@ -496,11 +500,11 @@ impl Gate<'_> {
             // Rifiutato da chi usa il PC, oppure nessuna app aperta per chiederglielo.
             Ok(Ok(false)) => {
                 info!("collegamento non accettato sul dispositivo");
-                Err("collegamento non accettato sul dispositivo".into())
+                Err("@agent.not_accepted".into())
             }
             _ => {
                 info!("nessuna risposta alla richiesta di collegamento: rifiutata");
-                Err("nessuna risposta dal dispositivo".into())
+                Err("@agent.no_answer".into())
             }
         }
     }
@@ -549,7 +553,7 @@ async fn session(
         if let Err(reason) = verdict {
             // Il motivo deve arrivare al viewer prima che la connessione si chiuda; con la
             // password errata la pausa è più lunga, contro i tentativi a raffica.
-            let pause = if reason == "password errata" { 2000 } else { 500 };
+            let pause = if reason == WRONG_PASSWORD { 2000 } else { 500 };
             tokio::time::sleep(Duration::from_millis(pause)).await;
             bail!("{reason}");
         }
@@ -766,7 +770,7 @@ async fn session(
                                     let path = path.display().to_string();
                                     let _ = events.send(AgentEvent::FileReceived { name: name.clone(), path });
                                 }
-                                nexodesk_proto::v1::FileReceived { name, ok: true, message: "Download".into() }
+                                nexodesk_proto::v1::FileReceived { name, ok: true, message: "@agent.downloads".into() }
                             }
                             Err((name, e)) => {
                                 warn!("file {name} non ricevuto: {e:#}");

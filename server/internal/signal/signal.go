@@ -161,7 +161,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	}
 	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly}
 	if reg.ProtocolVersion < ProtocolVersion {
-		_ = c.send(errorMsg("versione del protocollo non supportata, aggiornare NexoDesk", ""))
+		_ = c.send(errorMsg("@server.old_version", ""))
 		return nil, fmt.Errorf("protocollo %d", reg.ProtocolVersion)
 	}
 
@@ -238,11 +238,11 @@ func (s *Server) connect(viewer *client, target string) {
 	s.mu.Unlock()
 
 	if agent == nil {
-		_ = viewer.send(errorMsg("dispositivo "+target+" non raggiungibile", ""))
+		_ = viewer.send(errorMsg("@server.unreachable", ""))
 		return
 	}
 	if p == nil {
-		_ = viewer.send(errorMsg("non ci si può collegare a se stessi", ""))
+		_ = viewer.send(errorMsg("@server.self_connect", ""))
 		return
 	}
 	s.log.Info("richiesta di collegamento", "sessione", p.id, "da", viewer.device.ID, "a", target)
@@ -254,7 +254,7 @@ func (s *Server) connect(viewer *client, target string) {
 	}}})
 	if err != nil {
 		s.dropSession(p.id)
-		_ = viewer.send(errorMsg("dispositivo "+target+" non raggiungibile", p.id))
+		_ = viewer.send(errorMsg("@server.unreachable", p.id))
 	}
 }
 
@@ -296,7 +296,7 @@ func (s *Server) accept(agent *client, id string) {
 		}}}
 	}
 	if err := agent.send(route(pb.Role_ROLE_AGENT, p.viewer.device)); err != nil {
-		_ = p.viewer.send(errorMsg("il dispositivo si è scollegato", id))
+		_ = p.viewer.send(errorMsg("@server.peer_left", id))
 		return
 	}
 	if err := p.viewer.send(route(pb.Role_ROLE_VIEWER, agent.device)); err != nil {
@@ -311,7 +311,7 @@ func (s *Server) reject(agent *client, id, reason string) {
 		return
 	}
 	if reason == "" {
-		reason = "collegamento rifiutato"
+		reason = "@agent.rejected"
 	}
 	_ = p.viewer.send(errorMsg(reason, id))
 	s.log.Info("sessione rifiutata", "sessione", id, "motivo", reason)
@@ -335,7 +335,7 @@ func (s *Server) expireLoop(ctx context.Context) {
 			}
 			s.mu.Unlock()
 			for _, p := range expired {
-				_ = p.viewer.send(errorMsg("nessuna risposta dal dispositivo", p.id))
+				_ = p.viewer.send(errorMsg("@agent.no_answer", p.id))
 			}
 		}
 	}

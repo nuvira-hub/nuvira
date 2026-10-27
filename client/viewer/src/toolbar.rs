@@ -190,6 +190,8 @@ fn child_webview(
         .with_background_color((0x1f, 0x25, 0x2b, 0xff))
         .with_bounds(bounds)
         .with_visible(visible)
+        // Strings in the session's language, available to the page before it runs.
+        .with_initialization_script(format!("window.I18N = {};", nexodesk_i18n::json()))
         .with_ipc_handler(move |request| {
             if let Some(action) = Action::parse(request.body()) {
                 let _ = proxy.send_event(NetEvent::Toolbar(action));
@@ -235,12 +237,10 @@ pub fn displays_state(displays: &[DisplayInfo], current: u32) -> String {
     let items: Vec<String> = displays
         .iter()
         .map(|d| {
-            let title = format!(
-                "Schermo {} · {}x{}{}",
-                d.index + 1,
-                d.width,
-                d.height,
-                if d.primary { " · principale" } else { "" }
+            let key = if d.primary { "tb.display_primary" } else { "tb.display" };
+            let title = nexodesk_i18n::tf(
+                key,
+                &[("n", &(d.index + 1).to_string()), ("w", &d.width.to_string()), ("h", &d.height.to_string())],
             );
             format!("{{index:{},title:{}}}", d.index, js_string(&title))
         })

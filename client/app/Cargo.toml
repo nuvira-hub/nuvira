@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 anyhow.workspace = true
 nexodesk-agent = { path = "../agent" }
 nexodesk-codec.workspace = true
+nexodesk-i18n.workspace = true
 nexodesk-input.workspace = true
 nexodesk-proto.workspace = true
 nexodesk-transport.workspace = true

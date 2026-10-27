@@ -100,7 +100,10 @@ fn downloads_dir() -> Result<PathBuf> {
     let user_token = match unsafe { WTSQueryUserToken(crate::ipc::current_session(), &mut token) } {
         Ok(()) => Some(token),
         Err(e) if e.code() == ERROR_PRIVILEGE_NOT_HELD.to_hresult() => None,
-        Err(e) => bail!("nessun utente collegato al PC a cui consegnare il file ({e})"),
+        Err(e) => {
+            tracing::warn!("no user token for the session: {e}");
+            bail!("@agent.no_user")
+        }
     };
     let path = unsafe { SHGetKnownFolderPath(&FOLDERID_Downloads, KF_FLAG_DEFAULT, user_token) };
     if let Some(token) = user_token {

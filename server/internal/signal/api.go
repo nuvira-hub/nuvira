@@ -23,7 +23,7 @@ func (s *Server) api(c *client, req *pb.ApiRequest) {
 
 func (s *Server) apiCall(c *client, req *pb.ApiRequest, resp *pb.ApiResponse) error {
 	if s.accounts == nil {
-		return errors.New("rubrica non disponibile su questo server")
+		return errors.New("@server.no_rubrica")
 	}
 	switch call := req.Call.(type) {
 	case *pb.ApiRequest_Login:
@@ -48,7 +48,7 @@ func (s *Server) apiCall(c *client, req *pb.ApiRequest, resp *pb.ApiResponse) er
 
 	account, token := c.currentSession()
 	if account == nil {
-		return errors.New("accesso alla rubrica necessario")
+		return errors.New("@err.login_required")
 	}
 	switch call := req.Call.(type) {
 	case *pb.ApiRequest_Logout:

@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::mpsc;
+use nexodesk_i18n::{t, tf};
 use tracing::{info, warn};
 
 const SOURCE_URL: &str = "https://github.com/alexbn71/NexoDesk";
@@ -82,6 +83,9 @@ struct Settings {
     /// Accesso ricordato alla rubrica (gettone del server, non la password).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     token: Option<String>,
+    /// Interface language ("auto" or a code from `nexodesk_i18n::LANGUAGES`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
 }
 
 fn settings_path() -> PathBuf {
@@ -91,7 +95,8 @@ fn settings_path() -> PathBuf {
 fn load_settings() -> Settings {
     std::fs::read_to_string(settings_path())
         .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+        // Editors such as Notepad (and PowerShell 5) may add a UTF-8 byte order mark.
+        .and_then(|s| serde_json::from_str(s.trim_start_matches('\u{feff}')).ok())
         .unwrap_or_default()
 }
 
@@ -264,14 +269,14 @@ fn start_service_link(app: &AppHandle) {
                         ui.status = "connecting".into();
                         ui.incoming = None;
                         ui.session = None;
-                        ui.error = Some("Collegamento con il servizio NexoDesk perso, riprovo…".into());
+                        ui.error = Some("@status.service_lost".into());
                     });
                 }
                 Err(e) => {
                     tracing::debug!("agent del servizio non raggiungibile: {e:#}");
                     state.update(&app, |ui| {
                         ui.status = "connecting".into();
-                        ui.error = Some("In attesa del servizio NexoDesk…".into());
+                        ui.error = Some("@status.service_waiting".into());
                     });
                 }
             }
@@ -318,7 +323,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
         }),
         AgentEvent::FileReceived { name, path } => {
             info!("file ricevuto: {path}");
-            let text = format!("Hai ricevuto il file «{name}» nella cartella Download");
+            let text = tf("chat.file_received", &[("name", &name)]);
             state.update(app, |ui| ui.chat.push(ChatLine { mine: false, system: true, text }));
             bring_to_front(app);
         }
@@ -345,7 +350,7 @@ fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(
     let server = server.trim().to_string();
     if !server.is_empty() {
         nexodesk_transport::resolve_addr(&server, nexodesk_transport::signal::DEFAULT_PORT)
-            .map_err(|e| format!("indirizzo non valido: {e}"))?;
+            .map_err(|e| tf("err.invalid_address", &[("e", &e.to_string())]))?;
     }
     let mut settings = load_settings();
     let changed = settings.server != server;
@@ -413,29 +418,31 @@ fn connect_entry(app: AppHandle, state: State<NexoApp>, id: i64) -> Result<(), S
         .flat_map(|b| &b.entries)
         .find(|e| e.id == id)
         .cloned()
-        .ok_or("scheda non trovata")?;
+        .ok_or_else(|| t("err.entry_not_found"))?;
     launch_viewer(&app, &state, entry.device_id, entry.password)
 }
 
 fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: String) -> Result<(), String> {
     let device_id: String = device_id.chars().filter(|c| c.is_ascii_digit()).collect();
     if device_id.len() != 9 {
-        return Err("l'ID è di 9 cifre".into());
+        return Err(t("err.id_digits"));
     }
     let server = state.ui.lock().expect("stato").server.clone();
     if server.is_empty() {
-        return Err("imposta prima il server".into());
+        return Err(t("err.set_server_first"));
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let viewer = exe.with_file_name(if cfg!(windows) { "nexodesk-viewer.exe" } else { "nexodesk-viewer" });
     if !viewer.exists() {
-        return Err(format!("{} non trovato", viewer.display()));
+        return Err(tf("err.viewer_missing", &[("path", &viewer.display().to_string())]));
     }
     // La password passa nell'ambiente del processo, non sulla riga di comando
     // (che altri programmi dello stesso PC possono leggere).
     let mut child = std::process::Command::new(&viewer)
         .args(["--server", &server, &device_id])
         .env("NEXODESK_PASSWORD", &password)
+        // The session window uses the app's language.
+        .env("NEXODESK_LANG", nexodesk_i18n::lang())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -443,42 +450,83 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
     info!("sessione verso {device_id} avviata");
     state.update(app, |ui| ui.viewer_message = None);
 
-    // Il viewer segnala la sessione partita: è il momento dell'aggiunta automatica in rubrica.
-    if let Some(stdout) = child.stdout.take() {
-        let app = app.clone();
+    // The viewer reports on its standard output: session started (time for the
+    // address book's automatic add) and, at the end, why it closed.
+    let closed_reason = std::sync::Arc::new(Mutex::new(None::<String>));
+    let reader = child.stdout.take().map(|stdout| {
+        let (app, closed_reason) = (app.clone(), closed_reason.clone());
         std::thread::spawn(move || {
             use std::io::BufRead;
             for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
                 if let Some(name) = line.strip_prefix("@connected\t") {
                     rubrica::auto_add(&app, device_id.clone(), name.to_string(), password.clone());
+                } else if let Some(reason) = line.strip_prefix("@closed\t") {
+                    // Already translated by the viewer.
+                    *closed_reason.lock().expect("reason") = Some(reason.to_string());
                 }
             }
-        });
-    }
+        })
+    });
     let app = app.clone();
 
-    // Se il viewer termina con un errore, il motivo (ultima riga) arriva nell'interfaccia.
+    // When the viewer exits with an error, the reason reaches the interface.
     std::thread::spawn(move || {
         let mut stderr = String::new();
         if let Some(mut err) = child.stderr.take() {
             let _ = std::io::Read::read_to_string(&mut err, &mut stderr);
         }
         let status = child.wait();
-        let reason = stderr
-            .lines()
-            .rev()
-            .find(|l| l.contains("Sessione chiusa") || l.contains("ERROR") || l.contains("Error"))
-            .map(|l| l.trim().to_string());
+        if let Some(reader) = reader {
+            let _ = reader.join();
+        }
         let failed = !matches!(status, Ok(s) if s.success());
+        let reason = closed_reason.lock().expect("reason").take();
         let message = match (failed, reason) {
             (_, Some(r)) => Some(r),
-            (true, None) => Some("la sessione si è chiusa con un errore".into()),
+            (true, None) => {
+                info!("viewer error output: {}", stderr.trim());
+                Some(t("err.session_error"))
+            }
             _ => None,
         };
         let state = app.state::<NexoApp>();
         state.update(&app, |ui| ui.viewer_message = message);
     });
     Ok(())
+}
+
+
+/// Strings for the interface in the current language.
+#[derive(Serialize)]
+struct I18nUi {
+    lang: &'static str,
+    /// "auto" or the chosen code.
+    preference: String,
+    languages: Vec<(&'static str, &'static str)>,
+    strings: serde_json::Value,
+}
+
+fn i18n_ui() -> I18nUi {
+    I18nUi {
+        lang: nexodesk_i18n::lang(),
+        preference: load_settings().language.unwrap_or_else(|| "auto".into()),
+        languages: nexodesk_i18n::LANGUAGES.to_vec(),
+        strings: serde_json::from_str(&nexodesk_i18n::json()).unwrap_or_default(),
+    }
+}
+
+#[tauri::command]
+fn i18n() -> I18nUi {
+    i18n_ui()
+}
+
+#[tauri::command]
+fn set_language(language: String) -> Result<I18nUi, String> {
+    let mut settings = load_settings();
+    settings.language = (language != "auto").then_some(language);
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    nexodesk_i18n::init(settings.language.as_deref());
+    Ok(i18n_ui())
 }
 
 #[tauri::command]
@@ -506,6 +554,7 @@ fn main() {
     init_logging();
     nexodesk_input::set_dpi_awareness();
     let settings = load_settings();
+    nexodesk_i18n::init(settings.language.as_deref());
     let password = nexodesk_agent::random_password();
     let state = NexoApp {
         ui: Mutex::new(UiState {
@@ -544,7 +593,9 @@ fn main() {
             rubrica::rubrica_delete_book,
             end_session,
             connect,
-            open_source
+            open_source,
+            i18n,
+            set_language
         ])
         .setup(|app| {
             start_agent(app.handle());

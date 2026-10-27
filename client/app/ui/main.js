@@ -1,24 +1,55 @@
-// Interfaccia di NexoDesk: riceve lo stato dal processo Rust (evento "state")
-// e invia i comandi con invoke. Le sezioni si scelgono dalla barra a sinistra;
-// rubrica e amministrazione sono in rubrica.js.
+// NexoDesk user interface: receives the state from the Rust process ("state"
+// event) and sends commands with invoke. Sections are picked from the rail on the
+// left; address book and administration live in rubrica.js. Texts come from the
+// nexodesk-i18n strings: t() for keys, msg() for "@key" messages from other programs.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
 
-const STATUS_TEXT = {
-  setup: "Imposta il server NexoDesk nelle Impostazioni",
-  connecting: "Collegamento al server…",
-  online: "Pronto: raggiungibile con questo ID",
-  offline: "Non collegato al server",
-};
-
+let strings = {};
 let current = null;
 let section = "connect";
 let countdownTimer = null;
 let firstRender = true;
 let chatSeen = 0;
+
+function t(key, vars = {}) {
+  let text = strings[key] ?? key;
+  for (const [name, value] of Object.entries(vars)) text = text.replaceAll(`{${name}}`, value);
+  return text;
+}
+
+// A message from another program: "@key" is translated, anything else is shown as is.
+function msg(text) {
+  return typeof text === "string" && text.startsWith("@") && strings[text.slice(1)] ? t(text.slice(1)) : text;
+}
+
+function applyStrings() {
+  for (const node of document.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll("[data-i18n-placeholder]")) node.placeholder = t(node.dataset.i18nPlaceholder);
+  for (const node of document.querySelectorAll("[data-i18n-title]")) {
+    node.title = t(node.dataset.i18nTitle);
+    node.setAttribute("aria-label", node.title);
+  }
+  for (const node of document.querySelectorAll("[data-i18n-label]")) node.setAttribute("aria-label", t(node.dataset.i18nLabel));
+}
+
+function useStrings(info) {
+  strings = info.strings;
+  document.documentElement.lang = info.lang;
+  const select = $("language");
+  const auto = new Option(t("settings.language_auto"), "auto");
+  select.replaceChildren(auto, ...info.languages.map(([code, name]) => new Option(name, code)));
+  select.value = info.preference;
+  applyStrings();
+  if (current) render(current);
+}
+
+$("language").addEventListener("change", async (e) => {
+  useStrings(await invoke("set_language", { language: e.target.value }));
+});
 
 function formatId(id) {
   return id ? `${id.slice(0, 3)} ${id.slice(3, 6)} ${id.slice(6)}` : "— — —";
@@ -39,18 +70,27 @@ for (const nav of document.querySelectorAll(".nav")) {
   nav.addEventListener("click", () => showSection(nav.dataset.section));
 }
 
+function statusText(state) {
+  // With the service, the reason is shown until its agent answers.
+  if (state.service && state.status === "connecting" && state.error) return msg(state.error);
+  switch (state.status) {
+    case "online":
+      return t(state.websocket ? "status.online_ws" : "status.online");
+    case "offline":
+      return state.error ? t("status.offline_reason", { reason: msg(state.error) }) : t("status.offline");
+    default:
+      return t(`status.${state.status}`);
+  }
+}
+
 function render(state) {
   current = state;
-  let text = STATUS_TEXT[state.status] ?? state.status;
-  if (state.status === "online" && state.websocket) text += " (via WebSocket)";
-  if (state.status === "offline" && state.error) text += `: ${state.error}`;
-  // Con il servizio, finché il suo agent non risponde si mostra il motivo.
-  if (state.service && state.status === "connecting" && state.error) text = state.error;
+  const text = statusText(state);
   $("status-dot").className = `dot ${state.status}`;
   $("rail-status").title = text;
   $("status-text").textContent = text;
   $("service-note").classList.toggle("hidden", !state.service);
-  $("password-label").textContent = state.service ? "Password temporanea" : "Password";
+  $("password-label").textContent = t(state.service ? "connect.temp_password" : "connect.password");
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password || "—";
   if (document.activeElement !== $("server")) $("server").value = state.server;
@@ -61,16 +101,17 @@ function render(state) {
   $("session-strip").classList.toggle("hidden", !session);
   if (session) {
     const who = session.viewer_name || formatId(session.viewer_id);
-    $("session-text").textContent = `${who} sta controllando questo computer · ${session.direct ? "connessione diretta" : "attraverso il server"}`;
+    const path = t(session.direct ? "session.direct" : "session.relay");
+    $("session-text").textContent = t("session.strip", { who, path });
   }
 
-  const msg = state.viewer_message;
-  $("connect-message").classList.toggle("hidden", !msg);
-  $("connect-message").textContent = msg ?? "";
+  const message = state.viewer_message;
+  $("connect-message").classList.toggle("hidden", !message);
+  $("connect-message").textContent = msg(message) ?? "";
 
   renderChat(state);
   renderIncoming(state.incoming);
-  // Definita in rubrica.js, caricato dopo questo file.
+  // Defined in rubrica.js, loaded after this file.
   if (typeof renderRubrica === "function") renderRubrica(state);
 }
 
@@ -79,7 +120,7 @@ function renderChat(state) {
   $("nav-chat").classList.toggle("hidden", !available);
   if (!available && section === "chat") showSection("connect");
   $("chat-form").classList.toggle("hidden", !state.session);
-  // Sessione nuova: la chat ricomincia da capo.
+  // New session: the chat starts over.
   if (state.chat.length < chatSeen) chatSeen = 0;
   const log = $("chat-log");
   if (log.childElementCount === state.chat.length) return;
@@ -92,7 +133,7 @@ function renderChat(state) {
     }),
   );
   log.scrollTop = log.scrollHeight;
-  // Messaggio in arrivo durante la sessione: si apre la chat, pronta per rispondere.
+  // Incoming message during a session: the chat opens, ready for an answer.
   const last = state.chat[state.chat.length - 1];
   if (last && !last.mine && state.chat.length > chatSeen) {
     if (state.session && !last.system && document.activeElement?.tagName !== "INPUT") {
@@ -108,11 +149,11 @@ function renderIncoming(incoming) {
   $("incoming").classList.toggle("hidden", !incoming);
   clearInterval(countdownTimer);
   if (!incoming) return;
-  $("incoming-name").textContent = incoming.viewer_name || "Un dispositivo";
-  $("incoming-id").textContent = `(ID ${formatId(incoming.viewer_id)})`;
+  $("incoming-name").textContent = incoming.viewer_name || t("incoming.unknown");
+  $("incoming-id").textContent = t("incoming.id", { id: formatId(incoming.viewer_id) });
   const tick = () => {
     const left = Math.max(0, Math.round((incoming.deadline_ms - Date.now()) / 1000));
-    $("incoming-countdown").textContent = `Rifiutata automaticamente tra ${left} s`;
+    $("incoming-countdown").textContent = t("incoming.countdown", { s: left });
   };
   tick();
   countdownTimer = setInterval(tick, 500);
@@ -130,10 +171,14 @@ async function copy(text, button) {
   try {
     await navigator.clipboard.writeText(text);
     button.classList.add("done");
-    button.title = "Copiato";
-    setTimeout(() => button.classList.remove("done"), 1200);
+    const title = button.title;
+    button.title = t("connect.copied");
+    setTimeout(() => {
+      button.classList.remove("done");
+      button.title = title;
+    }, 1200);
   } catch {
-    // Appunti non disponibili: niente da fare.
+    // Clipboard not available: nothing to do.
   }
 }
 
@@ -150,10 +195,6 @@ for (const id of ["source", "source-button"]) {
     invoke("open_source");
   });
 }
-window.__TAURI__.app
-  ?.getVersion()
-  .then((v) => ($("app-version").textContent = `Versione ${v}`))
-  .catch(() => {});
 
 $("server-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -161,7 +202,7 @@ $("server-form").addEventListener("submit", async (e) => {
   try {
     await invoke("set_server", { server: $("server").value });
   } catch (err) {
-    $("server-message").textContent = String(err);
+    $("server-message").textContent = msg(String(err));
     $("server-message").classList.remove("hidden");
   }
 });
@@ -171,7 +212,7 @@ $("connect-form").addEventListener("submit", async (e) => {
   const message = $("connect-message");
   message.classList.add("hidden");
   const password = $("remote-password").value;
-  // Scheda scelta dai suggerimenti (rubrica.js): senza password scritta si usa quella salvata.
+  // Entry picked from the suggestions (rubrica.js): without a typed password, the saved one is used.
   const entry = typeof chosenEntry === "function" ? chosenEntry() : null;
   try {
     if (entry && !password) {
@@ -181,7 +222,7 @@ $("connect-form").addEventListener("submit", async (e) => {
     }
     $("remote-password").value = "";
   } catch (err) {
-    message.textContent = String(err);
+    message.textContent = msg(String(err));
     message.classList.remove("hidden");
   }
 });
@@ -198,5 +239,14 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && current?.incoming) respond(false);
 });
 
-listen("state", (event) => render(event.payload));
-invoke("get_state").then(render);
+(async () => {
+  useStrings(await invoke("i18n"));
+  window.__TAURI__.app
+    ?.getVersion()
+    .then((v) => {
+      $("app-version").textContent = t("about.version", { v });
+    })
+    .catch(() => {});
+  listen("state", (event) => render(event.payload));
+  render(await invoke("get_state"));
+})();

@@ -3057,6 +3057,7 @@ dependencies = [
  "anyhow",
  "nexodesk-agent",
  "nexodesk-codec",
+ "nexodesk-i18n",
  "nexodesk-input",
  "nexodesk-proto",
  "nexodesk-transport",
@@ -3099,6 +3100,14 @@ dependencies = [
  "openh264-sys2",
  "tracing",
  "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
+name = "nexodesk-i18n"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
  "windows",
 ]
 
@@ -3165,6 +3174,7 @@ dependencies = [
  "clap",
  "nexodesk-clipboard",
  "nexodesk-codec",
+ "nexodesk-i18n",
  "nexodesk-proto",
  "nexodesk-transport",
  "nu-ansi-term",

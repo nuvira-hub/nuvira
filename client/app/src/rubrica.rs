@@ -7,6 +7,7 @@
 use nexodesk_proto::v1::{self as pb, api_request::Call, api_response::Result as ApiResult};
 use nexodesk_transport::api::ApiClient;
 use serde::{Deserialize, Serialize};
+use nexodesk_i18n::{t, tf};
 use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
 
@@ -111,16 +112,16 @@ async fn client(app: &AppHandle) -> Result<ApiClient, String> {
     if let Some(client) = guard.as_ref().filter(|c| !c.is_closed()) {
         return Ok(client.clone());
     }
-    let token = load_settings().token.ok_or("accesso alla rubrica necessario")?;
+    let token = load_settings().token.ok_or_else(|| t("err.login_required"))?;
     let client = open(app).await?;
     match client.call(Call::LoginToken(pb::LoginToken { token })).await {
         Ok(Some(ApiResult::Session(session))) => set_account(app, session.account),
-        Ok(_) => return Err("risposta inattesa del server".into()),
+        Ok(_) => return Err(t("err.unexpected")),
         Err(e) => {
             // Gettone scaduto o revocato: si torna al riquadro di accesso.
             warn!("accesso ricordato non valido: {e:#}");
             forget(app);
-            return Err("accesso scaduto: entra di nuovo nella rubrica".into());
+            return Err(t("err.session_expired"));
         }
     }
     *guard = Some(client.clone());
@@ -131,7 +132,7 @@ async fn client(app: &AppHandle) -> Result<ApiClient, String> {
 async fn open(app: &AppHandle) -> Result<ApiClient, String> {
     let server_name = app.state::<NexoApp>().ui.lock().expect("stato").server.clone();
     if server_name.is_empty() {
-        return Err("imposta prima il server".into());
+        return Err(t("err.set_server_first"));
     }
     let server = nexodesk_transport::resolve_addr(&server_name, nexodesk_transport::signal::DEFAULT_PORT)
         .map_err(|e| format!("{e:#}"))?;
@@ -142,7 +143,7 @@ async fn open(app: &AppHandle) -> Result<ApiClient, String> {
     let name = std::env::var("COMPUTERNAME").unwrap_or_default();
     ApiClient::connect(&server_name, server, &ws_url, Default::default(), &identity, &name)
         .await
-        .map_err(|e| format!("collegamento al server: {e:#}"))
+        .map_err(|e| tf("err.server_connect", &[("e", &nexodesk_i18n::message(&format!("{e:#}")))]))
 }
 
 /// Richiesta con una nuova connessione se quella aperta è caduta nel frattempo.
@@ -190,7 +191,7 @@ pub fn restore(app: &AppHandle) {
 
 pub async fn refresh(app: &AppHandle) -> Result<(), String> {
     let Some(ApiResult::Books(books)) = call(app, Call::GetBooks(pb::GetBooks {})).await? else {
-        return Err("risposta inattesa del server".into());
+        return Err(t("err.unexpected"));
     };
     let books = books
         .books
@@ -239,7 +240,7 @@ pub async fn rubrica_login(app: AppHandle, username: String, password: String) -
         .await
         .map_err(|e| format!("{e:#}"))?
     else {
-        return Err("risposta inattesa del server".into());
+        return Err(t("err.unexpected"));
     };
     let mut settings = load_settings();
     settings.token = Some(session.token.clone());
@@ -289,7 +290,7 @@ pub async fn rubrica_change_password(app: AppHandle, old: String, new: String) -
 pub async fn rubrica_accounts(app: AppHandle) -> Result<Vec<AccountUi>, String> {
     match call(&app, Call::ListAccounts(pb::ListAccounts {})).await? {
         Some(ApiResult::Accounts(list)) => Ok(list.accounts.into_iter().map(Into::into).collect()),
-        _ => Err("risposta inattesa del server".into()),
+        _ => Err(t("err.unexpected")),
     }
 }
 

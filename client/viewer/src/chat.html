@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <style>
@@ -50,17 +50,24 @@
 </head>
 <body>
 <header>
-  <span>Chat</span>
-  <button id="close" title="Chiudi la chat">
+  <span data-i18n="chatpanel.title">Chat</span>
+  <button id="close" data-i18n-title="chatpanel.close">
     <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
   </button>
 </header>
-<div id="log"><span id="empty">Scrivi a chi usa il computer remoto: vedrà il messaggio nell'app NexoDesk.</span></div>
+<div id="log"><span id="empty" data-i18n="chatpanel.empty">Write to the person at the remote computer: they will see the message in the NexoDesk app.</span></div>
 <form id="form">
-  <input id="text" autocomplete="off" placeholder="Scrivi un messaggio">
-  <button type="submit">Invia</button>
+  <input id="text" autocomplete="off" data-i18n-placeholder="chatpanel.placeholder" placeholder="Write a message">
+  <button type="submit" data-i18n="chatpanel.send">Send</button>
 </form>
 <script>
+  // Strings injected by the viewer before the page loads (window.I18N).
+  const STRINGS = window.I18N || {};
+  const t = (key) => STRINGS[key] || key;
+  for (const node of document.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
+  for (const node of document.querySelectorAll("[data-i18n-placeholder]")) node.placeholder = t(node.dataset.i18nPlaceholder);
+
   const send = (msg) => window.ipc.postMessage(msg);
   document.getElementById("close").addEventListener("click", () => send("chat"));
   document.getElementById("form").addEventListener("submit", (e) => {
@@ -72,7 +79,7 @@
     send("chat:" + text);
   });
 
-  // Chiamata dal viewer.
+  // Called by the viewer.
   window.nexodesk = {
     add(line) {
       document.getElementById("empty")?.remove();

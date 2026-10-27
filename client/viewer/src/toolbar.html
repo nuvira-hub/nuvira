@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <style>
-  /* Sempre scura: sta sopra lo schermo remoto, qualunque colore abbia. */
+  /* Always dark: it sits on top of the remote screen, whatever its colours. */
   :root {
     --bar: #1f252b;
     --hover: #323a42;
@@ -56,70 +56,77 @@
 </head>
 <body>
 <div class="bar">
-  <div class="info" title="">
+  <div class="info" id="info">
     <span class="dot" id="dot"></span>
-    <span class="name" id="name">Connessione…</span>
+    <span class="name" id="name" data-i18n="tb.connecting">Connecting…</span>
     <span class="stats" id="stats"></span>
   </div>
   <div class="displays" id="displays"></div>
   <div class="sep" id="displays-sep" hidden></div>
-  <button id="quality" title="">
+  <button id="quality">
     <svg viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
-    <span id="quality-label">Bilanciata</span>
+    <span id="quality-label"></span>
   </button>
   <div class="sep"></div>
-  <button id="sendfile" title="Invia file al computer remoto (anche trascinandoli sulla finestra)">
+  <button id="sendfile" data-i18n-title="tb.send_file">
     <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
   </button>
-  <button id="chat" title="Chat con chi usa il computer remoto">
+  <button id="chat" data-i18n-title="tb.chat">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
   </button>
-  <button id="sas" title="Invia Ctrl+Alt+Canc (anche Ctrl+Alt+Fine)">
+  <button id="sas" data-i18n-title="tb.sas">
     <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
-    Ctrl+Alt+Canc
+    <span data-i18n="tb.sas_label">Ctrl+Alt+Del</span>
   </button>
-  <button id="viewonly" title="Solo visualizzazione: mouse e tastiera non vengono inviati">
+  <button id="viewonly" data-i18n-title="tb.view_only">
     <svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
   </button>
-  <button id="fullscreen" title="Schermo intero">
+  <button id="fullscreen" data-i18n-title="tb.fullscreen">
     <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
   </button>
-  <button id="collapse" title="Riduci la barra">
+  <button id="collapse" data-i18n-title="tb.collapse">
     <svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>
   </button>
   <div class="sep"></div>
-  <button id="close" class="close" title="Chiudi la sessione">
+  <button id="close" class="close" data-i18n-title="tb.close">
     <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
   </button>
 </div>
-<button class="tab" id="expand" title="Mostra la barra">
+<button class="tab" id="expand" data-i18n-title="tb.expand">
   <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
 </button>
 <script>
+  // Strings injected by the viewer before the page loads (window.I18N).
+  const STRINGS = window.I18N || {};
+  const t = (key) => STRINGS[key] || key;
+  for (const node of document.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
+
   const send = (action) => window.ipc.postMessage(action);
   for (const id of ["sendfile", "chat", "sas", "viewonly", "fullscreen", "collapse", "expand", "close"]) {
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
-  // Qualità: un clic passa alla successiva.
-  const QUALITIES = [
-    ["balanced", "Bilanciata", "Bilanciata: nitidezza e fluidità secondo la rete"],
-    ["sharp", "Nitida", "Nitida: testo più definito, al più 30 fotogrammi al secondo"],
-    ["fast", "Fluida", "Fluida: meno banda, per reti lente"],
-  ];
+  // Quality: each click moves to the next one.
+  const QUALITIES = ["balanced", "sharp", "fast"];
   let quality = "balanced";
   let stats = "";
   let noticeTimer = null;
   document.getElementById("quality").addEventListener("click", () => {
-    const i = QUALITIES.findIndex(([id]) => id === quality);
-    send("quality:" + QUALITIES[(i + 1) % QUALITIES.length][0]);
+    const i = QUALITIES.indexOf(quality);
+    send("quality:" + QUALITIES[(i + 1) % QUALITIES.length]);
   });
+  function showQuality() {
+    document.getElementById("quality-label").textContent = t(`tb.quality_${quality}`);
+    document.getElementById("quality").title = `${t(`tb.quality_${quality}_hint`)} ${t("tb.click_to_change")}`;
+  }
+  showQuality();
 
-  // Chiamata dal viewer con lo stato aggiornato.
+  // Called by the viewer with the updated state.
   window.nexodesk = {
     update(state) {
       if ("name" in state) document.getElementById("name").textContent = state.name;
-      // Un avviso (es. invio file) prende per qualche secondo il posto delle statistiche.
+      // A notice (e.g. a file being sent) takes the place of the statistics for a few seconds.
       if ("stats" in state) {
         stats = state.stats;
         if (!noticeTimer) document.getElementById("stats").textContent = stats;
@@ -133,21 +140,18 @@
         }, state.sticky ? 60000 : 6000);
       }
       if ("path" in state) {
-        const dot = document.getElementById("dot");
-        dot.className = "dot " + state.path;
-        dot.parentElement.title = { direct: "Collegamento diretto", relay: "Collegamento tramite il server" }[state.path] || "";
+        document.getElementById("dot").className = "dot " + state.path;
+        document.getElementById("info").title = t(state.path === "direct" ? "tb.direct" : "tb.relay");
       }
       if ("viewOnly" in state) document.getElementById("viewonly").classList.toggle("on", state.viewOnly);
       if ("fullscreen" in state) {
         const b = document.getElementById("fullscreen");
         b.classList.toggle("on", state.fullscreen);
-        b.title = state.fullscreen ? "Esci dallo schermo intero" : "Schermo intero";
+        b.title = t(state.fullscreen ? "tb.exit_fullscreen" : "tb.fullscreen");
       }
       if ("quality" in state) {
         quality = state.quality;
-        const [, label, title] = QUALITIES.find(([id]) => id === quality) || QUALITIES[0];
-        document.getElementById("quality-label").textContent = label;
-        document.getElementById("quality").title = title + " (clic per cambiare)";
+        showQuality();
       }
       if ("displays" in state) {
         const box = document.getElementById("displays");

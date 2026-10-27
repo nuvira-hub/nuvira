@@ -1,5 +1,5 @@
-/* NexoDesk: barra di icone a sinistra, area di lavoro che cambia con la sezione.
-   Chiaro o scuro come Windows; accento azzurro petrolio del logo. */
+/* NexoDesk: icon rail on the left, work area that changes with the section.
+   Light or dark like Windows; accent is the petrol blue of the logo. */
 
 :root {
   --bg: #f4f6f8;
@@ -56,7 +56,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .mono { font-family: Consolas, "Cascadia Mono", monospace; }
 .hidden { display: none !important; }
 
-/* --- barra di navigazione --- */
+/* --- navigation rail --- */
 
 .rail {
   background: var(--rail);
@@ -87,7 +87,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .dot.connecting { background: var(--warn); }
 .dot.offline, .dot.setup { background: var(--danger); }
 
-/* --- area di lavoro --- */
+/* --- work area --- */
 
 .content { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
 main { flex: 1; overflow-y: auto; padding: 26px 32px 18px; }
@@ -104,7 +104,7 @@ p { margin: 0 0 8px; }
 .label { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .message { margin: 8px 0 0; font-size: 13px; color: var(--danger); }
 
-/* fascia della sessione in corso */
+/* strip of the session in progress */
 .strip {
   display: flex; align-items: center; gap: 10px;
   background: var(--accent); color: var(--accent-text);
@@ -114,7 +114,7 @@ p { margin: 0 0 8px; }
 button.on-accent { background: transparent; color: var(--accent-text); border-color: var(--accent-text); padding: 4px 12px; }
 button.on-accent.strong { background: var(--accent-text); color: var(--accent); }
 
-/* --- controlli --- */
+/* --- controls --- */
 
 input, select, textarea {
   font: inherit; padding: 8px 11px; border-radius: 8px;
@@ -142,7 +142,7 @@ button.danger { color: var(--danger); border-color: var(--danger); background: t
 .stack { display: flex; flex-direction: column; gap: 8px; max-width: 420px; }
 label.check { display: inline-flex; align-items: center; gap: 6px; }
 
-/* --- Connessione --- */
+/* --- Connection --- */
 
 .this-pc {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 28px;
@@ -176,7 +176,7 @@ label.check { display: inline-flex; align-items: center; gap: 6px; }
 .suggestion span { font-size: 12px; color: var(--muted); }
 .suggestion:hover, .suggestion.selected { background: var(--accent-soft); }
 
-/* --- Rubrica --- */
+/* --- Address book --- */
 
 .tools { display: flex; align-items: center; gap: 8px; }
 .tools input { width: 260px; }
@@ -212,7 +212,7 @@ label.check { display: inline-flex; align-items: center; gap: 6px; }
 .chat-form { display: flex; gap: 8px; margin-top: 10px; }
 .chat-form input { flex: 1; }
 
-/* --- Amministrazione --- */
+/* --- Administration --- */
 
 .list { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 4px 6px; margin-bottom: 10px; }
 .list .row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-bottom: 1px solid var(--border); }
@@ -224,13 +224,13 @@ label.check { display: inline-flex; align-items: center; gap: 6px; }
 .book-form { display: flex; flex-direction: column; gap: 8px; }
 .members { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 
-/* --- Informazioni --- */
+/* --- About --- */
 
 .about { max-width: 480px; margin: 30px auto 0; text-align: center; }
 .about-logo { width: 72px; height: 72px; margin-bottom: 10px; }
 .about h1 { margin-bottom: 4px; }
 
-/* --- finestre di dialogo --- */
+/* --- dialogs --- */
 
 .overlay {
   position: fixed; inset: 0; background: rgba(0, 0, 0, .45);
@@ -247,7 +247,7 @@ label.check { display: inline-flex; align-items: center; gap: 6px; }
 .grid label input, .grid label select, .grid label textarea { font-size: 14px; color: var(--text); }
 .grid .full { grid-column: 1 / -1; }
 
-/* finestra stretta */
+/* narrow window */
 @media (max-width: 640px) {
   main { padding: 18px 16px; }
   .this-pc { grid-template-columns: 1fr; }
