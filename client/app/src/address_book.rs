@@ -168,13 +168,15 @@ async fn open(app: &AppHandle) -> Result<ApiClient, String> {
 /// Request with a new connection if the open one dropped in the meantime.
 async fn call(app: &AppHandle, call: Call) -> Result<Option<ApiResult>, String> {
     let first = client(app).await?;
-    match first.call(call.clone()).await {
-        Err(_) if first.is_closed() => {
-            let retry = client(app).await?;
-            retry.call(call).await.map_err(|e| format!("{e:#}"))
-        }
-        result => result.map_err(|e| format!("{e:#}")),
-    }
+    let result = match first.call(call.clone()).await {
+        Err(_) if first.is_closed() => client(app).await?.call(call).await,
+        result => result,
+    };
+    result.map_err(|e| {
+        let text = format!("{e:#}");
+        // A server older than the app does not know the request.
+        if text.ends_with("unknown request") { t("err.server_too_old") } else { text }
+    })
 }
 
 fn set_account(app: &AppHandle, account: Option<pb::Account>) {

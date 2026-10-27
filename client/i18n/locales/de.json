@@ -165,6 +165,7 @@
   "err.session_error": "Die Sitzung wurde mit einem Fehler beendet",
   "err.login_required": "Melden Sie sich zuerst beim Adressbuch an",
   "err.unexpected": "Unerwartete Antwort des Servers",
+  "err.server_too_old": "Der Server ist älter als diese App und kennt diese Funktion nicht: Aktualisieren Sie den Server.",
   "err.session_expired": "Anmeldung abgelaufen: Melden Sie sich erneut beim Adressbuch an",
   "err.server_connect": "Verbindung zum Server: {e}",
 

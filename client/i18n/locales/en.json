@@ -165,6 +165,7 @@
   "err.session_error": "The session ended with an error",
   "err.login_required": "Sign in to the address book first",
   "err.unexpected": "Unexpected response from the server",
+  "err.server_too_old": "The server is older than this app and does not know this function: update the server.",
   "err.session_expired": "Sign-in expired: sign in to the address book again",
   "err.server_connect": "Connecting to the server: {e}",
 

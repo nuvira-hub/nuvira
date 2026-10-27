@@ -165,6 +165,7 @@
   "err.session_error": "La session s'est terminée par une erreur",
   "err.login_required": "Connectez-vous d'abord au carnet d'adresses",
   "err.unexpected": "Réponse inattendue du serveur",
+  "err.server_too_old": "Le serveur est plus ancien que cette application et ne connaît pas cette fonction : mettez le serveur à jour.",
   "err.session_expired": "Session expirée : reconnectez-vous au carnet d'adresses",
   "err.server_connect": "Connexion au serveur : {e}",
 

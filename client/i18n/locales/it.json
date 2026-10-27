@@ -165,6 +165,7 @@
   "err.session_error": "La sessione si è chiusa con un errore",
   "err.login_required": "Entra prima nella rubrica",
   "err.unexpected": "Risposta inattesa del server",
+  "err.server_too_old": "Il server è più vecchio di questa app e non conosce questa funzione: aggiorna il server.",
   "err.session_expired": "Accesso scaduto: entra di nuovo nella rubrica",
   "err.server_connect": "Collegamento al server: {e}",
 
