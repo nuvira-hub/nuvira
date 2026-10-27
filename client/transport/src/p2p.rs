@@ -1,9 +1,9 @@
-//! Collegamento tra due dispositivi passando dal relay di nexodesk-server.
+//! Connection between two devices, directly or through nexodesk-server's relay.
 //!
-//! Ciascun lato apre un socket UDP per la sessione, lo aggancia al relay con il
-//! gettone ricevuto dal server (RelayBind) e poi ci fa girare QUIC. Il TLS è
-//! end-to-end tra i dispositivi: ognuno presenta il certificato firmato con la
-//! propria chiave e verifica che quello dell'altro usi la chiave comunicata dal server.
+//! Each side opens a UDP socket for the session, binds it to the relay with the
+//! token received from the server (RelayBind) and then runs QUIC on it. TLS is
+//! end-to-end between the devices: each presents the certificate signed with its
+//! own key and checks that the other's uses the key announced by the server.
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
@@ -22,18 +22,18 @@ use tracing::debug;
 use crate::identity::{Identity, PublicKey};
 use crate::{ALPN, provider, transport_config};
 
-/// Ruolo nel relay (stessi valori di `nexodesk.v1.Role`).
+/// Role in the relay (same values as `nexodesk.v1.Role`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Viewer = 1,
     Agent = 2,
 }
 
-/// Percorso di una sessione ricevuto dal server.
+/// Route of a session received from the server.
 #[derive(Debug, Clone)]
 pub struct Route {
     pub relay: SocketAddr,
-    /// Come si raggiunge il relay (lo stesso trasporto della segnalazione).
+    /// How the relay is reached (the same transport as signalling).
     pub transport: crate::ServerTransport,
     pub token: [u8; 16],
     pub peer_public_key: PublicKey,
@@ -44,8 +44,8 @@ const RELAY_MAGIC: [u8; 4] = [0x00, b'N', b'X', b'R'];
 const RELAY_BIND: u8 = 0x01;
 const RELAY_BOUND: u8 = 0x02;
 
-/// Aggancia `socket` al relay e attende che anche l'altro lato sia collegato.
-/// Restituisce l'indirizzo dell'altro lato come lo vede il relay (per la via diretta).
+/// Binds `socket` to the relay and waits until the other side is bound too.
+/// Returns the other side's address as the relay sees it (for the direct path).
 fn bind_message(route: &Route, locals: &[SocketAddr]) -> Vec<u8> {
     let mut bind = Vec::with_capacity(64);
     bind.extend_from_slice(&RELAY_MAGIC);
@@ -59,13 +59,13 @@ fn bind_message(route: &Route, locals: &[SocketAddr]) -> Vec<u8> {
     bind
 }
 
-/// Risposta del relay al bind per questo gettone: `Some(true)` se anche l'altro lato è agganciato.
+/// Relay answer to the bind for this token: `Some(true)` if the other side is bound too.
 fn bound_state(data: &[u8], token: &[u8; 16]) -> Option<bool> {
     (data.len() >= 22 && data[..5] == [0, b'N', b'X', b'R', RELAY_BOUND] && data[5..21] == token[..])
         .then(|| data[21] == 1)
 }
 
-/// Aggancio al relay attraverso il tunnel WebSocket (niente via diretta).
+/// Binding to the relay through the WebSocket tunnel (no direct path).
 async fn bind_relay_ws(socket: &crate::ws::WsSocket, route: &Route) -> Result<()> {
     let bind = bind_message(route, &[]);
     for _ in 0..60 {
@@ -79,19 +79,19 @@ async fn bind_relay_ws(socket: &crate::ws::WsSocket, route: &Route) -> Result<()
             }
         }
     }
-    bail!("l'altro dispositivo non si è agganciato al relay")
+    bail!("the other device did not bind to the relay")
 }
 
 fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Result<Candidates> {
     let bind = bind_message(route, locals);
 
     socket.set_read_timeout(Some(Duration::from_millis(250)))?;
-    // Grande quanto un datagramma QUIC: se l'altro lato è già partito, i suoi pacchetti
-    // arrivano qui prima della fine dell'aggancio (e su Windows un buffer piccolo
-    // non tronca, ma fa fallire recv_from con WSAEMSGSIZE).
+    // As large as a QUIC datagram: if the other side has already started, its packets
+    // arrive here before binding is over (and on Windows a small buffer does not
+    // truncate, it makes recv_from fail with WSAEMSGSIZE).
     let mut buf = [0u8; 2048];
     let mut acked = false;
-    // ~15 s: l'altro lato può arrivare qualche secondo dopo.
+    // ~15 s: the other side may arrive a few seconds later.
     for _ in 0..60 {
         socket.send_to(&bind, route.relay)?;
         loop {
@@ -102,7 +102,7 @@ fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Resul
                         return Ok(parse_candidates(&buf[22..n]));
                     }
                     Some(false) if !acked => {
-                        debug!("agganciato al relay, in attesa dell'altro lato");
+                        debug!("bound to the relay, waiting for the other side");
                         acked = true;
                     }
                     _ => {}
@@ -118,23 +118,23 @@ fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Resul
         }
     }
     if acked {
-        bail!("l'altro dispositivo non si è agganciato al relay")
+        bail!("the other device did not bind to the relay")
     } else {
-        bail!("il relay {} non risponde", route.relay)
+        bail!("the relay {} does not answer", route.relay)
     }
 }
 
-/// Indirizzi da cui provare a raggiungere direttamente l'altro lato.
+/// Addresses to try to reach the other side directly.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Candidates {
-    /// Come lo vede il relay, attraverso gli eventuali NAT.
+    /// As the relay sees it, through any NATs.
     reflexive: Option<SocketAddr>,
-    /// Indirizzi nella sua rete locale (utili se si è dietro lo stesso router).
+    /// Addresses in its local network (useful when behind the same router).
     locals: Vec<SocketAddr>,
 }
 
 impl Candidates {
-    /// Tutti gli indirizzi, prima i locali (in LAN sono i più veloci), senza doppioni.
+    /// All addresses, local ones first (on a LAN they are the fastest), without duplicates.
     fn all(&self) -> Vec<SocketAddr> {
         let mut all = self.locals.clone();
         all.extend(self.reflexive);
@@ -149,8 +149,8 @@ impl Candidates {
     }
 }
 
-/// Indirizzo nel formato del relay: famiglia (4/6) | IP | porta big endian.
-/// Restituisce l'indirizzo e i byte che seguono.
+/// Address in the relay's format: family (4/6) | IP | big-endian port.
+/// Returns the address and the bytes that follow.
 fn parse_addr(b: &[u8]) -> Option<(SocketAddr, &[u8])> {
     let (ip, rest): (std::net::IpAddr, &[u8]) = match b.first()? {
         4 if b.len() >= 7 => (<[u8; 4]>::try_from(&b[1..5]).ok()?.into(), &b[5..]),
@@ -174,7 +174,7 @@ fn push_addr(out: &mut Vec<u8>, addr: SocketAddr) {
     out.extend_from_slice(&addr.port().to_be_bytes());
 }
 
-/// Risposta "pronto" del relay: indirizzo visto dal relay, poi n indirizzi locali.
+/// "Ready" answer of the relay: address seen by the relay, then n local addresses.
 fn parse_candidates(b: &[u8]) -> Candidates {
     let Some((reflexive, mut rest)) = parse_addr(b) else { return Candidates::default() };
     let mut locals = Vec::new();
@@ -189,12 +189,12 @@ fn parse_candidates(b: &[u8]) -> Candidates {
     Candidates { reflexive: Some(reflexive), locals }
 }
 
-/// Indirizzo locale con cui questo PC raggiunge il relay (l'interfaccia di rete
-/// principale), con la porta del socket della sessione.
+/// Local address this PC uses to reach the relay (the main network interface),
+/// with the port of the session socket.
 fn local_candidates(relay: SocketAddr, port: u16) -> Vec<SocketAddr> {
     let probe_bind: SocketAddr =
         if relay.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse().expect("indirizzo");
-    // connect su UDP non invia nulla: chiede solo al sistema quale interfaccia userebbe.
+    // connect on UDP sends nothing: it only asks the system which interface it would use.
     let ip = UdpSocket::bind(probe_bind).and_then(|s| s.connect(relay).and_then(|()| s.local_addr()));
     match ip {
         Ok(addr) if !addr.ip().is_unspecified() => vec![SocketAddr::new(addr.ip(), port)],
@@ -202,9 +202,9 @@ fn local_candidates(relay: SocketAddr, port: u16) -> Vec<SocketAddr> {
     }
 }
 
-/// Pacchetti di apertura verso l'altro lato: aprono la mappatura del NAT e lo stato
-/// del firewall locale, così i pacchetti QUIC diretti dell'altro lato possono entrare.
-/// QUIC li scarta (primo byte senza il bit 0x40).
+/// Opening packets towards the other side: they open the NAT mapping and the local
+/// firewall state, so the other side's direct QUIC packets can get in.
+/// QUIC drops them (first byte without the 0x40 bit).
 fn punch(socket: &UdpSocket, peer: SocketAddr, token: &[u8; 16]) {
     let mut packet = vec![0x00, b'N', b'X', b'P'];
     packet.extend_from_slice(token);
@@ -214,8 +214,7 @@ fn punch(socket: &UdpSocket, peer: SocketAddr, token: &[u8; 16]) {
     }
 }
 
-/// Socket della sessione: agganciato al relay e con la via diretta già aperta verso l'altro lato.
-/// Endpoint QUIC della sessione, agganciato al relay, e indirizzi diretti dell'altro lato.
+/// Session QUIC endpoint, bound to the relay, and the other side's direct addresses.
 async fn session_endpoint(
     route: &Route,
     server_config: Option<ServerConfig>,
@@ -249,7 +248,7 @@ async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
     tokio::task::spawn_blocking(move || {
         let locals = local_candidates(route.relay, socket.local_addr()?.port());
         let candidates = bind_relay(&socket, &route, &locals)?;
-        debug!(?candidates, "indirizzi dell'altro lato");
+        debug!(?candidates, "addresses of the other side");
         let peers: Vec<SocketAddr> = candidates.all().into_iter().filter(|a| *a != route.relay).collect();
         for peer in &peers {
             punch(&socket, *peer, &route.token);
@@ -260,8 +259,8 @@ async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
     .await?
 }
 
-/// Lato agent: endpoint QUIC che accetta solo il viewer atteso, sia attraverso il
-/// relay sia in diretta.
+/// Agent side: QUIC endpoint accepting only the expected viewer, both through the
+/// relay and directly.
 pub async fn agent_endpoint(identity: &Identity, route: &Route) -> Result<Endpoint> {
     let (certs, key) = identity.tls_cert();
     let verifier = PeerKey { expected: route.peer_public_key, provider: provider() };
@@ -275,17 +274,17 @@ pub async fn agent_endpoint(identity: &Identity, route: &Route) -> Result<Endpoi
     Ok(session_endpoint(route, Some(config)).await?.0)
 }
 
-/// Come è stata raggiunta l'altra parte.
+/// How the other side was reached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Path {
     Direct,
     Relay,
 }
 
-/// Quanto attendere la via diretta dopo che il relay è già pronto.
+/// How long to wait for the direct path once the relay is ready.
 const DIRECT_GRACE: Duration = Duration::from_millis(1500);
 
-/// Lato viewer: prova insieme la via diretta e il relay e preferisce la diretta.
+/// Viewer side: tries the direct path and the relay together and prefers the direct one.
 pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Connection, Path)> {
     let (certs, key) = identity.tls_cert();
     let verifier = PeerKey { expected: route.peer_public_key, provider: provider() };
@@ -301,9 +300,9 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     endpoint.set_default_client_config(config);
 
     let mut relay = Box::pin(endpoint.connect(route.relay, "nexodesk-device")?);
-    // NEXODESK_FORCE_RELAY=1: solo relay, per misurarne il costo nei test.
+    // NEXODESK_FORCE_RELAY=1: relay only, to measure its cost in tests.
     let force_relay = std::env::var_os("NEXODESK_FORCE_RELAY").is_some();
-    // Tentativi diretti verso tutti gli indirizzi dell'altro lato, in parallelo.
+    // Direct attempts towards all the other side's addresses, in parallel.
     let mut direct = tokio::task::JoinSet::new();
     if !force_relay {
         for peer in peers {
@@ -312,40 +311,40 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
         }
     }
 
-    // Vince la prima connessione diretta; il relay serve solo se nessuna diretta
-    // riesce entro DIRECT_GRACE dal momento in cui il relay è pronto.
+    // The first direct connection wins; the relay is used only if no direct one
+    // succeeds within DIRECT_GRACE of the relay being ready.
     let mut relayed: Option<Result<Connection>> = None;
     let mut deadline = None;
     let chosen = loop {
         tokio::select! {
             Some(r) = direct.join_next(), if !direct.is_empty() => match r {
                 Ok(Ok(conn)) => break (conn, Path::Direct),
-                Ok(Err((peer, e))) => debug!(%peer, "via diretta non riuscita: {e}"),
-                Err(e) => debug!("tentativo diretto interrotto: {e}"),
+                Ok(Err((peer, e))) => debug!(%peer, "direct path failed: {e}"),
+                Err(e) => debug!("direct attempt interrupted: {e}"),
             },
             r = &mut relay, if relayed.is_none() => {
-                relayed = Some(r.context("collegamento attraverso il relay"));
+                relayed = Some(r.context("connecting through the relay"));
                 deadline = Some(tokio::time::Instant::now() + DIRECT_GRACE);
             }
             _ = tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)), if deadline.is_some() => {
-                break (relayed.take().expect("relay pronto")?, Path::Relay);
+                break (relayed.take().expect("relay ready")?, Path::Relay);
             }
         }
-        // Tutti i tentativi diretti falliti e relay pronto: inutile aspettare.
+        // All direct attempts failed and the relay is ready: no point waiting.
         if direct.is_empty() && relayed.is_some() {
-            break (relayed.take().expect("relay pronto")?, Path::Relay);
+            break (relayed.take().expect("relay ready")?, Path::Relay);
         }
     };
     let (conn, path) = chosen;
-    // Gli altri tentativi si chiudono: l'agent usa la connessione su cui si apre la sessione.
+    // The other attempts are closed: the agent uses the connection the session opens on.
     direct.abort_all();
     match relayed {
-        Some(Ok(c)) if path == Path::Direct => c.close(0u32.into(), b"percorso diretto"),
+        Some(Ok(c)) if path == Path::Direct => c.close(0u32.into(), b"direct path"),
         Some(_) => {}
         None if path == Path::Direct => {
             tokio::spawn(async move {
                 if let Ok(c) = relay.await {
-                    c.close(0u32.into(), b"percorso diretto");
+                    c.close(0u32.into(), b"direct path");
                 }
             });
         }
@@ -355,9 +354,9 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     Ok((conn, path))
 }
 
-/// Il certificato usa questa chiave pubblica Ed25519?
+/// Does the certificate use this Ed25519 public key?
 pub fn cert_has_key(cert: &CertificateDer<'_>, key: &PublicKey) -> bool {
-    // SubjectPublicKeyInfo DER di una chiave Ed25519 (RFC 8410): prefisso fisso + 32 byte.
+    // DER SubjectPublicKeyInfo of an Ed25519 key (RFC 8410): fixed prefix + 32 bytes.
     const ED25519_SPKI_PREFIX: [u8; 12] =
         [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00];
     let Ok(parsed) = webpki::EndEntityCert::try_from(cert) else { return false };
@@ -365,9 +364,9 @@ pub fn cert_has_key(cert: &CertificateDer<'_>, key: &PublicKey) -> bool {
     spki.as_ref().len() == 44 && spki.as_ref()[..12] == ED25519_SPKI_PREFIX && spki.as_ref()[12..] == key[..]
 }
 
-/// Verifica che il certificato dell'altro dispositivo usi la chiave attesa.
-/// La firma dell'handshake (verify_tls13_signature) dimostra poi che l'altro
-/// possiede la chiave privata.
+/// Checks that the other device's certificate uses the expected key.
+/// The handshake signature (verify_tls13_signature) then proves that the other
+/// side holds the private key.
 #[derive(Debug)]
 struct PeerKey {
     expected: PublicKey,
@@ -379,7 +378,7 @@ impl PeerKey {
         if cert_has_key(cert, &self.expected) {
             Ok(())
         } else {
-            Err(rustls::Error::General("il dispositivo non ha la chiave indicata dal server".into()))
+            Err(rustls::Error::General("the device does not have the key given by the server".into()))
         }
     }
 
@@ -416,7 +415,7 @@ impl ServerCertVerifier for PeerKey {
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Err(rustls::Error::General("TLS 1.2 non supportato".into()))
+        Err(rustls::Error::General("TLS 1.2 not supported".into()))
     }
 
     fn verify_tls13_signature(
@@ -453,7 +452,7 @@ impl ClientCertVerifier for PeerKey {
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Err(rustls::Error::General("TLS 1.2 non supportato".into()))
+        Err(rustls::Error::General("TLS 1.2 not supported".into()))
     }
 
     fn verify_tls13_signature(
@@ -486,7 +485,7 @@ mod tests {
         let c = parse_candidates(&wire);
         assert_eq!(c.reflexive, Some(a));
         assert_eq!(c.locals, vec![b, a]);
-        // Locali prima, senza doppioni.
+        // Local ones first, without duplicates.
         assert_eq!(c.all(), vec![b, a]);
         assert_eq!(parse_addr(&[4, 1, 2]), None);
         assert_eq!(parse_candidates(&[]), Candidates::default());

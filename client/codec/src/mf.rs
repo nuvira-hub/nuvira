@@ -1,13 +1,13 @@
-//! H.264 con l'encoder hardware della scheda video tramite Media Foundation
-//! (Intel Quick Sync, NVIDIA NVENC, AMD AMF: ognuno registra il proprio MFT).
+//! H.264 with the graphics card's hardware encoder through Media Foundation
+//! (Intel Quick Sync, NVIDIA NVENC, AMD AMF: each registers its own MFT).
 //!
-//! Gli MFT hardware sono asincroni: segnalano con eventi quando accettano un
-//! input (`METransformNeedInput`) e quando hanno un output (`METransformHaveOutput`).
-//! Un thread dedicato legge gli eventi e li passa a `encode` tramite un canale,
-//! così l'attesa dell'output ha un limite di tempo e non può bloccarsi.
+//! Hardware MFTs are asynchronous: they signal with events when they accept an
+//! input (`METransformNeedInput`) and when they have an output (`METransformHaveOutput`).
+//! A dedicated thread reads the events and passes them to `encode` through a channel,
+//! so waiting for the output has a time limit and cannot hang.
 //!
-//! Fase 0: l'immagine viene convertita in NV12 sulla CPU e passata in memoria di
-//! sistema. Il passo successivo è passare la texture D3D11 della cattura senza copie.
+//! The image comes either from RAM (converted to NV12 on the CPU) or as a D3D11
+//! texture already on the GPU (see [`crate::gpu`]), without copies.
 
 use std::collections::VecDeque;
 use std::sync::OnceLock;
@@ -26,10 +26,10 @@ use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
 use crate::gpu::{GpuDevice, GpuTexture, Nv12Converter};
 use crate::{BgraImage, EncodedFrame, EncoderSettings, VideoEncoder, convert};
 
-/// Tempo massimo di attesa dell'output di un frame prima di restituire `None`
-/// (il frame uscirà alla chiamata successiva).
+/// Maximum wait for a frame's output before returning `None`
+/// (the frame will come out at the next call).
 const OUTPUT_TIMEOUT: Duration = Duration::from_millis(100);
-/// Tempo massimo di attesa perché l'encoder accetti un nuovo frame.
+/// Maximum wait for the encoder to accept a new frame.
 const INPUT_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn startup() -> Result<()> {
@@ -40,7 +40,7 @@ fn startup() -> Result<()> {
         .map_err(|e| anyhow!("MFStartup: {e}"))
 }
 
-/// Gli oggetti Media Foundation sono utilizzabili da qualunque thread (MTA).
+/// Media Foundation objects can be used from any thread (MTA).
 struct SendPtr<T>(T);
 unsafe impl<T> Send for SendPtr<T> {}
 
@@ -49,7 +49,7 @@ enum TransformEvent {
     HaveOutput,
 }
 
-/// Nomi degli encoder H.264 hardware installati, in ordine di preferenza.
+/// Names of the installed H.264 hardware encoders, in order of preference.
 pub fn hardware_encoders() -> Result<Vec<String>> {
     Ok(enumerate()?.into_iter().map(|(name, _)| name).collect())
 }
@@ -76,7 +76,7 @@ fn enumerate() -> Result<Vec<(String, IMFActivate)>> {
     if list.is_null() {
         return Ok(Vec::new());
     }
-    // SAFETY: MFTEnumEx restituisce un array di `count` puntatori allocato con CoTaskMemAlloc.
+    // SAFETY: MFTEnumEx returns an array of `count` pointers allocated with CoTaskMemAlloc.
     let items = unsafe { std::slice::from_raw_parts_mut(list, count as usize) };
     let result = items
         .iter_mut()
@@ -92,7 +92,7 @@ fn friendly_name(activate: &IMFActivate) -> String {
     let mut len = 0;
     unsafe {
         if activate.GetAllocatedString(&MFT_FRIENDLY_NAME_Attribute, &mut name, &mut len).is_err() {
-            return "encoder hardware".into();
+            return "hardware encoder".into();
         }
         let s = name.to_string().unwrap_or_default();
         CoTaskMemFree(Some(name.0 as *const _));
@@ -102,11 +102,11 @@ fn friendly_name(activate: &IMFActivate) -> String {
 
 fn set_codec_value(api: &ICodecAPI, key: &windows::core::GUID, value: VARIANT, what: &str) {
     if let Err(e) = unsafe { api.SetValue(key, &value) } {
-        debug!("parametro {what} non supportato dall'encoder: {e}");
+        debug!("parameter {what} not supported by the encoder: {e}");
     }
 }
 
-/// Contiene `00 00 01 xx` con xx = SPS (tipo NAL 7)?
+/// Does it contain `00 00 01 xx` with xx = SPS (NAL type 7)?
 fn has_sps(data: &[u8]) -> bool {
     data.windows(4).any(|w| w[0] == 0 && w[1] == 0 && w[2] == 1 && w[3] & 0x1f == 7)
 }
@@ -123,7 +123,7 @@ struct Session {
     output_size: u32,
     need_input: u32,
     sequence_header: Vec<u8>,
-    /// Ingresso da texture GPU: conversione NV12 sulla scheda + gestore del device per l'MFT.
+    /// Input from GPU textures: NV12 conversion on the card + device manager for the MFT.
     gpu: Option<(Nv12Converter, IMFDXGIDeviceManager)>,
 }
 
@@ -138,21 +138,21 @@ impl Session {
         let transform: IMFTransform = unsafe { activate.ActivateObject() }.context("ActivateObject")?;
         unsafe {
             let attrs = transform.GetAttributes()?;
-            attrs.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1).context("sblocco MFT asincrono")?;
+            attrs.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1).context("asynchronous MFT unlock")?;
             let _ = attrs.SetUINT32(&MF_LOW_LATENCY, 1);
         }
-        // Con un device D3D11 l'MFT legge le texture NV12 direttamente dalla GPU.
-        // Il gestore va consegnato prima di impostare i tipi di ingresso e uscita.
+        // With a D3D11 device the MFT reads the NV12 textures straight from the GPU.
+        // The manager must be handed over before setting the input and output types.
         let manager = match device {
             Some(device) => unsafe {
                 let mut token = 0u32;
                 let mut manager = None;
                 MFCreateDXGIDeviceManager(&mut token, &mut manager)?;
-                let manager = manager.ok_or_else(|| anyhow!("gestore DXGI assente"))?;
+                let manager = manager.ok_or_else(|| anyhow!("missing DXGI manager"))?;
                 manager.ResetDevice(device, token)?;
                 transform
                     .ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize)
-                    .context("l'encoder non accetta texture D3D11")?;
+                    .context("the encoder does not accept D3D11 textures")?;
                 Some(manager)
             },
             None => None,
@@ -162,12 +162,12 @@ impl Session {
 
         let codec_api = transform.cast::<ICodecAPI>().ok();
         if let Some(api) = &codec_api {
-            set_codec_value(api, &CODECAPI_AVLowLatencyMode, VARIANT::from(true), "bassa latenza");
+            set_codec_value(api, &CODECAPI_AVLowLatencyMode, VARIANT::from(true), "low latency");
             set_codec_value(
                 api,
                 &CODECAPI_AVEncCommonRateControlMode,
                 VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32),
-                "bitrate costante",
+                "constant bitrate",
             );
             set_codec_value(
                 api,
@@ -179,9 +179,9 @@ impl Session {
                 api,
                 &CODECAPI_AVEncMPVDefaultBPictureCount,
                 VARIANT::from(0u32),
-                "niente B-frame",
+                "no B-frames",
             );
-            // Keyframe periodico ogni 10 s come rete di sicurezza; gli altri su richiesta.
+            // Periodic keyframe every 10 s as a safety net; the others on request.
             set_codec_value(api, &CODECAPI_AVEncMPVGOPSize, VARIANT::from((fps * 10) as u32), "GOP");
         }
 
@@ -195,7 +195,7 @@ impl Session {
             out.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1 << 32) | 1)?;
             out.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
             out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32)?;
-            transform.SetOutputType(0, &out, 0).context("tipo di output H.264")?;
+            transform.SetOutputType(0, &out, 0).context("H.264 output type")?;
 
             let inp = MFCreateMediaType()?;
             inp.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
@@ -204,7 +204,7 @@ impl Session {
             inp.SetUINT64(&MF_MT_FRAME_RATE, (fps << 32) | 1)?;
             inp.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1 << 32) | 1)?;
             inp.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-            transform.SetInputType(0, &inp, 0).context("tipo di input NV12")?;
+            transform.SetInputType(0, &inp, 0).context("NV12 input type")?;
         }
 
         let gpu = match (device, manager) {
@@ -221,12 +221,12 @@ impl Session {
         let event_thread = std::thread::Builder::new().name("eventi-mft".into()).spawn(move || {
             let generator = generator;
             loop {
-                // Bloccante: termina quando l'MFT viene chiuso (MF_E_SHUTDOWN).
+                // Blocking: ends when the MFT is shut down (MF_E_SHUTDOWN).
                 let event = match unsafe { generator.0.GetEvent(MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS(0)) } {
                     Ok(e) => e,
                     Err(e) => {
                         if e.code() != MF_E_SHUTDOWN {
-                            warn!("eventi dell'encoder interrotti: {e}");
+                            warn!("encoder events interrupted: {e}");
                         }
                         return;
                     }
@@ -297,14 +297,14 @@ impl Session {
         let mut status = 0;
         let result =
             unsafe { self.transform.ProcessOutput(0, std::slice::from_mut(&mut buffer), &mut status) };
-        // SAFETY: rilasciamo una sola volta i riferimenti restituiti nella struttura.
+        // SAFETY: the references returned in the structure are released only once.
         let sample = unsafe { std::mem::ManuallyDrop::take(&mut buffer.pSample) };
         drop(unsafe { std::mem::ManuallyDrop::take(&mut buffer.pEvents) });
 
         match result {
             Ok(()) => {}
             Err(e) if e.code() == MF_E_TRANSFORM_STREAM_CHANGE => {
-                // L'encoder propone un nuovo tipo di output: lo accettiamo.
+                // The encoder proposes a new output type: it is accepted.
                 unsafe {
                     let t = self.transform.GetOutputAvailableType(0, 0)?;
                     self.transform.SetOutputType(0, &t, 0)?;
@@ -327,8 +327,8 @@ impl Session {
         }
         let keyframe = unsafe { sample.GetUINT32(&MFSampleExtension_CleanPoint) }.unwrap_or(0) != 0;
 
-        // Alcuni encoder mettono SPS/PPS solo nel tipo di output e non nel flusso:
-        // il decoder ne ha bisogno davanti a ogni keyframe.
+        // Some encoders put SPS/PPS only in the output type and not in the stream:
+        // the decoder needs them in front of every keyframe.
         if keyframe && !has_sps(&data) {
             if self.sequence_header.is_empty() {
                 self.sequence_header = self.read_sequence_header().unwrap_or_default();
@@ -371,7 +371,7 @@ impl Session {
 impl Session {
     fn texture_sample(&mut self, bgra: &ID3D11Texture2D, time_100ns: i64) -> Result<IMFSample> {
         let (converter, _) =
-            self.gpu.as_mut().ok_or_else(|| anyhow!("encoder avviato senza device D3D11"))?;
+            self.gpu.as_mut().ok_or_else(|| anyhow!("encoder started without a D3D11 device"))?;
         let nv12 = converter.convert(bgra)?;
         unsafe {
             let buffer = MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, &nv12, 0, false)?;
@@ -392,50 +392,50 @@ impl Drop for Session {
         unsafe {
             let _ = self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
             let _ = self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
-            // Gli MFT hardware creati da un IMFActivate si chiudono con ShutdownObject;
-            // senza, GetEvent nel thread degli eventi non ritorna mai.
+            // Hardware MFTs created from an IMFActivate are closed with ShutdownObject;
+            // without it, GetEvent in the events thread never returns.
             if let Ok(shutdown) = self.transform.cast::<IMFShutdown>() {
                 let _ = shutdown.Shutdown();
             }
             let _ = self.activate.ShutdownObject();
         }
         if let Some(thread) = self.event_thread.take() {
-            // Per sicurezza non si attende all'infinito: un thread bloccato si abbandona.
+            // To be safe there is no endless wait: a stuck thread is abandoned.
             while !thread.is_finished() && t.elapsed() < Duration::from_secs(1) {
                 std::thread::sleep(Duration::from_millis(5));
             }
             if thread.is_finished() {
                 let _ = thread.join();
             } else {
-                warn!("il thread degli eventi dell'encoder non si è chiuso");
+                warn!("the encoder events thread did not end");
             }
         }
-        debug!("encoder hardware chiuso in {:?}", t.elapsed());
+        debug!("hardware encoder closed in {:?}", t.elapsed());
     }
 }
 
 pub struct MfEncoder {
     activate: IMFActivate,
-    /// Bitrate con cui è stata avviata la sessione corrente e quando.
+    /// Bitrate the current session was started with, and when.
     session_bitrate: u32,
     session_started: Instant,
     name: String,
     settings: EncoderSettings,
-    /// Presente se l'encoder riceve texture GPU invece di immagini in RAM.
+    /// Present if the encoder takes GPU textures instead of images in RAM.
     device: Option<ID3D11Device>,
     session: Option<Session>,
     outputs: VecDeque<EncodedFrame>,
     started: Instant,
 }
 
-// Usato da un solo thread alla volta; gli oggetti MF sono MTA.
+// Used by one thread at a time; MF objects are MTA.
 unsafe impl Send for MfEncoder {}
 
 impl MfEncoder {
-    /// Primo encoder H.264 hardware disponibile.
+    /// First available H.264 hardware encoder.
     pub fn new(settings: EncoderSettings) -> Result<Self> {
         let (name, activate) =
-            enumerate()?.into_iter().next().ok_or_else(|| anyhow!("nessun encoder H.264 hardware"))?;
+            enumerate()?.into_iter().next().ok_or_else(|| anyhow!("no H.264 hardware encoder"))?;
         Ok(Self {
             activate,
             name,
@@ -449,7 +449,7 @@ impl MfEncoder {
         })
     }
 
-    /// Encoder che riceve texture del `device` (cattura sulla GPU, vedi [`crate::gpu`]).
+    /// Encoder taking textures of `device` (capture on the GPU, see [`crate::gpu`]).
     pub fn with_device(settings: EncoderSettings, device: GpuDevice) -> Result<Self> {
         let mut enc = Self::new(settings)?;
         enc.device = Some(device.0);
@@ -460,16 +460,16 @@ impl MfEncoder {
         &self.name
     }
 
-    /// Il bitrate richiesto si discosta abbastanza da quello della sessione da
-    /// valere un riavvio (~0,3 s e un keyframe)? Le discese (rete congestionata)
-    /// sono più urgenti delle salite.
+    /// Is the requested bitrate far enough from the session's to be worth a
+    /// restart (~0.3 s and a keyframe)? Decreases (congested network) are more
+    /// urgent than increases.
     fn bitrate_restart_due(&self) -> bool {
         let ratio = self.settings.bitrate_bps as f64 / self.session_bitrate.max(1) as f64;
         let age = self.session_started.elapsed();
         (ratio < 0.85 && age > Duration::from_secs(1)) || (ratio > 1.25 && age > Duration::from_secs(3))
     }
 
-    /// Comprime un frame preparato da `make_sample` (immagine in RAM o texture GPU).
+    /// Encodes a frame prepared by `make_sample` (image in RAM or GPU texture).
     fn encode_sample(
         &mut self,
         width: u32,
@@ -480,7 +480,7 @@ impl MfEncoder {
         let (w, h) = (width & !1, height & !1);
         if self.session.is_some() && self.bitrate_restart_due() {
             info!(
-                "riavvio dell'encoder hardware: bitrate da {} a {} kbit/s",
+                "restarting the hardware encoder: bitrate from {} to {} kbit/s",
                 self.session_bitrate / 1000,
                 self.settings.bitrate_bps / 1000
             );
@@ -490,22 +490,22 @@ impl MfEncoder {
             self.session = None;
             self.outputs.clear();
             let session = Session::new(&self.activate, w, h, self.settings, self.device.as_ref())
-                .with_context(|| format!("avvio di {}", self.name))?;
+                .with_context(|| format!("starting {}", self.name))?;
             self.session_bitrate = self.settings.bitrate_bps;
             self.session_started = Instant::now();
-            let input = if self.device.is_some() { "texture GPU" } else { "RAM" };
-            info!("encoder hardware {} avviato a {w}x{h}, ingresso da {input}", self.name);
+            let input = if self.device.is_some() { "GPU texture" } else { "RAM" };
+            info!("hardware encoder {} started at {w}x{h}, input from {input}", self.name);
             self.session = Some(session);
         }
-        let session = self.session.as_mut().expect("sessione avviata");
+        let session = self.session.as_mut().expect("session started");
 
-        // Attende che l'encoder sia pronto a ricevere un frame.
+        // Waits until the encoder is ready to take a frame.
         let t_wait = Instant::now();
         while session.need_input == 0 {
             match session.events.recv_timeout(INPUT_TIMEOUT) {
                 Ok(event) => session.handle(event, &mut self.outputs)?,
-                Err(RecvTimeoutError::Timeout) => bail!("l'encoder non accetta frame"),
-                Err(RecvTimeoutError::Disconnected) => bail!("encoder chiuso"),
+                Err(RecvTimeoutError::Timeout) => bail!("the encoder does not accept frames"),
+                Err(RecvTimeoutError::Disconnected) => bail!("encoder closed"),
             }
         }
 
@@ -521,15 +521,15 @@ impl MfEncoder {
         unsafe { session.transform.ProcessInput(0, &sample, 0) }.context("ProcessInput")?;
         session.need_input -= 1;
 
-        // Attende l'output di questo frame, con un limite: se non arriva in tempo
-        // verrà restituito alla prossima chiamata.
+        // Waits for this frame's output, with a limit: if it does not arrive in time
+        // it will be returned at the next call.
         let deadline = Instant::now() + OUTPUT_TIMEOUT;
         while self.outputs.is_empty() {
             let left = deadline.saturating_duration_since(Instant::now());
             match session.events.recv_timeout(left) {
                 Ok(event) => session.handle(event, &mut self.outputs)?,
                 Err(RecvTimeoutError::Timeout) => break,
-                Err(RecvTimeoutError::Disconnected) => bail!("encoder chiuso"),
+                Err(RecvTimeoutError::Disconnected) => bail!("encoder closed"),
             }
         }
         tracing::trace!(
@@ -537,7 +537,7 @@ impl MfEncoder {
             ?converted,
             encoded = ?t_encode.elapsed(),
             ready = self.outputs.len(),
-            "frame hardware"
+            "hardware frame"
         );
         Ok(self.outputs.pop_front())
     }
@@ -550,7 +550,7 @@ impl VideoEncoder for MfEncoder {
 
     fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<Option<EncodedFrame>> {
         if self.device.is_some() {
-            bail!("encoder configurato per texture GPU");
+            bail!("encoder configured for GPU textures");
         }
         self.encode_sample(image.width, image.height, force_keyframe, |session, time| {
             session.input_sample(image, time)
@@ -574,21 +574,21 @@ impl VideoEncoder for MfEncoder {
     }
 
     fn set_bitrate(&mut self, bps: u32) {
-        // Quick Sync via Media Foundation ignora i cambi di CODECAPI_AVEncCommonMeanBitRate
-        // a sessione avviata (misurato: chiesti 1 Mbit/s, prodotti 6): il nuovo valore
-        // si applica riavviando l'encoder in `encode_sample`, con isteresi.
+        // Quick Sync through Media Foundation ignores CODECAPI_AVEncCommonMeanBitRate
+        // changes once the session started (measured: 1 Mbit/s asked, 6 produced): the new
+        // value is applied by restarting the encoder in `encode_sample`, with hysteresis.
         self.settings.bitrate_bps = bps;
     }
 
     fn wait_ready(&mut self, timeout: Duration) -> Result<bool> {
-        // Prima del primo frame la sessione non esiste ancora: si crea in `encode`.
+        // Before the first frame the session does not exist yet: it is created in `encode`.
         let Some(session) = self.session.as_mut() else { return Ok(true) };
         let deadline = Instant::now() + timeout;
         while session.need_input == 0 {
             match session.events.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                 Ok(event) => session.handle(event, &mut self.outputs)?,
                 Err(RecvTimeoutError::Timeout) => return Ok(false),
-                Err(RecvTimeoutError::Disconnected) => bail!("encoder chiuso"),
+                Err(RecvTimeoutError::Disconnected) => bail!("encoder closed"),
             }
         }
         Ok(true)

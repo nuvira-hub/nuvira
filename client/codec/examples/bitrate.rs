@@ -1,13 +1,13 @@
-//! Verifica che l'encoder segua un cambio di bitrate durante la sessione:
+//! Checks that the encoder follows a bitrate change during the session:
 //! `cargo run --release -p nexodesk-codec --example bitrate -- [hardware|software]`.
 //!
-//! Comprime 90 frame tipo desktop in movimento a 6 Mbit/s, poi chiede 1 Mbit/s
-//! per altri 90 frame e confronta la banda prodotta nelle due metà.
+//! Encodes 90 moving desktop-like frames at 6 Mbit/s, then asks for 1 Mbit/s for
+//! another 90 frames and compares the bandwidth produced in the two halves.
 
 use nexodesk_codec::{BgraImage, EncoderPlan, EncoderSettings};
 
 fn frame(w: usize, h: usize, t: usize) -> Vec<u8> {
-    // Sfondo sfumato e una finestra con righe di "testo" che si sposta: come un desktop.
+    // Shaded background and a window with rows of "text" moving around: like a desktop.
     let mut data = vec![0u8; w * h * 4];
     let wx = (t * 12) % (w / 2);
     for y in 0..h {
@@ -55,6 +55,6 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_millis(33));
         }
         // 90 frame a 30 fps = 3 s.
-        println!("{plan:?}: chiesti {} kbit/s → prodotti {} kbit/s", target / 1000, bytes * 8 / 3 / 1000);
+        println!("{plan:?}: asked {} kbit/s → produced {} kbit/s", target / 1000, bytes * 8 / 3 / 1000);
     }
 }

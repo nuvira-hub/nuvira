@@ -1,13 +1,13 @@
-//! Desktop di input di Windows.
+//! Windows input desktop.
 //!
-//! Mouse, tastiera e schermo appartengono a un desktop che cambia: `Default` per
-//! l'utente, `Winlogon` per le richieste di amministratore (UAC), la schermata di
-//! blocco e Ctrl+Alt+Canc. Cattura e iniezione dell'input agiscono sul desktop del
-//! proprio thread, quindi i thread che le eseguono devono seguire quello attivo.
+//! Mouse, keyboard and screen belong to a desktop that changes: `Default` for the
+//! user, `Winlogon` for administrator prompts (UAC), the lock screen and
+//! Ctrl+Alt+Del. Capture and input injection act on the desktop of their own
+//! thread, so the threads doing them must follow the active one.
 //!
-//! Solo un processo SYSTEM (avviato da nexodesk-service) può aprire `Winlogon`:
-//! da utente normale il passaggio fallisce e la cattura riprende al ritorno sul
-//! desktop dell'utente.
+//! Only a SYSTEM process (started by nexodesk-service) can open `Winlogon`: as a
+//! normal user the switch fails and capture resumes when the user's desktop
+//! comes back.
 
 use std::cell::Cell;
 
@@ -20,17 +20,17 @@ use windows::Win32::System::StationsAndDesktops::{
 use windows::Win32::System::Threading::GetCurrentThreadId;
 
 thread_local! {
-    /// Desktop aperto da noi e assegnato al thread: va chiuso quando si cambia.
+    /// Desktop opened by us and assigned to the thread: closed when switching.
     static OWNED: Cell<Option<HDESK>> = const { Cell::new(None) };
 }
 
-/// Sposta il thread corrente sul desktop che riceve l'input, se è cambiato.
-/// Restituisce il nome del nuovo desktop quando c'è stato un passaggio.
+/// Moves the current thread to the desktop receiving input, if it changed.
+/// Returns the name of the new desktop when a switch happened.
 pub fn follow_input_desktop() -> Option<String> {
     let input = match unsafe { OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_ACCESS_FLAGS(GENERIC_ALL.0)) } {
         Ok(desk) => desk,
         Err(e) => {
-            // Normale per un processo non SYSTEM quando è attivo il desktop sicuro.
+            // Normal for a non-SYSTEM process while the secure desktop is active.
             debug!("OpenInputDesktop: {e}");
             return None;
         }

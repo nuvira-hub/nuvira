@@ -1,8 +1,8 @@
-//! Immagini che restano sulla GPU (Windows, Direct3D 11).
+//! Images that stay on the GPU (Windows, Direct3D 11).
 //!
-//! La cattura DXGI produce texture BGRA; il processore video della scheda
-//! (D3D11 Video Processor) le converte in NV12 e l'encoder hardware le legge
-//! direttamente, senza passare dalla RAM.
+//! DXGI capture produces BGRA textures; the card's video processor
+//! (D3D11 Video Processor) converts them to NV12 and the hardware encoder reads
+//! them directly, without going through RAM.
 
 use anyhow::{Context, Result, anyhow};
 use windows::Win32::Foundation::HMODULE;
@@ -13,30 +13,30 @@ use windows::Win32::Graphics::Dxgi::Common::{
 };
 use windows::core::Interface;
 
-/// Device Direct3D 11 condiviso tra cattura ed encoder.
+/// Direct3D 11 device shared between capture and encoder.
 #[derive(Clone)]
 pub struct GpuDevice(pub ID3D11Device);
 
-/// Texture BGRA di un frame catturato.
+/// BGRA texture of a captured frame.
 #[derive(Clone)]
 pub struct GpuTexture(pub ID3D11Texture2D);
 
-// Il device è free-threaded e il contesto immediato è protetto (SetMultithreadProtected):
-// i riferimenti possono passare da un thread all'altro.
+// The device is free-threaded and the immediate context is protected (SetMultithreadProtected):
+// references can move from one thread to another.
 unsafe impl Send for GpuDevice {}
 unsafe impl Sync for GpuDevice {}
 unsafe impl Send for GpuTexture {}
 unsafe impl Sync for GpuTexture {}
 
-/// Texture NV12 di uscita a rotazione: l'encoder ne tiene qualcuna finché non ha finito.
+/// Rotating NV12 output textures: the encoder holds some until it is done.
 const NV12_POOL: usize = 4;
 
-/// Spazio colore del processore video: bit 4-5 = gamma nominale (1 = 16-235),
-/// bit 2 = matrice (0 = BT.601), bit 1 = gamma RGB (0 = completa 0-255).
+/// Video processor colour space: bits 4-5 = nominal range (1 = 16-235),
+/// bit 2 = matrix (0 = BT.601), bit 1 = RGB range (0 = full 0-255).
 const COLOR_RGB_FULL: u32 = 0;
 const COLOR_YUV_BT601_LIMITED: u32 = 1 << 4;
 
-/// Conversione BGRA → NV12 sulla GPU.
+/// BGRA → NV12 conversion on the GPU.
 pub struct Nv12Converter {
     video_device: ID3D11VideoDevice,
     video_context: ID3D11VideoContext,
@@ -44,14 +44,14 @@ pub struct Nv12Converter {
     processor: ID3D11VideoProcessor,
     outputs: Vec<(ID3D11Texture2D, ID3D11VideoProcessorOutputView)>,
     next: usize,
-    /// Viste di input per le texture della cattura (sempre le stesse, a rotazione).
+    /// Input views for the capture textures (always the same ones, rotating).
     input_views: Vec<(usize, ID3D11VideoProcessorInputView)>,
 }
 
 impl Nv12Converter {
     pub fn new(device: &ID3D11Device, width: u32, height: u32) -> Result<Self> {
         let video_device: ID3D11VideoDevice =
-            device.cast().context("la scheda non offre il processore video D3D11")?;
+            device.cast().context("the card does not offer the D3D11 video processor")?;
         let context = unsafe { device.GetImmediateContext() }?;
         let video_context: ID3D11VideoContext = context.cast()?;
         let rate = DXGI_RATIONAL { Numerator: 60, Denominator: 1 };
@@ -82,7 +82,7 @@ impl Nv12Converter {
                 &processor,
                 &D3D11_VIDEO_PROCESSOR_COLOR_SPACE { _bitfield: COLOR_YUV_BT601_LIMITED },
             );
-            // Niente "miglioramenti" automatici del driver: vogliamo una conversione fedele.
+            // No automatic driver "enhancements": a faithful conversion is wanted.
             video_context.VideoProcessorSetStreamAutoProcessingMode(&processor, 0, false);
         }
 
@@ -104,7 +104,7 @@ impl Nv12Converter {
                     Some(&mut view),
                 )
             }?;
-            outputs.push((texture, view.ok_or_else(|| anyhow!("vista di uscita assente"))?));
+            outputs.push((texture, view.ok_or_else(|| anyhow!("missing output view"))?));
         }
         Ok(Self {
             video_device,
@@ -133,8 +133,8 @@ impl Nv12Converter {
         unsafe {
             self.video_device.CreateVideoProcessorInputView(texture, &self.enumerator, &desc, Some(&mut view))
         }?;
-        let view = view.ok_or_else(|| anyhow!("vista di ingresso assente"))?;
-        // Le texture della cattura sono poche; se cambiano (nuova risoluzione) si riparte.
+        let view = view.ok_or_else(|| anyhow!("missing input view"))?;
+        // The capture textures are few; if they change (new resolution) it starts over.
         if self.input_views.len() >= 8 {
             self.input_views.clear();
         }
@@ -142,7 +142,7 @@ impl Nv12Converter {
         Ok(view)
     }
 
-    /// Converte `bgra` nella prossima texture NV12 libera e la restituisce.
+    /// Converts `bgra` into the next free NV12 texture and returns it.
     pub fn convert(&mut self, bgra: &ID3D11Texture2D) -> Result<ID3D11Texture2D> {
         let input = self.input_view(bgra)?;
         let (texture, output) = self.outputs[self.next].clone();
@@ -155,7 +155,7 @@ impl Nv12Converter {
         let result = unsafe {
             self.video_context.VideoProcessorBlt(&self.processor, &output, 0, std::slice::from_ref(&stream))
         };
-        // SAFETY: il riferimento alla vista va rilasciato una volta sola.
+        // SAFETY: the reference to the view must be released only once.
         unsafe { std::mem::ManuallyDrop::drop(&mut stream.pInputSurface) };
         result.context("VideoProcessorBlt")?;
         Ok(texture)
@@ -176,16 +176,16 @@ fn create_nv12(device: &ID3D11Device, width: u32, height: u32) -> Result<ID3D11T
         MiscFlags: 0,
     };
     let mut texture = None;
-    // Non tutti i driver accettano il flag VIDEO_ENCODER: senza, l'encoder copia internamente.
+    // Not every driver accepts the VIDEO_ENCODER flag: without it, the encoder copies internally.
     if unsafe { device.CreateTexture2D(&desc, None, Some(&mut texture)) }.is_err() {
         desc.BindFlags = D3D11_BIND_RENDER_TARGET.0 as u32;
-        unsafe { device.CreateTexture2D(&desc, None, Some(&mut texture)) }.context("texture NV12")?;
+        unsafe { device.CreateTexture2D(&desc, None, Some(&mut texture)) }.context("NV12 texture")?;
     }
-    texture.ok_or_else(|| anyhow!("texture NV12 assente"))
+    texture.ok_or_else(|| anyhow!("missing NV12 texture"))
 }
 
-/// Device D3D11 sulla scheda predefinita, pronto per processore video e condivisione tra thread.
-/// Usato dalla prova degli encoder, quando la cattura non è ancora aperta.
+/// D3D11 device on the default card, ready for the video processor and sharing between threads.
+/// Used by the encoder test, when capture is not open yet.
 pub fn create_device() -> Result<ID3D11Device> {
     let (mut device, mut context) = (None, None);
     unsafe {
@@ -202,14 +202,14 @@ pub fn create_device() -> Result<ID3D11Device> {
         )
     }
     .context("D3D11CreateDevice")?;
-    let context: ID3D11DeviceContext = context.ok_or_else(|| anyhow!("context D3D11 assente"))?;
+    let context: ID3D11DeviceContext = context.ok_or_else(|| anyhow!("missing D3D11 context"))?;
     if let Ok(mt) = context.cast::<ID3D11Multithread>() {
         let _ = unsafe { mt.SetMultithreadProtected(true) };
     }
-    device.ok_or_else(|| anyhow!("device D3D11 assente"))
+    device.ok_or_else(|| anyhow!("missing D3D11 device"))
 }
 
-/// Texture BGRA con il contenuto indicato (righe compatte, `width * 4` byte).
+/// BGRA texture with the given content (packed rows, `width * 4` bytes).
 pub fn upload_bgra(device: &ID3D11Device, width: u32, height: u32, data: &[u8]) -> Result<ID3D11Texture2D> {
     let desc = D3D11_TEXTURE2D_DESC {
         Width: width,
@@ -227,5 +227,5 @@ pub fn upload_bgra(device: &ID3D11Device, width: u32, height: u32, data: &[u8]) 
         D3D11_SUBRESOURCE_DATA { pSysMem: data.as_ptr().cast(), SysMemPitch: width * 4, SysMemSlicePitch: 0 };
     let mut texture = None;
     unsafe { device.CreateTexture2D(&desc, Some(&init), Some(&mut texture)) }?;
-    texture.ok_or_else(|| anyhow!("texture BGRA assente"))
+    texture.ok_or_else(|| anyhow!("missing BGRA texture"))
 }

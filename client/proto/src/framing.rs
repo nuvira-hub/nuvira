@@ -1,10 +1,10 @@
-//! Framing dei messaggi sugli stream affidabili: lunghezza varint + messaggio
-//! Protobuf (lo stesso formato di `prost::Message::encode_length_delimited`).
+//! Message framing on reliable streams: varint length + Protobuf message
+//! (the same format as `prost::Message::encode_length_delimited`).
 
 use bytes::{Buf, BytesMut};
 use prost::Message;
 
-/// Dimensione massima di un singolo messaggio (frame video compresi).
+/// Maximum size of a single message (video frames included).
 pub const MAX_MESSAGE_LEN: usize = 16 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -16,20 +16,20 @@ pub enum FrameError {
 impl std::fmt::Display for FrameError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FrameError::TooLarge(n) => write!(f, "messaggio troppo grande: {n} byte"),
-            FrameError::Decode(e) => write!(f, "messaggio non valido: {e}"),
+            FrameError::TooLarge(n) => write!(f, "message too large: {n} bytes"),
+            FrameError::Decode(e) => write!(f, "invalid message: {e}"),
         }
     }
 }
 
 impl std::error::Error for FrameError {}
 
-/// Serializza un messaggio con il prefisso di lunghezza.
+/// Serialises a message with its length prefix.
 pub fn encode<M: Message>(msg: &M) -> Vec<u8> {
     msg.encode_length_delimited_to_vec()
 }
 
-/// Accumula i byte ricevuti e restituisce i messaggi completi.
+/// Collects the received bytes and returns the complete messages.
 #[derive(Default)]
 pub struct Decoder {
     buf: BytesMut,
@@ -40,12 +40,12 @@ impl Decoder {
         self.buf.extend_from_slice(data);
     }
 
-    /// Prossimo messaggio completo, se è già arrivato per intero.
+    /// Next complete message, if it has fully arrived.
     pub fn next_message<M: Message + Default>(&mut self) -> Result<Option<M>, FrameError> {
         let mut peek = &self.buf[..];
         let len = match prost::encoding::decode_varint(&mut peek) {
             Ok(len) => len as usize,
-            // Varint incompleto: servono altri byte (al massimo 10).
+            // Incomplete varint: more bytes are needed (at most 10).
             Err(_) if self.buf.len() < 10 => return Ok(None),
             Err(e) => return Err(FrameError::Decode(e)),
         };

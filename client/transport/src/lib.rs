@@ -1,9 +1,9 @@
-//! Trasporto delle sessioni su QUIC.
+//! Session transport over QUIC.
 //!
-//! Fase 0: connessione diretta in LAN. L'agent presenta un certificato
-//! autofirmato e il viewer può verificarne l'impronta SHA-256 (`--fingerprint`).
-//! Questa NON è ancora l'autenticazione definitiva: nella fase 1 arrivano
-//! l'handshake Noise con le chiavi dei dispositivi e il server di rendezvous.
+//! Every device has an Ed25519 key (see [`identity`]) that signs its TLS
+//! certificate; the other side checks the key it was told about by nexodesk-server
+//! ([`p2p`]). The LAN prototype mode ([`connect`] without the server) can check
+//! the agent's SHA-256 certificate fingerprint instead (`--fingerprint`).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -28,20 +28,20 @@ pub mod ws;
 
 pub use quinn::{Connection, Endpoint};
 
-/// Identificativo del protocollo negoziato in TLS (ALPN).
+/// Protocol identifier negotiated in TLS (ALPN).
 pub(crate) const ALPN: &[u8] = b"nexodesk/0";
 
-/// Come si raggiunge nexodesk-server (e il suo relay).
+/// How nexodesk-server (and its relay) is reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerTransport {
-    /// QUIC su UDP, il percorso normale.
+    /// QUIC over UDP, the normal path.
     Udp,
-    /// QUIC dentro un WebSocket (ws:// o wss://) per le reti che bloccano UDP.
+    /// QUIC inside a WebSocket (ws:// or wss://) for networks that block UDP.
     WebSocket(String),
 }
 
-/// Endpoint QUIC verso `server` con il trasporto indicato. Con UDP il socket è
-/// già pronto (anche agganciato al relay); con WebSocket si apre il tunnel.
+/// QUIC endpoint towards `server` with the given transport. With UDP the socket is
+/// ready (also bound to the relay); with WebSocket the tunnel is opened.
 pub(crate) async fn endpoint_for(
     transport: &ServerTransport,
     server: SocketAddr,
@@ -69,15 +69,15 @@ pub(crate) async fn endpoint_for(
     }
 }
 
-/// Dati non ancora confermati per connessione (vedi `transport_config`).
+/// Unacknowledged data per connection (see `transport_config`).
 const SEND_WINDOW: u64 = 256 * 1024;
 
-/// Porta UDP predefinita del prototipo in LAN.
+/// Default UDP port of the LAN prototype.
 pub const DEFAULT_PORT: u16 = 21500;
 
 pub type Fingerprint = [u8; 32];
 
-/// Indirizzo `host[:porta]` (anche IPv6 tra parentesi); senza porta si usa `default_port`.
+/// `host[:port]` address (IPv6 also in brackets); without a port `default_port` is used.
 pub fn resolve_addr(host: &str, default_port: u16) -> Result<SocketAddr> {
     use std::net::{IpAddr, ToSocketAddrs};
     if let Ok(addr) = host.parse::<SocketAddr>() {
@@ -88,7 +88,7 @@ pub fn resolve_addr(host: &str, default_port: u16) -> Result<SocketAddr> {
     }
     let mut addrs =
         if host.contains(':') { host.to_socket_addrs()? } else { (host, default_port).to_socket_addrs()? };
-    addrs.next().with_context(|| format!("indirizzo non valido: {host}"))
+    addrs.next().with_context(|| format!("invalid address: {host}"))
 }
 
 pub fn fingerprint_hex(fp: &Fingerprint) -> String {
@@ -98,7 +98,7 @@ pub fn fingerprint_hex(fp: &Fingerprint) -> String {
 pub fn parse_fingerprint(hex: &str) -> Result<Fingerprint> {
     let hex: String = hex.chars().filter(|c| c.is_ascii_hexdigit()).collect();
     if hex.len() != 64 {
-        bail!("l'impronta deve avere 64 cifre esadecimali");
+        bail!("the fingerprint must have 64 hexadecimal digits");
     }
     let mut fp = [0u8; 32];
     for (i, b) in fp.iter_mut().enumerate() {
@@ -113,27 +113,27 @@ pub(crate) fn provider() -> Arc<CryptoProvider> {
 
 pub(crate) fn transport_config() -> Arc<TransportConfig> {
     let mut t = TransportConfig::default();
-    // Se l'altra parte sparisce senza chiudere (viewer chiuso di forza, rete caduta)
-    // l'agent resta "occupato" fino al timeout: 10 s, con un pacchetto ogni 2 s perché
-    // una connessione viva non resti mai così a lungo in silenzio.
+    // If the other side disappears without closing (viewer killed, network down) the
+    // agent stays "busy" until the timeout: 10 s, with a packet every 2 s so that a
+    // live connection is never silent for that long.
     t.keep_alive_interval(Some(Duration::from_secs(2)));
-    t.max_idle_timeout(Some(Duration::from_secs(10).try_into().expect("durata valida")));
-    // GSO (più datagrammi in un'unica chiamata di invio) su Windows perde i pacchetti
-    // in loopback, e dopo la perdita la connessione non riceve più nulla: disattivato.
-    // TODO: riprovare su LAN reale e riattivarlo dove funziona.
+    t.max_idle_timeout(Some(Duration::from_secs(10).try_into().expect("valid duration")));
+    // GSO (several datagrams in a single send call) loses packets on loopback on
+    // Windows, and after the loss the connection receives nothing more: disabled.
+    // TODO: try again on a real LAN and enable it where it works.
     t.enable_segmentation_offload(false);
-    // Buffer di invio limitato: se la rete non smaltisce, l'invio si blocca presto e
-    // l'agent salta frame invece di accodarne secondi (il bitrate adattivo fa il resto).
+    // Limited send buffer: if the network does not keep up, sending blocks early and
+    // the agent skips frames instead of queueing seconds of them (adaptive bitrate does the rest).
     t.send_window(SEND_WINDOW);
-    // BBR stima la banda invece di dimezzare la finestra a ogni perdita: con perdite
-    // casuali (Wi-Fi, reti mobili) NewReno/Cubic scendono ben sotto la capacità reale.
+    // BBR estimates bandwidth instead of halving the window at every loss: with random
+    // losses (Wi-Fi, mobile networks) NewReno/Cubic drop well below the real capacity.
     if std::env::var_os("NEXODESK_CC_CUBIC").is_none() {
         t.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
     }
     Arc::new(t)
 }
 
-/// Endpoint dell'agent: accetta connessioni su `bind`. Restituisce anche l'impronta del certificato.
+/// Agent endpoint: accepts connections on `bind`. Also returns the certificate fingerprint.
 pub fn server_endpoint(bind: SocketAddr) -> Result<(Endpoint, Fingerprint)> {
     let cert = rcgen::generate_simple_self_signed(vec!["nexodesk-agent".to_string()])?;
     let cert_der = CertificateDer::from(cert.cert.der().to_vec());
@@ -148,14 +148,14 @@ pub fn server_endpoint(bind: SocketAddr) -> Result<(Endpoint, Fingerprint)> {
 
     let mut config = ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
     config.transport_config(transport_config());
-    let endpoint = Endpoint::server(config, bind).with_context(|| format!("ascolto su {bind}"))?;
+    let endpoint = Endpoint::server(config, bind).with_context(|| format!("listening on {bind}"))?;
     Ok((endpoint, fingerprint))
 }
 
-/// Connessione del viewer verso un agent. Senza impronta attesa accetta qualunque certificato.
+/// Viewer connection to an agent. Without an expected fingerprint any certificate is accepted.
 pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<Connection> {
     if expected.is_none() {
-        warn!("impronta dell'agent non indicata: connessione NON verificata (solo per prove in LAN)");
+        warn!("agent fingerprint not given: connection NOT verified (LAN tests only)");
     }
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
@@ -171,16 +171,16 @@ pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<
     let mut endpoint = Endpoint::client(bind)?;
     endpoint.set_default_client_config(config);
     let conn =
-        endpoint.connect(addr, "nexodesk-agent")?.await.with_context(|| format!("connessione a {addr}"))?;
+        endpoint.connect(addr, "nexodesk-agent")?.await.with_context(|| format!("connecting to {addr}"))?;
     Ok(conn)
 }
 
-/// Verifica il certificato dell'agent confrontandone l'impronta SHA-256.
+/// Checks the agent's certificate by comparing its SHA-256 fingerprint.
 #[derive(Debug)]
 pub(crate) struct PinnedCert {
     pub(crate) expected: Option<Fingerprint>,
     pub(crate) provider: Arc<CryptoProvider>,
-    /// Se presente, vi si registra l'impronta vista (per memorizzarla al primo collegamento).
+    /// If present, the fingerprint seen is stored here (to remember it at the first connection).
     pub(crate) seen: Option<Arc<std::sync::Mutex<Option<Fingerprint>>>>,
 }
 
@@ -195,11 +195,11 @@ impl ServerCertVerifier for PinnedCert {
     ) -> Result<ServerCertVerified, rustls::Error> {
         let fingerprint: Fingerprint = Sha256::digest(end_entity).into();
         if let Some(seen) = &self.seen {
-            *seen.lock().expect("impronta") = Some(fingerprint);
+            *seen.lock().expect("fingerprint") = Some(fingerprint);
         }
         match self.expected {
             Some(expected) if fingerprint != expected => {
-                Err(rustls::Error::General("impronta del certificato diversa da quella attesa".into()))
+                Err(rustls::Error::General("certificate fingerprint differs from the expected one".into()))
             }
             _ => Ok(ServerCertVerified::assertion()),
         }
@@ -211,7 +211,7 @@ impl ServerCertVerifier for PinnedCert {
         _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Err(rustls::Error::General("TLS 1.2 non supportato".into()))
+        Err(rustls::Error::General("TLS 1.2 not supported".into()))
     }
 
     fn verify_tls13_signature(
@@ -233,7 +233,7 @@ impl ServerCertVerifier for PinnedCert {
     }
 }
 
-/// Invio di messaggi Protobuf su uno stream QUIC.
+/// Sending Protobuf messages on a QUIC stream.
 pub struct FramedSend {
     stream: SendStream,
 }
@@ -248,14 +248,14 @@ impl FramedSend {
         Ok(())
     }
 
-    /// Chiude lo stream: l'altro lato riceve la fine dopo l'ultimo messaggio.
+    /// Closes the stream: the other side receives the end after the last message.
     pub fn finish(mut self) -> Result<()> {
         self.stream.finish()?;
         Ok(())
     }
 }
 
-/// Ricezione di messaggi Protobuf da uno stream QUIC.
+/// Receiving Protobuf messages from a QUIC stream.
 pub struct FramedRecv {
     stream: RecvStream,
     decoder: nexodesk_proto::framing::Decoder,
@@ -267,7 +267,7 @@ impl FramedRecv {
         Self { stream, decoder: Default::default(), buf: vec![0; 64 * 1024] }
     }
 
-    /// Prossimo messaggio; `None` quando l'altro lato chiude lo stream.
+    /// Next message; `None` when the other side closes the stream.
     pub async fn recv<M: Message + Default>(&mut self) -> Result<Option<M>> {
         loop {
             if let Some(msg) = self.decoder.next_message()? {
@@ -298,7 +298,7 @@ mod tests {
         let fp: Fingerprint = core::array::from_fn(|i| i as u8 * 7);
         let hex = fingerprint_hex(&fp);
         assert_eq!(parse_fingerprint(&hex).unwrap(), fp);
-        // Separatori ammessi, come nelle impronte copiate a mano.
+        // Separators are allowed, as in fingerprints copied by hand.
         let spaced: String =
             hex.as_bytes().chunks(4).map(|c| std::str::from_utf8(c).unwrap()).collect::<Vec<_>>().join(":");
         assert_eq!(parse_fingerprint(&spaced).unwrap(), fp);

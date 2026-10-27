@@ -1,11 +1,11 @@
-//! Conversione BGRA → YUV 4:2:0 (BT.601, gamma limitata) con aritmetica intera,
-//! divisa su più core per righe di blocchi 2x2.
+//! BGRA → YUV 4:2:0 conversion (BT.601, limited range) with integer arithmetic,
+//! split over several cores by rows of 2x2 blocks.
 //!
-//! Formula (ITU-R BT.601, coefficienti a 8 bit):
+//! Formula (ITU-R BT.601, 8-bit coefficients):
 //!   Y = ((66 R + 129 G + 25 B + 128) >> 8) + 16
 //!   U = ((-38 R - 74 G + 112 B + 128) >> 8) + 128
 //!   V = ((112 R - 94 G - 18 B + 128) >> 8) + 128
-//! U e V sono calcolati sulla media del blocco 2x2.
+//! U and V are computed on the average of the 2x2 block.
 
 use crate::BgraImage;
 
@@ -21,8 +21,8 @@ fn chroma(b: i32, g: i32, r: i32) -> (u8, u8) {
     (u.clamp(0, 255) as u8, v.clamp(0, 255) as u8)
 }
 
-/// Converte due righe BGRA in due righe di luma e una riga di crominanza.
-/// `put_chroma(x, u, v)` scrive la crominanza della colonna di blocchi `x`.
+/// Converts two BGRA rows into two luma rows and one chroma row.
+/// `put_chroma(x, u, v)` writes the chroma of block column `x`.
 #[inline(always)]
 fn convert_row_pair(
     src0: &[u8],
@@ -57,12 +57,12 @@ fn threads() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8)
 }
 
-/// Dimensioni pari usate dalla conversione (si scarta al massimo una riga/colonna).
+/// Even sizes used by the conversion (at most one row/column is dropped).
 pub fn even_size(image: &BgraImage) -> (usize, usize) {
     ((image.width & !1) as usize, (image.height & !1) as usize)
 }
 
-/// BGRA → I420 (tre piani: Y w×h, U e V w/2×h/2). I buffer vengono ridimensionati.
+/// BGRA → I420 (three planes: Y w×h, U and V w/2×h/2). The buffers are resized.
 pub fn bgra_to_i420(image: &BgraImage, y: &mut Vec<u8>, u: &mut Vec<u8>, v: &mut Vec<u8>) {
     let (w, h) = even_size(image);
     let (cw, ch) = (w / 2, h / 2);
@@ -98,8 +98,8 @@ pub fn bgra_to_i420(image: &BgraImage, y: &mut Vec<u8>, u: &mut Vec<u8>, v: &mut
     });
 }
 
-/// BGRA → NV12 (piano Y w×h seguito da UV interlacciati w×h/2) con passo di riga `pitch`
-/// e `height_aligned` righe di luma prima del piano UV (allineamento richiesto da alcuni encoder).
+/// BGRA → NV12 (Y plane w×h followed by interleaved UV w×h/2) with row pitch `pitch`
+/// and `height_aligned` luma rows before the UV plane (alignment required by some encoders).
 pub fn bgra_to_nv12(image: &BgraImage, out: &mut [u8], pitch: usize, height_aligned: usize) {
     let (w, h) = even_size(image);
     let ch = h / 2;
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn known_colors() {
-        // Bianco, nero e rosso puro in BT.601 a gamma limitata.
+        // White, black and pure red in limited-range BT.601.
         for (bgra, yuv) in [
             ([255, 255, 255, 255], (235, 128, 128)),
             ([0, 0, 0, 255], (16, 128, 128)),
@@ -150,7 +150,7 @@ mod tests {
             let img = BgraImage { width: 4, height: 2, stride: 16, data: &data };
             let (mut y, mut u, mut v) = (vec![], vec![], vec![]);
             bgra_to_i420(&img, &mut y, &mut u, &mut v);
-            assert_eq!((y[0], u[0], v[0]), yuv, "colore {bgra:?}");
+            assert_eq!((y[0], u[0], v[0]), yuv, "colour {bgra:?}");
 
             let mut nv12 = vec![0u8; 4 * 2 + 4];
             bgra_to_nv12(&img, &mut nv12, 4, 2);
@@ -167,7 +167,7 @@ mod tests {
         bgra_to_i420(&img, &mut y, &mut u, &mut v);
         assert_eq!((y.len(), u.len(), v.len()), (6 * 4, 3 * 2, 3 * 2));
 
-        // Righe NV12 con passo 16 e 8 righe allineate.
+        // NV12 rows with pitch 16 and 8 aligned rows.
         let mut nv12 = vec![0u8; 16 * 8 + 16 * 4];
         bgra_to_nv12(&img, &mut nv12, 16, 8);
         assert_eq!(nv12[16 * 3 + 5], y[3 * 6 + 5]);

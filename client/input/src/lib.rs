@@ -1,8 +1,8 @@
-//! Simulazione dell'input ricevuto dal viewer.
+//! Injection of the input received from the viewer.
 //!
-//! - Windows: SendInput (`windows.rs`). Il desktop sicuro (UAC, login) richiede
-//!   il servizio di sistema della fase 3.
-//! - macOS: CGEvent; Linux: portale RemoteDesktop / XTest (fase 4).
+//! - Windows: SendInput (`windows.rs`). The secure desktop (UAC, sign-in) needs
+//!   the system service (nexodesk-service).
+//! - macOS: CGEvent; Linux: RemoteDesktop portal / XTest (phase 4).
 
 use nexodesk_proto::v1::InputEvent;
 
@@ -10,7 +10,7 @@ pub mod keys;
 #[cfg(windows)]
 mod windows;
 
-/// Area dello schermo trasmesso nel desktop virtuale, in pixel fisici.
+/// Area of the transmitted screen in the virtual desktop, in physical pixels.
 #[derive(Debug, Clone, Copy)]
 pub struct ScreenRect {
     pub left: i32,
@@ -22,26 +22,26 @@ pub struct ScreenRect {
 pub trait InputInjector: Send {
     fn inject(&mut self, event: &InputEvent) -> anyhow::Result<()>;
 
-    /// Rilascia tasti e pulsanti ancora premuti (fine sessione, connessione persa).
+    /// Releases keys and buttons still pressed (end of session, lost connection).
     fn release_all(&mut self);
 
-    /// Lo schermo trasmesso è cambiato: le coordinate del mouse si riferiscono a questo.
+    /// The transmitted screen changed: mouse coordinates refer to this one.
     fn set_screen(&mut self, screen: ScreenRect);
 }
 
-/// Apre l'iniezione di input sullo schermo indicato.
+/// Opens input injection on the given screen.
 pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
     #[cfg(windows)]
     return Ok(Box::new(windows::SendInputInjector::new(screen)));
     #[cfg(not(windows))]
     {
         let _ = screen;
-        anyhow::bail!("controllo remoto dell'input non ancora disponibile su questo sistema");
+        anyhow::bail!("remote input control is not available on this system yet");
     }
 }
 
-/// Rende il processo consapevole dei DPI per monitor: coordinate in pixel fisici,
-/// coerenti con quelle della cattura. Va chiamata all'avvio, prima di creare finestre.
+/// Makes the process per-monitor DPI aware: coordinates in physical pixels,
+/// consistent with the capture ones. Call it at start-up, before creating windows.
 pub fn set_dpi_awareness() {
     #[cfg(windows)]
     windows::set_dpi_awareness();

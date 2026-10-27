@@ -1,8 +1,8 @@
-//! Identità del dispositivo: una chiave Ed25519 creata al primo avvio.
+//! Device identity: an Ed25519 key created at first start.
 //!
-//! Il server lega la chiave pubblica all'ID a 9 cifre; nelle sessioni la stessa
-//! chiave firma il certificato TLS del dispositivo, che l'altro lato verifica.
-//! TODO (fase 3): proteggere la chiave privata con DPAPI/TPM, Keychain, Secret Service.
+//! The server binds the public key to the 9-digit ID; in sessions the same key
+//! signs the device's TLS certificate, which the other side checks.
+//! TODO (phase 3): protect the private key with DPAPI/TPM, Keychain, Secret Service.
 
 use std::path::{Path, PathBuf};
 
@@ -19,25 +19,25 @@ pub struct Identity {
 }
 
 impl Identity {
-    /// Legge la chiave da `path` o la crea (con le cartelle) se non esiste.
+    /// Reads the key from `path` or creates it (with its folders) if missing.
     pub fn load_or_create(path: &Path) -> Result<Self> {
         let key = match std::fs::read(path) {
-            Ok(der) => KeyPair::try_from(der.as_slice()).context("chiave del dispositivo non valida")?,
+            Ok(der) => KeyPair::try_from(der.as_slice()).context("invalid device key")?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 let key = KeyPair::generate_for(&PKCS_ED25519)?;
                 if let Some(dir) = path.parent() {
                     std::fs::create_dir_all(dir)?;
                 }
                 std::fs::write(path, key.serialize_der())
-                    .with_context(|| format!("scrittura di {}", path.display()))?;
+                    .with_context(|| format!("writing {}", path.display()))?;
                 key
             }
-            Err(e) => return Err(e).with_context(|| format!("lettura di {}", path.display())),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
         let public_key: PublicKey = key
             .public_key_raw()
             .try_into()
-            .map_err(|_| anyhow!("la chiave del dispositivo non è Ed25519"))?;
+            .map_err(|_| anyhow!("the device key is not Ed25519"))?;
         let cert = CertificateParams::new(vec!["nexodesk-device".to_string()])?.self_signed(&key)?;
         Ok(Self { cert: cert.der().clone(), key, public_key })
     }
@@ -50,13 +50,13 @@ impl Identity {
         Ok(self.key.sign(message)?)
     }
 
-    /// Certificato e chiave per il TLS delle sessioni.
+    /// Certificate and key for the sessions' TLS.
     pub fn tls_cert(&self) -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
         (vec![self.cert.clone()], PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(self.key.serialize_der())))
     }
 }
 
-/// Cartella dei dati di NexoDesk per l'utente (`%APPDATA%\NexoDesk` su Windows).
+/// NexoDesk data folder of the user (`%APPDATA%\NexoDesk` on Windows).
 pub fn data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("NEXODESK_DATA_DIR") {
         return dir.into();

@@ -1,12 +1,12 @@
-//! Compressione e decompressione video.
+//! Video encoding and decoding.
 //!
-//! Il resto del client vede solo i trait [`VideoEncoder`] e [`VideoDecoder`]:
-//! - `mf`: H.264 con l'encoder della scheda video tramite Media Foundation (Windows);
-//! - `openh264`: H.264 software, disponibile ovunque (ripiego);
-//! - VideoToolbox (macOS), VAAPI (Linux) e la decodifica hardware: prossimi passi.
+//! The rest of the client sees only the [`VideoEncoder`] and [`VideoDecoder`] traits:
+//! - `mf`: H.264 with the graphics card's encoder through Media Foundation (Windows);
+//! - `openh264`: software H.264, available everywhere (fallback);
+//! - VideoToolbox (macOS), VAAPI (Linux) and hardware decoding: next steps.
 //!
-//! Formato intermedio: YUV 4:2:0 BT.601 a gamma limitata (I420 per OpenH264,
-//! NV12 per gli encoder hardware), vedi [`convert`].
+//! Intermediate format: YUV 4:2:0 BT.601 limited range (I420 for OpenH264,
+//! NV12 for hardware encoders), see [`convert`].
 
 pub mod convert;
 #[cfg(windows)]
@@ -20,11 +20,11 @@ mod select;
 pub use crate::mf::{MfEncoder, hardware_encoders};
 pub use crate::openh264::{OpenH264Decoder, OpenH264Encoder};
 
-/// Immagine BGRA da comprimere (come esce dalla cattura).
+/// BGRA image to encode (as it comes from capture).
 pub struct BgraImage<'a> {
     pub width: u32,
     pub height: u32,
-    /// Byte per riga.
+    /// Bytes per row.
     pub stride: usize,
     pub data: &'a [u8],
 }
@@ -34,7 +34,7 @@ pub struct EncodedFrame {
     pub keyframe: bool,
 }
 
-/// Immagine decompressa in I420 con piani compatti (stride = larghezza del piano).
+/// Decoded I420 image with packed planes (stride = plane width).
 #[derive(Default)]
 pub struct YuvFrame {
     pub width: u32,
@@ -59,10 +59,10 @@ impl Default for EncoderSettings {
 pub trait VideoEncoder: Send {
     fn name(&self) -> &'static str;
 
-    /// Comprime un'immagine. `None` se l'encoder decide di saltare il frame.
+    /// Encodes an image. `None` if the encoder decides to skip the frame.
     fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> anyhow::Result<Option<EncodedFrame>>;
 
-    /// Comprime un frame che è già sulla GPU (solo encoder con [`accepts_textures`](Self::accepts_textures)).
+    /// Encodes a frame already on the GPU (only encoders with [`accepts_textures`](Self::accepts_textures)).
     #[cfg(windows)]
     fn encode_texture(
         &mut self,
@@ -71,20 +71,20 @@ pub trait VideoEncoder: Send {
         _height: u32,
         _force_keyframe: bool,
     ) -> anyhow::Result<Option<EncodedFrame>> {
-        anyhow::bail!("questo encoder non accetta texture GPU")
+        anyhow::bail!("this encoder does not accept GPU textures")
     }
 
-    /// L'encoder vuole i frame come texture GPU invece che in RAM.
+    /// The encoder wants frames as GPU textures instead of in RAM.
     fn accepts_textures(&self) -> bool {
         false
     }
 
-    /// Cambia il bitrate durante la sessione (bitrate adattivo).
+    /// Changes the bitrate during the session (adaptive bitrate).
     fn set_bitrate(&mut self, _bps: u32) {}
 
-    /// Attende (al massimo `timeout`) che l'encoder possa ricevere subito un frame.
-    /// Chi chiama può così scegliere l'immagine più recente solo quando serve,
-    /// invece di farla invecchiare dentro `encode`. `true` se è pronto.
+    /// Waits (at most `timeout`) until the encoder can take a frame right away.
+    /// The caller can then pick the most recent image only when needed, instead
+    /// of letting it age inside `encode`. `true` if it is ready.
     fn wait_ready(&mut self, _timeout: std::time::Duration) -> anyhow::Result<bool> {
         Ok(true)
     }
@@ -93,40 +93,40 @@ pub trait VideoEncoder: Send {
 pub trait VideoDecoder: Send {
     fn name(&self) -> &'static str;
 
-    /// Decomprime un frame. `None` se il decoder non ha ancora un'immagine da mostrare.
+    /// Decodes a frame. `None` if the decoder has no image to show yet.
     fn decode(&mut self, data: &[u8]) -> anyhow::Result<Option<&YuvFrame>>;
 }
 
-/// Quale encoder usare.
+/// Which encoder to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EncoderChoice {
-    /// Il più veloce tra hardware e software, provati all'avvio.
+    /// The fastest of hardware and software, tried at start-up.
     #[default]
     Auto,
     Hardware,
     Software,
 }
 
-/// Come comprimere, deciso una volta per processo.
+/// How to encode, decided once per process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncoderPlan {
-    /// OpenH264 sulla CPU.
+    /// OpenH264 on the CPU.
     Software,
-    /// Encoder della scheda video, immagine passata dalla RAM.
+    /// Graphics card encoder, image passed through RAM.
     Hardware,
-    /// Encoder della scheda video, immagine che resta sulla GPU dalla cattura in poi.
+    /// Graphics card encoder, image staying on the GPU from capture onwards.
     HardwareGpu,
 }
 
-/// Device grafico condiviso tra cattura ed encoder (solo Windows).
+/// Graphics device shared between capture and encoder (Windows only).
 #[cfg(not(windows))]
 #[derive(Clone)]
 pub struct GpuDevice(());
 #[cfg(windows)]
 pub use gpu::{GpuDevice, GpuTexture};
 
-/// Traduce la scelta dell'utente in un piano. Con `Auto` prova gli encoder disponibili
-/// (circa due secondi, una volta sola: conviene chiamarla all'avvio).
+/// Turns the user's choice into a plan. With `Auto` it tries the available encoders
+/// (about two seconds, only once: better called at start-up).
 pub fn plan_encoder(choice: EncoderChoice, settings: EncoderSettings) -> EncoderPlan {
     match choice {
         EncoderChoice::Auto => select::auto_plan(settings),
@@ -136,8 +136,8 @@ pub fn plan_encoder(choice: EncoderChoice, settings: EncoderSettings) -> Encoder
     }
 }
 
-/// Crea l'encoder del piano. Per `HardwareGpu` serve il device della cattura;
-/// senza, si ripiega sull'ingresso dalla RAM.
+/// Creates the plan's encoder. `HardwareGpu` needs the capture device; without
+/// it, input from RAM is used instead.
 pub fn create_encoder(
     plan: EncoderPlan,
     settings: EncoderSettings,
@@ -150,19 +150,19 @@ pub fn create_encoder(
                 (EncoderPlan::HardwareGpu, Some(device)) => MfEncoder::with_device(settings, device)?,
                 _ => MfEncoder::new(settings)?,
             };
-            tracing::info!("encoder hardware: {}", enc.device_name());
+            tracing::info!("hardware encoder: {}", enc.device_name());
             Ok(Box::new(enc))
         }
         #[cfg(not(windows))]
         EncoderPlan::Hardware | EncoderPlan::HardwareGpu => {
             let _ = gpu;
-            anyhow::bail!("encoder hardware non ancora disponibile su questo sistema")
+            anyhow::bail!("hardware encoder not available on this system yet")
         }
         EncoderPlan::Software => Ok(Box::new(OpenH264Encoder::new(settings)?)),
     }
 }
 
-/// Il miglior decoder H.264 disponibile su questo sistema.
+/// Best H.264 decoder available on this system.
 pub fn best_decoder() -> anyhow::Result<Box<dyn VideoDecoder>> {
     Ok(Box::new(OpenH264Decoder::new()?))
 }

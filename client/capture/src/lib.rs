@@ -1,9 +1,9 @@
-//! Cattura dello schermo.
+//! Screen capture.
 //!
-//! Ogni sistema ha la propria implementazione dietro il trait [`Capturer`]:
+//! Each system has its own implementation behind the [`Capturer`] trait:
 //! - Windows: DXGI Desktop Duplication (`windows.rs`);
-//! - macOS: ScreenCaptureKit (fase 4);
-//! - Linux: PipeWire / X11 (fase 4).
+//! - macOS: ScreenCaptureKit (phase 4);
+//! - Linux: PipeWire / X11 (phase 4).
 
 use std::time::Duration;
 
@@ -15,12 +15,12 @@ mod windows;
 
 pub use synthetic::SyntheticCapturer;
 
-/// Uno schermo collegato al sistema.
+/// A screen connected to the system.
 #[derive(Debug, Clone)]
 pub struct Display {
     pub index: usize,
     pub name: String,
-    /// Posizione nel desktop virtuale, in pixel fisici.
+    /// Position in the virtual desktop, in physical pixels.
     pub left: i32,
     pub top: i32,
     pub width: u32,
@@ -28,16 +28,16 @@ pub struct Display {
     pub primary: bool,
 }
 
-/// Immagine catturata in formato BGRA 8 bit.
+/// Captured image in 8-bit BGRA format.
 pub struct Frame {
     pub width: u32,
     pub height: u32,
-    /// Byte per riga (può essere maggiore di `width * 4`).
+    /// Bytes per row (may be larger than `width * 4`).
     pub stride: usize,
     pub data: Vec<u8>,
-    /// Orologio di sistema in microsecondi al momento della cattura.
+    /// System clock in microseconds at capture time.
     pub captured_us: u64,
-    /// Modalità GPU (Windows): l'immagine è in questa texture BGRA e `data` è vuoto.
+    /// GPU mode (Windows): the image is in this BGRA texture and `data` is empty.
     #[cfg(windows)]
     pub texture: Option<::windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>,
 }
@@ -45,35 +45,35 @@ pub struct Frame {
 pub trait Capturer: Send {
     fn display(&self) -> &Display;
 
-    /// Attende un'immagine nuova fino a `timeout`. `None` se lo schermo non è cambiato.
+    /// Waits up to `timeout` for a new image. `None` if the screen did not change.
     fn next_frame(&mut self, timeout: Duration) -> anyhow::Result<Option<&Frame>>;
 
-    /// Ultima immagine catturata (per ricomprimerla quando serve un keyframe a schermo fermo).
+    /// Last captured image (to encode it again when a keyframe is needed on a still screen).
     fn last_frame(&self) -> Option<&Frame>;
 
-    /// Passa alla modalità GPU: i frame restano in texture Direct3D 11 su questo device,
-    /// da condividere con l'encoder hardware. `None` se la sorgente non la supporta.
+    /// Switches to GPU mode: frames stay in Direct3D 11 textures on this device,
+    /// to be shared with the hardware encoder. `None` if the source does not support it.
     #[cfg(windows)]
     fn enable_gpu_output(&mut self) -> Option<::windows::Win32::Graphics::Direct3D11::ID3D11Device> {
         None
     }
 }
 
-/// Elenco degli schermi disponibili.
+/// List of the available screens.
 pub fn displays() -> anyhow::Result<Vec<Display>> {
     #[cfg(windows)]
     return windows::displays();
     #[cfg(not(windows))]
-    anyhow::bail!("cattura schermo non ancora disponibile su questo sistema");
+    anyhow::bail!("screen capture is not available on this system yet");
 }
 
-/// Apre la cattura dello schermo indicato (quello principale se `None`).
+/// Opens capture of the given screen (the primary one if `None`).
 pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
     #[cfg(windows)]
     return Ok(Box::new(windows::DxgiCapturer::new(index)?));
     #[cfg(not(windows))]
     {
         let _ = index;
-        anyhow::bail!("cattura schermo non ancora disponibile su questo sistema");
+        anyhow::bail!("screen capture is not available on this system yet");
     }
 }

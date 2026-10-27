@@ -1,4 +1,4 @@
-//! Iniezione dell'input con SendInput.
+//! Input injection with SendInput.
 
 use std::collections::HashSet;
 
@@ -25,12 +25,12 @@ use crate::{InputInjector, ScreenRect, keys};
 
 pub fn set_dpi_awareness() {
     if let Err(e) = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) } {
-        // Già impostata (es. dal manifest) oppure sistema troppo vecchio.
+        // Already set (e.g. by the manifest) or system too old.
         debug!("SetProcessDpiAwarenessContext: {e}");
     }
 }
 
-/// Tasto premuto, da rilasciare a fine sessione.
+/// Pressed key, to be released at the end of the session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Held {
     Key(String),
@@ -60,7 +60,7 @@ impl SendInputInjector {
         let s = self.screen;
         let px = s.left as f64 + (x.clamp(0.0, 1.0) as f64) * (s.width.saturating_sub(1)) as f64;
         let py = s.top as f64 + (y.clamp(0.0, 1.0) as f64) * (s.height.saturating_sub(1)) as f64;
-        // Coordinate assolute normalizzate 0..65535 sull'intero desktop virtuale.
+        // Absolute coordinates normalised to 0..65535 over the whole virtual desktop.
         let (vx, vy, vw, vh) = unsafe {
             (
                 GetSystemMetrics(SM_XVIRTUALSCREEN),
@@ -98,12 +98,12 @@ impl SendInputInjector {
             let ext = if sc.extended { KEYEVENTF_EXTENDEDKEY } else { KEYBD_EVENT_FLAGS(0) };
             keyboard(VIRTUAL_KEY(0), sc.code, KEYEVENTF_SCANCODE | ext | up)
         } else {
-            // Tasti senza un codice di scansione semplice: si usa il tasto virtuale.
+            // Keys without a simple scan code: the virtual key is used.
             let vk = match code {
                 "Pause" => VK_PAUSE,
                 "NumLock" => VK_NUMLOCK,
                 _ => {
-                    warn!(code, "tasto sconosciuto ignorato");
+                    warn!(code, "unknown key ignored");
                     return;
                 }
             };
@@ -132,31 +132,31 @@ fn keyboard(vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     }
 }
 
-/// Evento creato da nexodesk-service: segnalarlo chiede al servizio Ctrl+Alt+Canc.
-/// Con la sicurezza predefinita di un oggetto creato da SYSTEM, solo SYSTEM può segnalarlo.
-/// Lo stesso nome è in nexodesk-service (`scm.rs`).
+/// Event created by nexodesk-service: signalling it asks the service for Ctrl+Alt+Del.
+/// With the default security of an object created by SYSTEM, only SYSTEM can signal it.
+/// The same name is in nexodesk-service (`scm.rs`).
 const SAS_EVENT: &str = r"Global\NexoDeskSAS";
 
-/// Ctrl+Alt+Canc. Windows lo accetta solo da un servizio (`SendSAS`, con il criterio
-/// SoftwareSASGeneration impostato da `nexodesk-service install`): l'agent lo chiede
-/// al servizio. Senza servizio non è disponibile.
+/// Ctrl+Alt+Del. Windows accepts it only from a service (`SendSAS`, with the
+/// SoftwareSASGeneration policy set by `nexodesk-service install`): the agent asks
+/// the service for it. Without the service it is not available.
 fn secure_attention() {
     let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, false, &HSTRING::from(SAS_EVENT)) };
     match event {
         Ok(event) => {
-            info!("Ctrl+Alt+Canc richiesto dal viewer");
+            info!("Ctrl+Alt+Del requested by the viewer");
             let _ = unsafe { SetEvent(event) };
             let _ = unsafe { CloseHandle(event) };
         }
-        Err(e) => warn!("Ctrl+Alt+Canc non disponibile: serve nexodesk-service ({e})"),
+        Err(e) => warn!("Ctrl+Alt+Del not available: nexodesk-service is needed ({e})"),
     }
 }
 
 fn send(input: INPUT) {
     let sent = unsafe { SendInput(&[input], size_of::<INPUT>() as i32) };
     if sent == 0 {
-        // Succede se la finestra in primo piano ha privilegi più alti (UIPI) o sul desktop sicuro.
-        debug!("SendInput rifiutato: {}", windows::core::Error::from_thread());
+        // Happens when the foreground window has higher privileges (UIPI) or on the secure desktop.
+        debug!("SendInput refused: {}", windows::core::Error::from_thread());
     }
 }
 

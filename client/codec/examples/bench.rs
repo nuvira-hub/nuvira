@@ -1,7 +1,7 @@
-//! Confronta gli encoder: `cargo run --release -p nexodesk-codec --example bench [LxA]`.
+//! Compares the encoders: `cargo run --release -p nexodesk-codec --example bench [WxH]`.
 //!
-//! Comprime 120 frame di un'immagine tipo desktop con una finestra che si muove
-//! e verifica che OpenH264 riesca a decomprimere il risultato.
+//! Encodes 120 frames of a desktop-like image with a moving window and checks
+//! that OpenH264 can decode the result.
 
 use std::time::Instant;
 
@@ -14,7 +14,7 @@ fn desktop(w: usize, h: usize, t: usize) -> Vec<u8> {
     for y in 0..h {
         for x in 0..w {
             let p = &mut data[(y * w + x) * 4..][..4];
-            // Sfondo uniforme, barra delle applicazioni, testo finto a righe e una finestra che scorre.
+            // Plain background, taskbar, fake text rows and a scrolling window.
             let mut c = [180u8, 120, 40, 255];
             if y > h - 48 {
                 c = [30, 30, 30, 255];
@@ -48,13 +48,13 @@ fn run(label: &str, mut enc: Box<dyn VideoEncoder>, w: usize, h: usize) {
         if let Some(out) = out {
             encoded += 1;
             bytes += out.data.len();
-            if dec.decode(&out.data).expect("flusso non valido").is_some() {
+            if dec.decode(&out.data).expect("invalid stream").is_some() {
                 decoded += 1;
             }
         }
     }
     println!(
-        "{label:<28} {:>6.2} ms/frame (peggiore {:>6.2} ms), {:>5} kB/frame, {encoded}/{FRAMES} compressi, {decoded} decompressi",
+        "{label:<28} {:>6.2} ms/frame (worst {:>6.2} ms), {:>5} kB/frame, {encoded}/{FRAMES} encoded, {decoded} decoded",
         total as f64 / FRAMES as f64 / 1000.0,
         worst as f64 / 1000.0,
         bytes / encoded.max(1) / 1024,
@@ -68,18 +68,18 @@ fn main() {
         )
         .init();
     let size = std::env::args().nth(1).unwrap_or_else(|| "1920x1080".into());
-    let (w, h) = size.split_once('x').expect("formato LxA");
+    let (w, h) = size.split_once('x').expect("WxH format");
     let (w, h): (usize, usize) = (w.parse().unwrap(), h.parse().unwrap());
     let settings = EncoderSettings::default();
 
     #[cfg(windows)]
     match nexodesk_codec::hardware_encoders() {
-        Ok(list) => println!("encoder hardware trovati: {list:?}"),
-        Err(e) => println!("enumerazione encoder hardware non riuscita: {e:#}"),
+        Ok(list) => println!("hardware encoders found: {list:?}"),
+        Err(e) => println!("hardware encoder enumeration failed: {e:#}"),
     }
     match nexodesk_codec::create_encoder(EncoderPlan::Hardware, settings, None) {
         Ok(enc) => run("hardware (Media Foundation)", enc, w, h),
-        Err(e) => println!("hardware non disponibile: {e:#}"),
+        Err(e) => println!("hardware not available: {e:#}"),
     }
     run(
         "software (OpenH264)",

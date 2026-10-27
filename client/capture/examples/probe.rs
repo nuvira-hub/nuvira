@@ -1,4 +1,4 @@
-//! Elenca gli schermi e misura la cattura: `cargo run -p nexodesk-capture --example probe`.
+//! Lists the screens and measures capture: `cargo run -p nexodesk-capture --example probe`.
 
 use std::time::{Duration, Instant};
 
@@ -7,7 +7,7 @@ fn main() -> anyhow::Result<()> {
         println!("{d:?}");
     }
     let mut capturer = nexodesk_capture::open(None)?;
-    println!("cattura di {:?}", capturer.display());
+    println!("capturing {:?}", capturer.display());
 
     let start = Instant::now();
     let (mut frames, mut timeouts) = (0, 0);
@@ -23,6 +23,6 @@ fn main() -> anyhow::Result<()> {
             None => timeouts += 1,
         }
     }
-    println!("{frames} frame, {timeouts} attese senza cambiamenti in 3 s");
+    println!("{frames} frames, {timeouts} waits without changes in 3 s");
     Ok(())
 }

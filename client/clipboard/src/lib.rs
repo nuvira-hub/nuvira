@@ -1,34 +1,34 @@
-//! Appunti condivisi durante la sessione (per ora solo testo).
+//! Clipboard shared during the session (text only for now).
 //!
-//! Viewer e agent controllano a intervalli se il proprio sistema ha testo nuovo
-//! negli appunti e lo inviano all'altra parte, che lo scrive nei suoi. Il testo
-//! ricevuto non viene rimandato indietro (niente ping-pong).
+//! Viewer and agent check at intervals whether their system has new text on the
+//! clipboard and send it to the other side, which writes it to its own. Received
+//! text is not sent back (no ping-pong).
 //!
-//! Su Windows il cambio si riconosce dal numero di sequenza degli appunti, senza
-//! leggerli; altrove si confronta il testo.
+//! On Windows a change is detected from the clipboard sequence number, without
+//! reading it; elsewhere the text is compared.
 
 use anyhow::{Context, Result};
 use tracing::debug;
 
-/// Testo più lungo di così non viene condiviso (resta solo negli appunti locali).
+/// Longer text is not shared (it stays only on the local clipboard).
 pub const MAX_TEXT_BYTES: usize = 1 << 20;
 
 pub struct Clipboard {
     inner: arboard::Clipboard,
-    /// Ultimo stato visto: numero di sequenza (Windows) o testo.
+    /// Last state seen: sequence number (Windows) or text.
     last_seq: u32,
     last_text: Option<String>,
 }
 
 impl Clipboard {
-    /// Il testo già presente all'apertura non viene inviato: conta solo quello copiato dopo.
+    /// Text already present when opened is not sent: only what is copied afterwards counts.
     pub fn new() -> Result<Self> {
-        let mut inner = arboard::Clipboard::new().context("appunti non disponibili")?;
+        let mut inner = arboard::Clipboard::new().context("clipboard not available")?;
         let last_text = inner.get_text().ok();
         Ok(Self { inner, last_seq: sequence(), last_text })
     }
 
-    /// Testo copiato localmente dall'ultima chiamata, se c'è.
+    /// Text copied locally since the last call, if any.
     pub fn poll(&mut self) -> Option<String> {
         if cfg!(windows) {
             let seq = sequence();
@@ -37,31 +37,31 @@ impl Clipboard {
             }
             self.last_seq = seq;
         }
-        // Errori normali: appunti occupati da un altro programma, contenuto non testuale.
+        // Normal errors: clipboard held by another program, non-text content.
         let text = self.inner.get_text().ok()?;
         if self.last_text.as_ref() == Some(&text) {
             return None;
         }
         self.last_text = Some(text.clone());
         if text.is_empty() || text.len() > MAX_TEXT_BYTES {
-            debug!(bytes = text.len(), "testo degli appunti non condiviso");
+            debug!(bytes = text.len(), "clipboard text not shared");
             return None;
         }
         Some(text)
     }
 
-    /// Scrive il testo ricevuto dall'altra parte, senza poi segnalarlo come nuovo.
+    /// Writes text received from the other side, without reporting it as new afterwards.
     pub fn set(&mut self, text: String) -> Result<()> {
-        self.inner.set_text(text.clone()).context("scrittura degli appunti")?;
+        self.inner.set_text(text.clone()).context("writing the clipboard")?;
         self.last_seq = sequence();
         self.last_text = Some(text);
         Ok(())
     }
 }
 
-/// Thread che controlla gli appunti ogni 400 ms. Il testo copiato localmente va a
-/// `outgoing` (se restituisce `false` il thread termina); il testo inviato sul canale
-/// restituito viene scritto negli appunti. Chiudendo il canale il thread termina.
+/// Thread that checks the clipboard every 400 ms. Text copied locally goes to
+/// `outgoing` (if it returns `false` the thread ends); text sent on the returned
+/// channel is written to the clipboard. Closing the channel ends the thread.
 pub fn spawn_sync(
     mut outgoing: impl FnMut(String) -> bool + Send + 'static,
 ) -> Result<std::sync::mpsc::Sender<String>> {
@@ -69,7 +69,7 @@ pub fn spawn_sync(
     let (incoming_tx, incoming_rx) = channel::<String>();
     let (ready_tx, ready_rx) = channel();
     std::thread::Builder::new().name("appunti".into()).spawn(move || {
-        // Gli appunti si aprono nel thread che li usa.
+        // The clipboard is opened in the thread that uses it.
         let mut clipboard = match Clipboard::new() {
             Ok(c) => {
                 let _ = ready_tx.send(Ok(()));
@@ -98,7 +98,7 @@ pub fn spawn_sync(
             }
         }
     })?;
-    ready_rx.recv().context("thread degli appunti terminato")??;
+    ready_rx.recv().context("clipboard thread ended")??;
     Ok(incoming_tx)
 }
 

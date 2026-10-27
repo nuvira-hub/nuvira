@@ -1,5 +1,5 @@
-//! Connessione di segnalazione con nexodesk-server: registrazione del dispositivo
-//! (prova della chiave), poi scambio di richieste e percorsi.
+//! Signalling connection with nexodesk-server: device registration (proof of
+//! the key), then exchange of requests and routes.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -12,22 +12,22 @@ use quinn::crypto::rustls::QuicClientConfig;
 use crate::identity::Identity;
 use crate::{Fingerprint, FramedRecv, FramedSend, PinnedCert, ServerTransport, provider, transport_config};
 
-/// ALPN della segnalazione (deve coincidere con quello del server).
+/// Signalling ALPN (must match the server's).
 const ALPN: &[u8] = b"nexodesk-signal/1";
-/// Versione del protocollo di segnalazione.
+/// Signalling protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
-/// Prefisso firmato insieme al nonce (come nel server).
+/// Prefix signed together with the nonce (as in the server).
 const REGISTER_CONTEXT: &[u8] = b"nexodesk-register-v1";
-/// Porta UDP predefinita di nexodesk-server.
+/// Default UDP port of nexodesk-server.
 pub const DEFAULT_PORT: u16 = 21116;
 
 pub struct Signal {
     pub device_id: String,
-    /// Indirizzo del server: è anche l'indirizzo del relay.
+    /// Server address: it is also the relay address.
     pub server: SocketAddr,
-    /// Impronta del certificato del server vista in questa connessione.
+    /// Fingerprint of the server certificate seen in this connection.
     pub server_fingerprint: Fingerprint,
-    /// Trasporto con cui il server è stato raggiunto: le sessioni useranno lo stesso.
+    /// Transport the server was reached with: sessions will use the same one.
     pub transport: ServerTransport,
     pub tx: SignalSender,
     pub rx: SignalReceiver,
@@ -43,30 +43,27 @@ impl SignalSender {
 }
 
 impl SignalReceiver {
-    /// Prossimo messaggio dal server; `None` se ha chiuso la connessione.
+    /// Next message from the server; `None` if it closed the connection.
     pub async fn recv(&mut self) -> Result<Option<server_message::Msg>> {
         Ok(self.0.recv::<ServerMessage>().await?.and_then(|m| m.msg))
     }
 }
 
-/// Si collega a nexodesk-server e registra il dispositivo. Con `expected` il certificato
-/// del server deve avere quell'impronta; senza, qualunque impronta viene accettata
-/// e restituita in `server_fingerprint` (da memorizzare: vedi [`known_server`]).
-/// Quale trasporto usare verso il server.
+/// Which transport to use towards the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TransportMode {
-    /// UDP; se non risponde entro pochi secondi, WebSocket.
+    /// UDP; if it does not answer within a few seconds, WebSocket.
     #[default]
     Auto,
     Udp,
     WebSocket,
 }
 
-/// Tempo concesso a UDP prima di provare il WebSocket.
+/// Time given to UDP before trying the WebSocket.
 const UDP_ATTEMPT: std::time::Duration = std::time::Duration::from_secs(4);
 
-/// Come [`connect`], scegliendo il trasporto: con `Auto` prova UDP e, se il
-/// server non risponde (rete che blocca UDP), passa al WebSocket `ws_url`.
+/// Like [`connect`], choosing the transport: with `Auto` it tries UDP and, if the
+/// server does not answer (network blocking UDP), moves to the WebSocket `ws_url`.
 pub async fn connect_auto(
     server: SocketAddr,
     ws_url: &str,
@@ -87,15 +84,15 @@ pub async fn connect_auto(
             .await;
             match udp {
                 Ok(Ok(signal)) => Ok(signal),
-                // Il server ha risposto ma rifiuta (impronta, registrazione): il WebSocket non cambierebbe nulla.
+                // The server answered but refuses (fingerprint, registration): the WebSocket would not change anything.
                 Ok(Err(e)) if !is_unreachable(&e) => Err(e),
                 other => {
                     let why = match other {
                         Ok(Err(e)) => format!("{e:#}"),
-                        _ => "nessuna risposta".into(),
+                        _ => "no answer".into(),
                     };
                     tracing::info!(
-                        "nexodesk-server non raggiungibile via UDP ({why}): provo il WebSocket {ws_url}"
+                        "nexodesk-server not reachable over UDP ({why}): trying the WebSocket {ws_url}"
                     );
                     connect(server, &ws, expected, identity, device).await
                 }
@@ -104,7 +101,7 @@ pub async fn connect_auto(
     }
 }
 
-/// L'errore indica che il server non è stato raggiunto (e non un rifiuto)?
+/// Does the error mean the server was not reached (rather than a refusal)?
 fn is_unreachable(e: &anyhow::Error) -> bool {
     e.chain().any(|c| {
         matches!(
@@ -114,13 +111,16 @@ fn is_unreachable(e: &anyhow::Error) -> bool {
     })
 }
 
-/// Come si presenta il dispositivo al server.
+/// How the device introduces itself to the server.
 pub struct DeviceInfo<'a> {
     pub name: &'a str,
-    /// Non raggiungibile: non riceve richieste di collegamento (viewer, app per la rubrica).
+    /// Not reachable: it receives no connection requests (viewer, app using the address book).
     pub reachable: bool,
 }
 
+/// Connects to nexodesk-server and registers the device. With `expected` the server
+/// certificate must have that fingerprint; without it, any fingerprint is accepted
+/// and returned in `server_fingerprint` (to be remembered: see [`known_server`]).
 pub async fn connect(
     server: SocketAddr,
     transport: &ServerTransport,
@@ -144,8 +144,8 @@ pub async fn connect(
     let conn = endpoint
         .connect(server, "nexodesk-server")?
         .await
-        .with_context(|| format!("collegamento a nexodesk-server {server}"))?;
-    let server_fingerprint = seen.lock().expect("impronta").expect("impronta registrata durante l'handshake");
+        .with_context(|| format!("connecting to nexodesk-server {server}"))?;
+    let server_fingerprint = seen.lock().expect("fingerprint").expect("fingerprint stored during the handshake");
 
     let (send, recv) = conn.open_bi().await?;
     let (mut tx, mut rx) = (SignalSender(FramedSend::new(send)), SignalReceiver(FramedRecv::new(recv)));
@@ -161,21 +161,21 @@ pub async fn connect(
 
     let nonce = match rx.recv().await? {
         Some(server_message::Msg::Challenge(c)) => c.nonce,
-        Some(server_message::Msg::Error(e)) => bail!("il server rifiuta la registrazione: {}", e.message),
-        other => bail!("risposta inattesa alla registrazione: {other:?}"),
+        Some(server_message::Msg::Error(e)) => bail!("the server refuses the registration: {}", e.message),
+        other => bail!("unexpected answer to the registration: {other:?}"),
     };
     let signature = identity.sign(&[REGISTER_CONTEXT, &nonce].concat())?;
     tx.send(client_message::Msg::Proof(Proof { signature })).await?;
     let device_id = match rx.recv().await? {
         Some(server_message::Msg::Registered(r)) => r.device_id,
-        Some(server_message::Msg::Error(e)) => bail!("il server rifiuta la registrazione: {}", e.message),
-        other => bail!("risposta inattesa alla registrazione: {other:?}"),
+        Some(server_message::Msg::Error(e)) => bail!("the server refuses the registration: {}", e.message),
+        other => bail!("unexpected answer to the registration: {other:?}"),
     };
     Ok(Signal { device_id, server, server_fingerprint, transport: transport.clone(), tx, rx })
 }
 
-/// Impronte dei server già visti (`servers.txt` nella cartella dati): al primo
-/// collegamento si memorizza l'impronta, ai successivi deve restare la stessa.
+/// Fingerprints of the servers already seen (`servers.txt` in the data folder): at
+/// the first connection the fingerprint is remembered, afterwards it must not change.
 pub mod known_server {
     use super::*;
 

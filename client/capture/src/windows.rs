@@ -1,8 +1,8 @@
-//! Cattura con DXGI Desktop Duplication.
+//! Capture with DXGI Desktop Duplication.
 //!
-//! La GPU fornisce una texture solo quando lo schermo cambia; la copiamo in una
-//! texture di staging leggibile dalla CPU. In una fase successiva la texture
-//! resterà sulla GPU e andrà direttamente all'encoder hardware.
+//! The GPU provides a texture only when the screen changes; it is copied into a
+//! staging texture the CPU can read, or, in GPU mode, into textures that go
+//! straight to the hardware encoder.
 
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ use windows::core::Interface;
 
 use crate::{Capturer, Display, Frame};
 
-/// Texture GPU a rotazione: mentre l'encoder legge l'una, la cattura scrive l'altra.
+/// Rotating GPU textures: while the encoder reads one, capture writes another.
 const GPU_POOL: usize = 3;
 
 struct Output {
@@ -83,14 +83,14 @@ pub struct DxgiCapturer {
     output: IDXGIOutput1,
     duplication: Option<IDXGIOutputDuplication>,
     staging: Option<ID3D11Texture2D>,
-    /// Modalità GPU: l'immagine resta in queste texture (a rotazione) invece di passare in RAM.
+    /// GPU mode: the image stays in these (rotating) textures instead of going through RAM.
     gpu_output: bool,
     gpu_pool: Vec<ID3D11Texture2D>,
     gpu_next: usize,
     frame: Frame,
 }
 
-// Gli oggetti COM di D3D11 sono usati da un solo thread alla volta.
+// The D3D11 COM objects are used by one thread at a time.
 unsafe impl Send for DxgiCapturer {}
 
 impl DxgiCapturer {
@@ -101,11 +101,11 @@ impl DxgiCapturer {
             None => all.iter().position(|o| o.display.primary).or(Some(0)),
         }
         .filter(|&p| p < all.len())
-        .ok_or_else(|| anyhow!("schermo non trovato"))?;
+        .ok_or_else(|| anyhow!("screen not found"))?;
         let Output { display, adapter, output } = all.swap_remove(pos);
 
-        // VIDEO_SUPPORT serve al processore video che converte in NV12 per l'encoder
-        // hardware; se il driver non lo offre la cattura funziona comunque.
+        // VIDEO_SUPPORT is needed by the video processor that converts to NV12 for the
+        // hardware encoder; if the driver does not offer it, capture still works.
         let adapter: IDXGIAdapter = adapter.cast()?;
         let create = |flags| {
             let (mut device, mut context) = (None, None);
@@ -127,14 +127,14 @@ impl DxgiCapturer {
         let (device, context) = create(D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT)
             .or_else(|_| create(D3D11_CREATE_DEVICE_BGRA_SUPPORT))
             .context("D3D11CreateDevice")?;
-        let context: ID3D11DeviceContext = context.ok_or_else(|| anyhow!("context D3D11 assente"))?;
-        // Il device viene condiviso con l'encoder, che lavora su un altro thread.
+        let context: ID3D11DeviceContext = context.ok_or_else(|| anyhow!("missing D3D11 context"))?;
+        // The device is shared with the encoder, which works on another thread.
         if let Ok(mt) = context.cast::<ID3D11Multithread>() {
             let _ = unsafe { mt.SetMultithreadProtected(true) };
         }
 
         let mut capturer = Self {
-            device: device.ok_or_else(|| anyhow!("device D3D11 assente"))?,
+            device: device.ok_or_else(|| anyhow!("missing D3D11 device"))?,
             context,
             output: output.cast()?,
             duplication: None,
@@ -151,15 +151,15 @@ impl DxgiCapturer {
 
     fn duplicate(&mut self) -> Result<()> {
         self.duplication = None;
-        // Dopo un passaggio a UAC o schermata di blocco la duplicazione va creata sul nuovo desktop.
+        // After a switch to UAC or the lock screen, duplication must be created on the new desktop.
         if let Some(name) = crate::desktop::follow_input_desktop() {
-            info!("cattura sul desktop {name}");
+            info!("capturing on desktop {name}");
         }
         let dup = unsafe { self.output.DuplicateOutput(&self.device) }
-            .context("DuplicateOutput (schermo protetto o sessione non interattiva?)")?;
+            .context("DuplicateOutput (protected screen or non-interactive session?)")?;
         let desc = unsafe { dup.GetDesc() };
         let (w, h) = (desc.ModeDesc.Width, desc.ModeDesc.Height);
-        debug!(w, h, "desktop duplication avviata");
+        debug!(w, h, "desktop duplication started");
 
         let tex_desc = D3D11_TEXTURE2D_DESC {
             Width: w,
@@ -193,7 +193,7 @@ impl DxgiCapturer {
         self.frame.texture = None;
         self.frame.width = w;
         self.frame.height = h;
-        // L'immagine precedente non corrisponde più alle nuove dimensioni.
+        // The previous image no longer matches the new size.
         self.frame.captured_us = 0;
         self.display.width = w;
         self.display.height = h;
@@ -202,13 +202,13 @@ impl DxgiCapturer {
     }
 
     fn acquire(&mut self, timeout: Duration) -> Result<bool> {
-        let dup = self.duplication.as_ref().expect("duplication inizializzata");
+        let dup = self.duplication.as_ref().expect("duplication initialised");
         let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
         let mut resource: Option<IDXGIResource> = None;
         unsafe { dup.AcquireNextFrame(timeout.as_millis() as u32, &mut info, &mut resource) }?;
         let captured_us = nexodesk_proto::now_us();
 
-        // LastPresentTime == 0: è cambiato solo il puntatore, l'immagine è la stessa.
+        // LastPresentTime == 0: only the pointer changed, the image is the same.
         let changed = info.LastPresentTime != 0;
         let target =
             if self.gpu_output { self.gpu_pool.get(self.gpu_next).cloned() } else { self.staging.clone() };
@@ -218,7 +218,7 @@ impl DxgiCapturer {
             }),
             _ => Ok(()),
         };
-        // ReleaseFrame va chiamato in ogni caso, anche se la copia è fallita.
+        // ReleaseFrame must be called in any case, even if the copy failed.
         unsafe { dup.ReleaseFrame() }?;
         copied?;
         if !changed {
@@ -226,7 +226,7 @@ impl DxgiCapturer {
         }
 
         if self.gpu_output {
-            // L'immagine resta sulla GPU: nessuna copia in RAM.
+            // The image stays on the GPU: no copy to RAM.
             self.frame.texture = target;
             self.gpu_next = (self.gpu_next + 1) % self.gpu_pool.len().max(1);
             self.frame.data.clear();
@@ -235,12 +235,12 @@ impl DxgiCapturer {
             return Ok(true);
         }
 
-        let staging = self.staging.as_ref().expect("staging inizializzata");
+        let staging = self.staging.as_ref().expect("staging initialised");
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         unsafe { self.context.Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }?;
         let stride = mapped.RowPitch as usize;
         let len = stride * self.frame.height as usize;
-        // SAFETY: Map restituisce RowPitch * altezza byte leggibili fino a Unmap.
+        // SAFETY: Map returns RowPitch * height readable bytes until Unmap.
         let src = unsafe { std::slice::from_raw_parts(mapped.pData as *const u8, len) };
         self.frame.data.clear();
         self.frame.data.extend_from_slice(src);
@@ -260,9 +260,9 @@ impl Capturer for DxgiCapturer {
         if self.duplication.is_none() {
             self.duplicate()?;
         }
-        // In modalità GPU il device è condiviso con l'encoder e AcquireNextFrame tiene il
-        // suo lock per tutta l'attesa: con lo schermo fermo conversione e compressione
-        // restavano bloccate fino a 100 ms. Si interroga senza attendere, a brevi intervalli.
+        // In GPU mode the device is shared with the encoder and AcquireNextFrame holds
+        // its lock for the whole wait: on a still screen conversion and encoding were
+        // blocked for up to 100 ms. It is polled without waiting, at short intervals.
         let deadline = std::time::Instant::now() + timeout;
         let wait = if self.gpu_output { Duration::ZERO } else { timeout };
         let result = loop {
@@ -280,10 +280,10 @@ impl Capturer for DxgiCapturer {
             Ok(false) => Ok(None),
             Err(e) => match e.downcast_ref::<windows::core::Error>().map(|e| e.code()) {
                 Some(code) if code == DXGI_ERROR_WAIT_TIMEOUT => Ok(None),
-                // Cambio risoluzione, desktop sicuro (UAC), blocco schermo: si ricrea.
+                // Resolution change, secure desktop (UAC), lock screen: it is recreated.
                 Some(code) if code == DXGI_ERROR_ACCESS_LOST => {
-                    // Normale a ogni cambio di desktop: il passaggio viene registrato in duplicate().
-                    debug!("accesso alla duplicazione perso, la ricreo");
+                    // Normal at every desktop switch: the switch is logged in duplicate().
+                    debug!("duplication access lost, recreating it");
                     self.duplication = None;
                     Ok(None)
                 }
@@ -299,7 +299,7 @@ impl Capturer for DxgiCapturer {
     fn enable_gpu_output(&mut self) -> Option<ID3D11Device> {
         if !self.gpu_output {
             self.gpu_output = true;
-            // Si ricrea la duplicazione per allocare le texture GPU.
+            // Duplication is recreated to allocate the GPU textures.
             self.duplication = None;
         }
         Some(self.device.clone())

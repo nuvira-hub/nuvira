@@ -1,9 +1,8 @@
-//! Account e rubrica su nexodesk-server.
+//! Accounts and address book on nexodesk-server.
 //!
-//! Le richieste viaggiano sulla connessione di segnalazione (registrata come
-//! dispositivo non raggiungibile), ognuna con un numero che ritorna nella
-//! risposta. Se la connessione cade, le richieste in corso e le successive
-//! falliscono: chi usa il client ne apre uno nuovo.
+//! Requests travel on the signalling connection (registered as an unreachable
+//! device), each with a number that comes back in the answer. If the connection
+//! drops, the pending and later requests fail: the user of the client opens a new one.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -23,7 +22,7 @@ pub struct ApiClient {
 }
 
 impl ApiClient {
-    /// Si collega al server (impronta memorizzata come per agent e viewer).
+    /// Connects to the server (fingerprint remembered as for agent and viewer).
     pub async fn connect(
         server_name: &str,
         server: SocketAddr,
@@ -45,11 +44,11 @@ impl ApiClient {
             let reason = loop {
                 tokio::select! {
                     request = rx.recv() => {
-                        let Some((call, reply)) = request else { break "client chiuso".to_string() };
+                        let Some((call, reply)) = request else { break "client closed".to_string() };
                         next_id = next_id.wrapping_add(1);
                         let msg = client_message::Msg::Api(ApiRequest { id: next_id, call: Some(call) });
                         if let Err(e) = sig.tx.send(msg).await {
-                            let _ = reply.send(Err(anyhow!("richiesta non inviata: {e:#}")));
+                            let _ = reply.send(Err(anyhow!("request not sent: {e:#}")));
                             break format!("{e:#}");
                         }
                         pending.insert(next_id, reply);
@@ -61,34 +60,34 @@ impl ApiClient {
                             }
                         }
                         Ok(Some(_)) => {}
-                        Ok(None) => break "il server ha chiuso la connessione".to_string(),
+                        Ok(None) => break "the server closed the connection".to_string(),
                         Err(e) => break format!("{e:#}"),
                     },
                 }
             };
-            tracing::debug!("connessione alla rubrica chiusa: {reason}");
+            tracing::debug!("address book connection closed: {reason}");
             for (_, reply) in pending {
-                let _ = reply.send(Err(anyhow!("connessione con il server persa: {reason}")));
+                let _ = reply.send(Err(anyhow!("connection with the server lost: {reason}")));
             }
         });
         Ok(Self { requests: tx })
     }
 
-    /// Esegue una richiesta; `Err` con il messaggio del server se non riesce.
+    /// Runs a request; `Err` with the server's message if it fails.
     pub async fn call(&self, call: api_request::Call) -> Result<Option<api_response::Result>> {
         let (reply, answer) = oneshot::channel();
-        self.requests.send((call, reply)).map_err(|_| anyhow!("connessione con il server persa"))?;
+        self.requests.send((call, reply)).map_err(|_| anyhow!("connection with the server lost"))?;
         let resp = tokio::time::timeout(std::time::Duration::from_secs(20), answer)
             .await
-            .map_err(|_| anyhow!("il server non risponde"))?
-            .map_err(|_| anyhow!("connessione con il server persa"))??;
+            .map_err(|_| anyhow!("the server does not answer"))?
+            .map_err(|_| anyhow!("connection with the server lost"))??;
         if !resp.error.is_empty() {
             bail!("{}", resp.error);
         }
         Ok(resp.result)
     }
 
-    /// Il client non è più utilizzabile (connessione caduta).
+    /// The client cannot be used any more (connection dropped).
     pub fn is_closed(&self) -> bool {
         self.requests.is_closed()
     }

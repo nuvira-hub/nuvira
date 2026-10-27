@@ -1,9 +1,9 @@
-//! Tasti fisici identificati con i nomi W3C di `KeyboardEvent.code`.
+//! Physical keys identified by the W3C names of `KeyboardEvent.code`.
 //!
-//! Il viewer invia il tasto fisico (posizione sulla tastiera), non il carattere:
-//! è il layout del dispositivo controllato a decidere quale carattere produce.
+//! The viewer sends the physical key (its position on the keyboard), not the
+//! character: the layout of the controlled device decides which character it produces.
 
-/// Codice di scansione PC (set 1) di un tasto e se richiede il prefisso E0.
+/// PC scan code (set 1) of a key and whether it needs the E0 prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScanCode {
     pub code: u16,
@@ -18,8 +18,8 @@ const fn ext(code: u16) -> Option<ScanCode> {
     Some(ScanCode { code, extended: true })
 }
 
-/// Codice di scansione del tasto W3C, se ne ha uno ordinario.
-/// `Pause` e `NumLock` non ne hanno uno semplice e vanno gestiti a parte.
+/// Scan code of the W3C key, if it has an ordinary one.
+/// `Pause` and `NumLock` have no simple one and are handled separately.
 pub fn scan_code(code: &str) -> Option<ScanCode> {
     match code {
         "Escape" => sc(0x01),

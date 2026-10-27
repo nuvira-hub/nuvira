@@ -1,7 +1,7 @@
-//! Sorgente sintetica: un'immagine animata generata in memoria.
+//! Synthetic source: an animated image generated in memory.
 //!
-//! Serve a collaudare compressione, rete e visualizzazione senza uno schermo
-//! catturabile (PC bloccato, macchine virtuali senza GPU, test automatici).
+//! Used to test encoding, network and display without a capturable screen
+//! (locked PC, virtual machines without a GPU, automated tests).
 
 use std::time::{Duration, Instant};
 
@@ -42,12 +42,12 @@ impl SyntheticCapturer {
         }
     }
 
-    /// Colore dello sfondo fisso nel punto (x, y).
+    /// Colour of the static background at (x, y).
     fn background(x: usize, y: usize) -> [u8; 4] {
         [(x % 256) as u8, (y % 256) as u8, 96, 255]
     }
 
-    /// Ridisegna le colonne `from..to` con lo sfondo o con la barra.
+    /// Redraws columns `from..to` with the background or the bar.
     fn paint_columns(&mut self, from: usize, to: usize, bar: bool) {
         let w = self.frame.width as usize;
         let (from, to) = (from.min(w), to.min(w));
@@ -60,8 +60,8 @@ impl SyntheticCapturer {
         }
     }
 
-    /// Sfondo fisso e una barra verticale che lo attraversa: come una finestra
-    /// trascinata su un desktop, cambia solo una piccola parte dell'immagine.
+    /// Static background with a vertical bar moving across it: like a window
+    /// dragged over a desktop, only a small part of the image changes.
     fn draw(&mut self) {
         const BAR: usize = 24;
         let w = self.frame.width as usize;
@@ -92,7 +92,7 @@ impl Capturer for SyntheticCapturer {
             std::thread::sleep(wait);
         }
         self.next += self.interval;
-        // Se siamo molto in ritardo non recuperiamo i frame persi.
+        // When far behind, lost frames are not made up.
         if self.next < Instant::now() {
             self.next = Instant::now() + self.interval;
         }

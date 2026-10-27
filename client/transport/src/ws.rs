@@ -1,11 +1,11 @@
-//! Ripiego per le reti che bloccano UDP: i datagrammi QUIC viaggiano dentro una
-//! connessione WebSocket verso nexodesk-server (ws:// o wss:// dietro un reverse proxy).
+//! Fallback for networks that block UDP: QUIC datagrams travel inside a
+//! WebSocket connection to nexodesk-server (ws://, or wss:// behind a reverse proxy).
 //!
-//! [`WsSocket`] implementa il socket astratto di quinn: QUIC, la crittografia
-//! end-to-end e il relay restano identici, cambia solo come escono i datagrammi.
-//! Il server tratta ogni connessione WebSocket come un indirizzo UDP virtuale.
-//! Tutto il traffico va al server: i tentativi di via diretta verso l'altro
-//! dispositivo vengono scartati (su queste reti UDP non passa comunque).
+//! [`WsSocket`] implements quinn's abstract socket: QUIC, end-to-end encryption
+//! and the relay stay the same, only the way datagrams leave changes.
+//! The server treats each WebSocket connection as a virtual UDP address.
+//! All traffic goes to the server: direct-path attempts towards the other device
+//! are dropped (UDP does not get through on these networks anyway).
 
 use std::fmt;
 use std::io::{self, IoSliceMut};
@@ -23,13 +23,13 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::debug;
 
-/// Percorso del ripiego WebSocket su nexodesk-server.
+/// Path of the WebSocket fallback on nexodesk-server.
 pub const PATH: &str = "/nexodesk";
 
-/// URL WebSocket predefinito per un server raggiunto in UDP su `server`
-/// (stessa porta, in TCP).
+/// Default WebSocket URL for a server reached over UDP at `server`
+/// (same port, over TCP).
 pub fn default_url(server_name: &str, server: SocketAddr) -> String {
-    // Host di `server_name` senza porta (anche IPv6, con o senza parentesi).
+    // Host of `server_name` without the port (IPv6 too, with or without brackets).
     let host = match server_name.parse::<SocketAddr>() {
         Ok(addr) => addr.ip().to_string(),
         Err(_) => match server_name.rsplit_once(':') {
@@ -42,8 +42,8 @@ pub fn default_url(server_name: &str, server: SocketAddr) -> String {
 }
 
 pub struct WsSocket {
-    /// Indirizzo con cui QUIC conosce il server (e il relay): i datagrammi
-    /// ricevuti risultano provenire da qui, quelli inviati qui vanno nel tunnel.
+    /// Address QUIC knows the server (and the relay) by: received datagrams
+    /// appear to come from here, those sent here go into the tunnel.
     server: SocketAddr,
     tx: mpsc::UnboundedSender<Vec<u8>>,
     rx: Mutex<mpsc::Receiver<Vec<u8>>>,
@@ -56,8 +56,8 @@ impl fmt::Debug for WsSocket {
 }
 
 impl WsSocket {
-    /// Apre la connessione WebSocket. `server` è l'indirizzo con cui QUIC
-    /// si rivolgerà al server attraverso il tunnel.
+    /// Opens the WebSocket connection. `server` is the address QUIC will use
+    /// for the server through the tunnel.
     pub async fn connect(url: &str, server: SocketAddr) -> Result<Arc<Self>> {
         let tls = Arc::new(
             rustls::ClientConfig::builder_with_provider(crate::provider())
@@ -73,9 +73,9 @@ impl WsSocket {
             tokio_tungstenite::connect_async_tls_with_config(url, None, true, Some(connector)),
         )
         .await
-        .with_context(|| format!("{url}: tempo scaduto"))?
-        .with_context(|| format!("collegamento WebSocket a {url}"))?;
-        debug!(url, "tunnel WebSocket aperto");
+        .with_context(|| format!("{url}: timed out"))?
+        .with_context(|| format!("WebSocket connection to {url}"))?;
+        debug!(url, "WebSocket tunnel open");
         let (mut sink, mut stream) = ws.split();
 
         let (tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -91,7 +91,7 @@ impl WsSocket {
         tokio::spawn(async move {
             while let Some(Ok(msg)) = stream.next().await {
                 if let Message::Binary(data) = msg {
-                    // Coda piena: si scarta, come farebbe un socket UDP (QUIC ritrasmette).
+                    // Queue full: dropped, as a UDP socket would do (QUIC retransmits).
                     let _ = in_tx.try_send(data.to_vec());
                 }
             }
@@ -99,21 +99,21 @@ impl WsSocket {
         Ok(Arc::new(Self { server, tx, rx: Mutex::new(rx) }))
     }
 
-    /// Invia un datagramma al server fuori da QUIC (aggancio al relay).
+    /// Sends a datagram to the server outside QUIC (binding to the relay).
     pub fn send_raw(&self, data: &[u8]) -> Result<()> {
         if self.tx.send(data.to_vec()).is_err() {
-            bail!("tunnel WebSocket chiuso");
+            bail!("WebSocket tunnel closed");
         }
         Ok(())
     }
 
-    /// Prossimo datagramma dal server fuori da QUIC, entro `timeout`.
+    /// Next datagram from the server outside QUIC, within `timeout`.
     pub async fn recv_raw(&self, timeout: Duration) -> Result<Option<Vec<u8>>> {
         let rx = &self.rx;
         let next = std::future::poll_fn(|cx| rx.lock().expect("tunnel").poll_recv(cx));
         match tokio::time::timeout(timeout, next).await {
             Ok(Some(data)) => Ok(Some(data)),
-            Ok(None) => bail!("tunnel WebSocket chiuso"),
+            Ok(None) => bail!("WebSocket tunnel closed"),
             Err(_) => Ok(None),
         }
     }
@@ -130,14 +130,14 @@ impl UdpPoller for AlwaysWritable {
 
 impl AsyncUdpSocket for WsSocket {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>> {
-        // La coda verso il tunnel non ha limite: l'invio non deve mai attendere
-        // (il controllo di congestione di QUIC regola il ritmo).
+        // The queue towards the tunnel has no limit: sending must never wait
+        // (QUIC congestion control sets the pace).
         Box::pin(AlwaysWritable)
     }
 
     fn try_send(&self, transmit: &Transmit) -> io::Result<()> {
         if transmit.destination != self.server {
-            // Via diretta verso l'altro dispositivo: non raggiungibile dal tunnel.
+            // Direct path towards the other device: not reachable through the tunnel.
             return Ok(());
         }
         let segment = transmit.segment_size.unwrap_or(transmit.contents.len()).max(1);

@@ -1,4 +1,4 @@
-//! H.264 software con OpenH264 (Cisco, licenza BSD).
+//! Software H.264 with OpenH264 (Cisco, BSD licence).
 
 use anyhow::{Context, Result};
 use openh264::OpenH264API;
@@ -11,8 +11,8 @@ use crate::{BgraImage, EncodedFrame, EncoderSettings, VideoDecoder, VideoEncoder
 pub struct OpenH264Encoder {
     encoder: Encoder,
     bitrate: u32,
-    /// Il bitrate corrente è già stato passato all'encoder (lo si fa dopo il
-    /// primo frame: prima l'encoder non è inizializzato).
+    /// The current bitrate has already been given to the encoder (done after the
+    /// first frame: before that the encoder is not initialised).
     bitrate_applied: bool,
     initialized: bool,
     y: Vec<u8>,
@@ -22,8 +22,8 @@ pub struct OpenH264Encoder {
 
 impl OpenH264Encoder {
     pub fn new(settings: EncoderSettings) -> Result<Self> {
-        // La modalità "contenuto schermo" comprime di più ma è ~5 volte più lenta
-        // (98 contro 19 ms a 1080p su un i7-10710U): per il controllo remoto conta la latenza.
+        // "Screen content" mode compresses more but is ~5 times slower
+        // (98 against 19 ms at 1080p on an i7-10710U): for remote control latency matters.
         let config = EncoderConfig::new()
             .usage_type(UsageType::CameraVideoRealTime)
             .rate_control_mode(RateControlMode::Bitrate)
@@ -31,7 +31,7 @@ impl OpenH264Encoder {
             .max_frame_rate(FrameRate::from_hz(settings.max_fps as f32))
             .skip_frames(true);
         let encoder = Encoder::with_api_config(OpenH264API::from_source(), config)
-            .context("inizializzazione OpenH264")?;
+            .context("OpenH264 initialisation")?;
         Ok(Self {
             encoder,
             bitrate: settings.bitrate_bps,
@@ -62,13 +62,13 @@ impl VideoEncoder for OpenH264Encoder {
         if force_keyframe {
             self.encoder.force_intra_frame();
         }
-        // Il nuovo bitrate si passa solo a encoder già inizializzato (dopo il primo frame).
+        // The new bitrate is given only to an already initialised encoder (after the first frame).
         if !self.bitrate_applied && self.initialized {
             let mut info = openh264_sys2::SBitrateInfo {
                 iLayer: openh264_sys2::SPATIAL_LAYER_ALL,
                 iBitrate: self.bitrate as i32,
             };
-            // SAFETY: opzione documentata di OpenH264 con la struttura che si aspetta.
+            // SAFETY: documented OpenH264 option with the structure it expects.
             unsafe {
                 self.encoder
                     .raw_api()
@@ -76,7 +76,7 @@ impl VideoEncoder for OpenH264Encoder {
             }
             self.bitrate_applied = true;
         }
-        let bitstream = self.encoder.encode(&yuv).context("compressione OpenH264")?;
+        let bitstream = self.encoder.encode(&yuv).context("OpenH264 encoding")?;
         self.initialized = true;
         let keyframe = match bitstream.frame_type() {
             FrameType::Skip | FrameType::Invalid => return Ok(None),
@@ -95,7 +95,7 @@ pub struct OpenH264Decoder {
 impl OpenH264Decoder {
     pub fn new() -> Result<Self> {
         let decoder = Decoder::with_api_config(OpenH264API::from_source(), DecoderConfig::new())
-            .context("inizializzazione decoder OpenH264")?;
+            .context("OpenH264 decoder initialisation")?;
         Ok(Self { decoder, frame: YuvFrame::default() })
     }
 }
@@ -113,7 +113,7 @@ impl VideoDecoder for OpenH264Decoder {
     }
 
     fn decode(&mut self, data: &[u8]) -> Result<Option<&YuvFrame>> {
-        let Some(yuv) = self.decoder.decode(data).context("decompressione OpenH264")? else {
+        let Some(yuv) = self.decoder.decode(data).context("OpenH264 decoding")? else {
             return Ok(None);
         };
         let (w, h) = yuv.dimensions();
@@ -148,10 +148,10 @@ mod tests {
 
         let mut enc = OpenH264Encoder::new(EncoderSettings::default()).unwrap();
         let mut dec = OpenH264Decoder::new().unwrap();
-        let first = enc.encode(&image, true).unwrap().expect("primo frame");
+        let first = enc.encode(&image, true).unwrap().expect("first frame");
         assert!(first.keyframe);
 
-        let frame = dec.decode(&first.data).unwrap().expect("immagine decompressa");
+        let frame = dec.decode(&first.data).unwrap().expect("decoded image");
         assert_eq!((frame.width, frame.height), (w, h));
         assert_eq!(frame.y.len(), (w * h) as usize);
         assert_eq!(frame.u.len(), (w / 2 * h / 2) as usize);
