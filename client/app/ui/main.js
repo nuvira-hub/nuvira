@@ -111,6 +111,8 @@ function render(state) {
 
   const message = state.viewer_message;
   $("connect-message").classList.toggle("hidden", !message);
+  // Not an error: the other side is being asked.
+  $("connect-message").classList.toggle("ok", message === "@app.waiting_confirmation");
   $("connect-message").textContent = msg(message) ?? "";
 
   renderChat(state);

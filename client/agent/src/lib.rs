@@ -473,7 +473,7 @@ struct Gate<'a> {
 
 impl Gate<'_> {
     /// `Err` with the reason to show to the viewer.
-    async fn authorize(&self, given: &str) -> Result<(), String> {
+    async fn authorize(&self, given: &str, pending: Option<&mut FramedSend>) -> Result<(), String> {
         let ctx = self.ctx;
         if ctx.permanent.as_deref().is_some_and(|hash| nexodesk_secret::verify(given, hash)) {
             info!("access with the permanent password");
@@ -485,6 +485,10 @@ impl Gate<'_> {
         }
         if !ctx.confirm {
             return self.started();
+        }
+        if let Some(ctrl_tx) = pending {
+            let waiting = nexodesk_proto::v1::ConfirmationPending { timeout_s: CONFIRM_TIMEOUT.as_secs() as u32 };
+            let _ = ctrl_tx.send(&control(Msg::ConfirmationPending(waiting))).await;
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
         ctx.pending.lock().expect("requests").insert(self.session_id.to_string(), tx);
@@ -535,9 +539,10 @@ async fn session(
         bail!("the viewer did not introduce itself");
     };
     info!(device = hello.device_name, os = hello.os, version = hello.app_version, "viewer");
-    if hello.protocol_version < nexodesk_proto::PROTOCOL_VERSION {
+    if hello.protocol_version < nexodesk_proto::MIN_PROTOCOL_VERSION {
         bail!("viewer protocol version not supported: {}", hello.protocol_version);
     }
+    let viewer_protocol = hello.protocol_version;
     let hello = Hello { password_required: gate.is_some(), ..local_hello() };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
     if let Some(gate) = gate {
@@ -545,7 +550,9 @@ async fn session(
             Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth.password,
             _ => bail!("the viewer did not send the password"),
         };
-        let verdict = gate.authorize(&given).await;
+        // Viewers that know it are told when the person at the PC is being asked.
+        let pending = (viewer_protocol >= nexodesk_proto::v1::ProtocolVersion::ConfirmationPending as u32).then_some(&mut ctrl_tx);
+        let verdict = gate.authorize(&given, pending).await;
         let (ok, message) = match &verdict {
             Ok(()) => (true, String::new()),
             Err(reason) => (false, reason.clone()),

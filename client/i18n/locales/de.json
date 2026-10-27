@@ -188,6 +188,9 @@
   "chatpanel.send": "Senden",
 
   "viewer.title_connecting": "NexoDesk — Verbindung zu {agent}…",
+  "viewer.title_pending": "NexoDesk — warten, bis {agent} annimmt…",
+  "viewer.pending": "Warten, bis die Person am entfernten Computer annimmt…",
+  "app.waiting_confirmation": "Warten, bis die Person am entfernten Computer die Verbindung annimmt…",
   "viewer.title": "NexoDesk — {agent} · {fps} fps · Latenz {latency} · RTT {rtt} ms · {mbps} Mbit/s · Enc. {enc} ms · Dec. {dec} ms",
   "viewer.file_dialog": "Dateien an den entfernten Computer senden",
   "viewer.file_sending": "„{name}“ wird gesendet: {percent} %",

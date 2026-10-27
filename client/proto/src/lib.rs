@@ -10,7 +10,10 @@ pub mod v1 {
 pub mod framing;
 
 /// Session protocol version spoken by this build.
-pub const PROTOCOL_VERSION: u32 = v1::ProtocolVersion::ProtocolVersion0 as u32;
+pub const PROTOCOL_VERSION: u32 = v1::ProtocolVersion::ConfirmationPending as u32;
+
+/// Oldest version still accepted: newer messages are sent only to whoever knows them.
+pub const MIN_PROTOCOL_VERSION: u32 = v1::ProtocolVersion::ProtocolVersion0 as u32;
 
 /// System clock in microseconds since 1970, used for message timestamps.
 #[cfg(not(target_arch = "wasm32"))]

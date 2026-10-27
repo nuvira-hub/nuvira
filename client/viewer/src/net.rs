@@ -19,6 +19,8 @@ use winit::event_loop::EventLoopProxy;
 
 /// Events from the network to the window.
 pub enum NetEvent {
+    /// The person at the remote computer is being asked to accept.
+    ConfirmationPending,
     Connected {
         agent: String,
         /// Direct path; otherwise through the server's relay.
@@ -242,7 +244,13 @@ async fn session(
     if agent.password_required {
         let password = password.with_context(|| nexodesk_i18n::t("viewer.password_required"))?;
         ctrl_tx.send(&control(Msg::Auth(nexodesk_proto::v1::Auth { password }))).await?;
-        match ctrl_rx.recv().await? {
+        let mut answer = ctrl_rx.recv().await?;
+        if let Some(ControlMessage { msg: Some(Msg::ConfirmationPending(_)) }) = answer {
+            info!("waiting for the person at the remote computer to accept");
+            let _ = proxy.send_event(NetEvent::ConfirmationPending);
+            answer = ctrl_rx.recv().await?;
+        }
+        match answer {
             Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) if r.ok => {}
             Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) => {
                 bail!("{}", nexodesk_i18n::tf("viewer.access_denied", &[("reason", &nexodesk_i18n::message(&r.message))]))

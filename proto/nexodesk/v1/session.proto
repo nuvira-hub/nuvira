@@ -12,6 +12,8 @@ enum ProtocolVersion {
   PROTOCOL_VERSION_UNSPECIFIED = 0;
   // Phase 0 prototype: LAN only, no authentication.
   PROTOCOL_VERSION_0 = 1;
+  // The agent may send ConfirmationPending between Auth and AuthResult.
+  PROTOCOL_VERSION_CONFIRMATION_PENDING = 2;
 }
 
 enum Codec {
@@ -36,7 +38,14 @@ message ControlMessage {
     Clipboard clipboard = 12;
     Chat chat = 13;
     FileReceived file_received = 14;
+    ConfirmationPending confirmation_pending = 15;
   }
+}
+
+// From the agent, after a correct temporary password, while the person at the PC
+// decides (at most `timeout_s` seconds). Only to viewers of protocol version 2 or later.
+message ConfirmationPending {
+  uint32 timeout_s = 1;
 }
 
 // From the agent, at the end of every received file (see FileChunk).

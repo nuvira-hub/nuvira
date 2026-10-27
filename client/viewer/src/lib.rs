@@ -519,6 +519,16 @@ impl ApplicationHandler<NetEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
         match event {
+            NetEvent::ConfirmationPending => {
+                // For the NexoDesk app, which shows it too.
+                println!("@pending");
+                if let Some(window) = &self.window {
+                    window.set_title(&tf("viewer.title_pending", &[("agent", &self.agent)]));
+                }
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&format!("{{name:{}}}", toolbar::js_string(&t("viewer.pending"))));
+                }
+            }
             NetEvent::Connected { agent, direct, width, height } => {
                 info!("remote screen {width}x{height}");
                 // For the NexoDesk app, which reads the output: the session started (address book).

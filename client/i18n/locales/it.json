@@ -188,6 +188,9 @@
   "chatpanel.send": "Invia",
 
   "viewer.title_connecting": "NexoDesk — connessione a {agent}…",
+  "viewer.title_pending": "NexoDesk — in attesa che {agent} accetti…",
+  "viewer.pending": "In attesa che la persona al computer remoto accetti…",
+  "app.waiting_confirmation": "In attesa che la persona al computer remoto accetti il collegamento…",
   "viewer.title": "NexoDesk — {agent} · {fps} fps · latenza {latency} · RTT {rtt} ms · {mbps} Mbit/s · comp. {enc} ms · decomp. {dec} ms",
   "viewer.file_dialog": "Invia file al computer remoto",
   "viewer.file_sending": "Invio «{name}» {percent}%",

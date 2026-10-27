@@ -531,7 +531,10 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
         std::thread::spawn(move || {
             use std::io::BufRead;
             for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
-                if let Some(name) = line.strip_prefix("@connected\t") {
+                if line == "@pending" {
+                    app.state::<NexoApp>().update(&app, |ui| ui.viewer_message = Some("@app.waiting_confirmation".into()));
+                } else if let Some(name) = line.strip_prefix("@connected\t") {
+                    app.state::<NexoApp>().update(&app, |ui| ui.viewer_message = None);
                     address_book::auto_add(&app, device_id.clone(), name.to_string(), password.clone());
                 } else if let Some(reason) = line.strip_prefix("@closed\t") {
                     // Already translated by the viewer.
