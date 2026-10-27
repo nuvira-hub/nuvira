@@ -13,10 +13,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-// WebSockets porta i datagrammi QUIC dentro connessioni WebSocket, per i
-// dispositivi su reti che bloccano UDP. Ogni messaggio binario è un datagramma;
-// ogni connessione è un indirizzo virtuale (wsAddr) che QUIC del server e relay
-// trattano come un indirizzo UDP qualsiasi. Il contenuto resta QUIC cifrato.
+// WebSockets carries QUIC datagrams inside WebSocket connections, for devices
+// on networks that block UDP. Every binary message is a datagram; every
+// connection is a virtual address (wsAddr) that the server's QUIC and the relay
+// treat like any UDP address. The content stays encrypted QUIC.
 type WebSockets struct {
 	conn *Conn
 	log  *slog.Logger
@@ -31,26 +31,26 @@ type wsPeer struct {
 	cancel context.CancelFunc
 }
 
-// wsAddr è l'indirizzo virtuale di una connessione WebSocket.
+// wsAddr is the virtual address of a WebSocket connection.
 type wsAddr string
 
 func (a wsAddr) Network() string { return "ws" }
 func (a wsAddr) String() string  { return string(a) }
 
-// Datagrammi in uscita in coda per connessione: oltre, si scartano (QUIC ritrasmette).
+// Outgoing datagrams queued per connection: beyond this they are dropped (QUIC retransmits).
 const wsOutQueue = 1024
 
-// Dimensione massima di un datagramma (QUIC usa al più ~1500 byte).
+// Maximum size of a datagram (QUIC uses at most ~1500 bytes).
 const wsMaxMessage = 2048
 
 func newWebSockets(c *Conn) *WebSockets {
 	return &WebSockets{conn: c, log: slog.Default(), peers: map[wsAddr]*wsPeer{}}
 }
 
-// SetLogger imposta il logger usato per le connessioni.
+// SetLogger sets the logger used for the connections.
 func (w *WebSockets) SetLogger(log *slog.Logger) { w.log = log }
 
-// ServeHTTP accetta una connessione WebSocket e la collega allo smistamento.
+// ServeHTTP accepts a WebSocket connection and connects it to the dispatching.
 func (w *WebSockets) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	ws, err := websocket.Accept(rw, req, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
@@ -63,14 +63,14 @@ func (w *WebSockets) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	w.mu.Lock()
 	w.peers[addr] = peer
 	w.mu.Unlock()
-	w.log.Debug("connessione WebSocket", "da", addr)
+	w.log.Debug("WebSocket connection", "from", addr)
 	defer func() {
 		cancel()
 		w.mu.Lock()
 		delete(w.peers, addr)
 		w.mu.Unlock()
 		_ = ws.CloseNow()
-		w.log.Debug("WebSocket chiuso", "da", addr)
+		w.log.Debug("WebSocket closed", "from", addr)
 	}()
 
 	go func() {
@@ -101,7 +101,7 @@ func (w *WebSockets) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// remoteHost è l'indirizzo del client (dietro un reverse proxy, quello che il proxy indica).
+// remoteHost is the client's address (behind a reverse proxy, the one the proxy reports).
 func remoteHost(req *http.Request) string {
 	if fwd := req.Header.Get("X-Forwarded-For"); fwd != "" {
 		return fwd
@@ -122,7 +122,7 @@ func (w *WebSockets) send(addr wsAddr, b []byte) (int, error) {
 	}
 	select {
 	case peer.out <- append([]byte(nil), b...):
-	default: // coda piena: scartato
+	default: // queue full: dropped
 	}
 	return len(b), nil
 }

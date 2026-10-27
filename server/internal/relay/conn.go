@@ -7,19 +7,19 @@ import (
 	"time"
 )
 
-// Conn è il "socket" condiviso da QUIC del server e relay. I datagrammi arrivano
-// dalla porta UDP oppure, per le reti che bloccano UDP, da connessioni WebSocket
-// (vedi WebSockets): ogni connessione WebSocket è un indirizzo virtuale come gli
-// altri. I messaggi di controllo e i datagrammi di una sessione relay vengono
-// gestiti qui; tutto il resto passa a quic-go attraverso ReadFrom.
+// Conn is the "socket" shared by the server's QUIC and the relay. Datagrams arrive
+// from the UDP port or, for networks that block UDP, from WebSocket connections
+// (see WebSockets): every WebSocket connection is a virtual address like the
+// others. Control messages and the datagrams of a relayed session are handled
+// here; everything else goes to quic-go through ReadFrom.
 //
-// Implementa solo net.PacketConn, di proposito: se esponesse i metodi di
-// *net.UDPConn (ReadMsgUDP, SyscallConn) quic-go li userebbe per leggere
-// direttamente dal socket, scavalcando lo smistamento.
+// It implements only net.PacketConn, on purpose: if it exposed the methods of
+// *net.UDPConn (ReadMsgUDP, SyscallConn) quic-go would use them to read straight
+// from the socket, bypassing the dispatching.
 type Conn struct {
 	udp    *net.UDPConn
 	relay  *Relay
-	impair *impairer // solo per i test (NEXODESK_RELAY_IMPAIR)
+	impair *impairer // tests only (NEXODESK_RELAY_IMPAIR)
 	ws     *WebSockets
 
 	in       chan packet
@@ -36,7 +36,7 @@ type packet struct {
 
 var _ net.PacketConn = (*Conn)(nil)
 
-// Datagrammi in attesa di essere smistati: oltre, si scartano (come un socket pieno).
+// Datagrams waiting to be dispatched: beyond this they are dropped (like a full socket).
 const inQueue = 4096
 
 func NewConn(udp *net.UDPConn, r *Relay) *Conn {
@@ -46,12 +46,12 @@ func NewConn(udp *net.UDPConn, r *Relay) *Conn {
 	return c
 }
 
-// Impair applica la simulazione di rete al traffico inoltrato (solo test).
+// Impair applies the network simulation to the forwarded traffic (tests only).
 func (c *Conn) Impair(im *Impairment) {
 	c.impair = newImpairer(im, func(b []byte, to net.Addr) { _, _ = c.WriteTo(b, to) })
 }
 
-// WebSockets restituisce il gestore delle connessioni WebSocket (da montare su HTTP).
+// WebSockets returns the handler of the WebSocket connections (to mount on HTTP).
 func (c *Conn) WebSockets() *WebSockets { return c.ws }
 
 func (c *Conn) readUDP() {
@@ -73,11 +73,11 @@ func (c *Conn) readUDP() {
 	}
 }
 
-// deliver accoda un datagramma ricevuto (da UDP o WebSocket).
+// deliver queues a received datagram (from UDP or WebSocket).
 func (c *Conn) deliver(data []byte, from net.Addr) {
 	select {
 	case c.in <- packet{data: data, from: from}:
-	default: // coda piena: scartato
+	default: // queue full: dropped
 	}
 }
 

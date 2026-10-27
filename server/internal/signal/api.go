@@ -7,13 +7,13 @@ import (
 	"github.com/alexbn71/NexoDesk/server/internal/pb"
 )
 
-// api risponde a una richiesta su account e rubrica. Prima di tutto serve un
-// accesso (Login o LoginToken), che resta legato alla connessione.
+// api answers a request about accounts and address book. First of all a sign-in
+// is needed (Login or LoginToken), which stays bound to the connection.
 func (s *Server) api(c *client, req *pb.ApiRequest) {
 	resp := &pb.ApiResponse{Id: req.Id}
 	if err := s.apiCall(c, req, resp); err != nil {
 		if !errors.Is(err, accounts.ErrDenied) {
-			s.log.Warn("richiesta alla rubrica non riuscita", "dispositivo", c.device.ID, "err", err)
+			s.log.Warn("address book request failed", "device", c.device.ID, "err", err)
 		}
 		resp.Result = nil
 		resp.Error = err.Error()
@@ -29,10 +29,10 @@ func (s *Server) apiCall(c *client, req *pb.ApiRequest, resp *pb.ApiResponse) er
 	case *pb.ApiRequest_Login:
 		session, err := s.accounts.Login(call.Login.Username, call.Login.Password)
 		if err != nil {
-			s.log.Info("accesso alla rubrica rifiutato", "utente", call.Login.Username, "da", c.conn.RemoteAddr())
+			s.log.Info("address book sign-in rejected", "user", call.Login.Username, "from", c.conn.RemoteAddr())
 			return err
 		}
-		s.log.Info("accesso alla rubrica", "utente", session.Account.Username, "dispositivo", c.device.ID)
+		s.log.Info("address book sign-in", "user", session.Account.Username, "device", c.device.ID)
 		c.setSession(session)
 		resp.Result = &pb.ApiResponse_Session{Session: session}
 		return nil
@@ -89,7 +89,7 @@ func (s *Server) apiCall(c *client, req *pb.ApiRequest, resp *pb.ApiResponse) er
 	case *pb.ApiRequest_DeleteBook:
 		return s.accounts.DeleteBook(account, call.DeleteBook.Id)
 	default:
-		return errors.New("richiesta sconosciuta")
+		return errors.New("unknown request")
 	}
 }
 

@@ -1,23 +1,23 @@
-// Package relay inoltra i datagrammi UDP tra i due lati di una sessione,
-// come un server TURN minimale: il contenuto è QUIC già cifrato end-to-end
-// e il relay non può leggerlo.
+// Package relay forwards UDP datagrams between the two sides of a session,
+// like a minimal TURN server: the content is QUIC, already end-to-end
+// encrypted, and the relay cannot read it.
 //
-// Formato dei messaggi di controllo (il primo byte 0x00 non è mai l'inizio di
-// un pacchetto QUIC, che ha sempre il bit 0x40 impostato):
+// Format of the control messages (the first byte 0x00 is never the start of a
+// QUIC packet, which always has the 0x40 bit set):
 //
-//	bind:  00 'N' 'X' 'R' 01 | gettone (16 byte) | ruolo (1 byte)
-//	       | n (1 byte) | n indirizzi locali del mittente
-//	bound: 00 'N' 'X' 'R' 02 | gettone (16 byte) | pronto (1 byte: 1 se anche l'altro lato è collegato)
-//	       [se pronto: indirizzo dell'altro lato come lo vede il relay
-//	        | n (1 byte) | n indirizzi locali dell'altro lato]
+//	bind:  00 'N' 'X' 'R' 01 | token (16 bytes) | role (1 byte)
+//	       | n (1 byte) | n local addresses of the sender
+//	bound: 00 'N' 'X' 'R' 02 | token (16 bytes) | ready (1 byte: 1 if the other side is bound too)
+//	       [if ready: address of the other side as the relay sees it
+//	        | n (1 byte) | n local addresses of the other side]
 //
-// Indirizzo: famiglia (4 o 6) | IP (4 o 16 byte) | porta (2 byte, big endian);
-// famiglia 0 (un solo byte) se l'altro lato è collegato via WebSocket.
+// Address: family (4 or 6) | IP (4 or 16 bytes) | port (2 bytes, big endian);
+// family 0 (a single byte) if the other side is connected through WebSocket.
 //
-// Gli indirizzi dell'altro lato servono a tentare la connessione diretta:
-// quello visto dal relay attraverso i NAT (hole punching) e quelli locali,
-// che funzionano quando i due dispositivi sono nella stessa rete dietro lo
-// stesso router (dove l'indirizzo pubblico spesso non è raggiungibile: hairpin).
+// The other side's addresses are used to attempt a direct connection: the one
+// seen by the relay through NATs (hole punching) and the local ones, which work
+// when the two devices are in the same network behind the same router (where
+// the public address is often unreachable: hairpin).
 package relay
 
 import (
@@ -34,18 +34,18 @@ const (
 	typeBind  = 0x01
 	typeBound = 0x02
 	tokenLen  = 16
-	// Indirizzi locali accettati per lato (limitano la dimensione delle risposte).
+	// Local addresses accepted per side (they limit the size of the answers).
 	maxLocals = 4
 
-	// Sessione dimenticata dopo questo tempo senza traffico.
+	// Session forgotten after this time without traffic.
 	idleTimeout = 2 * time.Minute
-	// Tempo massimo per collegare entrambi i lati dopo la creazione.
+	// Maximum time to bind both sides after creation.
 	bindTimeout = 60 * time.Second
 )
 
 type session struct {
 	token   [tokenLen]byte
-	peers   [2]net.Addr // [0] viewer, [1] agent (UDP o WebSocket)
+	peers   [2]net.Addr // [0] viewer, [1] agent (UDP or WebSocket)
 	locals  [2][]*net.UDPAddr
 	created time.Time
 	last    time.Time
@@ -54,9 +54,9 @@ type session struct {
 
 func (s *session) ready() bool { return s.peers[0] != nil && s.peers[1] != nil }
 
-// Relay tiene le sessioni e la tabella indirizzo → indirizzo dell'altro lato.
+// Relay keeps the sessions and the address → other side's address table.
 type Relay struct {
-	// Solo test: falsifica l'indirizzo visto dal relay (vedi reflexive).
+	// Tests only: fakes the address seen by the relay (see reflexive).
 	FakeReflexive bool
 
 	mu       sync.Mutex
@@ -76,7 +76,7 @@ func New(log *slog.Logger) *Relay {
 	return r
 }
 
-// Allow prepara una sessione: solo chi conosce il gettone potrà collegarsi.
+// Allow prepares a session: only whoever knows the token can bind to it.
 func (r *Relay) Allow(token [tokenLen]byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -84,10 +84,10 @@ func (r *Relay) Allow(token [tokenLen]byte) {
 	r.sessions[token] = &session{token: token, created: now, last: now}
 }
 
-// IsControl dice se il datagramma è un messaggio di controllo del relay.
+// IsControl tells whether the datagram is a relay control message.
 func IsControl(p []byte) bool { return len(p) >= 5 && bytes.Equal(p[:4], magic) }
 
-// HandleControl gestisce un bind e restituisce la risposta da inviare (o nil).
+// HandleControl handles a bind and returns the answer to send (or nil).
 func (r *Relay) HandleControl(p []byte, from net.Addr) []byte {
 	if len(p) < 5+tokenLen+1 || p[4] != typeBind {
 		return nil
@@ -111,7 +111,7 @@ func (r *Relay) HandleControl(p []byte, from net.Addr) []byte {
 	}
 	i := role - 1
 	if old := s.peers[i]; old == nil || old.String() != from.String() {
-		// Primo collegamento o cambio di indirizzo (NAT): si aggiorna la tabella.
+		// First bind or address change (NAT): the table is updated.
 		if old != nil {
 			delete(r.links, old.String())
 		}
@@ -119,7 +119,7 @@ func (r *Relay) HandleControl(p []byte, from net.Addr) []byte {
 		if s.ready() {
 			r.links[s.peers[0].String()] = &link{to: s.peers[1], session: s}
 			r.links[s.peers[1].String()] = &link{to: s.peers[0], session: s}
-			r.log.Info("relay attivo", "viewer", s.peers[0], "agent", s.peers[1])
+			r.log.Info("relay active", "viewer", s.peers[0], "agent", s.peers[1])
 		}
 	}
 	s.locals[i] = locals
@@ -141,17 +141,17 @@ func (r *Relay) HandleControl(p []byte, from net.Addr) []byte {
 	return reply
 }
 
-// reflexive è l'indirizzo dell'altro lato come lo vede il relay. Con
-// FakeReflexive (solo test) è sostituito da uno irraggiungibile: così si
-// simula in LAN il caso hairpin, dove riesce solo l'indirizzo locale.
+// reflexive is the other side's address as the relay sees it. With
+// FakeReflexive (tests only) it is replaced by an unreachable one: this way the
+// hairpin case, where only the local address works, is simulated in a LAN.
 func (r *Relay) reflexive(a net.Addr) net.Addr {
 	if _, udp := a.(*net.UDPAddr); r.FakeReflexive && udp {
-		return &net.UDPAddr{IP: net.IPv4(203, 0, 113, 1), Port: a.(*net.UDPAddr).Port} // TEST-NET-3, mai instradato
+		return &net.UDPAddr{IP: net.IPv4(203, 0, 113, 1), Port: a.(*net.UDPAddr).Port} // TEST-NET-3, never routed
 	}
 	return a
 }
 
-// parseAddrs legge "n | n indirizzi"; un elenco assente vale vuoto.
+// parseAddrs reads "n | n addresses"; a missing list counts as empty.
 func parseAddrs(b []byte) ([]*net.UDPAddr, bool) {
 	if len(b) == 0 {
 		return nil, true
@@ -186,7 +186,7 @@ func parseAddrs(b []byte) ([]*net.UDPAddr, bool) {
 func appendAddr(b []byte, addr net.Addr) []byte {
 	a, ok := addr.(*net.UDPAddr)
 	if !ok {
-		// Lato collegato via WebSocket: non ha un indirizzo UDP raggiungibile.
+		// Side connected through WebSocket: it has no reachable UDP address.
 		return append(b, 0)
 	}
 	if ip4 := a.IP.To4(); ip4 != nil {
@@ -199,8 +199,8 @@ func appendAddr(b []byte, addr net.Addr) []byte {
 	return append(b, byte(a.Port>>8), byte(a.Port))
 }
 
-// Destination restituisce dove inoltrare un datagramma ricevuto da `from`,
-// o nil se `from` non appartiene a nessuna sessione attiva.
+// Destination returns where to forward a datagram received from `from`,
+// or nil if `from` belongs to no active session.
 func (r *Relay) Destination(from net.Addr, n int) net.Addr {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -229,7 +229,7 @@ func (r *Relay) expireLoop() {
 				}
 			}
 			delete(r.sessions, token)
-			r.log.Info("sessione relay chiusa", "byte", s.bytes, "durata", now.Sub(s.created).Round(time.Second))
+			r.log.Info("relay session closed", "bytes", s.bytes, "duration", now.Sub(s.created).Round(time.Second))
 		}
 		r.mu.Unlock()
 	}

@@ -1,17 +1,16 @@
-// Messaggi scambiati dentro una sessione tra il dispositivo che controlla
-// (viewer) e quello controllato (agent). Vedi docs/11-protocollo.md.
+// Messages exchanged inside a session between the controlling device (viewer)
+// and the controlled one (agent). See docs/11-protocol.md.
 //
-// Regole: i campi si aggiungono e non si riutilizzano mai; i messaggi
-// sconosciuti vengono ignorati.
+// Rules: fields are added and never reused; unknown messages are ignored.
 
 syntax = "proto3";
 
 package nexodesk.v1;
 
-// La versione negoziata è la più alta comune ai due lati.
+// The negotiated version is the highest one common to both sides.
 enum ProtocolVersion {
   PROTOCOL_VERSION_UNSPECIFIED = 0;
-  // Prototipo della fase 0: solo LAN, nessuna autenticazione.
+  // Phase 0 prototype: LAN only, no authentication.
   PROTOCOL_VERSION_0 = 1;
 }
 
@@ -20,7 +19,7 @@ enum Codec {
   CODEC_H264 = 1;
 }
 
-// Canale `control` (stream bidirezionale aperto dal viewer).
+// `control` channel (bidirectional stream opened by the viewer).
 message ControlMessage {
   oneof msg {
     Hello hello = 1;
@@ -40,36 +39,36 @@ message ControlMessage {
   }
 }
 
-// Dall'agent, alla fine di ogni file ricevuto (vedi FileChunk).
+// From the agent, at the end of every received file (see FileChunk).
 message FileReceived {
   string name = 1;
   bool ok = 2;
-  // Con ok: dove è stato salvato (es. "Download"); altrimenti il motivo.
+  // With ok: where it was saved (e.g. "Downloads"); otherwise the reason.
   string message = 3;
 }
 
-// Canale `file` (stream unidirezionale viewer -> agent, uno per file, aperto dopo
-// quello dell'input). Il primo messaggio porta nome e dimensione, i successivi
-// solo i dati (al massimo 256 KB ciascuno). La fine dello stream chiude il file.
+// `file` channel (unidirectional stream viewer -> agent, one per file, opened after
+// the input one). The first message carries name and size, the following ones
+// only data (at most 256 KB each). The end of the stream closes the file.
 message FileChunk {
   string name = 1;
   uint64 size = 2;
   bytes data = 3;
 }
 
-// Messaggio di chat tra chi controlla e chi usa il PC (in entrambe le direzioni).
+// Chat message between the controlling side and the person at the PC (both directions).
 message Chat {
   string text = 1;
 }
 
-// Testo copiato negli appunti da una delle due parti, da scrivere negli appunti
-// dell'altra (in entrambe le direzioni, al massimo 1 MB).
+// Text copied to the clipboard on one side, to be written to the other's
+// clipboard (both directions, at most 1 MB).
 message Clipboard {
   string text = 1;
 }
 
-// Dall'agent, all'inizio della sessione e a ogni cambio: gli schermi disponibili
-// e quello trasmesso.
+// From the agent, at the start of the session and at every change: the available
+// screens and the one being streamed.
 message Displays {
   repeated DisplayInfo displays = 1;
   uint32 current = 2;
@@ -83,21 +82,21 @@ message DisplayInfo {
   bool primary = 5;
 }
 
-// Dal viewer: trasmetti questo schermo (indice di DisplayInfo). L'agent risponde
-// con VideoFormat e Displays aggiornati.
+// From the viewer: stream this screen (index of DisplayInfo). The agent answers
+// with updated VideoFormat and Displays.
 message SelectDisplay {
   uint32 index = 1;
 }
 
-// Dal viewer: compromesso tra nitidezza e fluidità. Il bitrate resta adattivo,
-// cambiano il tetto e i frame al secondo.
+// From the viewer: trade-off between sharpness and smoothness. The bitrate stays
+// adaptive; its cap and the frames per second change.
 enum Quality {
   QUALITY_UNSPECIFIED = 0;
-  // Predefinita: bitrate massimo e fps dell'agent.
+  // Default: the agent's maximum bitrate and fps.
   QUALITY_BALANCED = 1;
-  // Testo più nitido: bitrate massimo doppio, al più 30 fps.
+  // Sharper text: double maximum bitrate, at most 30 fps.
   QUALITY_SHARP = 2;
-  // Reti lente: bitrate massimo dimezzato, fps pieni.
+  // Slow networks: half maximum bitrate, full fps.
   QUALITY_FAST = 3;
 }
 
@@ -105,18 +104,18 @@ message SetQuality {
   Quality quality = 1;
 }
 
-// Dal viewer, ogni ~250 ms: cosa vede della sessione. L'agent lo usa per
-// adattare il bitrate (latenza che sale = pacchetti in coda = rete satura).
+// From the viewer, every ~250 ms: what it sees of the session. The agent uses it to
+// adapt the bitrate (rising latency = queued packets = saturated network).
 message Feedback {
-  // Latenza cattura→visualizzazione nell'intervallo (ms): mediana e minima.
+  // Capture→display latency in the interval (ms): median and minimum.
   uint32 latency_ms_p50 = 1;
   uint32 latency_ms_min = 2;
   uint32 frames = 3;
   uint32 window_ms = 4;
 }
 
-// Password di sessione, inviata dal viewer subito dopo Hello quando l'agent la
-// richiede. Viaggia solo nel canale cifrato end-to-end: il server non la vede.
+// Session password, sent by the viewer right after Hello when the agent asks for
+// it. It travels only in the end-to-end encrypted channel: the server never sees it.
 message Auth {
   string password = 1;
 }
@@ -131,41 +130,41 @@ message Hello {
   string device_name = 2;
   string os = 3;
   string app_version = 4;
-  // Solo dall'agent: il viewer deve inviare Auth prima di ricevere il video.
+  // From the agent only: the viewer must send Auth before receiving video.
   bool password_required = 5;
 }
 
-// Inviato dall'agent quando inizia (o cambia) il flusso video.
+// Sent by the agent when the video stream starts (or changes).
 message VideoFormat {
   Codec codec = 1;
   uint32 width = 2;
   uint32 height = 3;
 }
 
-// Stima di RTT e differenza tra gli orologi dei due dispositivi.
+// Estimate of RTT and of the difference between the two devices' clocks.
 message Ping {
   uint64 sent_us = 1;
 }
 
 message Pong {
   uint64 ping_sent_us = 1;
-  // Orologio dell'agent (microsecondi dal 1970) quando ha ricevuto il Ping.
+  // Agent clock (microseconds since 1970) when it received the Ping.
   uint64 agent_us = 2;
 }
 
 message RequestKeyframe {}
 
-// Canale `video` (stream unidirezionale agent -> viewer).
+// `video` channel (unidirectional stream agent -> viewer).
 message VideoFrame {
   uint64 seq = 1;
-  // Orologio dell'agent (microsecondi dal 1970) al momento della cattura.
+  // Agent clock (microseconds since 1970) at capture time.
   uint64 capture_us = 2;
   uint32 encode_us = 3;
   bool keyframe = 4;
   bytes data = 5;
 }
 
-// Canale `input` (stream unidirezionale viewer -> agent).
+// `input` channel (unidirectional stream viewer -> agent).
 message InputEvent {
   oneof event {
     MouseMove mouse_move = 1;
@@ -176,11 +175,11 @@ message InputEvent {
   }
 }
 
-// Ctrl+Alt+Canc sul dispositivo controllato. Non si può inviare come tasti: il
-// sistema del viewer lo intercetta sempre (nel viewer: Ctrl+Alt+Fine).
+// Ctrl+Alt+Del on the controlled device. It cannot be sent as keys: the viewer's
+// system always intercepts it (in the viewer: Ctrl+Alt+End).
 message SecureAttention {}
 
-// Posizione normalizzata 0..1 rispetto allo schermo trasmesso.
+// Normalised 0..1 position relative to the streamed screen.
 message MouseMove {
   float x = 1;
   float y = 2;
@@ -200,15 +199,15 @@ message MouseButton {
   bool down = 2;
 }
 
-// Rotella in unità da 120 per scatto (come WHEEL_DELTA di Windows).
+// Wheel in units of 120 per notch (like Windows' WHEEL_DELTA).
 message MouseWheel {
   int32 dx = 1;
   int32 dy = 2;
 }
 
-// Tasto fisico, identificato con il nome W3C di KeyboardEvent.code
-// (es. "KeyA", "Enter", "ControlLeft", "MetaLeft"): indipendente dal
-// layout di tastiera e uguale a quello che userà il client web.
+// Physical key, identified by the W3C name of KeyboardEvent.code
+// (e.g. "KeyA", "Enter", "ControlLeft", "MetaLeft"): independent of the
+// keyboard layout and the same the web client will use.
 message Key {
   string code = 1;
   bool down = 2;

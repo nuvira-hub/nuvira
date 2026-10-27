@@ -18,6 +18,6 @@ COPY --from=build --chown=65532:65532 /out/data /data
 USER 65532:65532
 ENV NEXODESK_DATA_DIR=/data NEXODESK_LISTEN=:21116
 VOLUME /data
-EXPOSE 21116/udp
+EXPOSE 21116/udp 21116/tcp
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["/nexodesk-server", "healthcheck"]
 ENTRYPOINT ["/nexodesk-server"]

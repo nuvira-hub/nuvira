@@ -17,10 +17,10 @@ func TestParseImpairment(t *testing.T) {
 		t.Fatalf("%+v", im)
 	}
 	if im, err := ParseImpairment(""); im != nil || err != nil {
-		t.Fatal("stringa vuota deve disattivare la simulazione")
+		t.Fatal("an empty string must disable the simulation")
 	}
 	if _, err := ParseImpairment("ritardo=1ms"); err == nil {
-		t.Fatal("chiave sconosciuta accettata")
+		t.Fatal("unknown key accepted")
 	}
 }
 
@@ -35,7 +35,7 @@ func TestImpairerDelayAndRate(t *testing.T) {
 		})
 	to := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}
 	start := time.Now()
-	// 10 pacchetti da 1250 byte a 1 Mbit/s: 10 ms l'uno, l'ultimo parte dopo ~90 ms.
+	// 10 packets of 1250 bytes at 1 Mbit/s: 10 ms each, the last leaves after ~90 ms.
 	for range 10 {
 		p.send(make([]byte, 1250), to)
 	}
@@ -43,12 +43,12 @@ func TestImpairerDelayAndRate(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if len(arrivals) != 10 {
-		t.Fatalf("arrivati %d pacchetti", len(arrivals))
+		t.Fatalf("%d packets arrived", len(arrivals))
 	}
 	if d := arrivals[0].Sub(start); d < 25*time.Millisecond {
-		t.Fatalf("primo pacchetto troppo presto: %v", d)
+		t.Fatalf("first packet too early: %v", d)
 	}
 	if d := arrivals[9].Sub(start); d < 110*time.Millisecond {
-		t.Fatalf("la banda non è limitata: ultimo dopo %v", d)
+		t.Fatalf("the bandwidth is not limited: last after %v", d)
 	}
 }

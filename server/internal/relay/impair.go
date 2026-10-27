@@ -10,20 +10,20 @@ import (
 	"time"
 )
 
-// Impairment simula una rete peggiore sul traffico inoltrato dal relay: ritardo,
-// variazione del ritardo, perdita e banda limitata con una coda finita (come un
-// router con buffer). Serve solo ai test: si attiva con NEXODESK_RELAY_IMPAIR, es.
+// Impairment simulates a worse network on the traffic forwarded by the relay:
+// delay, delay variation, loss and limited bandwidth with a finite queue (like a
+// router with a buffer). For tests only: enabled with NEXODESK_RELAY_IMPAIR, e.g.
 //
 //	NEXODESK_RELAY_IMPAIR="delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
 type Impairment struct {
 	Delay  time.Duration
 	Jitter time.Duration
 	Loss   float64 // 0..1
-	Rate   float64 // bit/s, 0 = illimitata
+	Rate   float64 // bit/s, 0 = unlimited
 	Queue  time.Duration
 }
 
-// ParseImpairment legge la specifica; stringa vuota = nessuna simulazione.
+// ParseImpairment reads the specification; empty string = no simulation.
 func ParseImpairment(spec string) (*Impairment, error) {
 	if strings.TrimSpace(spec) == "" {
 		return nil, nil
@@ -32,7 +32,7 @@ func ParseImpairment(spec string) (*Impairment, error) {
 	for _, part := range strings.Split(spec, ",") {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok {
-			return nil, fmt.Errorf("atteso chiave=valore: %q", part)
+			return nil, fmt.Errorf("expected key=value: %q", part)
 		}
 		var err error
 		switch key {
@@ -49,7 +49,7 @@ func ParseImpairment(spec string) (*Impairment, error) {
 		case "rate":
 			im.Rate, err = parseRate(value)
 		default:
-			err = fmt.Errorf("chiave sconosciuta")
+			err = fmt.Errorf("unknown key")
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", key, err)
@@ -73,7 +73,7 @@ func parseRate(v string) (float64, error) {
 }
 
 func (im *Impairment) String() string {
-	return fmt.Sprintf("ritardo %v ±%v, perdita %.1f%%, banda %.0f kbit/s, coda %v",
+	return fmt.Sprintf("delay %v ±%v, loss %.1f%%, bandwidth %.0f kbit/s, queue %v",
 		im.Delay, im.Jitter, im.Loss*100, im.Rate/1000, im.Queue)
 }
 
@@ -83,8 +83,8 @@ type delayed struct {
 	at   time.Time
 }
 
-// impairer applica la simulazione a ogni destinazione separatamente (ciascun
-// verso di una sessione ha la sua coda, come due link distinti).
+// impairer applies the simulation to each destination separately (each direction
+// of a session has its own queue, like two separate links).
 type impairer struct {
 	im    *Impairment
 	write func([]byte, net.Addr)
@@ -95,8 +95,8 @@ type impairer struct {
 
 type impairedLink struct {
 	queue    chan delayed
-	nextFree time.Time // quando il "link" avrà finito di trasmettere ciò che ha in coda
-	lastAt   time.Time // consegna dell'ultimo pacchetto: il jitter non riordina
+	nextFree time.Time // when the "link" will have finished sending what is queued
+	lastAt   time.Time // delivery of the last packet: jitter does not reorder
 }
 
 func newImpairer(im *Impairment, write func([]byte, net.Addr)) *impairer {
@@ -115,7 +115,7 @@ func (p *impairer) send(data []byte, to net.Addr) {
 		p.links[to.String()] = l
 		go p.run(l)
 	}
-	// Banda limitata: il pacchetto parte quando il link ha finito i precedenti.
+	// Limited bandwidth: the packet leaves when the link has finished the previous ones.
 	start := now
 	if l.nextFree.After(start) {
 		start = l.nextFree
@@ -123,7 +123,7 @@ func (p *impairer) send(data []byte, to net.Addr) {
 	if p.im.Rate > 0 {
 		if start.Sub(now) > p.im.Queue {
 			p.mu.Unlock()
-			return // coda piena: scartato, come farebbe un router
+			return // queue full: dropped, as a router would do
 		}
 		l.nextFree = start.Add(time.Duration(float64(len(data)*8) / p.im.Rate * float64(time.Second)))
 	}
@@ -131,7 +131,7 @@ func (p *impairer) send(data []byte, to net.Addr) {
 	if p.im.Jitter > 0 {
 		at = at.Add(time.Duration(rand.Int64N(int64(2*p.im.Jitter))) - p.im.Jitter)
 	}
-	// Come su un collegamento reale, il ritardo varia ma l'ordine resta quello d'invio.
+	// As on a real link, the delay varies but the order stays the sending order.
 	if at.Before(l.lastAt) {
 		at = l.lastAt
 	}
@@ -140,7 +140,7 @@ func (p *impairer) send(data []byte, to net.Addr) {
 
 	select {
 	case l.queue <- delayed{data: append([]byte(nil), data...), to: to, at: at}:
-	default: // coda interna piena: scartato
+	default: // internal queue full: dropped
 	}
 }
 

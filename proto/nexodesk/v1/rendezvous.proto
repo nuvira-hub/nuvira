@@ -1,10 +1,10 @@
-// Messaggi tra i dispositivi e nexodesk-server (segnalazione). Vedi docs/13-fase1-rete.md.
+// Messages between the devices and nexodesk-server (signalling). See docs/13-phase1-network.md.
 //
-// Ogni dispositivo apre una connessione QUIC verso il server e uno stream
-// bidirezionale su cui scambia ClientMessage/ServerMessage con prefisso di
-// lunghezza (varint), come nel canale `control` delle sessioni.
+// Every device opens a QUIC connection to the server and a bidirectional stream
+// on which it exchanges length-prefixed (varint) ClientMessage/ServerMessage,
+// like in the sessions' `control` channel.
 //
-// Regole: i campi si aggiungono e non si riutilizzano mai.
+// Rules: fields are added and never reused.
 
 syntax = "proto3";
 
@@ -34,21 +34,21 @@ message ServerMessage {
   }
 }
 
-// Primo messaggio di ogni dispositivo: la sua chiave pubblica Ed25519 (32 byte).
+// First message of every device: its Ed25519 public key (32 bytes).
 message Register {
   bytes public_key = 1;
   string device_name = 2;
   string os = 3;
   string app_version = 4;
   uint32 protocol_version = 5;
-  // Il dispositivo non è raggiungibile: non riceve richieste di collegamento
-  // (viewer, app che usa la rubrica). Più connessioni con la stessa chiave
-  // possono coesistere, ad esempio due finestre di sessione aperte insieme.
+  // The device is not reachable: it receives no connection requests (viewer,
+  // app using the address book). Several connections with the same key can
+  // coexist, for example two session windows open at the same time.
   bool api_only = 6;
 }
 
-// Il dispositivo dimostra di possedere la chiave privata firmando
-// "nexodesk-register-v1" seguito dal nonce.
+// The device proves it holds the private key by signing "nexodesk-register-v1"
+// followed by the nonce.
 message Challenge {
   bytes nonce = 1;
 }
@@ -57,17 +57,17 @@ message Proof {
   bytes signature = 1;
 }
 
-// ID di 9 cifre assegnato alla chiave pubblica (lo stesso a ogni riconnessione).
+// 9-digit ID assigned to the public key (the same at every reconnection).
 message Registered {
   string device_id = 1;
 }
 
-// Il viewer chiede di collegarsi a un dispositivo.
+// The viewer asks to connect to a device.
 message Connect {
   string device_id = 1;
 }
 
-// Al dispositivo richiesto: qualcuno vuole collegarsi.
+// To the requested device: someone wants to connect.
 message Incoming {
   string session_id = 1;
   string viewer_id = 2;
@@ -90,27 +90,27 @@ enum Role {
   ROLE_AGENT = 2;
 }
 
-// A entrambi i lati, quando la sessione è accettata: come raggiungersi.
+// To both sides, when the session is accepted: how to reach each other.
 message Route {
   string session_id = 1;
   Role role = 2;
-  // Chiave pubblica Ed25519 dell'altro lato: il suo certificato TLS deve usarla.
+  // Ed25519 public key of the other side: its TLS certificate must use it.
   bytes peer_public_key = 3;
   string peer_id = 4;
-  // Gettone per il relay (16 byte): va inviato in RelayBind dal socket della sessione.
+  // Relay token (16 bytes): to be sent in RelayBind from the session socket.
   bytes relay_token = 5;
 }
 
 message Error {
   string message = 1;
-  // Sessione o richiesta a cui si riferisce, se c'è.
+  // Session or request it refers to, if any.
   string session_id = 2;
 }
 
 // ---------------------------------------------------------------------------
-// Account e rubrica (vedi docs/17-rubrica.md). Dopo Registered il client può
-// inviare ApiRequest; ogni richiesta riceve un ApiResponse con lo stesso id.
-// Prima serve Login o LoginToken: l'account resta legato alla connessione.
+// Accounts and address book (see docs/17-address-book.md). After Registered the
+// client can send ApiRequest; every request receives an ApiResponse with the same id.
+// Login or LoginToken comes first: the account stays bound to the connection.
 
 message ApiRequest {
   uint32 id = 1;
@@ -122,20 +122,20 @@ message ApiRequest {
     Entry put_entry = 6;
     DeleteEntry delete_entry = 7;
     ChangePassword change_password = 8;
-    // Solo amministratori.
+    // Administrators only.
     ListAccounts list_accounts = 9;
     PutAccount put_account = 10;
     DeleteAccount delete_account = 11;
     PutBook put_book = 12;
     DeleteBook delete_book = 13;
-    // Aggiunge il dispositivo alla rubrica personale se non è in nessuna rubrica visibile.
+    // Adds the device to the personal address book if it is in no visible address book.
     Entry auto_add = 14;
   }
 }
 
 message ApiResponse {
   uint32 id = 1;
-  // Vuoto se la richiesta è riuscita.
+  // Empty if the request succeeded.
   string error = 2;
   oneof result {
     Session session = 3;
@@ -152,18 +152,18 @@ message Login {
   string password = 2;
 }
 
-// Accesso ricordato dall'app: il gettone sostituisce la password.
+// Sign-in remembered by the app: the token replaces the password.
 message LoginToken {
   string token = 1;
 }
 
-// Revoca il gettone in uso.
+// Revokes the token in use.
 message Logout {}
 
 message Session {
   string token = 1;
   Account account = 2;
-  // Scadenza del gettone (secondi dal 1970).
+  // Token expiry (seconds since 1970).
   int64 expires = 3;
 }
 
@@ -178,7 +178,7 @@ message ChangePassword {
   string new_password = 2;
 }
 
-// Tutte le rubriche visibili all'account, con le schede.
+// All the address books visible to the account, with their entries.
 message GetBooks {}
 
 message Books {
@@ -188,14 +188,14 @@ message Books {
 message Book {
   int64 id = 1;
   string name = 2;
-  // Rubrica personale dell'account (una sola, non condivisibile).
+  // Personal address book of the account (only one, not shareable).
   bool personal = 3;
-  // Rubriche condivise: account che la vedono (solo per gli amministratori).
+  // Shared address books: accounts that see it (for administrators only).
   repeated int64 member_ids = 4;
   repeated Entry entries = 5;
 }
 
-// Scheda di un dispositivo. Con id 0 PutEntry ne crea una nuova.
+// Entry of a device. With id 0 PutEntry creates a new one.
 message Entry {
   int64 id = 1;
   int64 book_id = 2;
@@ -206,9 +206,9 @@ message Entry {
   string email = 7;
   string phone = 8;
   string notes = 9;
-  // In chiaro solo dentro la connessione cifrata; sul server è cifrata.
+  // In clear only inside the encrypted connection; on the server it is encrypted.
   string password = 10;
-  // Ultima modifica (secondi dal 1970), impostata dal server.
+  // Last change (seconds since 1970), set by the server.
   int64 updated = 11;
 }
 
@@ -222,7 +222,7 @@ message Accounts {
   repeated Account accounts = 1;
 }
 
-// Con id 0 crea l'account; password vuota = invariata.
+// With id 0 creates the account; empty password = unchanged.
 message PutAccount {
   int64 id = 1;
   string username = 2;
@@ -234,7 +234,7 @@ message DeleteAccount {
   int64 id = 1;
 }
 
-// Rubrica condivisa: con id 0 la crea. I membri sostituiscono quelli attuali.
+// Shared address book: with id 0 it is created. The members replace the current ones.
 message PutBook {
   int64 id = 1;
   string name = 2;

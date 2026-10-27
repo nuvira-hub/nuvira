@@ -1,7 +1,7 @@
-// Package tlsutil crea e conserva il certificato del server.
+// Package tlsutil creates and keeps the server certificate.
 //
-// Per ora è autofirmato: i dispositivi verificano l'impronta SHA-256 (indicata
-// a mano o memorizzata al primo collegamento). Let's Encrypt arriverà con la porta TCP 443.
+// For now it is self-signed: devices check its SHA-256 fingerprint (given by hand
+// or remembered at the first connection). Let's Encrypt will come with TCP port 443.
 package tlsutil
 
 import (
@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-// LoadOrCreate legge cert.pem e key.pem da dir, creandoli al primo avvio.
+// LoadOrCreate reads cert.pem and key.pem from dir, creating them at first start.
 func LoadOrCreate(dir string) (tls.Certificate, error) {
 	certPath, keyPath := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
@@ -61,7 +61,7 @@ func LoadOrCreate(dir string) (tls.Certificate, error) {
 	return tls.LoadX509KeyPair(certPath, keyPath)
 }
 
-// Fingerprint è l'impronta SHA-256 del certificato, in esadecimale.
+// Fingerprint is the SHA-256 fingerprint of the certificate, in hexadecimal.
 func Fingerprint(cert tls.Certificate) string {
 	sum := sha256.Sum256(cert.Certificate[0])
 	return hex.EncodeToString(sum[:])

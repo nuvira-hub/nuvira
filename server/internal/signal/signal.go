@@ -1,6 +1,6 @@
-// Package signal gestisce le connessioni dei dispositivi al server:
-// registrazione con prova della chiave, presenza, richieste di collegamento
-// e consegna dei percorsi (relay) ai due lati di una sessione.
+// Package signal handles the devices' connections to the server: registration
+// with proof of the key, presence, connection requests and delivery of the
+// routes (relay) to the two sides of a session.
 package signal
 
 import (
@@ -25,13 +25,13 @@ import (
 	"github.com/alexbn71/NexoDesk/server/internal/store"
 )
 
-// ProtocolVersion è la versione del protocollo di segnalazione parlata dal server.
+// ProtocolVersion is the version of the signalling protocol spoken by the server.
 const ProtocolVersion = 1
 
-// Prefisso firmato insieme al nonce: impedisce di riusare la firma altrove.
+// Prefix signed together with the nonce: prevents reusing the signature elsewhere.
 const registerContext = "nexodesk-register-v1"
 
-// Tempo concesso all'agent per accettare una richiesta.
+// Time given to the agent to accept a request.
 const pendingTimeout = 60 * time.Second
 
 const maxMessage = 64 * 1024
@@ -39,12 +39,12 @@ const maxMessage = 64 * 1024
 type client struct {
 	device *store.Device
 	conn   *quic.Conn
-	mu     sync.Mutex // serializza le scritture sullo stream e protegge session
+	mu     sync.Mutex // serialises writes on the stream and protects session
 	stream *quic.Stream
-	// Non raggiungibile come dispositivo (viewer, app per la rubrica): non va
-	// tra quelli online e non scollega altre connessioni con la stessa chiave.
+	// Not reachable as a device (viewer, app using the address book): it is not
+	// listed as online and does not disconnect other connections with the same key.
 	apiOnly bool
-	// Accesso alla rubrica fatto su questa connessione.
+	// Address book sign-in made on this connection.
 	session *pb.Session
 }
 
@@ -69,7 +69,7 @@ type Server struct {
 	log      *slog.Logger
 
 	mu       sync.Mutex
-	online   map[string]*client // per ID dispositivo
+	online   map[string]*client // by device ID
 	sessions map[string]*pending
 }
 
@@ -80,7 +80,7 @@ func New(st *store.Store, acc *accounts.Service, r *relay.Relay, log *slog.Logge
 	}
 }
 
-// Serve accetta connessioni finché il listener non viene chiuso.
+// Serve accepts connections until the listener is closed.
 func (s *Server) Serve(ctx context.Context, ln *quic.Listener) error {
 	go s.expireLoop(ctx)
 	for {
@@ -90,7 +90,7 @@ func (s *Server) Serve(ctx context.Context, ln *quic.Listener) error {
 		}
 		go func() {
 			if err := s.handle(ctx, conn); err != nil && !isClosed(err) {
-				s.log.Debug("connessione terminata", "da", conn.RemoteAddr(), "err", err)
+				s.log.Debug("connection ended", "from", conn.RemoteAddr(), "err", err)
 			}
 		}()
 	}
@@ -121,16 +121,16 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 
 	c, err := s.register(conn, stream, read)
 	if err != nil {
-		return fmt.Errorf("registrazione: %w", err)
+		return fmt.Errorf("registration: %w", err)
 	}
 	s.setOnline(c)
 	defer s.setOffline(c)
-	s.log.Info("dispositivo collegato", "id", c.device.ID, "nome", c.device.Name, "da", conn.RemoteAddr())
+	s.log.Info("device connected", "id", c.device.ID, "name", c.device.Name, "from", conn.RemoteAddr())
 
 	for {
 		msg, err := read()
 		if err != nil {
-			s.log.Info("dispositivo scollegato", "id", c.device.ID)
+			s.log.Info("device disconnected", "id", c.device.ID)
 			return err
 		}
 		switch m := msg.Msg.(type) {
@@ -143,13 +143,13 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 		case *pb.ClientMessage_Api:
 			s.api(c, m.Api)
 		default:
-			_ = c.send(errorMsg("messaggio non previsto", ""))
+			_ = c.send(errorMsg("unexpected message", ""))
 		}
 	}
 }
 
-// register verifica che il dispositivo possieda la chiave privata della chiave
-// pubblica che presenta e gli assegna (o ritrova) il suo ID.
+// register checks that the device holds the private key of the public key it
+// presents and assigns (or finds) its ID.
 func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb.ClientMessage, error)) (*client, error) {
 	msg, err := read()
 	if err != nil {
@@ -157,12 +157,12 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	}
 	reg := msg.GetRegister()
 	if reg == nil || len(reg.PublicKey) != ed25519.PublicKeySize {
-		return nil, errors.New("Register mancante o chiave non valida")
+		return nil, errors.New("missing Register or invalid key")
 	}
 	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly}
 	if reg.ProtocolVersion < ProtocolVersion {
 		_ = c.send(errorMsg("@server.old_version", ""))
-		return nil, fmt.Errorf("protocollo %d", reg.ProtocolVersion)
+		return nil, fmt.Errorf("protocol %d", reg.ProtocolVersion)
 	}
 
 	nonce := make([]byte, 32)
@@ -179,8 +179,8 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	proof := msg.GetProof()
 	signed := append([]byte(registerContext), nonce...)
 	if proof == nil || !ed25519.Verify(reg.PublicKey, signed, proof.Signature) {
-		_ = c.send(errorMsg("prova della chiave non valida", ""))
-		return nil, errors.New("firma non valida")
+		_ = c.send(errorMsg("invalid proof of the key", ""))
+		return nil, errors.New("invalid signature")
 	}
 
 	device, err := s.store.Register(reg.PublicKey, limit(reg.DeviceName, 64), limit(reg.Os, 32))
@@ -206,8 +206,8 @@ func (s *Server) setOnline(c *client) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if old := s.online[c.device.ID]; old != nil {
-		// Stesso dispositivo ricollegato: la connessione vecchia non serve più.
-		_ = old.conn.CloseWithError(0, "sostituita da una nuova connessione")
+		// Same device reconnected: the old connection is no longer needed.
+		_ = old.conn.CloseWithError(0, "replaced by a new connection")
 	}
 	s.online[c.device.ID] = c
 }
@@ -245,7 +245,7 @@ func (s *Server) connect(viewer *client, target string) {
 		_ = viewer.send(errorMsg("@server.self_connect", ""))
 		return
 	}
-	s.log.Info("richiesta di collegamento", "sessione", p.id, "da", viewer.device.ID, "a", target)
+	s.log.Info("connection request", "session", p.id, "from", viewer.device.ID, "to", target)
 	err := agent.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Incoming{Incoming: &pb.Incoming{
 		SessionId:       p.id,
 		ViewerId:        viewer.device.ID,
@@ -258,7 +258,7 @@ func (s *Server) connect(viewer *client, target string) {
 	}
 }
 
-// take toglie la sessione dalle richieste in attesa, se appartiene a questo agent.
+// take removes the session from the pending requests, if it belongs to this agent.
 func (s *Server) take(agent *client, id string) *pending {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -279,7 +279,7 @@ func (s *Server) dropSession(id string) {
 func (s *Server) accept(agent *client, id string) {
 	p := s.take(agent, id)
 	if p == nil {
-		_ = agent.send(errorMsg("sessione sconosciuta o scaduta", id))
+		_ = agent.send(errorMsg("unknown or expired session", id))
 		return
 	}
 	var token [16]byte
@@ -300,9 +300,9 @@ func (s *Server) accept(agent *client, id string) {
 		return
 	}
 	if err := p.viewer.send(route(pb.Role_ROLE_VIEWER, agent.device)); err != nil {
-		s.log.Debug("viewer non raggiungibile", "sessione", id, "err", err)
+		s.log.Debug("viewer not reachable", "session", id, "err", err)
 	}
-	s.log.Info("sessione accettata", "sessione", id)
+	s.log.Info("session accepted", "session", id)
 }
 
 func (s *Server) reject(agent *client, id, reason string) {
@@ -314,7 +314,7 @@ func (s *Server) reject(agent *client, id, reason string) {
 		reason = "@agent.rejected"
 	}
 	_ = p.viewer.send(errorMsg(reason, id))
-	s.log.Info("sessione rifiutata", "sessione", id, "motivo", reason)
+	s.log.Info("session rejected", "session", id, "reason", reason)
 }
 
 func (s *Server) expireLoop(ctx context.Context) {

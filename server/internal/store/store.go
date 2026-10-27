@@ -1,4 +1,4 @@
-// Package store conserva i dispositivi registrati in SQLite.
+// Package store keeps the registered devices in SQLite.
 package store
 
 import (
@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Device è un dispositivo registrato: ID a 9 cifre legato alla sua chiave pubblica Ed25519.
+// Device is a registered device: 9-digit ID bound to its Ed25519 public key.
 type Device struct {
 	ID        string
 	PublicKey []byte
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS devices (
 	last_seen   INTEGER NOT NULL
 );`
 
-// Open apre (o crea) il database nel file indicato.
+// Open opens (or creates) the database in the given file.
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
@@ -52,11 +52,11 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// DB espone il database agli altri archivi dello stesso file (account e rubrica).
+// DB exposes the database to the other stores of the same file (accounts and address book).
 func (s *Store) DB() *sql.DB { return s.db }
 
-// Register restituisce il dispositivo con questa chiave, creandolo con un ID nuovo
-// se è la prima volta; aggiorna nome, sistema e ultimo accesso.
+// Register returns the device with this key, creating it with a new ID the first
+// time; it updates name, system and last access.
 func (s *Store) Register(publicKey []byte, name, os string) (*Device, error) {
 	now := time.Now()
 	d := &Device{PublicKey: publicKey, Name: name, OS: os, LastSeen: now}
@@ -83,12 +83,12 @@ func (s *Store) Register(publicKey []byte, name, os string) (*Device, error) {
 		if err == nil {
 			return d, nil
 		}
-		// Collisione sull'ID (rarissima): si riprova con un altro.
+		// ID collision (very rare): another one is tried.
 	}
-	return nil, fmt.Errorf("nessun ID libero: %w", err)
+	return nil, fmt.Errorf("no free ID: %w", err)
 }
 
-// ByID restituisce il dispositivo con questo ID, o nil se non esiste.
+// ByID returns the device with this ID, or nil if it does not exist.
 func (s *Store) ByID(id string) (*Device, error) {
 	d := &Device{ID: id}
 	var created, seen int64
@@ -104,13 +104,13 @@ func (s *Store) ByID(id string) (*Device, error) {
 	return d, nil
 }
 
-// Touch aggiorna l'ultimo accesso.
+// Touch updates the last access.
 func (s *Store) Touch(id string) error {
 	_, err := s.db.Exec(`UPDATE devices SET last_seen = ? WHERE id = ?`, time.Now().Unix(), id)
 	return err
 }
 
-// newID genera un ID di 9 cifre che non inizia con 0 (più facile da dettare).
+// newID generates a 9-digit ID not starting with 0 (easier to dictate).
 func newID() (string, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(900_000_000))
 	if err != nil {

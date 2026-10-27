@@ -1,22 +1,22 @@
-// nexodesk-server: segnalazione e relay di NexoDesk.
+// nexodesk-server: NexoDesk signalling and relay.
 //
-// Configurazione da variabili d'ambiente:
+// Configuration from environment variables:
 //
-//	NEXODESK_LISTEN    indirizzo UDP (predefinito ":21116")
-//	NEXODESK_WS_LISTEN indirizzo TCP per il ripiego WebSocket, percorso /nexodesk
-//	               (predefinito ":21116"; "off" per disattivarlo). Da pubblicare
-//	               anche come wss:// su 443 dietro un reverse proxy.
-//	NEXODESK_DATA_DIR  cartella per database e certificato (predefinito "./data")
-//	NEXODESK_LOG       debug | info (predefinito) | warn
-//	NEXODESK_ADMIN_USER, NEXODESK_ADMIN_PASSWORD  primo amministratore della rubrica,
-//	                   creato solo se non esiste nessun account (predefinito "admin"
-//	                   con una password casuale scritta una volta nel log)
-//	NEXODESK_RELAY_FAKE_REFLEXIVE  solo test: comunica indirizzi pubblici irraggiungibili
-//	                   (simula due dispositivi dietro lo stesso router)
-//	NEXODESK_RELAY_IMPAIR  solo test: simula una rete peggiore sul relay, es.
+//	NEXODESK_LISTEN    UDP address (default ":21116")
+//	NEXODESK_WS_LISTEN TCP address for the WebSocket fallback, path /nexodesk
+//	               (default ":21116"; "off" to disable it). Also to be published
+//	               as wss:// on 443 behind a reverse proxy.
+//	NEXODESK_DATA_DIR  folder for database and certificate (default "./data")
+//	NEXODESK_LOG       debug | info (default) | warn
+//	NEXODESK_ADMIN_USER, NEXODESK_ADMIN_PASSWORD  first address book administrator,
+//	                   created only if no account exists (default "admin" with a
+//	                   random password written once to the log)
+//	NEXODESK_RELAY_FAKE_REFLEXIVE  tests only: announces unreachable public addresses
+//	                   (simulates two devices behind the same router)
+//	NEXODESK_RELAY_IMPAIR  tests only: simulates a worse network on the relay, e.g.
 //	                   "delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
 //
-// `nexodesk-server healthcheck` verifica che il server risponda (usato da Docker).
+// `nexodesk-server healthcheck` checks that the server answers (used by Docker).
 package main
 
 import (
@@ -34,9 +34,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/alexbn71/NexoDesk/server/internal/accounts"
 	"github.com/alexbn71/NexoDesk/server/internal/relay"
 	nexosignal "github.com/alexbn71/NexoDesk/server/internal/signal"
-	"github.com/alexbn71/NexoDesk/server/internal/accounts"
 	"github.com/alexbn71/NexoDesk/server/internal/store"
 	"github.com/alexbn71/NexoDesk/server/internal/tlsutil"
 )
@@ -45,7 +45,7 @@ var version = "dev"
 
 const copyright = "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/NexoDesk"
 
-// ALPN della segnalazione (diverso da quello delle sessioni tra dispositivi).
+// Signalling ALPN (different from the one of sessions between devices).
 const alpn = "nexodesk-signal/1"
 
 func env(key, def string) string {
@@ -56,11 +56,11 @@ func env(key, def string) string {
 }
 
 func main() {
-	// I buffer UDP sono impostati da noi sul socket condiviso con il relay.
+	// The UDP buffers are set by us on the socket shared with the relay.
 	_ = os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
 		if err := healthcheck(); err != nil {
-			fmt.Fprintln(os.Stderr, "non risponde:", err)
+			fmt.Fprintln(os.Stderr, "not answering:", err)
 			os.Exit(1)
 		}
 		return
@@ -89,7 +89,7 @@ func run() error {
 
 	cert, err := tlsutil.LoadOrCreate(dataDir)
 	if err != nil {
-		return fmt.Errorf("certificato: %w", err)
+		return fmt.Errorf("certificate: %w", err)
 	}
 
 	addr, err := net.ResolveUDPAddr("udp", env("NEXODESK_LISTEN", ":21116"))
@@ -100,13 +100,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	// Buffer ampi: con molte sessioni in relay i datagrammi arrivano a raffiche.
+	// Large buffers: with many relayed sessions datagrams arrive in bursts.
 	_ = udp.SetReadBuffer(7 << 20)
 	_ = udp.SetWriteBuffer(7 << 20)
 	rl := relay.New(log)
 	if os.Getenv("NEXODESK_RELAY_FAKE_REFLEXIVE") != "" {
 		rl.FakeReflexive = true
-		log.Warn("indirizzi visti dal relay falsificati: simulazione hairpin (solo test)")
+		log.Warn("addresses seen by the relay faked: hairpin simulation (tests only)")
 	}
 	conn := relay.NewConn(udp, rl)
 	impairment, err := relay.ParseImpairment(os.Getenv("NEXODESK_RELAY_IMPAIR"))
@@ -115,7 +115,7 @@ func run() error {
 	}
 	if impairment != nil {
 		conn.Impair(impairment)
-		log.Warn("simulazione di rete attiva sul relay (solo test)", "condizioni", impairment.String())
+		log.Warn("network simulation active on the relay (tests only)", "conditions", impairment.String())
 	}
 	tr := &quic.Transport{Conn: conn}
 
@@ -126,11 +126,11 @@ func run() error {
 		wsServer := &http.Server{Addr: wsListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() {
 			if err := wsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Error("ripiego WebSocket non disponibile", "err", err)
+				log.Error("WebSocket fallback not available", "err", err)
 			}
 		}()
 		defer wsServer.Close()
-		log.Info("ripiego WebSocket attivo", "tcp", wsListen, "percorso", "/nexodesk")
+		log.Info("WebSocket fallback active", "tcp", wsListen, "path", "/nexodesk")
 	}
 	ln, err := tr.Listen(
 		&tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{alpn}, MinVersion: tls.VersionTLS13},
@@ -140,7 +140,7 @@ func run() error {
 		return err
 	}
 
-	log.Info("nexodesk-server avviato", "versione", version, "udp", udp.LocalAddr(), "impronta", tlsutil.Fingerprint(cert))
+	log.Info("nexodesk-server started", "version", version, "udp", udp.LocalAddr(), "fingerprint", tlsutil.Fingerprint(cert))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -150,13 +150,13 @@ func run() error {
 	}
 	created, generated, err := acc.Bootstrap(os.Getenv("NEXODESK_ADMIN_USER"), os.Getenv("NEXODESK_ADMIN_PASSWORD"))
 	if err != nil {
-		return fmt.Errorf("primo amministratore: %w", err)
+		return fmt.Errorf("first administrator: %w", err)
 	}
 	if created && generated != "" {
-		log.Warn("creato l'account amministratore della rubrica: cambiare la password dall'app",
-			"utente", env("NEXODESK_ADMIN_USER", "admin"), "password", generated)
+		log.Warn("address book administrator account created: change the password from the app",
+			"user", env("NEXODESK_ADMIN_USER", "admin"), "password", generated)
 	} else if created {
-		log.Info("creato l'account amministratore della rubrica", "utente", env("NEXODESK_ADMIN_USER", "admin"))
+		log.Info("address book administrator account created", "user", env("NEXODESK_ADMIN_USER", "admin"))
 	}
 	srv := nexosignal.New(st, acc, rl, log)
 	go func() {
@@ -166,11 +166,11 @@ func run() error {
 	if err := srv.Serve(ctx, ln); err != nil && ctx.Err() == nil {
 		return err
 	}
-	log.Info("nexodesk-server fermato")
+	log.Info("nexodesk-server stopped")
 	return nil
 }
 
-// healthcheck completa un handshake QUIC con il server locale.
+// healthcheck completes a QUIC handshake with the local server.
 func healthcheck() error {
 	_, port, err := net.SplitHostPort(env("NEXODESK_LISTEN", ":21116"))
 	if err != nil {
