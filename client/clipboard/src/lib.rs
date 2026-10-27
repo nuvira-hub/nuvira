@@ -68,7 +68,7 @@ pub fn spawn_sync(
     use std::sync::mpsc::{RecvTimeoutError, channel};
     let (incoming_tx, incoming_rx) = channel::<String>();
     let (ready_tx, ready_rx) = channel();
-    std::thread::Builder::new().name("appunti".into()).spawn(move || {
+    std::thread::Builder::new().name("clipboard".into()).spawn(move || {
         // The clipboard is opened in the thread that uses it.
         let mut clipboard = match Clipboard::new() {
             Ok(c) => {

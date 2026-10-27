@@ -1,9 +1,9 @@
-//! Cattura e compressione su due thread.
+//! Capture and encoding on two threads.
 //!
-//! Il thread di cattura deposita ogni immagine nuova in uno slot; il thread di
-//! compressione prende sempre la più recente. Se la compressione è più lenta
-//! della cattura le immagini intermedie vengono saltate: i fps dipendono dalla
-//! fase più lenta e non dalla somma delle due, e non si accumula ritardo.
+//! The capture thread puts every new image in a slot; the encoding thread always
+//! takes the most recent one. If encoding is slower than capture the intermediate
+//! images are skipped: fps depend on the slower stage and not on the sum of the
+//! two, and no delay builds up.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -17,14 +17,14 @@ use nexodesk_proto::v1::VideoFrame;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-/// Immagine catturata in attesa di compressione.
+/// Captured image waiting to be encoded.
 struct Captured {
     width: u32,
     height: u32,
     stride: usize,
     data: Vec<u8>,
     captured_us: u64,
-    /// Modalità GPU: l'immagine è in questa texture e `data` è vuoto.
+    /// GPU mode: the image is in this texture and `data` is empty.
     #[cfg(windows)]
     texture: Option<nexodesk_codec::GpuTexture>,
 }
@@ -33,7 +33,7 @@ struct Captured {
 struct Shared {
     slot: Mutex<Option<Captured>>,
     ready: Condvar,
-    /// Buffer già allocati da riusare (evita 8 MB di allocazioni per frame a 1080p).
+    /// Already allocated buffers to reuse (avoids 8 MB of allocations per frame at 1080p).
     spare: Mutex<Vec<Vec<u8>>>,
     stop: AtomicBool,
     captured: AtomicU64,
@@ -55,9 +55,9 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    /// Avvia i due thread. Bloccante finché cattura ed encoder non sono pronti.
-    /// Con `gpu` la cattura lascia le immagini sulla scheda video e l'encoder riceve
-    /// il suo device (se la sorgente non lo supporta, si passa dalla RAM).
+    /// Starts the two threads. Blocks until capture and encoder are ready.
+    /// With `gpu` capture leaves the images on the graphics card and the encoder gets
+    /// its device (if the source does not support it, images go through RAM).
     pub fn start(
         open_capturer: impl FnOnce() -> Result<Box<dyn Capturer>>,
         open_encoder: impl FnOnce(Option<GpuDevice>) -> Result<Box<dyn VideoEncoder>> + Send + 'static,
@@ -76,14 +76,14 @@ impl Pipeline {
         #[cfg(not(windows))]
         let device: Option<GpuDevice> = None;
         if gpu && device.is_none() {
-            info!("la sorgente non offre immagini sulla GPU: l'encoder le riceve dalla RAM");
+            info!("the source does not offer images on the GPU: the encoder gets them from RAM");
         }
         let screen = capturer.display().clone();
 
-        // L'encoder si crea nel thread che lo userà (Media Foundation inizializza COM per thread).
+        // The encoder is created in the thread that will use it (Media Foundation initialises COM per thread).
         let (enc_ready_tx, enc_ready_rx) = std::sync::mpsc::channel();
         let s = shared.clone();
-        pipeline.threads.push(std::thread::Builder::new().name("compressione".into()).spawn(move || {
+        pipeline.threads.push(std::thread::Builder::new().name("encoding".into()).spawn(move || {
             let encoder = match open_encoder(device) {
                 Ok(e) => {
                     let _ = enc_ready_tx.send(Ok(e.name()));
@@ -99,12 +99,12 @@ impl Pipeline {
 
         let s = shared.clone();
         pipeline.threads.push(
-            std::thread::Builder::new().name("cattura".into()).spawn(move || capture_loop(&s, capturer))?,
+            std::thread::Builder::new().name("capture".into()).spawn(move || capture_loop(&s, capturer))?,
         );
 
-        // In caso di errore `pipeline` viene distrutta e ferma l'altro thread.
-        let encoder = enc_ready_rx.recv().map_err(|_| anyhow!("thread di compressione terminato"))??;
-        info!("trasmetto {} {}x{} con {encoder}", screen.name, screen.width, screen.height);
+        // On error `pipeline` is dropped and stops the other thread.
+        let encoder = enc_ready_rx.recv().map_err(|_| anyhow!("encoding thread ended"))??;
+        info!("streaming {} {}x{} with {encoder}", screen.name, screen.width, screen.height);
         Ok((screen, pipeline))
     }
 }
@@ -126,10 +126,10 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
             Ok(Some(frame)) => frame,
             Ok(None) => continue,
             Err(e) => {
-                // Es. desktop sicuro senza nexodesk-service: si riprova senza chiudere la
-                // sessione, segnalandolo una volta sola.
+                // E.g. secure desktop without nexodesk-service: it is retried without closing
+                // the session, reporting it only once.
                 if !failing {
-                    warn!("cattura non riuscita, riprovo ogni mezzo secondo: {e:#}");
+                    warn!("capture failed, retrying every half second: {e:#}");
                     failing = true;
                 }
                 std::thread::sleep(Duration::from_millis(500));
@@ -137,7 +137,7 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
             }
         };
         if std::mem::take(&mut failing) {
-            info!("cattura ripresa");
+            info!("capture resumed");
         }
         let mut data = shared.spare.lock().expect("spare").pop().unwrap_or_default();
         data.clear();
@@ -171,13 +171,13 @@ fn encode_loop(
 ) {
     let mut applied_bitrate = bitrate.load(Ordering::Relaxed);
     let mut last_encoded = Instant::now() - Duration::from_secs(1);
-    // Ultima immagine compressa: serve a rifare un keyframe a schermo fermo.
+    // Last encoded image: used to make a keyframe again on a still screen.
     let mut last: Option<Captured> = None;
     let mut seq = 0u64;
     let mut stats = Stats::default();
 
     while !shared.stop.load(Ordering::Relaxed) {
-        // Limite di frame al secondo: nel frattempo lo slot si aggiorna con l'immagine più recente.
+        // Frames-per-second limit: meanwhile the slot is updated with the most recent image.
         let t_loop = Instant::now();
         let min_interval = Duration::from_secs(1) / max_fps.load(Ordering::Relaxed).max(1);
         let wait = min_interval.saturating_sub(last_encoded.elapsed());
@@ -186,13 +186,13 @@ fn encode_loop(
         }
 
         let slept = t_loop.elapsed();
-        // L'immagine si prende solo quando l'encoder può riceverla: così è la più fresca.
+        // The image is taken only when the encoder can accept it: that way it is the freshest.
         let t_ready = Instant::now();
         match encoder.wait_ready(Duration::from_millis(100)) {
             Ok(true) => {}
             Ok(false) => continue,
             Err(e) => {
-                warn!("encoder non disponibile: {e:#}");
+                warn!("encoder not available: {e:#}");
                 break;
             }
         }
@@ -222,7 +222,7 @@ fn encode_loop(
         } else if !force_key {
             continue;
         }
-        // Schermo fermo e keyframe richiesto: si ricomprime l'ultima immagine.
+        // Still screen and keyframe requested: the last image is encoded again.
         let Some(image) = &last else { continue };
 
         let t = Instant::now();
@@ -245,11 +245,11 @@ fn encode_loop(
             Ok(Some(e)) => e,
             Ok(None) => continue,
             Err(e) => {
-                warn!("compressione non riuscita: {e:#}");
+                warn!("encoding failed: {e:#}");
                 continue;
             }
         };
-        // Il ritmo si misura dall'inizio della compressione, non dalla fine.
+        // The pace is measured from the start of encoding, not from its end.
         last_encoded = t;
         if encoded.keyframe {
             keyframe.store(false, Ordering::Relaxed);
@@ -264,10 +264,10 @@ fn encode_loop(
             keyframe: encoded.keyframe,
             data: encoded.data,
         };
-        // Coda da un solo frame: se la rete è lenta si salta la cattura invece di accumulare ritardo.
+        // Single-frame queue: if the network is slow capture is skipped instead of building up delay.
         let t_send = Instant::now();
         let sent = frames.blocking_send(msg);
-        tracing::trace!(?slept, ?waited_ready, ?waited_slot, encode = ?t.elapsed().saturating_sub(t_send.elapsed()), send = ?t_send.elapsed(), "ciclo");
+        tracing::trace!(?slept, ?waited_ready, ?waited_slot, encode = ?t.elapsed().saturating_sub(t_send.elapsed()), send = ?t_send.elapsed(), "loop");
         if sent.is_err() {
             break;
         }
@@ -312,7 +312,7 @@ impl Stats {
         let captured = shared.captured.load(Ordering::Relaxed);
         let skipped = shared.skipped.load(Ordering::Relaxed);
         info!(
-            "{:.1} fps inviati ({:.1} catturati, {} saltati), compressione {:.1} ms/frame, {:.0} kbit/s",
+            "{:.1} fps sent ({:.1} captured, {} skipped), encoding {:.1} ms/frame, {:.0} kbit/s",
             self.frames as f64 / secs,
             (captured - self.captured_before) as f64 / secs,
             skipped - self.skipped_before,
@@ -342,10 +342,10 @@ mod tests {
             keyframe,
             Arc::new(AtomicU32::new(1_000_000)),
         )
-        .context("avvio")
+        .context("start")
         .unwrap();
         assert_eq!((display.width, display.height), (320, 180));
-        let first = rx.blocking_recv().expect("primo frame");
+        let first = rx.blocking_recv().expect("first frame");
         assert!(first.keyframe);
         assert!(rx.blocking_recv().is_some());
         drop(pipeline);

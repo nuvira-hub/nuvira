@@ -41,7 +41,7 @@ fn run(label: &str, mut enc: Box<dyn VideoEncoder>, w: usize, h: usize) {
         let data = &frames[i % frames.len()];
         let img = BgraImage { width: w as u32, height: h as u32, stride: w * 4, data };
         let t = Instant::now();
-        let out = enc.encode(&img, i == 0).expect("compressione");
+        let out = enc.encode(&img, i == 0).expect("encoding");
         let us = t.elapsed().as_micros();
         total += us;
         worst = worst.max(us);

@@ -1,6 +1,6 @@
 [package]
 name = "nexodesk-transport"
-description = "Trasporto di rete delle sessioni (QUIC)"
+description = "Session network transport (QUIC)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

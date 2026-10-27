@@ -1,10 +1,10 @@
-//! Disegno senza GPU: conversione YUV → RGB e ridimensionamento sulla CPU,
-//! presentazione con `softbuffer` (GDI su Windows).
+//! Drawing without a GPU: YUV → RGB conversion and scaling on the CPU,
+//! presentation with `softbuffer` (GDI on Windows).
 //!
-//! Serve per le schede video che wgpu raggiunge solo via OpenGL: su una Intel
-//! HD Graphics 2500 il percorso OpenGL costava ~23 ms per frame a 1080p.
-//! Il ridimensionamento è al pixel più vicino: esatto a scala 1:1, un po'
-//! seghettato quando la finestra è più piccola dello schermo remoto.
+//! Used for graphics cards that wgpu reaches only through OpenGL: on an Intel
+//! HD Graphics 2500 the OpenGL path cost ~23 ms per frame at 1080p.
+//! Scaling is nearest-pixel: exact at 1:1, slightly jagged when the window is
+//! smaller than the remote screen.
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -19,9 +19,9 @@ pub struct CpuRenderer {
     surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
     width: u32,
     height: u32,
-    /// Ultimo frame ricevuto (serve a ridisegnare dopo un ridimensionamento).
+    /// Last frame received (used to redraw after a resize).
     last: Option<YuvFrame>,
-    /// Immagine pronta, delle dimensioni della finestra, in 0x00RRGGBB.
+    /// Ready image, the size of the window, in 0x00RRGGBB.
     pixels: Vec<u32>,
 }
 
@@ -75,7 +75,7 @@ impl CpuRenderer {
         if vw == 0 || vh == 0 {
             return;
         }
-        // Colonna sorgente per ogni colonna di destinazione.
+        // Source column for every destination column.
         let src_x: Vec<usize> = (0..vw).map(|x| x * frame.width as usize / vw).collect();
         yuv_to_rgb_scaled(frame, &src_x, vh, &mut self.pixels[vy * out_w..(vy + vh) * out_w], out_w, vx);
     }
@@ -89,7 +89,7 @@ impl CpuRenderer {
     }
 }
 
-/// Salva un frame in PNG a risoluzione piena.
+/// Saves a frame as PNG at full resolution.
 pub fn write_png(frame: &YuvFrame, path: &std::path::Path) -> Result<()> {
     let (w, h) = (frame.width as usize, frame.height as usize);
     let src_x: Vec<usize> = (0..w).collect();
@@ -108,8 +108,8 @@ fn clamp8(v: i32) -> u32 {
     v.clamp(0, 255) as u32
 }
 
-/// Converte (BT.601, gamma limitata) e ridimensiona `rows` righe di destinazione,
-/// scritte in `out` a partire dalla colonna `x0` con passo `stride`. Divide il lavoro su più core.
+/// Converts (BT.601, limited range) and scales `rows` destination rows, written to
+/// `out` starting at column `x0` with pitch `stride`. Splits the work over several cores.
 fn yuv_to_rgb_scaled(
     frame: &YuvFrame,
     src_x: &[usize],
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn colors_and_scaling() {
-        // 4x2: metà sinistra bianca, metà destra rosso puro (valori BT.601 limitati).
+        // 4x2: left half white, right half pure red (limited BT.601 values).
         let frame = YuvFrame {
             width: 4,
             height: 2,
@@ -159,13 +159,13 @@ mod tests {
             u: vec![128, 90],
             v: vec![128, 240],
         };
-        // Destinazione 2x1 dentro un buffer largo 3 a partire dalla colonna 1.
+        // 2x1 destination inside a buffer 3 wide starting at column 1.
         let src_x: Vec<usize> = (0..2).map(|x| x * 4 / 2).collect();
         let mut out = vec![0u32; 3];
         yuv_to_rgb_scaled(&frame, &src_x, 1, &mut out, 3, 1);
         assert_eq!(out[0], 0);
         assert_eq!(out[1], 0xffffff);
         let (r, g, b) = (out[2] >> 16, (out[2] >> 8) & 0xff, out[2] & 0xff);
-        assert!(r > 250 && g < 5 && b < 5, "rosso: {r} {g} {b}");
+        assert!(r > 250 && g < 5 && b < 5, "red: {r} {g} {b}");
     }
 }

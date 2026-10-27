@@ -1,18 +1,18 @@
-//! Bitrate adattivo in base alla latenza osservata dal viewer.
+//! Adaptive bitrate based on the latency observed by the viewer.
 //!
-//! Quando la rete è satura i pacchetti si accodano (nei router, nel buffer di
-//! QUIC) e la latenza cattura→visualizzazione sale ben sopra il suo minimo.
-//! Il controllore confronta la latenza mediana recente con la minima degli
-//! ultimi 10 secondi (la latenza "a rete vuota"):
-//! - coda sopra 60 ms → bitrate × 0,8 (al massimo una volta al secondo);
-//! - coda sotto 25 ms da un po' → bitrate × 1,08 (risale piano).
+//! When the network is saturated packets queue up (in routers, in QUIC's
+//! buffer) and capture→display latency rises well above its minimum.
+//! The controller compares the recent median latency with the minimum of the
+//! last 10 seconds (the "empty network" latency):
+//! - queue above 60 ms → bitrate × 0.8 (at most once per second);
+//! - queue below 25 ms for a while → bitrate × 1.08 (climbs back slowly).
 //!
-//! Le soglie sono larghe di proposito: su un collegamento lento anche un frame
-//! più grande impiega di più a passare, e una ritrasmissione occasionale alza
-//! la latenza di un RTT; nessuna delle due è una coda da smaltire.
+//! The thresholds are wide on purpose: on a slow link a larger frame also takes
+//! longer to get through, and an occasional retransmission raises latency by one
+//! RTT; neither is a queue to drain.
 //!
-//! Se i frame partono ma non arriva feedback per oltre 1,5 s, la rete è
-//! probabilmente bloccata: si scende come per una coda alta.
+//! If frames are leaving but no feedback arrives for more than 1.5 s, the network
+//! is probably stuck: the bitrate goes down as for a high queue.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -25,9 +25,9 @@ const DECREASE_INTERVAL: Duration = Duration::from_secs(1);
 const INCREASE_AFTER_DECREASE: Duration = Duration::from_secs(3);
 const INCREASE_INTERVAL: Duration = Duration::from_secs(1);
 const BASE_WINDOW: Duration = Duration::from_secs(10);
-/// Dopo un cambio di bitrate le misure si ignorano per un po': l'encoder (che per
-/// Quick Sync va riavviato) e la coda di rete hanno bisogno di assestarsi, e il
-/// picco di latenza del cambio non va scambiato per congestione.
+/// After a bitrate change measurements are ignored for a while: the encoder (which
+/// must be restarted for Quick Sync) and the network queue need to settle, and the
+/// latency peak of the change must not be mistaken for congestion.
 const SETTLE: Duration = Duration::from_millis(1500);
 pub const FEEDBACK_TIMEOUT: Duration = Duration::from_millis(1500);
 
@@ -35,7 +35,7 @@ pub struct Abr {
     bitrate: f64,
     min: f64,
     max: f64,
-    /// Latenze minime riportate dal viewer, per la base "a rete vuota".
+    /// Minimum latencies reported by the viewer, for the "empty network" baseline.
     mins: VecDeque<(Instant, f64)>,
     last_decrease: Option<Instant>,
     last_increase: Instant,
@@ -59,14 +59,14 @@ impl Abr {
         self.bitrate as u32
     }
 
-    /// Nuovo tetto (cambio di qualità). Restituisce il nuovo bitrate se cambia.
+    /// New cap (quality change). Returns the new bitrate if it changes.
     pub fn set_max(&mut self, max_bps: u32) -> Option<u32> {
         self.max = (max_bps as f64).max(self.min);
         self.set(self.bitrate.min(self.max))
     }
 
-    /// Nuovo feedback: latenza mediana e minima dell'ultimo intervallo (ms).
-    /// Restituisce il nuovo bitrate se cambia.
+    /// New feedback: median and minimum latency of the last interval (ms).
+    /// Returns the new bitrate if it changes.
     pub fn on_feedback(&mut self, now: Instant, p50_ms: f64, min_ms: f64) -> Option<u32> {
         if self.settle_until.is_some_and(|t| now < t) {
             return None;
@@ -88,7 +88,7 @@ impl Abr {
         None
     }
 
-    /// Nessun feedback mentre si inviano frame: si tratta come una coda alta.
+    /// No feedback while frames are being sent: treated as a high queue.
     pub fn on_silence(&mut self, now: Instant) -> Option<u32> {
         self.decrease(now)
     }
@@ -124,19 +124,19 @@ mod tests {
     fn decreases_on_queue_and_recovers() {
         let t0 = Instant::now();
         let mut abr = Abr::new(4_000_000, 300_000, 8_000_000);
-        // Rete libera: latenza stabile a 40 ms, il bitrate sale.
+        // Free network: latency steady at 40 ms, the bitrate rises.
         assert_eq!(abr.on_feedback(t0, 40.0, 35.0), None);
         let t = |ms| t0 + Duration::from_millis(ms);
         let up = abr.on_feedback(t(1100), 40.0, 35.0);
         assert_eq!(up, Some(4_320_000));
-        // Durante l'assestamento (1,5 s) le misure non contano, nemmeno un picco.
+        // While settling (1.5 s) measurements do not count, not even a peak.
         assert_eq!(abr.on_feedback(t(1300), 500.0, 400.0), None);
-        // Coda: la mediana sale a 120 ms con minimo storico 35 → scende.
+        // Queue: the median rises to 120 ms with a historical minimum of 35 → down.
         let down = abr.on_feedback(t(2700), 120.0, 100.0);
         assert_eq!(down, Some(3_456_000));
-        // Dopo l'assestamento, di nuovo giù se la coda resta.
+        // After settling, down again if the queue stays.
         assert!(abr.on_feedback(t(4300), 120.0, 100.0).is_some());
-        // Dopo la discesa niente salite per 3 s anche se la coda si svuota.
+        // After a decrease no increases for 3 s, even if the queue empties.
         assert_eq!(abr.on_feedback(t(6000), 40.0, 35.0), None);
         assert!(abr.on_feedback(t(7400), 40.0, 35.0).is_some());
     }

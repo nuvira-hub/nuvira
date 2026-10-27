@@ -1,9 +1,9 @@
-//! NexoDesk viewer — la finestra della sessione remota.
+//! NexoDesk viewer — the window of the remote session.
 //!
-//! Prototipo della fase 0: si collega direttamente a un agent in LAN, mostra lo
-//! schermo con wgpu e invia mouse e tastiera. Nel titolo della finestra:
-//! frame al secondo, latenza cattura→visualizzazione, RTT e banda. In alto la
-//! barra degli strumenti (`toolbar.rs`).
+//! Connects to an agent by ID through nexodesk-server (or directly in a LAN),
+//! shows its screen with wgpu (or the CPU renderer) and sends mouse and keyboard.
+//! The window title shows frames per second, capture→display latency, RTT and
+//! bandwidth; the toolbar is at the top (`toolbar.rs`).
 
 mod cpu;
 mod net;
@@ -54,65 +54,65 @@ impl From<TransportArg> for nexodesk_transport::signal::TransportMode {
 }
 
 #[derive(Parser, Debug)]
-#[command(version, about = "NexoDesk viewer: controlla un PC con NexoDesk agent (prototipo in LAN)", after_help = COPYRIGHT)]
+#[command(version, about = "NexoDesk viewer: controls a PC running NexoDesk", after_help = COPYRIGHT)]
 struct Args {
-    /// ID dell'agent (con --server) oppure indirizzo in LAN, es. 192.168.1.20[:21500].
+    /// Agent ID (with --server) or LAN address, e.g. 192.168.1.20[:21500].
     agent: String,
 
-    /// nexodesk-server da usare per collegarsi per ID (host[:porta]).
-    #[arg(long, value_name = "HOST[:PORTA]")]
+    /// nexodesk-server used to connect by ID (host[:port]).
+    #[arg(long, value_name = "HOST[:PORT]")]
     server: Option<String>,
 
-    /// Impronta del certificato del server. Senza, si memorizza quella vista al primo collegamento.
-    #[arg(long, value_name = "IMPRONTA")]
+    /// Server certificate fingerprint. Without it, the one seen at the first connection is remembered.
+    #[arg(long, value_name = "FINGERPRINT")]
     server_key: Option<String>,
 
-    /// Trasporto verso il server: auto (UDP, poi WebSocket se UDP è bloccato), udp, websocket.
+    /// Transport towards the server: auto (UDP, then WebSocket if UDP is blocked), udp, websocket.
     #[arg(long, value_enum, default_value_t = TransportArg::Auto)]
     transport: TransportArg,
 
-    /// URL WebSocket del server per il ripiego (predefinito: ws://<server>:<porta>/nexodesk),
-    /// es. wss://nexodesk.example.it/nexodesk dietro un reverse proxy.
+    /// WebSocket URL of the server for the fallback (default: ws://<server>:<port>/nexodesk),
+    /// e.g. wss://nexodesk.example.com/nexodesk behind a reverse proxy.
     #[arg(long, value_name = "URL")]
     server_ws: Option<String>,
 
-    /// Password di sessione mostrata dall'agent (anche dalla variabile NEXODESK_PASSWORD,
-    /// che a differenza della riga di comando non è visibile agli altri programmi).
+    /// Session password shown by the agent (also from the NEXODESK_PASSWORD variable,
+    /// which, unlike the command line, other programs cannot see).
     #[arg(long, env = "NEXODESK_PASSWORD", hide_env_values = true)]
     password: Option<String>,
 
-    /// File con la chiave del dispositivo (predefinito: viewer.key nella cartella dati;
-    /// diversa da quella dell'agent, che altrimenti il server scollegherebbe).
+    /// File with the device key (default: viewer.key in the data folder; different
+    /// from the agent's, which the server would otherwise disconnect).
     #[arg(long, value_name = "FILE")]
     identity: Option<PathBuf>,
 
-    /// Impronta del certificato mostrata dall'agent (consigliata).
+    /// Certificate fingerprint shown by the agent (recommended).
     #[arg(long)]
     fingerprint: Option<String>,
 
-    /// Solo visualizzazione: non invia mouse e tastiera.
+    /// View only: does not send mouse and keyboard.
     #[arg(long)]
     view_only: bool,
 
-    /// Chiude la sessione dopo questi secondi (test automatici).
-    #[arg(long, value_name = "SECONDI")]
+    /// Closes the session after this many seconds (automated tests).
+    #[arg(long, value_name = "SECONDS")]
     duration: Option<u64>,
 
-    /// Scrive i risultati della sessione in JSON all'uscita (test automatici).
+    /// Writes the session results as JSON on exit (automated tests).
     #[arg(long, value_name = "FILE")]
     stats_file: Option<PathBuf>,
 
-    /// Salva l'ultimo frame mostrato in PNG all'uscita (verifica dei colori nei test).
+    /// Saves the last frame shown as PNG on exit (colour checks in tests).
     #[arg(long, value_name = "FILE")]
     snapshot: Option<PathBuf>,
 
-    /// Invia questo file all'agent appena collegato (test automatici; ripetibile).
+    /// Sends this file to the agent once connected (automated tests; repeatable).
     #[arg(long, value_name = "FILE")]
     send_file: Vec<PathBuf>,
 }
 
-/// Colori nei log solo se il terminale li interpreta (il vecchio prompt di Windows
-/// li mostrerebbe come `←[2m`).
+/// Colours in the logs only if the terminal understands them (the old Windows
+/// prompt would show them as `←[2m`).
 fn ansi_colors() -> bool {
     #[cfg(windows)]
     return std::io::IsTerminal::is_terminal(&std::io::stderr())
@@ -190,8 +190,8 @@ fn main() -> Result<()> {
         closed_message: None,
     };
     event_loop.run_app(&mut app)?;
-    // Chiudere il canale dell'input termina la sessione: si attende (poco) che la
-    // chiusura raggiunga l'agent.
+    // Closing the input channel ends the session: wait (briefly) for the close to
+    // reach the agent.
     app.input = None;
     if let Some(thread) = app.net_thread.take() {
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -210,13 +210,13 @@ fn main() -> Result<()> {
         app.report.exit_reason = app.exit_reason.clone();
         app.report.dropped = app.slot.dropped();
         std::fs::write(path, app.report.to_json(app.started))
-            .with_context(|| format!("scrittura di {}", path.display()))?;
+            .with_context(|| format!("writing {}", path.display()))?;
     }
     if let (Some(path), Some(frame)) = (&args.snapshot, &app.last_frame) {
-        cpu::write_png(frame, path).with_context(|| format!("scrittura di {}", path.display()))?;
+        cpu::write_png(frame, path).with_context(|| format!("writing {}", path.display()))?;
     }
-    // Chiusura in ordine: barra e superficie wgpu, poi la finestra, poi il resto.
-    // Lasciata all'ordine implicito, il viewer andava talvolta in crash in uscita.
+    // Orderly shutdown: toolbar and wgpu surface, then the window, then the rest.
+    // Left to the implicit order, the viewer sometimes crashed on exit.
     drop(app.chat.take());
     drop(app.toolbar.take());
     drop(app.renderer.take());
@@ -226,23 +226,22 @@ fn main() -> Result<()> {
 }
 
 struct App {
-    /// Conserva una copia dell'ultimo frame per `--snapshot`.
+    /// Keeps a copy of the last frame for `--snapshot`.
     keep_last_frame: bool,
     last_frame: Option<nexodesk_codec::YuvFrame>,
     slot: Arc<FrameSlot>,
     started: Instant,
     report: Report,
-    /// Agent a cui collegarsi appena la finestra è pronta.
+    /// Agent to connect to as soon as the window is ready.
     connect: Option<(net::Target, Option<String>)>,
     proxy: EventLoopProxy<NetEvent>,
     input: Option<UnboundedSender<InputEvent>>,
     net_thread: Option<std::thread::JoinHandle<()>>,
-    /// Verso l'agent, per il bitrate adattivo: latenze dell'intervallo in corso.
-    /// Messaggi di controllo verso l'agent (feedback, schermo, qualità).
+    /// Control messages towards the agent (feedback, screen, quality, chat).
     control: Option<UnboundedSender<nexodesk_proto::v1::control_message::Msg>>,
-    /// File da inviare all'agent.
+    /// Files to send to the agent.
     files: Option<UnboundedSender<PathBuf>>,
-    /// `--send-file`: da inviare appena collegati.
+    /// `--send-file`: to send as soon as connected.
     pending_files: Vec<PathBuf>,
     feedback_window: (Instant, Vec<u32>),
     view_only: bool,
@@ -253,7 +252,7 @@ struct App {
     quality: nexodesk_proto::v1::Quality,
     agent: String,
     stats: Stats,
-    /// Orologio dell'agent meno il nostro (dalla misura con RTT minore).
+    /// Agent clock minus ours (from the measurement with the lowest RTT).
     clock_offset_us: Option<i64>,
     best_rtt_us: u64,
     rtt_us: u64,
@@ -270,7 +269,7 @@ impl App {
         }
     }
 
-    /// Ogni 250 ms invia all'agent latenza mediana e minima dei frame mostrati.
+    /// Every 250 ms sends the agent the median and minimum latency of the frames shown.
     fn send_feedback(&mut self) {
         let (since, latencies) = &mut self.feedback_window;
         let window = since.elapsed();
@@ -341,11 +340,11 @@ impl App {
             Action::SecureAttention => self.send(Event::SecureAttention(SecureAttention {})),
             Action::ViewOnly => {
                 if !self.view_only {
-                    // Prima di smettere di inviare, si rilascia ciò che è premuto.
+                    // Before stopping sending, whatever is pressed is released.
                     self.release_keys();
                 }
                 self.view_only = !self.view_only;
-                info!("solo visualizzazione: {}", self.view_only);
+                info!("view only: {}", self.view_only);
             }
             Action::Fullscreen => {
                 if let Some(window) = &self.window {
@@ -358,13 +357,13 @@ impl App {
             }
             Action::Quality(quality) => {
                 self.quality = quality;
-                info!("qualità {quality:?}");
+                info!("quality {quality:?}");
                 self.send_control(Msg::SetQuality(nexodesk_proto::v1::SetQuality { quality: quality as i32 }));
             }
             Action::Chat => {
                 let open = !self.chat.as_ref().is_some_and(|c| c.visible());
                 self.show_chat(open);
-                // Il riquadro aperto tiene la tastiera per scrivere.
+                // The open panel keeps the keyboard for typing.
                 if open {
                     return;
                 }
@@ -377,7 +376,7 @@ impl App {
                 return;
             }
             Action::SendFile => {
-                // La finestra di scelta blocca il suo thread, non la sessione.
+                // The file picker blocks its own thread, not the session.
                 let proxy = self.proxy.clone();
                 std::thread::spawn(move || {
                     let picked = rfd::FileDialog::new().set_title(t("viewer.file_dialog")).pick_files();
@@ -406,7 +405,7 @@ impl App {
 
     fn send_file(&self, path: PathBuf) {
         if let Some(files) = &self.files {
-            info!("file da inviare: {}", path.display());
+            info!("file to send: {}", path.display());
             let _ = files.send(path);
         }
     }
@@ -448,20 +447,20 @@ impl ApplicationHandler<NetEvent> for App {
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
-                error!("finestra non creata: {e}");
+                error!("window not created: {e}");
                 event_loop.exit();
                 return;
             }
         };
         match Renderer::new(window.clone()) {
             Ok((r, info)) => {
-                info!("rendering con {info}");
+                info!("rendering with {info}");
                 self.report.renderer = Some(info);
                 self.renderer = Some(r);
             }
             Err(e) => {
-                error!("rendering non disponibile: {e:#}");
-                self.exit_reason = Some(format!("rendering non disponibile: {e:#}"));
+                error!("rendering not available: {e:#}");
+                self.exit_reason = Some(format!("rendering not available: {e:#}"));
                 event_loop.exit();
                 return;
             }
@@ -471,17 +470,17 @@ impl ApplicationHandler<NetEvent> for App {
                 toolbar.update(&format!("{{name:{}}}", toolbar::js_string(&self.agent)));
                 self.toolbar = Some(toolbar);
             }
-            // La sessione resta usabile (Ctrl+Alt+Fine, chiusura della finestra).
-            Err(e) => error!("barra degli strumenti non disponibile: {e:#}"),
+            // The session stays usable (Ctrl+Alt+End, closing the window).
+            Err(e) => error!("toolbar not available: {e:#}"),
         }
         match toolbar::ChatPanel::new(window.clone(), self.proxy.clone()) {
             Ok(chat) => self.chat = Some(chat),
-            Err(e) => error!("chat non disponibile: {e:#}"),
+            Err(e) => error!("chat not available: {e:#}"),
         }
         self.window = Some(window);
         self.update_toolbar_state();
-        // La connessione parte solo a finestra e rendering pronti: se la rete
-        // arrivava prima, il canale video a volte non veniva mai accettato.
+        // The connection starts only once window and rendering are ready: when the
+        // network came first, the video channel was sometimes never accepted.
         if let Some((target, password)) = self.connect.take() {
             let session = net::start(target, password, self.proxy.clone(), self.slot.clone());
             self.input = Some(session.input);
@@ -494,8 +493,8 @@ impl ApplicationHandler<NetEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
         match event {
             NetEvent::Connected { agent, direct, width, height } => {
-                info!("schermo remoto {width}x{height}");
-                // Per l'app NexoDesk, che legge l'uscita: la sessione è partita (rubrica).
+                info!("remote screen {width}x{height}");
+                // For the NexoDesk app, which reads the output: the session started (address book).
                 println!("@connected\t{agent}");
                 for path in std::mem::take(&mut self.pending_files) {
                     self.send_file(path);
@@ -527,10 +526,10 @@ impl ApplicationHandler<NetEvent> for App {
                 renderer.upload(&frame.yuv);
                 renderer.render();
                 let render_us = t.elapsed().as_micros() as u64;
-                tracing::trace!("frame mostrato in {render_us} µs");
+                tracing::trace!("frame shown in {render_us} µs");
                 self.report.render_us += render_us;
                 if let Some(offset) = self.clock_offset_us {
-                    // Momento della cattura riportato sul nostro orologio.
+                    // Capture time translated to our clock.
                     let captured_here = frame.capture_us as i64 - offset;
                     let latency = nexodesk_proto::now_us() as i64 - captured_here;
                     self.stats.latency_us += latency.max(0) as u64;
@@ -556,14 +555,14 @@ impl ApplicationHandler<NetEvent> for App {
             NetEvent::Clock { rtt_us, offset_us } => {
                 self.rtt_us = rtt_us;
                 self.report.rtt_us.push(rtt_us.min(u32::MAX as u64) as u32);
-                // La misura con RTT minore è la meno disturbata dalle code di rete.
+                // The measurement with the lowest RTT is the least disturbed by network queues.
                 if rtt_us <= self.best_rtt_us {
                     self.best_rtt_us = rtt_us;
                     self.clock_offset_us = Some(offset_us);
                 }
             }
             NetEvent::TestFinished => {
-                info!("durata del test terminata");
+                info!("test duration over");
                 self.report.completed = true;
                 self.exit_reason = Some("test duration over".into());
                 self.release_keys();
@@ -601,7 +600,7 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             NetEvent::Chat(text) => {
-                info!("messaggio di chat ricevuto");
+                info!("chat message received");
                 if !self.chat.as_ref().is_some_and(|c| c.visible()) {
                     self.show_chat(true);
                 }
@@ -611,7 +610,7 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::Toolbar(action) => self.handle_toolbar(event_loop, action),
             NetEvent::Disconnected(reason) => {
-                info!("disconnesso: {reason}");
+                info!("disconnected: {reason}");
                 self.exit_reason = Some(format!("disconnected: {reason}"));
                 self.closed_message = Some(tf("viewer.session_closed", &[("reason", &reason)]));
                 event_loop.exit();
@@ -652,7 +651,7 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                // Clic sull'immagine mentre si scriveva in chat: la tastiera torna alla sessione.
+                // Click on the image while typing in the chat: the keyboard goes back to the session.
                 if state == ElementState::Pressed
                     && let Some(chat) = &self.chat
                 {
@@ -672,7 +671,7 @@ impl ApplicationHandler<NetEvent> for App {
                 }));
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                // Unità di Windows: 120 per scatto. I touchpad danno pixel: ~40 px per scatto.
+                // Windows units: 120 per notch. Touchpads give pixels: ~40 px per notch.
                 let (dx, dy) = match delta {
                     MouseScrollDelta::LineDelta(x, y) => (x * 120.0, y * 120.0),
                     MouseScrollDelta::PixelDelta(p) => (p.x as f32 * 3.0, p.y as f32 * 3.0),
@@ -683,11 +682,11 @@ impl ApplicationHandler<NetEvent> for App {
                 let PhysicalKey::Code(code) = event.physical_key else { return };
                 let code = w3c_code(code);
                 let down = event.state == ElementState::Pressed;
-                // Ctrl+Alt+Fine (come in Desktop remoto) = Ctrl+Alt+Canc sul dispositivo
-                // controllato: Ctrl+Alt+Canc vero lo intercetta il sistema locale.
+                // Ctrl+Alt+End (as in Remote Desktop) = Ctrl+Alt+Del on the controlled
+                // device: the real Ctrl+Alt+Del is caught by the local system.
                 if code == "End" && self.ctrl_alt_held() {
                     if down && !event.repeat {
-                        info!("Ctrl+Alt+Fine: invio Ctrl+Alt+Canc");
+                        info!("Ctrl+Alt+End: sending Ctrl+Alt+Del");
                         self.send(Event::SecureAttention(SecureAttention {}));
                     }
                     return;
@@ -704,8 +703,8 @@ impl ApplicationHandler<NetEvent> for App {
     }
 }
 
-/// Nome W3C (`KeyboardEvent.code`) di un tasto winit. I nomi coincidono tranne
-/// per il tasto Windows/Cmd, che winit chiama "Super".
+/// W3C name (`KeyboardEvent.code`) of a winit key. The names are the same except
+/// for the Windows/Cmd key, which winit calls "Super".
 fn w3c_code(code: winit::keyboard::KeyCode) -> String {
     match format!("{code:?}").as_str() {
         "SuperLeft" => "MetaLeft".into(),

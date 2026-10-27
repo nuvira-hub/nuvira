@@ -1,9 +1,9 @@
-//! NexoDesk agent — il dispositivo controllato.
+//! NexoDesk agent — the controlled device.
 //!
-//! Libreria usata dall'app `nexodesk` e dal programma a riga di comando `nexodesk-agent`:
-//! si registra su nexodesk-server (o attende connessioni dirette in LAN), trasmette
-//! lo schermo e applica mouse e tastiera ricevuti. Con il server comunica con
-//! chi lo usa attraverso [`AgentEvent`] e [`AgentCommand`].
+//! Library used by the `nexodesk` app and by the `nexodesk-agent` command-line
+//! program: it registers with nexodesk-server (or waits for direct LAN
+//! connections), streams the screen and applies the mouse and keyboard input it
+//! receives. With the server it talks to its user through [`AgentEvent`] and [`AgentCommand`].
 
 mod abr;
 mod files;
@@ -32,31 +32,31 @@ use tracing::{info, warn};
 
 use crate::pipeline::Pipeline;
 
-/// Bitrate minimo del controllo adattivo.
+/// Minimum bitrate of the adaptive control.
 const MIN_BITRATE: u32 = 500_000;
 
 /// Rejection reasons sent to the viewer are translation keys (`@key`, see
 /// nexodesk-i18n): the viewer shows them in its own language.
 const WRONG_PASSWORD: &str = "@agent.wrong_password";
 
-/// Tempo concesso a chi usa il PC per accettare una richiesta di collegamento.
+/// Time given to the person at the PC to accept a connection request.
 pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Come catturare e comprimere lo schermo.
+/// How to capture and encode the screen.
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
-    /// Schermo da trasmettere; `None` = il principale.
+    /// Screen to stream; `None` = the primary one.
     pub display: Option<usize>,
-    /// Immagine sintetica (larghezza, altezza, fps) invece dello schermo (test).
+    /// Synthetic image (width, height, fps) instead of the screen (tests).
     pub synthetic: Option<(u32, u32, u32)>,
-    /// Bitrate massimo in kbit/s.
+    /// Maximum bitrate in kbit/s.
     pub bitrate_kbps: u32,
     pub fps: u32,
-    /// Encoder deciso all'avvio (vedi `nexodesk_codec::plan_encoder`).
+    /// Encoder chosen at start-up (see `nexodesk_codec::plan_encoder`).
     pub plan: EncoderPlan,
-    /// Bitrate fisso invece di adattarlo alla rete.
+    /// Fixed bitrate instead of adapting it to the network.
     pub fixed_bitrate: bool,
-    /// Ignora mouse e tastiera del viewer.
+    /// Ignores the viewer's mouse and keyboard.
     pub view_only: bool,
 }
 
@@ -73,40 +73,40 @@ impl AgentConfig {
     }
 }
 
-/// Immagine sintetica nel formato "LxA@FPS", es. "1920x1080@60".
+/// Synthetic image in the "WxH@FPS" format, e.g. "1920x1080@60".
 pub fn parse_synthetic(spec: &str) -> Result<(u32, u32, u32)> {
     let (size, fps) = spec.split_once('@').unwrap_or((spec, "60"));
-    let (w, h) = size.split_once('x').context("formato atteso LxA@FPS, es. 1920x1080@60")?;
+    let (w, h) = size.split_once('x').context("expected format WxH@FPS, e.g. 1920x1080@60")?;
     Ok((w.parse()?, h.parse()?, fps.parse()?))
 }
 
-/// Come raggiungere nexodesk-server e come comportarsi con le richieste.
+/// How to reach nexodesk-server and how to handle requests.
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
-    /// host[:porta] del server.
+    /// host[:port] of the server.
     pub server_name: String,
-    /// Impronta attesa del certificato; senza, si usa quella memorizzata (o si memorizza).
+    /// Expected certificate fingerprint; without it, the remembered one is used (or remembered).
     pub server_key: Option<Fingerprint>,
     pub transport: TransportMode,
-    /// URL del ripiego WebSocket; senza, `ws://<server>:<porta>/nexodesk`.
+    /// URL of the WebSocket fallback; without it, `ws://<server>:<port>/nexodesk`.
     pub server_ws: Option<String>,
     pub identity_path: PathBuf,
-    /// Chi entra con la password temporanea deve essere confermato da chi usa il PC
-    /// (evento [`AgentEvent::Incoming`]). Senza, basta la password.
+    /// Whoever uses the temporary password must be confirmed by the person at the PC
+    /// (event [`AgentEvent::Incoming`]). Without it, the password is enough.
     pub confirm: bool,
-    /// Password permanente per l'accesso non presidiato: mai confermata.
+    /// Permanent password for unattended access: never confirmed.
     pub permanent_password: Option<String>,
-    /// Test automatici: dove scrivere "ID password" appena registrati.
+    /// Automated tests: where to write "ID password" once registered.
     pub info_file: Option<PathBuf>,
 }
 
-/// Cosa succede, per chi mostra lo stato all'utente (anche attraverso il canale
-/// locale tra servizio e app, vedi [`ipc`]).
+/// What happens, for whoever shows the state to the user (also through the local
+/// channel between service and app, see [`ipc`]).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum AgentEvent {
     Connecting,
-    /// Registrato sul server: si è raggiungibili con questo ID.
+    /// Registered on the server: reachable with this ID.
     Online {
         device_id: String,
         websocket: bool,
@@ -114,18 +114,18 @@ pub enum AgentEvent {
     Offline {
         reason: String,
     },
-    /// Password temporanea attuale (all'avvio e dopo [`AgentCommand::NewPassword`]).
+    /// Current temporary password (at start-up and after [`AgentCommand::NewPassword`]).
     Password {
         password: String,
     },
-    /// Qualcuno ha inserito la password temporanea: rispondere con
-    /// [`AgentCommand::Respond`] entro [`CONFIRM_TIMEOUT`].
+    /// Someone typed the temporary password: answer with
+    /// [`AgentCommand::Respond`] within [`CONFIRM_TIMEOUT`].
     Incoming {
         session_id: String,
         viewer_id: String,
         viewer_name: String,
     },
-    /// La richiesta non è più in attesa (scaduta o già risposta).
+    /// The request is no longer pending (expired or already answered).
     IncomingClosed {
         session_id: String,
     },
@@ -137,44 +137,44 @@ pub enum AgentEvent {
     SessionEnded {
         error: Option<String>,
     },
-    /// Messaggio di chat da chi controlla.
+    /// Chat message from the controlling side.
     Chat {
         text: String,
     },
-    /// File inviato da chi controlla, salvato in `path`.
+    /// File sent by the controlling side, saved in `path`.
     FileReceived {
         name: String,
         path: String,
     },
 }
 
-/// Cosa chiede chi usa il PC.
+/// What the person at the PC asks for.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum AgentCommand {
     Respond { session_id: String, accept: bool },
     EndSession,
-    /// Genera una nuova password temporanea (risposta: [`AgentEvent::Password`]).
+    /// Generates a new temporary password (answer: [`AgentEvent::Password`]).
     NewPassword,
-    /// Messaggio di chat per chi controlla (sessione in corso).
+    /// Chat message for the controlling side (session in progress).
     Chat { text: String },
 }
 
-/// Password casuale di 8 caratteri facili da dettare (niente 0/O, 1/l/I).
+/// Random 8-character password that is easy to dictate (no 0/O, 1/l/I).
 pub fn random_password() -> String {
     const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
     let mut bytes = [0u8; 8];
-    // Generatore casuale del sistema operativo (tramite ring).
-    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).expect("generatore casuale");
+    // Operating system random generator (through ring).
+    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).expect("random generator");
     bytes.iter().map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char).collect()
 }
 
-/// Confronto a tempo costante (non rivela quanti caratteri iniziali sono giusti).
+/// Constant-time comparison (does not reveal how many leading characters are right).
 fn same_secret(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Modalità LAN senza server (fase 0): attende connessioni dirette sulla porta UDP indicata.
+/// LAN mode without a server (phase 0): waits for direct connections on the given UDP port.
 pub async fn serve_direct(
     config: AgentConfig,
     port: u16,
@@ -183,33 +183,33 @@ pub async fn serve_direct(
 ) -> Result<()> {
     let bind: SocketAddr = ([0, 0, 0, 0], port).into();
     let (endpoint, fingerprint) = nexodesk_transport::server_endpoint(bind)?;
-    info!("in attesa del viewer su UDP {bind}");
+    info!("waiting for the viewer on UDP {bind}");
     let fingerprint = nexodesk_transport::fingerprint_hex(&fingerprint);
-    info!("impronta dell'agent: {fingerprint}");
+    info!("agent fingerprint: {fingerprint}");
     if let Some(path) = &fingerprint_file {
-        std::fs::write(path, &fingerprint).with_context(|| format!("scrittura di {}", path.display()))?;
+        std::fs::write(path, &fingerprint).with_context(|| format!("writing {}", path.display()))?;
     }
 
-    // Una sessione alla volta: le connessioni successive attendono in coda.
+    // One session at a time: later connections wait in the queue.
     while let Some(incoming) = endpoint.accept().await {
         let conn = match incoming.await {
             Ok(conn) => conn,
             Err(e) => {
-                warn!("connessione non riuscita: {e}");
+                warn!("connection failed: {e}");
                 continue;
             }
         };
         let peer = conn.remote_address();
-        info!("viewer collegato da {peer}");
-        let result = match conn.accept_bi().await.context("canale di controllo") {
+        info!("viewer connected from {peer}");
+        let result = match conn.accept_bi().await.context("control channel") {
             Ok(streams) => session(conn.clone(), streams, &config, None).await,
             Err(e) => Err(e),
         };
         match result {
-            Ok(()) => info!("sessione con {peer} terminata"),
-            Err(e) => warn!("sessione con {peer} terminata: {e:#}"),
+            Ok(()) => info!("session with {peer} ended"),
+            Err(e) => warn!("session with {peer} ended: {e:#}"),
         }
-        conn.close(0u32.into(), b"fine sessione");
+        conn.close(0u32.into(), b"end of session");
         if once {
             break;
         }
@@ -218,8 +218,8 @@ pub async fn serve_direct(
     Ok(())
 }
 
-/// Registra il dispositivo su nexodesk-server e accetta le sessioni che arrivano.
-/// Se il server cade, si ricollega. Termina solo se `commands` si chiude.
+/// Registers the device with nexodesk-server and accepts the incoming sessions.
+/// If the server goes away, it reconnects. It ends only when `commands` is closed.
 pub async fn serve_via_server(
     config: AgentConfig,
     opts: ServerOptions,
@@ -250,7 +250,7 @@ pub async fn serve_via_server(
         match signal_loop(&ctx, &opts, &identity, server, expected, &mut commands).await {
             Ok(()) => return Ok(()),
             Err(e) => {
-                warn!("collegamento con nexodesk-server perso: {e:#}; riprovo tra 5 s");
+                warn!("connection with nexodesk-server lost: {e:#}; retrying in 5 s");
                 let _ = ctx.events.send(AgentEvent::Offline { reason: format!("{e:#}") });
             }
         }
@@ -258,23 +258,23 @@ pub async fn serve_via_server(
     }
 }
 
-/// Stato condiviso tra il ciclo di segnalazione e la sessione in corso.
+/// State shared between the signalling loop and the session in progress.
 struct SessionContext {
     config: AgentConfig,
-    /// Password temporanea, mostrata a chi usa il PC.
+    /// Temporary password, shown to the person at the PC.
     password: Arc<Mutex<String>>,
     permanent: Option<String>,
     confirm: bool,
-    /// Richieste in attesa della risposta di chi usa il PC, per sessione.
+    /// Requests waiting for the answer of the person at the PC, by session.
     pending: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
     events: mpsc::UnboundedSender<AgentEvent>,
-    /// Chat verso il viewer della sessione in corso.
+    /// Chat towards the viewer of the session in progress.
     chat: Mutex<Option<mpsc::UnboundedSender<String>>>,
     busy: AtomicBool,
     end_session: Notify,
 }
 
-/// Richiesta accettata dal server, in attesa del percorso.
+/// Request accepted by the server, waiting for the route.
 struct Request {
     viewer_id: String,
     viewer_name: String,
@@ -303,19 +303,19 @@ async fn signal_loop(
     .await?;
     let websocket = matches!(signal.transport, nexodesk_transport::ServerTransport::WebSocket(_));
     if let nexodesk_transport::ServerTransport::WebSocket(url) = &signal.transport {
-        info!("collegato a nexodesk-server attraverso il WebSocket {url}");
+        info!("connected to nexodesk-server through the WebSocket {url}");
     }
     if expected.is_none() {
         nexodesk_transport::signal::known_server::remember(&opts.server_name, &signal.server_fingerprint)?;
         info!(
-            "impronta di nexodesk-server memorizzata: {}",
+            "nexodesk-server fingerprint remembered: {}",
             nexodesk_transport::fingerprint_hex(&signal.server_fingerprint)
         );
     }
     let id = signal.device_id.clone();
-    info!("registrato su {}: ID {} {} {}", opts.server_name, &id[..3], &id[3..6], &id[6..]);
+    info!("registered on {}: ID {} {} {}", opts.server_name, &id[..3], &id[3..6], &id[6..]);
     if let Some(path) = &opts.info_file {
-        // Nei test automatici il viewer legge da qui ID e password.
+        // In automated tests the viewer reads ID and password from here.
         let password = ctx.password.lock().expect("password").clone();
         std::fs::write(path, format!("{id} {password}"))?;
     }
@@ -328,14 +328,14 @@ async fn signal_loop(
             msg = signal.rx.recv() => match msg? {
                 Some(server_message::Msg::Incoming(inc)) => {
                     let request = Request { viewer_id: inc.viewer_id, viewer_name: inc.viewer_name };
-                    info!("richiesta di collegamento da {} ({})", request.viewer_name, request.viewer_id);
+                    info!("connection request from {} ({})", request.viewer_name, request.viewer_id);
                     if ctx.busy.load(Ordering::Relaxed) {
                         Some(client_message::Msg::Reject(Reject {
                             session_id: inc.session_id,
                             reason: "@agent.busy".into(),
                         }))
                     } else {
-                        // La conferma di chi usa il PC, se serve, arriva dopo la password.
+                        // Confirmation by the person at the PC, if needed, comes after the password.
                         accepted.insert(inc.session_id.clone(), request);
                         Some(client_message::Msg::Accept(Accept { session_id: inc.session_id }))
                     }
@@ -345,12 +345,12 @@ async fn signal_loop(
                     let p2p_route = nexodesk_transport::p2p::Route {
                         relay: server,
                         transport: signal.transport.clone(),
-                        token: route.relay_token.as_slice().try_into().context("gettone del relay non valido")?,
+                        token: route.relay_token.as_slice().try_into().context("invalid relay token")?,
                         peer_public_key: route
                             .peer_public_key
                             .as_slice()
                             .try_into()
-                            .context("chiave del viewer non valida")?,
+                            .context("invalid viewer key")?,
                         role: nexodesk_transport::p2p::Role::Agent,
                     };
                     let request = request.unwrap_or(Request { viewer_id: route.peer_id, viewer_name: String::new() });
@@ -360,7 +360,7 @@ async fn signal_loop(
                     tokio::spawn(async move {
                         let result = relayed_session(&ctx, &identity, &p2p_route, &request, &session_id).await;
                         if let Err(e) = &result {
-                            warn!("sessione terminata: {e:#}");
+                            warn!("session ended: {e:#}");
                         }
                         ctx.busy.store(false, Ordering::Relaxed);
                         let _ = ctx.events.send(AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) });
@@ -372,11 +372,11 @@ async fn signal_loop(
                     None
                 }
                 Some(_) => None,
-                None => bail!("nexodesk-server ha chiuso la connessione"),
+                None => bail!("nexodesk-server closed the connection"),
             },
             cmd = commands.recv() => match cmd {
                 Some(AgentCommand::Respond { session_id, accept }) => {
-                    if let Some(answer) = ctx.pending.lock().expect("richieste").remove(&session_id) {
+                    if let Some(answer) = ctx.pending.lock().expect("requests").remove(&session_id) {
                         let _ = answer.send(accept);
                     }
                     None
@@ -414,8 +414,8 @@ async fn relayed_session(
     session_id: &str,
 ) -> Result<()> {
     let endpoint = nexodesk_transport::p2p::agent_endpoint(identity, route).await?;
-    // Il viewer può aprire più connessioni (diretta e attraverso il relay): vale quella
-    // su cui apre il canale di controllo; le altre le chiude lui.
+    // The viewer may open several connections (direct and through the relay): the one
+    // it opens the control channel on counts; it closes the others itself.
     let (tx, mut rx) = mpsc::channel(2);
     let acceptor = {
         let endpoint = endpoint.clone();
@@ -433,36 +433,36 @@ async fn relayed_session(
     };
     let (conn, streams) = tokio::time::timeout(Duration::from_secs(20), rx.recv())
         .await
-        .context("il viewer non si è collegato entro 20 s")?
-        .context("endpoint chiuso")?;
+        .context("the viewer did not connect within 20 s")?
+        .context("endpoint closed")?;
     acceptor.abort();
     let direct = conn.remote_address() != route.relay;
     info!(
-        "viewer collegato {} ({})",
-        if direct { "in diretta" } else { "attraverso il relay" },
+        "viewer connected {} ({})",
+        if direct { "directly" } else { "through the relay" },
         conn.remote_address()
     );
     let gate = Gate { ctx, session_id, request, direct };
     let result = tokio::select! {
         r = session(conn.clone(), streams, &ctx.config, Some(&gate)) => r,
         _ = ctx.end_session.notified() => {
-            info!("sessione terminata da chi usa il PC");
+            info!("session ended by the person at the PC");
             Ok(())
         }
     };
-    // Si chiude l'endpoint intero: anche l'eventuale connessione rimasta via relay,
-    // che altrimenti terrebbe l'agent "occupato" fino al suo timeout.
-    endpoint.close(0u32.into(), b"fine sessione");
+    // The whole endpoint is closed: including a connection left over through the relay,
+    // which would otherwise keep the agent "busy" until its timeout.
+    endpoint.close(0u32.into(), b"end of session");
     endpoint.wait_idle().await;
     if result.is_ok() {
-        info!("sessione terminata");
+        info!("session ended");
     }
     result
 }
 
-/// Controllo d'accesso di una sessione arrivata dal server: password permanente
-/// (accesso non presidiato) oppure temporanea, con la conferma di chi usa il PC
-/// se richiesta.
+/// Access control of a session arriving from the server: permanent password
+/// (unattended access) or temporary password, with confirmation by the person
+/// at the PC if required.
 struct Gate<'a> {
     ctx: &'a SessionContext,
     session_id: &'a str,
@@ -471,11 +471,11 @@ struct Gate<'a> {
 }
 
 impl Gate<'_> {
-    /// `Err` con il motivo da mostrare al viewer.
+    /// `Err` with the reason to show to the viewer.
     async fn authorize(&self, given: &str) -> Result<(), String> {
         let ctx = self.ctx;
         if ctx.permanent.as_deref().is_some_and(|p| same_secret(given, p)) {
-            info!("accesso con la password permanente");
+            info!("access with the permanent password");
             return self.started();
         }
         let temporary = ctx.password.lock().expect("password").clone();
@@ -486,24 +486,24 @@ impl Gate<'_> {
             return self.started();
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
-        ctx.pending.lock().expect("richieste").insert(self.session_id.to_string(), tx);
+        ctx.pending.lock().expect("requests").insert(self.session_id.to_string(), tx);
         let _ = ctx.events.send(AgentEvent::Incoming {
             session_id: self.session_id.to_string(),
             viewer_id: self.request.viewer_id.clone(),
             viewer_name: self.request.viewer_name.clone(),
         });
         let answer = tokio::time::timeout(CONFIRM_TIMEOUT, rx).await;
-        ctx.pending.lock().expect("richieste").remove(self.session_id);
+        ctx.pending.lock().expect("requests").remove(self.session_id);
         let _ = ctx.events.send(AgentEvent::IncomingClosed { session_id: self.session_id.to_string() });
         match answer {
             Ok(Ok(true)) => self.started(),
-            // Rifiutato da chi usa il PC, oppure nessuna app aperta per chiederglielo.
+            // Rejected by the person at the PC, or no app open to ask them.
             Ok(Ok(false)) => {
-                info!("collegamento non accettato sul dispositivo");
+                info!("connection not accepted on the device");
                 Err("@agent.not_accepted".into())
             }
             _ => {
-                info!("nessuna risposta alla richiesta di collegamento: rifiutata");
+                info!("no answer to the connection request: rejected");
                 Err("@agent.no_answer".into())
             }
         }
@@ -519,8 +519,8 @@ impl Gate<'_> {
     }
 }
 
-/// Una sessione con un viewer già collegato. Con `gate` il viewer deve
-/// autenticarsi (ed essere eventualmente confermato) prima di ricevere qualunque immagine.
+/// A session with a viewer already connected. With `gate` the viewer must
+/// authenticate (and possibly be confirmed) before receiving any image.
 async fn session(
     conn: Connection,
     (send, recv): (quinn::SendStream, quinn::RecvStream),
@@ -531,18 +531,18 @@ async fn session(
     let mut ctrl_rx = FramedRecv::new(recv);
 
     let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = ctrl_rx.recv().await? else {
-        bail!("il viewer non si è presentato");
+        bail!("the viewer did not introduce itself");
     };
     info!(device = hello.device_name, os = hello.os, version = hello.app_version, "viewer");
     if hello.protocol_version < nexodesk_proto::PROTOCOL_VERSION {
-        bail!("versione del protocollo del viewer non supportata: {}", hello.protocol_version);
+        bail!("viewer protocol version not supported: {}", hello.protocol_version);
     }
     let hello = Hello { password_required: gate.is_some(), ..local_hello() };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
     if let Some(gate) = gate {
         let given = match ctrl_rx.recv::<ControlMessage>().await? {
             Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth.password,
-            _ => bail!("il viewer non ha inviato la password"),
+            _ => bail!("the viewer did not send the password"),
         };
         let verdict = gate.authorize(&given).await;
         let (ok, message) = match &verdict {
@@ -551,8 +551,8 @@ async fn session(
         };
         ctrl_tx.send(&control(Msg::AuthResult(AuthResult { ok, message }))).await?;
         if let Err(reason) = verdict {
-            // Il motivo deve arrivare al viewer prima che la connessione si chiuda; con la
-            // password errata la pausa è più lunga, contro i tentativi a raffica.
+            // The reason must reach the viewer before the connection closes; with a
+            // wrong password the pause is longer, against rapid-fire attempts.
             let pause = if reason == WRONG_PASSWORD { 2000 } else { 500 };
             tokio::time::sleep(Duration::from_millis(pause)).await;
             bail!("{reason}");
@@ -561,12 +561,12 @@ async fn session(
 
     let keyframe = Arc::new(AtomicBool::new(true));
     let max_bps = config.bitrate_kbps * 1000;
-    // Si parte da metà del massimo: la rete ignota potrebbe non reggere di più.
+    // Start from half the maximum: the unknown network might not take more.
     let mut abr = (!config.fixed_bitrate).then(|| abr::Abr::new(max_bps / 2, MIN_BITRATE, max_bps));
     let bitrate = Arc::new(AtomicU32::new(abr.as_ref().map_or(max_bps, |a| a.bitrate())));
     let fps = Arc::new(AtomicU32::new(config.fps));
     let session_start = Instant::now();
-    // Momento dell'ultimo frame inviato (ms dall'inizio): serve a capire se manca il feedback.
+    // Time of the last frame sent (ms from the start): tells whether feedback is missing.
     let last_sent_ms = Arc::new(AtomicU64::new(0));
     let (frame_tx, mut frame_rx) = mpsc::channel::<VideoFrame>(1);
     let source = VideoSource {
@@ -581,19 +581,19 @@ async fn session(
     if let Some(msg) = displays_message(config, &display) {
         ctrl_tx.send(&msg).await?;
     }
-    // Cattura in corso: il canale di controllo la sostituisce quando cambia lo schermo.
+    // Capture in progress: the control channel replaces it when the screen changes.
     let pipeline = std::sync::Mutex::new(Some(first));
     let (screen_tx, mut screen_rx) = tokio::sync::watch::channel(screen_rect(&display));
 
-    // Chat: i messaggi di chi usa il PC arrivano dall'app attraverso il contesto.
+    // Chat: messages from the person at the PC come from the app through the context.
     let (chat_tx, mut chat_rx) = mpsc::unbounded_channel::<String>();
     let events = gate.map(|g| {
         *g.ctx.chat.lock().expect("chat") = Some(chat_tx.clone());
         g.ctx.events.clone()
     });
-    // Esito dei file ricevuti, da comunicare al viewer.
+    // Outcome of the received files, to report to the viewer.
     let (file_tx, mut file_rx) = mpsc::unbounded_channel::<nexodesk_proto::v1::FileReceived>();
-    // Appunti condivisi: il testo copiato qui va al viewer, quello copiato là arriva qui.
+    // Shared clipboard: text copied here goes to the viewer, text copied there arrives here.
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<String>();
     let clipboard = if config.view_only || config.synthetic.is_some() {
         None
@@ -601,19 +601,19 @@ async fn session(
         match nexodesk_clipboard::spawn_sync(move |text| clip_tx.send(text).is_ok()) {
             Ok(tx) => Some(tx),
             Err(e) => {
-                warn!("appunti non condivisi: {e:#}");
+                warn!("clipboard not shared: {e:#}");
                 None
             }
         }
     };
 
     let mut video_tx = FramedSend::new(conn.open_uni().await?);
-    tracing::debug!("canale video aperto");
+    tracing::debug!("video channel open");
     let video = {
         let last_sent_ms = last_sent_ms.clone();
         async move {
             while let Some(frame) = frame_rx.recv().await {
-                tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "invio frame");
+                tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "sending frame");
                 video_tx.send(&frame).await?;
                 last_sent_ms.store(session_start.elapsed().as_millis() as u64, Ordering::Relaxed);
             }
@@ -643,7 +643,7 @@ async fn session(
                     continue;
                 }
                 _ = tick.tick() => {
-                    // Frame inviati di recente ma nessun feedback: la rete è probabilmente bloccata.
+                    // Frames sent recently but no feedback: the network is probably stuck.
                     let now_ms = session_start.elapsed().as_millis() as u64;
                     let sending = now_ms.saturating_sub(last_sent_ms.load(Ordering::Relaxed)) < 1000;
                     if let Some(abr) = abr.as_mut()
@@ -652,7 +652,7 @@ async fn session(
                         && let Some(bps) = abr.on_silence(Instant::now())
                     {
                         bitrate.store(bps, Ordering::Relaxed);
-                        info!("bitrate {} kbit/s (nessun feedback dal viewer)", bps / 1000);
+                        info!("bitrate {} kbit/s (no feedback from the viewer)", bps / 1000);
                     }
                     continue;
                 }
@@ -675,7 +675,7 @@ async fn session(
                     {
                         bitrate.store(bps, Ordering::Relaxed);
                         info!(
-                            "bitrate {} kbit/s (latenza {} ms, minima {} ms)",
+                            "bitrate {} kbit/s (latency {} ms, minimum {} ms)",
                             bps / 1000,
                             fb.latency_ms_p50,
                             fb.latency_ms_min
@@ -687,13 +687,13 @@ async fn session(
                     if index == display.index {
                         continue;
                     }
-                    // Prima si ferma la cattura attuale, poi si apre la nuova.
+                    // First the current capture is stopped, then the new one is opened.
                     let old = pipeline.lock().expect("pipeline").take();
                     let _ = tokio::task::spawn_blocking(move || drop(old)).await;
                     let (new_display, new_pipeline) = match source.start(Some(index)).await {
                         Ok(started) => started,
                         Err(e) => {
-                            warn!("schermo {index} non disponibile: {e:#}; resto sul precedente");
+                            warn!("screen {index} not available: {e:#}; staying on the previous one");
                             source.start(Some(display.index)).await?
                         }
                     };
@@ -714,7 +714,7 @@ async fn session(
                     Some(events) => {
                         let _ = events.send(AgentEvent::Chat { text: chat.text });
                     }
-                    None => info!("chat dal viewer: {}", chat.text),
+                    None => info!("chat from the viewer: {}", chat.text),
                 },
                 Some(Msg::SetQuality(q)) => {
                     let (limit_bps, limit_fps) = quality_limits(config, q.quality());
@@ -726,7 +726,7 @@ async fn session(
                     if let Some(bps) = bps {
                         bitrate.store(bps, Ordering::Relaxed);
                     }
-                    info!("qualità {:?}: fino a {} kbit/s e {limit_fps} fps", q.quality(), limit_bps / 1000);
+                    info!("quality {:?}: up to {} kbit/s and {limit_fps} fps", q.quality(), limit_bps / 1000);
                 }
                 _ => {}
             }
@@ -741,7 +741,7 @@ async fn session(
             let screen = *screen_rx.borrow_and_update();
             Some(input_thread(nexodesk_input::open(screen)?)?)
         };
-        let closed = || anyhow!("thread dell'input terminato");
+        let closed = || anyhow!("input thread ended");
         loop {
             tokio::select! {
                 event = rx.recv::<InputEvent>() => match event? {
@@ -754,11 +754,11 @@ async fn session(
                     let screen = *screen_rx.borrow_and_update();
                     injector.send(InputCmd::Screen(screen)).map_err(|_| closed())?;
                 },
-                // Dopo quello dell'input, ogni canale unidirezionale del viewer è un file.
+                // After the input one, every unidirectional stream of the viewer is a file.
                 stream = conn.accept_uni() => {
                     let mut stream = stream?;
                     if injector.is_none() {
-                        // Solo visualizzazione: niente file.
+                        // View only: no files.
                         let _ = stream.stop(0u32.into());
                         continue;
                     }
@@ -773,7 +773,7 @@ async fn session(
                                 nexodesk_proto::v1::FileReceived { name, ok: true, message: "@agent.downloads".into() }
                             }
                             Err((name, e)) => {
-                                warn!("file {name} non ricevuto: {e:#}");
+                                warn!("file {name} not received: {e:#}");
                                 nexodesk_proto::v1::FileReceived { name, ok: false, message: format!("{e:#}") }
                             }
                         };
@@ -786,9 +786,9 @@ async fn session(
     };
 
     let result = tokio::select! {
-        r = video => r.context("invio video"),
-        r = control_loop => r.context("canale di controllo"),
-        r = input => r.context("canale input"),
+        r = video => r.context("sending video"),
+        r = control_loop => r.context("control channel"),
+        r = input => r.context("input channel"),
     };
     let last = pipeline.lock().expect("pipeline").take();
     let _ = tokio::task::spawn_blocking(move || drop(last)).await;
@@ -799,10 +799,10 @@ async fn session(
     result
 }
 
-/// Cattura e compressione di uno schermo, riavviabili su un altro durante la sessione.
+/// Capture and encoding of a screen, restartable on another one during the session.
 struct VideoSource {
     config: AgentConfig,
-    /// Copia del mittente: tiene aperto il canale video mentre si cambia schermo.
+    /// Copy of the sender: keeps the video channel open while the screen changes.
     frames: mpsc::Sender<VideoFrame>,
     keyframe: Arc<AtomicBool>,
     bitrate: Arc<AtomicU32>,
@@ -813,13 +813,13 @@ impl VideoSource {
     async fn start(&self, display: Option<usize>) -> Result<(nexodesk_capture::Display, Pipeline)> {
         let mut cap_config = self.config.clone();
         cap_config.display = display;
-        // L'encoder parte dal bitrate attuale del controllo adattivo.
+        // The encoder starts from the current bitrate of the adaptive control.
         let settings = EncoderSettings {
             bitrate_bps: self.bitrate.load(Ordering::Relaxed),
             max_fps: self.fps.load(Ordering::Relaxed),
         };
         let plan = self.config.plan;
-        // Un flusso nuovo deve iniziare con un keyframe.
+        // A new stream must start with a keyframe.
         self.keyframe.store(true, Ordering::Relaxed);
         let (frames, keyframe, bitrate, fps) =
             (self.frames.clone(), self.keyframe.clone(), self.bitrate.clone(), self.fps.clone());
@@ -835,7 +835,7 @@ impl VideoSource {
             )
         })
         .await?
-        .context("avvio di cattura e compressione")
+        .context("starting capture and encoding")
     }
 }
 
@@ -843,7 +843,7 @@ fn video_format(display: &nexodesk_capture::Display) -> ControlMessage {
     control(Msg::VideoFormat(VideoFormat { codec: Codec::H264 as i32, width: display.width, height: display.height }))
 }
 
-/// Elenco degli schermi per il viewer (niente con l'immagine sintetica dei test).
+/// List of screens for the viewer (none with the tests' synthetic image).
 fn displays_message(config: &AgentConfig, current: &nexodesk_capture::Display) -> Option<ControlMessage> {
     if config.synthetic.is_some() {
         return None;
@@ -866,7 +866,7 @@ fn screen_rect(display: &nexodesk_capture::Display) -> nexodesk_input::ScreenRec
     nexodesk_input::ScreenRect { left: display.left, top: display.top, width: display.width, height: display.height }
 }
 
-/// Tetto del bitrate (bit/s) e fps per la qualità scelta dal viewer.
+/// Bitrate cap (bit/s) and fps for the quality chosen by the viewer.
 fn quality_limits(config: &AgentConfig, quality: Quality) -> (u32, u32) {
     let (bps, fps) = (config.bitrate_kbps * 1000, config.fps);
     match quality {
@@ -876,16 +876,16 @@ fn quality_limits(config: &AgentConfig, quality: Quality) -> (u32, u32) {
     }
 }
 
-/// Cosa riceve il thread dell'input.
+/// What the input thread receives.
 enum InputCmd {
     Event(InputEvent),
-    /// Cambio di schermo: le coordinate del mouse si riferiscono a questo.
+    /// Screen change: mouse coordinates refer to this one.
     Screen(nexodesk_input::ScreenRect),
 }
 
-/// Inietta l'input su un thread dedicato, che può seguire il desktop attivo
-/// (UAC, schermata di blocco) senza toccare i thread di tokio. Chiudendo il
-/// canale il thread termina e rilascia i tasti ancora premuti.
+/// Injects input on a dedicated thread, which can follow the active desktop
+/// (UAC, lock screen) without touching tokio's threads. Closing the channel
+/// ends the thread, which releases the keys still pressed.
 fn input_thread(
     mut injector: Box<dyn nexodesk_input::InputInjector>,
 ) -> Result<std::sync::mpsc::Sender<InputCmd>> {
@@ -901,10 +901,10 @@ fn input_thread(
             };
             #[cfg(windows)]
             if let Some(name) = nexodesk_capture::desktop::follow_input_desktop() {
-                info!("input sul desktop {name}");
+                info!("input on desktop {name}");
             }
             if let Err(e) = injector.inject(&event) {
-                warn!("input non iniettato: {e:#}");
+                warn!("input not injected: {e:#}");
             }
         }
     })?;

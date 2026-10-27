@@ -1,6 +1,6 @@
 [package]
 name = "nexodesk-app"
-description = "NexoDesk: applicazione desktop (ID, password, conferma dei collegamenti, avvio delle sessioni)"
+description = "NexoDesk: desktop application (ID, password, confirming connections, starting sessions, address book)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

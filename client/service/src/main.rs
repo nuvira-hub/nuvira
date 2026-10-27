@@ -1,12 +1,12 @@
-//! nexodesk-service — accesso non presidiato su Windows.
+//! nexodesk-service — unattended access on Windows.
 //!
-//! Servizio di sistema (LocalSystem) che tiene attivo nexodesk-agent nella
-//! sessione di chi usa il PC, con un ID fisso e una password permanente. Da
-//! SYSTEM l'agent vede e controlla anche le richieste di amministratore (UAC)
-//! e la schermata di blocco, che un programma avviato dall'utente non può catturare.
+//! System service (LocalSystem) that keeps nexodesk-agent running in the session
+//! of the person using the PC, with a fixed ID and a permanent password. As SYSTEM
+//! the agent also sees and controls administrator prompts (UAC) and the lock
+//! screen, which a program started by the user cannot capture.
 //!
 //! ```text
-//! nexodesk-service install --server nexodesk.example.it   (prompt da amministratore)
+//! nexodesk-service install --server nexodesk.example.com   (administrator prompt)
 //! nexodesk-service status
 //! nexodesk-service uninstall
 //! ```
@@ -24,7 +24,7 @@ const COPYRIGHT: &str = "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · https
 
 #[cfg(windows)]
 #[derive(clap::Parser, Debug)]
-#[command(version, about = "NexoDesk: servizio per l'accesso non presidiato", after_help = COPYRIGHT)]
+#[command(version, about = "NexoDesk: service for unattended access", after_help = COPYRIGHT)]
 struct Args {
     #[command(subcommand)]
     command: Cmd,
@@ -33,29 +33,29 @@ struct Args {
 #[cfg(windows)]
 #[derive(clap::Subcommand, Debug)]
 enum Cmd {
-    /// Installa (o aggiorna) e avvia il servizio. Serve un prompt da amministratore.
+    /// Installs (or updates) and starts the service. Needs an administrator prompt.
     Install {
-        /// nexodesk-server a cui registrarsi (host[:porta]).
-        #[arg(long, value_name = "HOST[:PORTA]")]
+        /// nexodesk-server to register with (host[:port]).
+        #[arg(long, value_name = "HOST[:PORT]")]
         server: String,
-        /// Password permanente. Senza, si tiene quella già impostata o se ne genera una.
+        /// Permanent password. Without it, the one already set is kept or a new one is generated.
         #[arg(long)]
         password: Option<String>,
-        /// Impronta del certificato del server. Senza, si memorizza quella vista al primo collegamento.
-        #[arg(long, value_name = "IMPRONTA")]
+        /// Server certificate fingerprint. Without it, the one seen at the first connection is remembered.
+        #[arg(long, value_name = "FINGERPRINT")]
         server_key: Option<String>,
-        /// Trasporto verso il server: auto, udp, websocket.
+        /// Transport towards the server: auto, udp, websocket.
         #[arg(long, default_value = "auto")]
         transport: String,
-        /// URL WebSocket del server per il ripiego.
+        /// WebSocket URL of the server for the fallback.
         #[arg(long, value_name = "URL")]
         server_ws: Option<String>,
     },
-    /// Ferma e rimuove il servizio (dati e ID restano).
+    /// Stops and removes the service (data and ID remain).
     Uninstall,
-    /// Mostra stato del servizio e ID del dispositivo.
+    /// Shows the service state and the device ID.
     Status,
-    /// Usato dal gestore servizi di Windows.
+    /// Used by the Windows service manager.
     #[command(hide = true)]
     Run,
 }
@@ -87,13 +87,13 @@ fn run_service() -> anyhow::Result<()> {
         .create(true)
         .append(true)
         .open(config::service_log())
-        .context("apertura del log del servizio")?;
+        .context("opening the service log")?;
     tracing_subscriber::fmt().with_ansi(false).with_writer(std::sync::Mutex::new(log)).init();
 
     let service_config = config::ServiceConfig::load()?;
-    // Ereditate dall'agent: la password non compare sulla riga di comando, e i dati
-    // (impronta del server memorizzata) restano nella cartella protetta.
-    // SAFETY: il processo ha ancora un solo thread.
+    // Inherited by the agent: the password does not appear on the command line, and the
+    // data (remembered server fingerprint) stays in the protected folder.
+    // SAFETY: the process still has a single thread.
     unsafe {
         std::env::set_var("NEXODESK_PASSWORD", &service_config.password);
         std::env::set_var("NEXODESK_DATA_DIR", &data_dir);
@@ -107,6 +107,6 @@ fn run_service() -> anyhow::Result<()> {
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("{COPYRIGHT}\nnexodesk-service per ora esiste solo per Windows");
+    eprintln!("{COPYRIGHT}\nnexodesk-service exists only for Windows for now");
     std::process::exit(1);
 }

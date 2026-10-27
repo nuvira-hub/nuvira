@@ -193,7 +193,7 @@ fn parse_candidates(b: &[u8]) -> Candidates {
 /// with the port of the session socket.
 fn local_candidates(relay: SocketAddr, port: u16) -> Vec<SocketAddr> {
     let probe_bind: SocketAddr =
-        if relay.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse().expect("indirizzo");
+        if relay.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse().expect("address");
     // connect on UDP sends nothing: it only asks the system which interface it would use.
     let ip = UdpSocket::bind(probe_bind).and_then(|s| s.connect(relay).and_then(|()| s.local_addr()));
     match ip {
@@ -350,7 +350,7 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
         }
         None => {}
     }
-    debug!(?path, remote = %conn.remote_address(), "collegato");
+    debug!(?path, remote = %conn.remote_address(), "connected");
     Ok((conn, path))
 }
 

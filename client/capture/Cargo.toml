@@ -1,6 +1,6 @@
 [package]
 name = "nexodesk-capture"
-description = "Cattura dello schermo con le API native di ogni sistema"
+description = "Screen capture with each system's native APIs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,9 +1,9 @@
-//! Ricezione dei file inviati dal viewer.
+//! Receiving the files sent by the viewer.
 //!
-//! I file finiscono nella cartella Download dell'utente collegato al PC, anche
-//! quando l'agent è quello del servizio (SYSTEM): la cartella si ricava dal token
-//! dell'utente della sessione. Si scrive prima `nome.part`, rinominato a file
-//! completo; se il nome esiste già si aggiunge " (1)", " (2)"…
+//! Files end up in the Downloads folder of the user signed in on the PC, also
+//! when the agent is the service's (SYSTEM): the folder is derived from the token
+//! of the session's user. `name.part` is written first and renamed once the file
+//! is complete; if the name exists " (1)", " (2)"… is added.
 
 use std::path::{Path, PathBuf};
 
@@ -13,18 +13,18 @@ use nexodesk_transport::FramedRecv;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
-/// Riceve un file dallo stream; restituisce nome e percorso finale.
+/// Receives a file from the stream; returns its name and final path.
 pub async fn receive(stream: quinn::RecvStream) -> Result<(String, PathBuf), (String, anyhow::Error)> {
     let mut rx = FramedRecv::new(stream);
     let first = match rx.recv::<FileChunk>().await {
         Ok(Some(first)) => first,
-        Ok(None) => return Err((String::new(), anyhow::anyhow!("canale del file vuoto"))),
+        Ok(None) => return Err((String::new(), anyhow::anyhow!("empty file stream"))),
         Err(e) => return Err((String::new(), e)),
     };
     let name = safe_name(&first.name);
     let result = async {
         let dir = downloads_dir()?;
-        std::fs::create_dir_all(&dir).with_context(|| format!("creazione di {}", dir.display()))?;
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         let part = dir.join(format!("{name}.part"));
         let written = write(&part, first.data, &mut rx).await;
         let size = match written {
@@ -36,11 +36,11 @@ pub async fn receive(stream: quinn::RecvStream) -> Result<(String, PathBuf), (St
         };
         if size != first.size {
             let _ = std::fs::remove_file(&part);
-            bail!("file incompleto: ricevuti {size} byte su {}", first.size);
+            bail!("incomplete file: received {size} bytes out of {}", first.size);
         }
         let target = unique_path(&dir, &name);
-        std::fs::rename(&part, &target).with_context(|| format!("salvataggio di {}", target.display()))?;
-        info!("file ricevuto: {} ({size} byte)", target.display());
+        std::fs::rename(&part, &target).with_context(|| format!("saving {}", target.display()))?;
+        info!("file received: {} ({size} bytes)", target.display());
         Ok(target)
     }
     .await;
@@ -48,7 +48,7 @@ pub async fn receive(stream: quinn::RecvStream) -> Result<(String, PathBuf), (St
 }
 
 async fn write(path: &Path, first: Vec<u8>, rx: &mut FramedRecv) -> Result<u64> {
-    let mut file = tokio::fs::File::create(path).await.with_context(|| format!("creazione di {}", path.display()))?;
+    let mut file = tokio::fs::File::create(path).await.with_context(|| format!("creating {}", path.display()))?;
     file.write_all(&first).await?;
     let mut size = first.len() as u64;
     while let Some(chunk) = rx.recv::<FileChunk>().await? {
@@ -59,7 +59,7 @@ async fn write(path: &Path, first: Vec<u8>, rx: &mut FramedRecv) -> Result<u64> 
     Ok(size)
 }
 
-/// Solo il nome del file, senza cartelle né caratteri che Windows non accetta.
+/// Only the file name, without folders or characters Windows does not accept.
 fn safe_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
     let clean: String = base
@@ -70,7 +70,7 @@ fn safe_name(name: &str) -> String {
     if clean.is_empty() || clean == "." || clean == ".." { "file".into() } else { clean }
 }
 
-/// `nome.ext`, oppure `nome (1).ext`, `nome (2).ext`… se esiste già.
+/// `name.ext`, or `name (1).ext`, `name (2).ext`… if it already exists.
 fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let candidate = dir.join(name);
     if !candidate.exists() {
@@ -83,10 +83,10 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
     (1..)
         .map(|i| dir.join(format!("{stem} ({i}){ext}")))
         .find(|p| !p.exists())
-        .expect("un nome libero esiste sempre")
+        .expect("a free name always exists")
 }
 
-/// Cartella Download dell'utente collegato a questa sessione di Windows.
+/// Downloads folder of the user signed in to this Windows session.
 #[cfg(windows)]
 fn downloads_dir() -> Result<PathBuf> {
     use windows::Win32::Foundation::{CloseHandle, ERROR_PRIVILEGE_NOT_HELD, HANDLE};
@@ -94,8 +94,8 @@ fn downloads_dir() -> Result<PathBuf> {
     use windows::Win32::System::RemoteDesktop::WTSQueryUserToken;
     use windows::Win32::UI::Shell::{FOLDERID_Downloads, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
 
-    // Da SYSTEM (servizio) si usa il token dell'utente della sessione; da utente
-    // normale WTSQueryUserToken non è permesso e vale il proprio profilo.
+    // As SYSTEM (service) the token of the session's user is used; as a normal user
+    // WTSQueryUserToken is not allowed and the own profile applies.
     let mut token = HANDLE::default();
     let user_token = match unsafe { WTSQueryUserToken(crate::ipc::current_session(), &mut token) } {
         Ok(()) => Some(token),
@@ -109,7 +109,7 @@ fn downloads_dir() -> Result<PathBuf> {
     if let Some(token) = user_token {
         let _ = unsafe { CloseHandle(token) };
     }
-    let path = path.context("cartella Download")?;
+    let path = path.context("Downloads folder")?;
     let text = unsafe { path.to_string() };
     unsafe { CoTaskMemFree(Some(path.0 as *const _)) };
     Ok(PathBuf::from(text?))
@@ -117,7 +117,7 @@ fn downloads_dir() -> Result<PathBuf> {
 
 #[cfg(not(windows))]
 fn downloads_dir() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME non impostata")?;
+    let home = std::env::var_os("HOME").context("HOME not set")?;
     Ok(PathBuf::from(home).join("Downloads"))
 }
 

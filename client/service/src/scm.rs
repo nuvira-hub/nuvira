@@ -1,10 +1,10 @@
-//! Esecuzione come servizio: dialogo con il gestore servizi e ciclo che tiene
-//! un agent attivo nella sessione della console.
+//! Running as a service: dialogue with the service manager and the loop that keeps
+//! an agent running in the console session.
 //!
-//! Il ciclo controlla ogni mezzo secondo la sessione attiva: a ogni cambio
-//! (disconnessione, cambio utente) l'agent viene chiuso e riavviato nella nuova.
-//! Se l'agent termina da solo si riavvia, aspettando sempre di più se continua a
-//! cadere subito (fino a 30 s).
+//! The loop checks the active session every half second: at every change
+//! (disconnection, user switch) the agent is closed and restarted in the new one.
+//! If the agent ends on its own it is restarted, waiting longer and longer if it
+//! keeps failing right away (up to 30 s).
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
@@ -26,13 +26,13 @@ use windows::core::{HSTRING, PWSTR};
 use crate::config::{self, ServiceConfig};
 use crate::launch::{AgentProcess, Job};
 
-/// Codice di uscita di un processo chiuso dal sistema alla fine della sua sessione.
+/// Exit code of a process closed by the system at the end of its session.
 const DBG_TERMINATE_PROCESS: u32 = 0x4001_0004;
 
 static STOP: AtomicBool = AtomicBool::new(false);
 static STATUS: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
-/// Consegna il thread al gestore servizi, che chiama [`service_main`]. Ritorna quando il servizio si ferma.
+/// Hands the thread over to the service manager, which calls [`service_main`]. Returns when the service stops.
 pub fn dispatch() -> Result<()> {
     let mut name: Vec<u16> = config::SERVICE_NAME.encode_utf16().chain(Some(0)).collect();
     let table = [
@@ -40,7 +40,7 @@ pub fn dispatch() -> Result<()> {
         SERVICE_TABLE_ENTRYW::default(),
     ];
     unsafe { StartServiceCtrlDispatcherW(table.as_ptr()) }
-        .context("StartServiceCtrlDispatcher: `run` è riservato al gestore servizi, usa `install`")
+        .context("StartServiceCtrlDispatcher: `run` is reserved for the service manager, use `install`")
 }
 
 unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
@@ -55,15 +55,15 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
     STATUS.store(handle.0, Ordering::Relaxed);
     set_status(SERVICE_START_PENDING, 0);
     set_status(SERVICE_RUNNING, 0);
-    info!("servizio avviato");
+    info!("service started");
     let code = match run() {
         Ok(()) => 0,
         Err(e) => {
-            error!("servizio terminato per errore: {e:#}");
+            error!("service ended with an error: {e:#}");
             1
         }
     };
-    info!("servizio fermato");
+    info!("service stopped");
     set_status(SERVICE_STOPPED, code);
 }
 
@@ -96,27 +96,27 @@ fn set_status(state: SERVICE_STATUS_CURRENT_STATE, exit_code: u32) {
     }
 }
 
-/// Evento con cui l'agent chiede Ctrl+Alt+Canc (stesso nome in nexodesk-input).
+/// Event the agent uses to ask for Ctrl+Alt+Del (same name in nexodesk-input).
 const SAS_EVENT: &str = r"Global\NexoDeskSAS";
 
-/// Thread che esegue Ctrl+Alt+Canc quando l'agent segnala [`SAS_EVENT`]. Windows
-/// accetta `SendSAS` solo da un servizio, non dall'agent pur essendo SYSTEM.
-/// L'evento creato da SYSTEM, con la sicurezza predefinita, può segnalarlo solo SYSTEM.
+/// Thread that performs Ctrl+Alt+Del when the agent signals [`SAS_EVENT`]. Windows
+/// accepts `SendSAS` only from a service, not from the agent even though it is SYSTEM.
+/// The event created by SYSTEM, with the default security, can be signalled only by SYSTEM.
 fn sas_listener() -> Option<std::thread::JoinHandle<()>> {
     let event = match unsafe { CreateEventW(None, false, false, &HSTRING::from(SAS_EVENT)) } {
         Ok(event) => event,
         Err(e) => {
-            warn!("Ctrl+Alt+Canc non disponibile: CreateEvent: {e}");
+            warn!("Ctrl+Alt+Del not available: CreateEvent: {e}");
             return None;
         }
     };
-    // HANDLE non è Send: passa al thread come numero.
+    // HANDLE is not Send: it goes to the thread as a number.
     let raw = event.0 as usize;
     let thread = std::thread::Builder::new().name("ctrl-alt-canc".into()).spawn(move || {
         let event = HANDLE(raw as *mut c_void);
         while !STOP.load(Ordering::Relaxed) {
             if unsafe { WaitForSingleObject(event, 500) } == WAIT_OBJECT_0 {
-                info!("Ctrl+Alt+Canc richiesto dall'agent");
+                info!("Ctrl+Alt+Del requested by the agent");
                 unsafe { SendSAS(false) };
             }
         }
@@ -157,7 +157,7 @@ fn run() -> Result<()> {
         let session = crate::launch::active_session();
         if let Some(running) = &agent {
             if Some(running.session) != session {
-                info!("sessione della console cambiata ({} → {session:?}): riavvio l'agent", running.session);
+                info!("console session changed ({} → {session:?}): restarting the agent", running.session);
                 running.kill();
                 agent = None;
                 next_start = Instant::now();
@@ -165,18 +165,18 @@ fn run() -> Result<()> {
             }
             if let Some(code) = running.wait(Duration::from_millis(500)) {
                 if code == DBG_TERMINATE_PROCESS {
-                    // Chiuso da Windows: fine della sessione o spegnimento, che chiude le sessioni
-                    // prima di fermare i servizi. Non è un crash: se è uno spegnimento lo stop arriva
-                    // a breve, altrimenti si riparte nella nuova sessione.
-                    info!("agent chiuso da Windows (fine sessione o spegnimento)");
+                    // Closed by Windows: end of the session or shutdown, which closes the sessions
+                    // before stopping the services. It is not a crash: if it is a shutdown the stop
+                    // comes shortly, otherwise it starts again in the new session.
+                    info!("agent closed by Windows (end of session or shutdown)");
                     agent = None;
                     next_start = Instant::now() + Duration::from_secs(3);
                     continue;
                 }
                 let lived = running.started.elapsed();
-                // Se è rimasto attivo a lungo si riparte subito, altrimenti si aspetta di più.
+                // If it ran for a long time it restarts right away, otherwise it waits longer.
                 backoff = if lived > Duration::from_secs(60) { Duration::from_secs(1) } else { (backoff * 2).min(Duration::from_secs(30)) };
-                warn!("agent terminato con codice {code} dopo {} s: riavvio tra {} s", lived.as_secs(), backoff.as_secs());
+                warn!("agent ended with code {code} after {} s: restarting in {} s", lived.as_secs(), backoff.as_secs());
                 agent = None;
                 next_start = Instant::now() + backoff;
             }
@@ -187,11 +187,11 @@ fn run() -> Result<()> {
                 config::rotate_log(&config::agent_log(), 10 << 20);
                 match AgentProcess::spawn(&job, session, &exe, &args, &config::agent_log(), &data) {
                     Ok(started) => {
-                        info!("agent avviato nella sessione {session}");
+                        info!("agent started in session {session}");
                         agent = Some(started);
                     }
                     Err(e) => {
-                        warn!("avvio dell'agent non riuscito: {e:#}; riprovo tra 5 s");
+                        warn!("starting the agent failed: {e:#}; retrying in 5 s");
                         next_start = Instant::now() + Duration::from_secs(5);
                     }
                 }

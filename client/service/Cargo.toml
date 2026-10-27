@@ -1,6 +1,6 @@
 [package]
 name = "nexodesk-service"
-description = "NexoDesk: servizio di sistema per l'accesso non presidiato"
+description = "NexoDesk: system service for unattended access"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

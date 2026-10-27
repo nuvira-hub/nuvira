@@ -1,8 +1,8 @@
-//! Visualizzazione dei frame I420 con wgpu.
+//! Displaying I420 frames with wgpu.
 //!
-//! I tre piani Y, U, V vengono caricati come texture R8 e convertiti in RGB
-//! dallo shader (BT.601, gamma limitata). L'immagine è adattata alla finestra
-//! mantenendo le proporzioni.
+//! The three planes Y, U, V are uploaded as R8 textures and converted to RGB by
+//! the shader (BT.601, limited range). The image is fitted to the window keeping
+//! its proportions.
 
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ struct VsOut {
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
-    // Triangolo che copre tutto il viewport.
+    // Triangle covering the whole viewport.
     let x = f32((i << 1u) & 2u);
     let y = f32(i & 2u);
     var out: VsOut;
@@ -46,7 +46,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Rettangolo occupato dall'immagine nella finestra, in pixel fisici.
+/// Rectangle the image takes in the window, in physical pixels.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Viewport {
     pub x: f32,
@@ -56,7 +56,7 @@ pub struct Viewport {
 }
 
 impl Viewport {
-    /// Posizione normalizzata 0..1 nell'immagine, se il punto cade al suo interno.
+    /// Normalised 0..1 position in the image, if the point falls inside it.
     pub fn normalize(&self, px: f64, py: f64) -> Option<(f32, f32)> {
         if self.width <= 0.0 || self.height <= 0.0 {
             return None;
@@ -67,7 +67,7 @@ impl Viewport {
     }
 }
 
-/// Registra a livello trace quanto dura il blocco in cui vive.
+/// Logs at trace level how long the block it lives in takes.
 struct TraceTime(&'static str, std::time::Instant);
 
 impl Drop for TraceTime {
@@ -76,9 +76,9 @@ impl Drop for TraceTime {
     }
 }
 
-/// API grafica nativa di ogni sistema, con OpenGL come ripiego dove esiste.
-/// Su Windows Vulkan è escluso: alcuni driver Intel vanno in crash già all'enumerazione.
-/// `WGPU_BACKEND` (es. `vulkan`, `gl`) permette comunque di forzarne uno.
+/// Native graphics API of each system, with OpenGL as a fallback where it exists.
+/// On Windows Vulkan is excluded: some Intel drivers crash already at enumeration.
+/// `WGPU_BACKEND` (e.g. `vulkan`, `gl`) still allows forcing one.
 fn native_backends() -> wgpu::Backends {
     if cfg!(windows) {
         wgpu::Backends::DX12 | wgpu::Backends::GL
@@ -89,8 +89,8 @@ fn native_backends() -> wgpu::Backends {
     }
 }
 
-/// Rettangolo in cui l'immagine `fw`x`fh` entra nella finestra `sw`x`sh`
-/// mantenendo le proporzioni, centrata.
+/// Rectangle in which the `fw`x`fh` image fits into the `sw`x`sh` window
+/// keeping its proportions, centred.
 pub fn fit(fw: u32, fh: u32, sw: u32, sh: u32) -> Viewport {
     if fw == 0 || fh == 0 {
         return Viewport::default();
@@ -131,40 +131,40 @@ impl GpuRenderer {
             desc.backends = native_backends();
         }
         let instance = wgpu::Instance::new(desc);
-        let surface = instance.create_surface(window).context("superficie wgpu")?;
+        let surface = instance.create_surface(window).context("wgpu surface")?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
             apply_limit_buckets: false,
         }))
-        .context("nessuna scheda video compatibile")?;
+        .context("no compatible graphics card")?;
         let info = adapter.get_info();
         let adapter_info = format!("{} ({:?})", info.name, info.backend);
         let backend = info.backend;
-        // Si chiedono solo i limiti minimi (quelli di WebGL2) più la risoluzione massima della scheda:
-        // il viewer non usa compute shader, e le schede che passano da OpenGL non li offrono.
+        // Only the minimum limits (WebGL2's) plus the card's maximum resolution are requested:
+        // the viewer uses no compute shaders, and cards reached through OpenGL do not offer them.
         let required_limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
         let (device, queue) = pollster::block_on(
             adapter.request_device(&wgpu::DeviceDescriptor { required_limits, ..Default::default() }),
         )
-        .with_context(|| format!("dispositivo wgpu su {adapter_info}"))?;
+        .with_context(|| format!("wgpu device on {adapter_info}"))?;
 
         let caps = surface.get_capabilities(&adapter);
-        // Lo shader produce valori già in gamma sRGB: serve un formato non-sRGB,
-        // altrimenti la GPU li convertirebbe una seconda volta (immagine slavata).
+        // The shader produces values already in sRGB gamma: a non-sRGB format is needed,
+        // otherwise the GPU would convert them a second time (washed-out image).
         let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
-        // Mailbox: nessuno strappo e nessuna coda di frame vecchi. Senza Mailbox (es. OpenGL)
-        // Immediate: qualche strappo, ma Fifo aspetterebbe il vsync prima e dopo ogni frame
-        // (misurati ~40 ms per frame su una Intel HD 2500).
+        // Mailbox: no tearing and no queue of old frames. Without Mailbox (e.g. OpenGL)
+        // Immediate: some tearing, but Fifo would wait for vsync before and after every frame
+        // (measured ~40 ms per frame on an Intel HD 2500).
         let present_mode = [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
             .into_iter()
             .find(|m| caps.present_modes.contains(m))
             .unwrap_or(wgpu::PresentMode::Fifo);
-        tracing::debug!(?present_mode, available = ?caps.present_modes, "presentazione");
+        tracing::debug!(?present_mode, available = ?caps.present_modes, "presentation");
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
-            .context("configurazione superficie")?;
+            .context("surface configuration")?;
         config.format = format;
         config.present_mode = present_mode;
         config.desired_maximum_frame_latency = 1;
@@ -283,14 +283,14 @@ impl GpuRenderer {
         Planes { width, height, y, u, v, bind_group }
     }
 
-    /// Carica un frame decompresso sulla GPU.
+    /// Uploads a decoded frame to the GPU.
     pub fn upload(&mut self, frame: &YuvFrame) {
         let _t = TraceTime("upload", std::time::Instant::now());
         let fits = self.planes.as_ref().is_some_and(|p| p.width == frame.width && p.height == frame.height);
         if !fits {
             self.planes = Some(self.create_planes(frame.width, frame.height));
         }
-        let planes = self.planes.as_ref().expect("piani creati");
+        let planes = self.planes.as_ref().expect("planes created");
         let (cw, ch) = (frame.width.div_ceil(2), frame.height.div_ceil(2));
         for (texture, data, w, h) in [
             (&planes.y, &frame.y, frame.width, frame.height),
@@ -306,7 +306,7 @@ impl GpuRenderer {
         }
     }
 
-    /// Dove finisce l'immagine nella finestra (proporzioni mantenute, centrata).
+    /// Where the image ends up in the window (proportions kept, centred).
     pub fn viewport(&self) -> Viewport {
         let Some(p) = &self.planes else { return Viewport::default() };
         fit(p.width, p.height, self.config.width, self.config.height)
@@ -353,15 +353,15 @@ impl GpuRenderer {
     }
 }
 
-/// Il modo di disegnare scelto per questa finestra.
+/// The drawing method chosen for this window.
 pub enum Renderer {
     Gpu(Box<GpuRenderer>),
     Cpu(crate::cpu::CpuRenderer),
 }
 
 impl Renderer {
-    /// GPU (wgpu) se c'è un'API moderna; CPU se la scheda arriva solo via OpenGL o wgpu non parte.
-    /// `NEXODESK_RENDERER=gpu|cpu` forza la scelta.
+    /// GPU (wgpu) if there is a modern API; CPU if the card is reachable only through OpenGL or wgpu fails.
+    /// `NEXODESK_RENDERER=gpu|cpu` forces the choice.
     pub fn new(window: Arc<Window>) -> Result<(Self, String)> {
         let forced = std::env::var("NEXODESK_RENDERER").ok();
         if forced.as_deref() != Some("cpu") {
@@ -371,10 +371,10 @@ impl Renderer {
                     return Ok((Renderer::Gpu(Box::new(gpu)), info));
                 }
                 Ok(gpu) => {
-                    tracing::info!("{} disponibile solo via OpenGL: disegno con la CPU", gpu.adapter_info)
+                    tracing::info!("{} available only through OpenGL: drawing with the CPU", gpu.adapter_info)
                 }
                 Err(e) if forced.as_deref() == Some("gpu") => return Err(e),
-                Err(e) => tracing::info!("wgpu non disponibile ({e:#}): disegno con la CPU"),
+                Err(e) => tracing::info!("wgpu not available ({e:#}): drawing with the CPU"),
             }
         }
         let cpu = crate::cpu::CpuRenderer::new(window)?;
@@ -393,7 +393,7 @@ impl Renderer {
             Renderer::Gpu(r) => r.render(),
             Renderer::Cpu(r) => {
                 if let Err(e) = r.render() {
-                    tracing::debug!("presentazione non riuscita: {e:#}");
+                    tracing::debug!("presentation failed: {e:#}");
                 }
             }
         }

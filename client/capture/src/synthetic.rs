@@ -20,7 +20,7 @@ impl SyntheticCapturer {
         Self {
             display: Display {
                 index: usize::MAX,
-                name: "sintetico".into(),
+                name: "synthetic".into(),
                 left: 0,
                 top: 0,
                 width,

@@ -1,7 +1,7 @@
-//! Finestra a schermo intero con un'animazione continua, per misurare la cattura
-//! dello schermo vero con un contenuto che cambia a ogni frame.
+//! Full-screen window with a continuous animation, to measure capture of the
+//! real screen with content that changes at every frame.
 //!
-//! `cargo run --release -p nexodesk-viewer --example animate -- [secondi]`
+//! `cargo run --release -p nexodesk-viewer --example animate -- [seconds]`
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -22,11 +22,11 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
-            .with_title("NexoDesk — animazione di prova")
+            .with_title("NexoDesk — test animation")
             .with_fullscreen(Some(Fullscreen::Borderless(None)));
-        let window = Arc::new(el.create_window(attrs).expect("finestra"));
-        let context = softbuffer::Context::new(window.clone()).expect("contesto");
-        self.surface = Some(softbuffer::Surface::new(&context, window.clone()).expect("superficie"));
+        let window = Arc::new(el.create_window(attrs).expect("window"));
+        let context = softbuffer::Context::new(window.clone()).expect("context");
+        self.surface = Some(softbuffer::Surface::new(&context, window.clone()).expect("surface"));
         window.request_redraw();
         self.window = Some(window);
     }
@@ -47,7 +47,7 @@ impl ApplicationHandler for App {
                 surface.resize(w, h).expect("resize");
                 let mut buf = surface.buffer_mut().expect("buffer");
                 let (w, h) = (size.width as usize, size.height as usize);
-                // Sfondo a righe che scorre + barra verticale che attraversa lo schermo.
+                // Scrolling striped background + vertical bar crossing the screen.
                 let t = (self.started.elapsed().as_millis() / 16) as usize;
                 let bar = (t * 12) % w;
                 for y in 0..h {

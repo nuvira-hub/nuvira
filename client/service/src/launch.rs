@@ -1,11 +1,11 @@
-//! Avvio dell'agent nella sessione di chi usa il PC.
+//! Starting the agent in the session of the person using the PC.
 //!
-//! Il servizio gira nella sessione 0, che non ha schermo. L'agent viene avviato
-//! con una copia del token SYSTEM del servizio spostata nella sessione della
-//! console (`winsta0\default`): da SYSTEM può passare sul desktop protetto (UAC,
-//! schermata di blocco) e iniettare input anche nelle finestre da amministratore.
-//! L'agent sta in un job object: se il servizio termina, anche all'improvviso,
-//! Windows chiude l'agent invece di lasciarne una copia orfana.
+//! The service runs in session 0, which has no screen. The agent is started with
+//! a copy of the service's SYSTEM token moved into the console session
+//! (`winsta0\default`): as SYSTEM it can switch to the secure desktop (UAC, lock
+//! screen) and inject input into administrator windows too.
+//! The agent is in a job object: if the service ends, even abruptly, Windows
+//! closes the agent instead of leaving an orphan copy behind.
 
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
@@ -30,13 +30,13 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{HSTRING, PWSTR};
 
-/// Sessione collegata a schermo, tastiera e mouse fisici; `None` durante un cambio utente.
+/// Session connected to the physical screen, keyboard and mouse; `None` during a user switch.
 pub fn active_session() -> Option<u32> {
     let id = unsafe { WTSGetActiveConsoleSessionId() };
     (id != u32::MAX).then_some(id)
 }
 
-/// Handle chiuso automaticamente.
+/// Handle closed automatically.
 struct Owned(HANDLE);
 
 impl Drop for Owned {
@@ -45,7 +45,7 @@ impl Drop for Owned {
     }
 }
 
-/// Job object che chiude gli agent quando il servizio termina.
+/// Job object that closes the agents when the service ends.
 pub struct Job(Owned);
 
 impl Job {
@@ -73,16 +73,16 @@ pub struct AgentProcess {
 }
 
 impl AgentProcess {
-    /// Avvia `exe` con `args` nella sessione indicata. Output e errori vanno in `log`.
+    /// Starts `exe` with `args` in the given session. Output and errors go to `log`.
     pub fn spawn(job: &Job, session: u32, exe: &Path, args: &str, log: &Path, cwd: &Path) -> Result<Self> {
         let token = system_token_for(session)?;
 
-        // L'agent eredita il file di log come stdout e stderr.
+        // The agent inherits the log file as stdout and stderr.
         let log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(log)
-            .with_context(|| format!("apertura di {}", log.display()))?;
+            .with_context(|| format!("opening {}", log.display()))?;
         let log_handle = HANDLE(log_file.as_raw_handle());
         unsafe { SetHandleInformation(log_handle, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }
             .context("SetHandleInformation")?;
@@ -114,10 +114,10 @@ impl AgentProcess {
                 &mut info,
             )
         }
-        .with_context(|| format!("avvio di {}", exe.display()))?;
+        .with_context(|| format!("starting {}", exe.display()))?;
         let process = Owned(info.hProcess);
         let thread = Owned(info.hThread);
-        // Nel job prima di partire: così non può sfuggirgli nemmeno per un istante.
+        // Into the job before starting: that way it cannot escape it even for an instant.
         if let Err(e) = unsafe { AssignProcessToJobObject(job.0.0, process.0) } {
             let _ = unsafe { TerminateProcess(process.0, 1) };
             return Err(e).context("AssignProcessToJobObject");
@@ -126,7 +126,7 @@ impl AgentProcess {
         Ok(Self { process, session, started: Instant::now() })
     }
 
-    /// Attende fino a `timeout` che l'agent termini; restituisce il codice di uscita.
+    /// Waits up to `timeout` for the agent to end; returns its exit code.
     pub fn wait(&self, timeout: Duration) -> Option<u32> {
         if unsafe { WaitForSingleObject(self.process.0, timeout.as_millis() as u32) } != WAIT_OBJECT_0 {
             return None;
@@ -142,8 +142,8 @@ impl AgentProcess {
     }
 }
 
-/// Copia primaria del token del servizio (SYSTEM), spostata nella sessione indicata.
-/// Cambiare sessione a un token richiede SeTcbPrivilege, che SYSTEM ha.
+/// Primary copy of the service's token (SYSTEM), moved into the given session.
+/// Changing a token's session needs SeTcbPrivilege, which SYSTEM has.
 fn system_token_for(session: u32) -> Result<Owned> {
     let mut own = HANDLE::default();
     unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &mut own) }.context("OpenProcessToken")?;
@@ -155,6 +155,6 @@ fn system_token_for(session: u32) -> Result<Owned> {
     unsafe {
         SetTokenInformation(primary.0, TokenSessionId, (&raw const session).cast(), size_of::<u32>() as u32)
     }
-    .context("SetTokenInformation(TokenSessionId): il servizio deve girare come SYSTEM")?;
+    .context("SetTokenInformation(TokenSessionId): the service must run as SYSTEM")?;
     Ok(primary)
 }

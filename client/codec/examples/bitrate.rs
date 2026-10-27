@@ -49,7 +49,7 @@ fn main() {
         for i in 0..90 {
             let data = &frames[(half * 90 + i) % frames.len()];
             let img = BgraImage { width: w as u32, height: h as u32, stride: w * 4, data };
-            if let Some(out) = enc.encode(&img, half == 0 && i == 0).expect("compressione") {
+            if let Some(out) = enc.encode(&img, half == 0 && i == 0).expect("encoding") {
                 bytes += out.data.len();
             }
             std::thread::sleep(std::time::Duration::from_millis(33));

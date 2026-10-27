@@ -1,6 +1,6 @@
 [package]
 name = "nexodesk-codec"
-description = "Compressione e decompressione video"
+description = "Video encoding and decoding"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

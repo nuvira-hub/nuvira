@@ -1,8 +1,9 @@
-//! Rubrica sul server: accesso con l'account, schede dei dispositivi, gestione
-//! di account e rubriche condivise (amministratori). Vedi docs/17-rubrica.md.
+//! Address book on the server: sign-in with the account, device entries,
+//! management of accounts and shared address books (administrators). See
+//! docs/17-address-book.md.
 //!
-//! La connessione con il server si apre al primo uso e si riapre da sola se cade;
-//! l'accesso è ricordato con il gettone salvato in `app.json`, mai con la password.
+//! The connection with the server opens at first use and reopens by itself if it
+//! drops; the sign-in is remembered with the token saved in `app.json`, never the password.
 
 use nexodesk_proto::v1::{self as pb, api_request::Call, api_response::Result as ApiResult};
 use nexodesk_transport::api::ApiClient;
@@ -92,20 +93,20 @@ impl From<EntryUi> for pb::Entry {
     }
 }
 
-/// Connessione aperta (se c'è) e già autenticata.
+/// Open (if any) and already authenticated connection.
 #[derive(Default)]
 pub struct Link {
     client: tokio::sync::Mutex<Option<ApiClient>>,
 }
 
 impl Link {
-    /// Accesso senza attesa (dai comandi sincroni): fallisce se è in uso.
+    /// Access without waiting (from synchronous commands): fails if it is in use.
     pub fn client_slot(&self) -> Result<tokio::sync::MutexGuard<'_, Option<ApiClient>>, tokio::sync::TryLockError> {
         self.client.try_lock()
     }
 }
 
-/// Client autenticato: riaperto se la connessione è caduta, con il gettone salvato.
+/// Authenticated client: reopened if the connection dropped, with the saved token.
 async fn client(app: &AppHandle) -> Result<ApiClient, String> {
     let state = app.state::<NexoApp>();
     let mut guard = state.rubrica.client.lock().await;
@@ -118,8 +119,8 @@ async fn client(app: &AppHandle) -> Result<ApiClient, String> {
         Ok(Some(ApiResult::Session(session))) => set_account(app, session.account),
         Ok(_) => return Err(t("err.unexpected")),
         Err(e) => {
-            // Gettone scaduto o revocato: si torna al riquadro di accesso.
-            warn!("accesso ricordato non valido: {e:#}");
+            // Expired or revoked token: back to the sign-in panel.
+            warn!("remembered sign-in not valid: {e:#}");
             forget(app);
             return Err(t("err.session_expired"));
         }
@@ -128,9 +129,9 @@ async fn client(app: &AppHandle) -> Result<ApiClient, String> {
     Ok(client)
 }
 
-/// Nuova connessione con il server impostato nell'app.
+/// New connection with the server set in the app.
 async fn open(app: &AppHandle) -> Result<ApiClient, String> {
-    let server_name = app.state::<NexoApp>().ui.lock().expect("stato").server.clone();
+    let server_name = app.state::<NexoApp>().ui.lock().expect("state").server.clone();
     if server_name.is_empty() {
         return Err(t("err.set_server_first"));
     }
@@ -146,7 +147,7 @@ async fn open(app: &AppHandle) -> Result<ApiClient, String> {
         .map_err(|e| tf("err.server_connect", &[("e", &nexodesk_i18n::message(&format!("{e:#}")))]))
 }
 
-/// Richiesta con una nuova connessione se quella aperta è caduta nel frattempo.
+/// Request with a new connection if the open one dropped in the meantime.
 async fn call(app: &AppHandle, call: Call) -> Result<Option<ApiResult>, String> {
     let first = client(app).await?;
     match first.call(call.clone()).await {
@@ -163,7 +164,7 @@ fn set_account(app: &AppHandle, account: Option<pb::Account>) {
     state.update(app, |ui| ui.account = account.map(Into::into));
 }
 
-/// Dimentica l'accesso (gettone, account, rubriche mostrate).
+/// Forgets the sign-in (token, account, address books shown).
 fn forget(app: &AppHandle) {
     let mut settings = load_settings();
     settings.token = None;
@@ -175,7 +176,7 @@ fn forget(app: &AppHandle) {
     });
 }
 
-/// All'avvio: se c'è un accesso ricordato, carica la rubrica.
+/// At start-up: if there is a remembered sign-in, loads the address book.
 pub fn restore(app: &AppHandle) {
     if load_settings().token.is_none() {
         return;
@@ -183,7 +184,7 @@ pub fn restore(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(e) = refresh(&app).await {
-            warn!("rubrica non caricata: {e}");
+            warn!("address book not loaded: {e}");
             app.state::<NexoApp>().update(&app, |ui| ui.rubrica_error = Some(e));
         }
     });
@@ -211,9 +212,9 @@ pub async fn refresh(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Al primo collegamento riuscito a un ID che non è in nessuna rubrica, lo aggiunge a quella personale.
+/// At the first successful connection to an ID that is in no address book, adds it to the personal one.
 pub fn auto_add(app: &AppHandle, device_id: String, name: String, password: String) {
-    if app.state::<NexoApp>().ui.lock().expect("stato").account.is_none() {
+    if app.state::<NexoApp>().ui.lock().expect("state").account.is_none() {
         return;
     }
     let app = app.clone();
@@ -221,16 +222,16 @@ pub fn auto_add(app: &AppHandle, device_id: String, name: String, password: Stri
         let entry = pb::Entry { device_id, name, password, ..Default::default() };
         match call(&app, Call::AutoAdd(entry)).await {
             Ok(Some(ApiResult::Entry(e))) => {
-                info!("dispositivo {} aggiunto alla rubrica personale", e.device_id);
+                info!("device {} added to the personal address book", e.device_id);
                 let _ = refresh(&app).await;
             }
             Ok(_) => {}
-            Err(e) => warn!("aggiunta automatica alla rubrica non riuscita: {e}"),
+            Err(e) => warn!("automatic add to the address book failed: {e}"),
         }
     });
 }
 
-// --- comandi dell'interfaccia ---
+// --- interface commands ---
 
 #[tauri::command]
 pub async fn rubrica_login(app: AppHandle, username: String, password: String) -> Result<(), String> {
@@ -277,8 +278,8 @@ pub async fn rubrica_delete_entry(app: AppHandle, id: i64) -> Result<(), String>
 #[tauri::command]
 pub async fn rubrica_change_password(app: AppHandle, old: String, new: String) -> Result<(), String> {
     call(&app, Call::ChangePassword(pb::ChangePassword { old_password: old, new_password: new.clone() })).await?;
-    // Il server chiude gli accessi ricordati: si rientra con la password nuova.
-    let username = app.state::<NexoApp>().ui.lock().expect("stato").account.as_ref().map(|a| a.username.clone());
+    // The server closes the remembered sign-ins: signing in again with the new password.
+    let username = app.state::<NexoApp>().ui.lock().expect("state").account.as_ref().map(|a| a.username.clone());
     *app.state::<NexoApp>().rubrica.client.lock().await = None;
     match username {
         Some(username) => rubrica_login(app, username, new).await,

@@ -1,13 +1,13 @@
-//! Barra degli strumenti della sessione.
+//! Session toolbar.
 //!
-//! Una WebView (WebView2 su Windows) figlia della finestra, in alto al centro:
-//! i pulsanti sono HTML (`toolbar.html`, riusabile nel futuro client web) e
-//! funzionano con entrambi i modi di disegno, wgpu e CPU. I clic arrivano al
-//! ciclo degli eventi come [`NetEvent::Toolbar`]; lo stato torna alla pagina con
-//! `nexodesk.update({...})`. Il mouse sopra la barra non arriva al PC remoto.
+//! A WebView (WebView2 on Windows) child of the window, at the top centre: the
+//! buttons are HTML (`toolbar.html`, reusable in the future web client) and work
+//! with both drawing methods, wgpu and CPU. Clicks reach the event loop as
+//! [`NetEvent::Toolbar`]; the state goes back to the page with
+//! `nexodesk.update({...})`. The mouse over the toolbar does not reach the remote PC.
 //!
-//! Il riquadro della chat ([`ChatPanel`], `chat.html`) è una seconda WebView,
-//! a destra sotto la barra, visibile solo quando serve.
+//! The chat panel ([`ChatPanel`], `chat.html`) is a second WebView, on the right
+//! below the toolbar, visible only when needed.
 
 use std::sync::Arc;
 
@@ -22,9 +22,9 @@ use crate::net::NetEvent;
 
 const HTML: &str = include_str!("toolbar.html");
 const CHAT_HTML: &str = include_str!("chat.html");
-/// Dimensioni in pixel logici: barra aperta e linguetta per riaprirla.
+/// Sizes in logical pixels: open toolbar and the tab to reopen it.
 const BAR: (f64, f64) = (860.0, 38.0);
-/// Riquadro della chat: larghezza e altezza massima, distanza dai bordi.
+/// Chat panel: width and maximum height, distance from the edges.
 const CHAT: (f64, f64) = (340.0, 440.0);
 const CHAT_MARGIN: f64 = 12.0;
 const TAB: (f64, f64) = (56.0, 14.0);
@@ -34,17 +34,17 @@ pub enum Action {
     SecureAttention,
     ViewOnly,
     Fullscreen,
-    /// Trasmetti lo schermo con questo indice.
+    /// Stream the screen with this index.
     Display(u32),
     Quality(Quality),
     Collapse,
     Expand,
     Close,
-    /// Apre o chiude il riquadro della chat.
+    /// Opens or closes the chat panel.
     Chat,
-    /// Messaggio scritto nel riquadro della chat.
+    /// Message written in the chat panel.
     ChatSend(String),
-    /// Sceglie file da inviare al PC remoto.
+    /// Picks files to send to the remote PC.
     SendFile,
 }
 
@@ -82,18 +82,18 @@ pub struct Toolbar {
     webview: WebView,
     window: Arc<Window>,
     collapsed: bool,
-    // Deve vivere quanto la WebView.
+    // Must live as long as the WebView.
     _context: WebContext,
 }
 
 impl Toolbar {
     pub fn new(window: Arc<Window>, proxy: EventLoopProxy<NetEvent>) -> Result<Self> {
         let (webview, context) =
-            child_webview(&window, proxy, HTML, bounds(&window, BAR), true).context("WebView della barra")?;
+            child_webview(&window, proxy, HTML, bounds(&window, BAR), true).context("toolbar WebView")?;
         Ok(Self { webview, window, collapsed: false, _context: context })
     }
 
-    /// Riposiziona la barra (finestra ridimensionata o barra ridotta/aperta).
+    /// Repositions the toolbar (window resized or toolbar collapsed/expanded).
     pub fn layout(&self) {
         let size = if self.collapsed { TAB } else { BAR };
         let _ = self.webview.set_bounds(bounds(&self.window, size));
@@ -105,18 +105,18 @@ impl Toolbar {
         self.update(&format!("{{collapsed:{collapsed}}}"));
     }
 
-    /// Aggiorna la pagina; `state` è un oggetto JavaScript, es. `{viewOnly:true}`.
+    /// Updates the page; `state` is a JavaScript object, e.g. `{viewOnly:true}`.
     pub fn update(&self, state: &str) {
         let _ = self.webview.evaluate_script(&format!("window.nexodesk && nexodesk.update({state})"));
     }
 
-    /// Dopo un clic sulla barra la tastiera torna alla sessione.
+    /// After a click on the toolbar the keyboard goes back to the session.
     pub fn focus_session(&self) {
         let _ = self.webview.focus_parent();
     }
 }
 
-/// Riquadro della chat, nascosto finché non serve.
+/// Chat panel, hidden until needed.
 pub struct ChatPanel {
     webview: WebView,
     window: Arc<Window>,
@@ -127,7 +127,7 @@ pub struct ChatPanel {
 impl ChatPanel {
     pub fn new(window: Arc<Window>, proxy: EventLoopProxy<NetEvent>) -> Result<Self> {
         let (webview, context) = child_webview(&window, proxy, CHAT_HTML, chat_bounds(&window), false)
-            .context("WebView della chat")?;
+            .context("chat WebView")?;
         Ok(Self { webview, window, visible: false, _context: context })
     }
 
@@ -151,27 +151,27 @@ impl ChatPanel {
         let _ = self.webview.set_bounds(chat_bounds(&self.window));
     }
 
-    /// Aggiunge un messaggio; `mine`: scritto da chi controlla.
+    /// Adds a message; `mine`: written by the controlling side.
     pub fn add(&self, mine: bool, text: &str) {
         let _ = self
             .webview
             .evaluate_script(&format!("window.nexodesk && nexodesk.add({{mine:{mine},text:{}}})", js_string(text)));
     }
 
-    /// Avviso del viewer (es. file inviato), non un messaggio.
+    /// Viewer notice (e.g. file sent), not a message.
     pub fn notice(&self, text: &str) {
         let _ = self
             .webview
             .evaluate_script(&format!("window.nexodesk && nexodesk.add({{system:true,text:{}}})", js_string(text)));
     }
 
-    /// Clic sull'immagine: la tastiera torna alla sessione.
+    /// Click on the image: the keyboard goes back to the session.
     pub fn focus_session(&self) {
         let _ = self.webview.focus_parent();
     }
 }
 
-/// WebView figlia della finestra della sessione, con i messaggi della pagina inoltrati al viewer.
+/// WebView child of the session window, with the page's messages forwarded to the viewer.
 fn child_webview(
     window: &Window,
     proxy: EventLoopProxy<NetEvent>,
@@ -179,14 +179,14 @@ fn child_webview(
     bounds: Rect,
     visible: bool,
 ) -> Result<(WebView, WebContext)> {
-    // Dati di WebView2 nella cartella dell'utente: accanto al programma (es. Program Files)
-    // spesso non si può scrivere.
+    // WebView2 data in the user's folder: next to the program (e.g. Program Files)
+    // it often cannot write.
     let data_dir =
         std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("NexoDesk").join("WebView2"));
     let mut context = WebContext::new(data_dir);
     let webview = WebViewBuilder::new_with_web_context(&mut context)
         .with_html(html)
-        // Stesso colore delle pagine: niente lampo bianco al caricamento.
+        // Same colour as the pages: no white flash while loading.
         .with_background_color((0x1f, 0x25, 0x2b, 0xff))
         .with_bounds(bounds)
         .with_visible(visible)
@@ -201,7 +201,7 @@ fn child_webview(
     Ok((webview, context))
 }
 
-/// A destra, sotto la barra.
+/// On the right, below the toolbar.
 fn chat_bounds(window: &Window) -> Rect {
     let inner = window.inner_size().to_logical::<f64>(window.scale_factor());
     let w = CHAT.0.min(inner.width - 2.0 * CHAT_MARGIN).max(0.0);
@@ -213,7 +213,7 @@ fn chat_bounds(window: &Window) -> Rect {
     }
 }
 
-/// In alto al centro, larga al massimo quanto la finestra.
+/// At the top centre, at most as wide as the window.
 fn bounds(window: &Window, (w, h): (f64, f64)) -> Rect {
     let inner = window.inner_size().to_logical::<f64>(window.scale_factor());
     let w = w.min(inner.width);
@@ -223,7 +223,7 @@ fn bounds(window: &Window, (w, h): (f64, f64)) -> Rect {
     }
 }
 
-/// Nome della qualità usato dalla pagina.
+/// Quality name used by the page.
 pub fn quality_name(quality: Quality) -> &'static str {
     match quality {
         Quality::Sharp => "sharp",
@@ -232,7 +232,7 @@ pub fn quality_name(quality: Quality) -> &'static str {
     }
 }
 
-/// Stato degli schermi per `nexodesk.update`: i pulsanti compaiono solo se sono più di uno.
+/// Screens state for `nexodesk.update`: the buttons appear only if there is more than one.
 pub fn displays_state(displays: &[DisplayInfo], current: u32) -> String {
     let items: Vec<String> = displays
         .iter()
@@ -248,7 +248,7 @@ pub fn displays_state(displays: &[DisplayInfo], current: u32) -> String {
     format!("{{displays:[{}],display:{current}}}", items.join(","))
 }
 
-/// Stringa JavaScript con le virgolette e i caratteri speciali protetti.
+/// JavaScript string with quotes and special characters escaped.
 pub fn js_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -278,8 +278,8 @@ mod tests {
         assert_eq!(Action::parse("display:1"), Some(Action::Display(1)));
         assert_eq!(Action::parse("quality:sharp"), Some(Action::Quality(Quality::Sharp)));
         assert_eq!(Action::parse("quality:x"), None);
-        assert_eq!(Action::parse("chat:ciao: a te"), Some(Action::ChatSend("ciao: a te".into())));
-        // "<" diventa <: il testo non può chiudere un tag <script>.
+        assert_eq!(Action::parse("chat:hello: to you"), Some(Action::ChatSend("hello: to you".into())));
+        // "<" is escaped: the text cannot close a <script> tag.
         let expected = concat!(r#""PC \"lab\"\u000a"#, r"\u", "003c", r#"/script>""#);
         assert_eq!(js_string("PC \"lab\"\n</script>"), expected);
     }

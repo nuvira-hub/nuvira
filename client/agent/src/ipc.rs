@@ -1,13 +1,13 @@
-//! Canale locale tra l'agent del servizio e l'app di chi usa il PC.
+//! Local channel between the service's agent and the app of the person at the PC.
 //!
-//! Con nexodesk-service l'agent gira come SYSTEM e l'app come utente. Per mostrare
-//! ID e password temporanea e confermare le richieste, l'app si collega alla
-//! named pipe `\\.\pipe\nexodesk-agent-<sessione>` creata dall'agent:
-//! - accesso consentito a SYSTEM e agli utenti interattivi; l'agent accetta solo
-//!   app della propria sessione di Windows;
-//! - una riga JSON per messaggio: verso l'app [`ToApp`], verso l'agent [`AgentCommand`];
-//! - un'app alla volta, che appena collegata riceve lo stato attuale;
-//! - senza app collegata nessuno può confermare: le richieste vengono rifiutate.
+//! With nexodesk-service the agent runs as SYSTEM and the app as the user. To show
+//! the ID and the temporary password and to confirm requests, the app connects to
+//! the named pipe `\\.\pipe\nexodesk-agent-<session>` created by the agent:
+//! - access allowed to SYSTEM and interactive users; the agent accepts only apps
+//!   of its own Windows session;
+//! - one JSON line per message: [`ToApp`] towards the app, [`AgentCommand`] towards the agent;
+//! - one app at a time, which receives the current state as soon as it connects;
+//! - with no app connected nobody can confirm: requests are rejected.
 
 use std::time::Duration;
 
@@ -30,16 +30,16 @@ use windows::core::{HSTRING, PCWSTR};
 
 use crate::{AgentCommand, AgentEvent};
 
-/// Messaggi dall'agent all'app.
+/// Messages from the agent to the app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToApp {
-    /// Primo messaggio: server a cui è registrato l'agent.
+    /// First message: server the agent is registered on.
     Info { server: String },
     Event { event: AgentEvent },
 }
 
-/// Sessione di Windows del processo corrente.
+/// Windows session of the current process.
 pub fn current_session() -> u32 {
     let mut session = 0;
     let _ = unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut session) };
@@ -50,7 +50,7 @@ fn pipe_name(session: u32) -> String {
     format!(r"\\.\pipe\nexodesk-agent-{session}")
 }
 
-/// Il servizio NexoDesk è installato (lo può verificare anche un utente normale).
+/// The NexoDesk service is installed (a normal user can check this too).
 pub fn service_installed() -> bool {
     unsafe {
         let Ok(scm) = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) else { return false };
@@ -63,7 +63,7 @@ pub fn service_installed() -> bool {
     }
 }
 
-/// Stato da ripetere a ogni app che si collega.
+/// State to repeat to every app that connects.
 #[derive(Default)]
 struct Snapshot {
     status: Option<AgentEvent>,
@@ -87,7 +87,7 @@ impl Snapshot {
                 self.incoming = None;
                 return;
             }
-            // I messaggi di chat valgono solo per l'app collegata in quel momento.
+            // Chat messages only matter to the app connected at that moment.
             AgentEvent::Chat { .. } | AgentEvent::FileReceived { .. } => return,
         };
         *slot = Some(event.clone());
@@ -97,7 +97,7 @@ impl Snapshot {
         [&self.status, &self.password, &self.session, &self.incoming].into_iter().flatten()
     }
 
-    /// Nessuno può più confermare la richiesta in attesa: la si rifiuta.
+    /// Nobody can confirm the pending request any more: it is rejected.
     fn reject_pending(&self, commands: &mpsc::UnboundedSender<AgentCommand>) {
         if let Some(AgentEvent::Incoming { session_id, .. }) = &self.incoming {
             let _ = commands.send(AgentCommand::Respond { session_id: session_id.clone(), accept: false });
@@ -105,7 +105,7 @@ impl Snapshot {
     }
 }
 
-/// Lato agent: inoltra eventi e comandi all'app collegata. Termina quando si chiude `events`.
+/// Agent side: forwards events and commands to the connected app. Ends when `events` closes.
 pub async fn serve(
     server: String,
     mut events: mpsc::UnboundedReceiver<AgentEvent>,
@@ -114,9 +114,9 @@ pub async fn serve(
     let session = current_session();
     let name = pipe_name(session);
     let mut snapshot = Snapshot::default();
-    // La prima istanza si crea solo se il nome è libero (nessun altro processo lo ha
-    // preso); poi se ne prepara sempre una nuova prima di usare quella collegata,
-    // così il nome resta nostro anche mentre un'app si scollega.
+    // The first instance is created only if the name is free (no other process has
+    // taken it); afterwards a new one is always prepared before using the connected
+    // one, so the name stays ours even while an app disconnects.
     let mut first = true;
     let mut next: Option<NamedPipeServer> = None;
     loop {
@@ -128,7 +128,7 @@ pub async fn serve(
                     pipe
                 }
                 Err(e) => {
-                    warn!("creazione di {name} non riuscita: {e:#}; riprovo tra 2 s");
+                    warn!("creating {name} failed: {e:#}; retrying in 2 s");
                     let pause = tokio::time::sleep(Duration::from_secs(2));
                     tokio::pin!(pause);
                     loop {
@@ -144,7 +144,7 @@ pub async fn serve(
                 }
             },
         };
-        // In attesa dell'app, gli eventi aggiornano lo stato.
+        // While waiting for the app, events update the state.
         let connected = {
             let connect = pipe.connect();
             tokio::pin!(connect);
@@ -161,36 +161,36 @@ pub async fn serve(
         next = match create_pipe(&name, false) {
             Ok(pipe) => Some(pipe),
             Err(e) => {
-                warn!("istanza successiva di {name}: {e:#}");
+                warn!("next instance of {name}: {e:#}");
                 None
             }
         };
         if let Err(e) = connected {
-            debug!("collegamento dell'app non riuscito: {e}");
+            debug!("app connection failed: {e}");
             continue;
         }
         let mut client_session = u32::MAX;
         let raw = std::os::windows::io::AsRawHandle::as_raw_handle(&pipe);
         let _ = unsafe { GetNamedPipeClientSessionId(HANDLE(raw), &mut client_session) };
         if client_session != session {
-            warn!("app di un'altra sessione di Windows ({client_session}) rifiutata");
+            warn!("app from another Windows session ({client_session}) rejected");
             continue;
         }
-        info!("app collegata");
+        info!("app connected");
         if let Err(e) = serve_app(pipe, &server, &mut snapshot, &mut events, &commands).await {
-            debug!("canale con l'app: {e:#}");
+            debug!("channel with the app: {e:#}");
         }
-        info!("app scollegata");
+        info!("app disconnected");
         snapshot.reject_pending(&commands);
     }
 }
 
-/// Evento mentre nessuna app è collegata: aggiorna lo stato; una richiesta da
-/// confermare viene rifiutata subito, perché non c'è nessuno a cui chiedere.
+/// Event while no app is connected: it updates the state; a request to confirm is
+/// rejected right away, since there is nobody to ask.
 fn without_app(event: &AgentEvent, snapshot: &mut Snapshot, commands: &mpsc::UnboundedSender<AgentCommand>) {
     snapshot.apply(event);
     if matches!(event, AgentEvent::Incoming { .. }) {
-        info!("nessuna app aperta per confermare la richiesta: rifiutata");
+        info!("no app open to confirm the request: rejected");
         snapshot.reject_pending(commands);
     }
 }
@@ -215,7 +215,7 @@ async fn serve_app(
                     Ok(command) => {
                         let _ = commands.send(command);
                     }
-                    Err(e) => warn!("comando dell'app non valido: {e}"),
+                    Err(e) => warn!("invalid command from the app: {e}"),
                 },
                 None => return Ok(()),
             },
@@ -228,19 +228,19 @@ async fn serve_app(
     }
 }
 
-/// Pipe accessibile a SYSTEM e agli utenti interattivi. Con `first` la creazione
-/// fallisce se un altro processo ha già una pipe con lo stesso nome.
+/// Pipe accessible to SYSTEM and interactive users. With `first` creation fails
+/// if another process already has a pipe with the same name.
 fn create_pipe(name: &str, first: bool) -> Result<NamedPipeServer> {
     let sddl = HSTRING::from("D:P(A;;GA;;;SY)(A;;GRGW;;;IU)");
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
     unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(&sddl, 1, &mut descriptor, None) }
-        .context("descrittore di sicurezza della pipe")?;
+        .context("pipe security descriptor")?;
     let mut attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
         lpSecurityDescriptor: descriptor.0,
         bInheritHandle: false.into(),
     };
-    // SAFETY: gli attributi sono validi per tutta la chiamata.
+    // SAFETY: the attributes are valid for the whole call.
     let pipe = unsafe {
         ServerOptions::new().first_pipe_instance(first).create_with_security_attributes_raw(name, (&raw mut attributes).cast())
     };
@@ -255,10 +255,10 @@ async fn send_line(write: &mut (impl AsyncWrite + Unpin), msg: &impl Serialize) 
     Ok(())
 }
 
-/// Lato app: collegamento all'agent del servizio nella propria sessione di Windows.
-/// Il canale dei messaggi si chiude quando l'agent si scollega.
+/// App side: connection to the service's agent in its own Windows session.
+/// The message channel closes when the agent disconnects.
 pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSender<AgentCommand>)> {
-    let pipe = ClientOptions::new().open(pipe_name(current_session())).context("agent del servizio non raggiungibile")?;
+    let pipe = ClientOptions::new().open(pipe_name(current_session())).context("service agent not reachable")?;
     let (read, mut write) = tokio::io::split(pipe);
     let (to_app_tx, to_app_rx) = mpsc::unbounded_channel();
     let (commands_tx, mut commands_rx) = mpsc::unbounded_channel::<AgentCommand>();
@@ -271,7 +271,7 @@ pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSende
                         break;
                     }
                 }
-                Err(e) => warn!("messaggio dell'agent non valido: {e}"),
+                Err(e) => warn!("invalid message from the agent: {e}"),
             }
         }
     });

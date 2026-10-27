@@ -1,6 +1,6 @@
 [package]
 name = "nexodesk-clipboard"
-description = "Appunti condivisi tra viewer e agent (testo)"
+description = "Clipboard shared between viewer and agent (text)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

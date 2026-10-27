@@ -1,12 +1,12 @@
-//! NexoDesk — applicazione desktop.
+//! NexoDesk — desktop application.
 //!
-//! Finestra principale (Tauri) con ID e password di questo dispositivo, stato
-//! del collegamento a nexodesk-server, conferma delle richieste in arrivo e avvio
-//! delle sessioni verso altri dispositivi. L'agent gira in questo processo
-//! (libreria `nexodesk_agent`), oppure, se è installato nexodesk-service, è quello
-//! del servizio e l'app gli parla attraverso il canale locale (`nexodesk_agent::ipc`).
-//! La finestra della sessione remota è `nexodesk-viewer`, avviato come processo
-//! separato (finestra nativa wgpu, decisione D5).
+//! Main window (Tauri) with the ID and password of this device, the state of the
+//! connection to nexodesk-server, confirmation of incoming requests and start of
+//! sessions towards other devices. The agent runs in this process (the
+//! `nexodesk_agent` library) or, if nexodesk-service is installed, it is the
+//! service's and the app talks to it through the local channel (`nexodesk_agent::ipc`).
+//! The remote session window is `nexodesk-viewer`, started as a separate process
+//! (native wgpu window, decision D5).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -27,25 +27,25 @@ use tracing::{info, warn};
 
 const SOURCE_URL: &str = "https://github.com/alexbn71/NexoDesk";
 
-/// Stato mostrato dall'interfaccia (inviato con l'evento "state").
+/// State shown by the interface (sent with the "state" event).
 #[derive(Debug, Default, Clone, Serialize)]
 struct UiState {
     server: String,
-    /// "setup" (server da impostare), "connecting", "online", "offline".
+    /// "setup" (server to set), "connecting", "online", "offline".
     status: String,
     device_id: Option<String>,
     websocket: bool,
-    /// ID e password sono quelli del servizio (accesso non presidiato).
+    /// ID and password are the service's (unattended access).
     service: bool,
     password: String,
     error: Option<String>,
     incoming: Option<IncomingUi>,
     session: Option<SessionUi>,
-    /// Messaggio dell'ultima sessione verso un altro dispositivo.
+    /// Message of the last session towards another device.
     viewer_message: Option<String>,
-    /// Chat con chi controlla questo PC (sessione in corso o ultima).
+    /// Chat with whoever is controlling this PC (current or last session).
     chat: Vec<ChatLine>,
-    /// Account con cui si è entrati nella rubrica del server.
+    /// Account signed in to the server's address book.
     account: Option<rubrica::AccountUi>,
     books: Vec<rubrica::BookUi>,
     rubrica_error: Option<String>,
@@ -53,9 +53,9 @@ struct UiState {
 
 #[derive(Debug, Clone, Serialize)]
 struct ChatLine {
-    /// Scritto da chi usa questo PC.
+    /// Written by the person using this PC.
     mine: bool,
-    /// Avviso dell'app (es. file ricevuto), non un messaggio.
+    /// App notice (e.g. file received), not a message.
     system: bool,
     text: String,
 }
@@ -65,7 +65,7 @@ struct IncomingUi {
     session_id: String,
     viewer_id: String,
     viewer_name: String,
-    /// Scadenza della richiesta (ms dal 1970): l'interfaccia mostra il conto alla rovescia.
+    /// Request deadline (ms since 1970): the interface shows the countdown.
     deadline_ms: u64,
 }
 
@@ -76,11 +76,11 @@ struct SessionUi {
     direct: bool,
 }
 
-/// Impostazioni salvate in `app.json` nella cartella dati.
+/// Settings saved in `app.json` in the data folder.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct Settings {
     server: String,
-    /// Accesso ricordato alla rubrica (gettone del server, non la password).
+    /// Remembered address book sign-in (server token, not the password).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     token: Option<String>,
     /// Interface language ("auto" or a code from `nexodesk_i18n::LANGUAGES`).
@@ -114,7 +114,7 @@ struct NexoApp {
     password: Arc<Mutex<String>>,
     commands: Mutex<Option<mpsc::UnboundedSender<AgentCommand>>>,
     agent: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
-    /// Encoder scelto alla prima sessione (la prova dura un paio di secondi).
+    /// Encoder chosen at the first session (the test takes a couple of seconds).
     plan: Mutex<Option<EncoderPlan>>,
     rubrica: rubrica::Link,
 }
@@ -122,7 +122,7 @@ struct NexoApp {
 impl NexoApp {
     fn update(&self, app: &AppHandle, change: impl FnOnce(&mut UiState)) {
         let state = {
-            let mut ui = self.ui.lock().expect("stato");
+            let mut ui = self.ui.lock().expect("state");
             change(&mut ui);
             ui.clone()
         };
@@ -130,7 +130,7 @@ impl NexoApp {
     }
 
     fn send(&self, command: AgentCommand) {
-        if let Some(tx) = self.commands.lock().expect("comandi").as_ref() {
+        if let Some(tx) = self.commands.lock().expect("commands").as_ref() {
             let _ = tx.send(command);
         }
     }
@@ -140,7 +140,7 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-/// Porta la finestra in primo piano (richiesta di collegamento in arrivo).
+/// Brings the window to the front (incoming connection request).
 fn bring_to_front(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -150,8 +150,8 @@ fn bring_to_front(app: &AppHandle) {
     }
 }
 
-/// Avvia (o riavvia, se il server cambia) l'agent nel runtime di Tauri, oppure
-/// il collegamento con l'agent del servizio se è installato.
+/// Starts (or restarts, if the server changes) the agent in Tauri's runtime, or the
+/// link with the service's agent if the service is installed.
 fn start_agent(app: &AppHandle) {
     let state = app.state::<NexoApp>();
     if let Some(old) = state.agent.lock().expect("agent").take() {
@@ -162,13 +162,13 @@ fn start_agent(app: &AppHandle) {
         start_service_link(app);
         return;
     }
-    let server = state.ui.lock().expect("stato").server.clone();
+    let server = state.ui.lock().expect("state").server.clone();
     if server.trim().is_empty() {
         state.update(app, |ui| ui.status = "setup".into());
         return;
     }
     let (commands_tx, commands_rx) = mpsc::unbounded_channel();
-    *state.commands.lock().expect("comandi") = Some(commands_tx);
+    *state.commands.lock().expect("commands") = Some(commands_tx);
     state.update(app, |ui| {
         ui.status = "connecting".into();
         ui.device_id = None;
@@ -221,7 +221,7 @@ fn start_agent(app: &AppHandle) {
         if let Err(e) =
             nexodesk_agent::serve_via_server(config, opts, state.password.clone(), events_tx, commands_rx).await
         {
-            warn!("agent terminato: {e:#}");
+            warn!("agent ended: {e:#}");
             state.update(&app, |ui| {
                 ui.status = "offline".into();
                 ui.error = Some(format!("{e:#}"));
@@ -231,8 +231,8 @@ fn start_agent(app: &AppHandle) {
     *state.agent.lock().expect("agent") = Some(handle);
 }
 
-/// Il servizio NexoDesk è installato: niente agent nell'app, si mostra quello del
-/// servizio. Se il suo agent non risponde (avvio, cambio utente) si riprova.
+/// The NexoDesk service is installed: no agent in the app, the service's one is
+/// shown. If its agent does not answer (start-up, user switch) it is retried.
 #[cfg(windows)]
 fn start_service_link(app: &AppHandle) {
     use nexodesk_agent::ipc::ToApp;
@@ -249,12 +249,12 @@ fn start_service_link(app: &AppHandle) {
         loop {
             match nexodesk_agent::ipc::connect() {
                 Ok((mut messages, commands)) => {
-                    info!("collegato all'agent del servizio");
-                    *state.commands.lock().expect("comandi") = Some(commands);
+                    info!("connected to the service's agent");
+                    *state.commands.lock().expect("commands") = Some(commands);
                     state.update(&app, |ui| ui.error = None);
                     while let Some(msg) = messages.recv().await {
                         match msg {
-                            // Il server del servizio vale anche per i collegamenti in uscita, se non ne è impostato un altro.
+                            // The service's server also applies to outgoing connections, unless another one is set.
                             ToApp::Info { server } => state.update(&app, |ui| {
                                 if ui.server.is_empty() {
                                     ui.server = server;
@@ -263,8 +263,8 @@ fn start_service_link(app: &AppHandle) {
                             ToApp::Event { event } => on_agent_event(&app, event),
                         }
                     }
-                    *state.commands.lock().expect("comandi") = None;
-                    warn!("collegamento con l'agent del servizio perso");
+                    *state.commands.lock().expect("commands") = None;
+                    warn!("link with the service's agent lost");
                     state.update(&app, |ui| {
                         ui.status = "connecting".into();
                         ui.incoming = None;
@@ -273,7 +273,7 @@ fn start_service_link(app: &AppHandle) {
                     });
                 }
                 Err(e) => {
-                    tracing::debug!("agent del servizio non raggiungibile: {e:#}");
+                    tracing::debug!("service agent not reachable: {e:#}");
                     state.update(&app, |ui| {
                         ui.status = "connecting".into();
                         ui.error = Some("@status.service_waiting".into());
@@ -322,7 +322,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
             ui.chat.clear();
         }),
         AgentEvent::FileReceived { name, path } => {
-            info!("file ricevuto: {path}");
+            info!("file received: {path}");
             let text = tf("chat.file_received", &[("name", &name)]);
             state.update(app, |ui| ui.chat.push(ChatLine { mine: false, system: true, text }));
             bring_to_front(app);
@@ -334,7 +334,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
             ui.session = None;
             if let Some(e) = error {
-                info!("sessione terminata: {e}");
+                info!("session ended: {e}");
             }
         }),
     }
@@ -342,7 +342,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
 
 #[tauri::command]
 fn get_state(state: State<NexoApp>) -> UiState {
-    state.ui.lock().expect("stato").clone()
+    state.ui.lock().expect("state").clone()
 }
 
 #[tauri::command]
@@ -356,7 +356,7 @@ fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(
     let changed = settings.server != server;
     settings.server = server.clone();
     if changed {
-        // L'accesso alla rubrica vale per il server su cui è stato fatto.
+        // The address book sign-in applies to the server it was made on.
         settings.token = None;
     }
     save_settings(&settings).map_err(|e| e.to_string())?;
@@ -374,7 +374,7 @@ fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(
     Ok(())
 }
 
-/// La genera l'agent (dell'app o del servizio), che risponde con l'evento Password.
+/// Generated by the agent (the app's or the service's), which answers with the Password event.
 #[tauri::command]
 fn new_password(state: State<NexoApp>) {
     state.send(AgentCommand::NewPassword);
@@ -388,7 +388,7 @@ fn respond(state: State<NexoApp>, session_id: String, accept: bool) {
 #[tauri::command]
 fn send_chat(app: AppHandle, state: State<NexoApp>, text: String) {
     let text = text.trim().to_string();
-    if text.is_empty() || state.ui.lock().expect("stato").session.is_none() {
+    if text.is_empty() || state.ui.lock().expect("state").session.is_none() {
         return;
     }
     state.send(AgentCommand::Chat { text: text.clone() });
@@ -400,19 +400,19 @@ fn end_session(state: State<NexoApp>) {
     state.send(AgentCommand::EndSession);
 }
 
-/// Apre la finestra della sessione verso un altro dispositivo (processo `nexodesk-viewer`).
+/// Opens the session window towards another device (`nexodesk-viewer` process).
 #[tauri::command]
 fn connect(app: AppHandle, state: State<NexoApp>, device_id: String, password: String) -> Result<(), String> {
     launch_viewer(&app, &state, device_id, password)
 }
 
-/// Collegamento dalla rubrica, con la password salvata nella scheda.
+/// Connection from the address book, with the password saved in the entry.
 #[tauri::command]
 fn connect_entry(app: AppHandle, state: State<NexoApp>, id: i64) -> Result<(), String> {
     let entry = state
         .ui
         .lock()
-        .expect("stato")
+        .expect("state")
         .books
         .iter()
         .flat_map(|b| &b.entries)
@@ -427,7 +427,7 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
     if device_id.len() != 9 {
         return Err(t("err.id_digits"));
     }
-    let server = state.ui.lock().expect("stato").server.clone();
+    let server = state.ui.lock().expect("state").server.clone();
     if server.is_empty() {
         return Err(t("err.set_server_first"));
     }
@@ -436,8 +436,8 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
     if !viewer.exists() {
         return Err(tf("err.viewer_missing", &[("path", &viewer.display().to_string())]));
     }
-    // La password passa nell'ambiente del processo, non sulla riga di comando
-    // (che altri programmi dello stesso PC possono leggere).
+    // The password goes in the process environment, not on the command line
+    // (which other programs on the same PC can read).
     let mut child = std::process::Command::new(&viewer)
         .args(["--server", &server, &device_id])
         .env("NEXODESK_PASSWORD", &password)
@@ -446,8 +446,8 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("avvio di nexodesk-viewer: {e}"))?;
-    info!("sessione verso {device_id} avviata");
+        .map_err(|e| format!("starting nexodesk-viewer: {e}"))?;
+    info!("session towards {device_id} started");
     state.update(app, |ui| ui.viewer_message = None);
 
     // The viewer reports on its standard output: session started (time for the
@@ -603,7 +603,7 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("avvio dell'applicazione");
-    // Lascia il tempo alla chiusura delle connessioni dell'agent.
+        .expect("starting the application");
+    // Leaves time for the agent's connections to close.
     std::thread::sleep(Duration::from_millis(100));
 }

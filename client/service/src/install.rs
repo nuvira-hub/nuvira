@@ -1,4 +1,4 @@
-//! Installazione, rimozione e stato del servizio (da un prompt amministratore).
+//! Installing, removing and checking the service (from an administrator prompt).
 
 use std::os::windows::process::CommandExt;
 use std::path::Path;
@@ -21,7 +21,7 @@ use crate::config::{self, ServiceConfig};
 
 const FIREWALL_RULE: &str = "NexoDesk agent";
 
-/// Handle del gestore servizi, chiuso automaticamente.
+/// Service manager handle, closed automatically.
 struct Sc(SC_HANDLE);
 
 impl Drop for Sc {
@@ -33,10 +33,10 @@ impl Drop for Sc {
 fn manager(access: u32) -> Result<Sc> {
     unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), access) }
         .map(Sc)
-        .context("accesso al gestore servizi negato: serve un prompt dei comandi da amministratore")
+        .context("access to the service manager denied: an administrator command prompt is needed")
 }
 
-/// `None` se il servizio non è installato.
+/// `None` if the service is not installed.
 fn open_service(scm: &Sc, access: u32) -> Result<Option<Sc>> {
     match unsafe { OpenServiceW(scm.0, &HSTRING::from(config::SERVICE_NAME), access) } {
         Ok(h) => Ok(Some(Sc(h))),
@@ -67,10 +67,10 @@ fn stop(service: &Sc) -> Result<()> {
         return Ok(());
     }
     let mut status = SERVICE_STATUS::default();
-    // Può fallire se si sta già fermando: conta solo lo stato finale.
+    // It may fail if it is already stopping: only the final state counts.
     let _ = unsafe { ControlService(service.0, SERVICE_CONTROL_STOP, &mut status) };
     if !wait_state(service, SERVICE_STOPPED, Duration::from_secs(20))? {
-        bail!("il servizio non si è fermato entro 20 s");
+        bail!("the service did not stop within 20 s");
     }
     Ok(())
 }
@@ -87,30 +87,30 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     let scm = manager(SC_MANAGER_ALL_ACCESS)?;
     let existing = open_service(&scm, SERVICE_ALL_ACCESS)?;
     if let Some(service) = &existing {
-        println!("servizio già installato: lo fermo per aggiornarlo");
+        println!("service already installed: stopping it to update it");
         stop(service)?;
     }
 
-    // Programmi in Program Files: il servizio (SYSTEM) non deve eseguire file che un utente può sostituire.
+    // Programs in Program Files: the service (SYSTEM) must not run files a user can replace.
     let here = std::env::current_exe()?;
-    let source_dir = here.parent().context("cartella del programma")?;
+    let source_dir = here.parent().context("program folder")?;
     let program_dir = config::program_dir();
-    std::fs::create_dir_all(&program_dir).with_context(|| format!("creazione di {}", program_dir.display()))?;
+    std::fs::create_dir_all(&program_dir).with_context(|| format!("creating {}", program_dir.display()))?;
     for exe in [config::SERVICE_EXE, config::AGENT_EXE] {
         let (src, dst) = (source_dir.join(exe), program_dir.join(exe));
         if !src.exists() {
-            bail!("{} non trovato: deve stare nella stessa cartella di nexodesk-service.exe", src.display());
+            bail!("{} not found: it must be in the same folder as nexodesk-service.exe", src.display());
         }
         if !same_file(&src, &dst) {
-            std::fs::copy(&src, &dst).with_context(|| format!("copia di {} in {}", exe, program_dir.display()))?;
+            std::fs::copy(&src, &dst).with_context(|| format!("copying {} to {}", exe, program_dir.display()))?;
         }
     }
 
-    // Dati leggibili solo da SYSTEM e amministratori: contengono chiave e password.
+    // Data readable only by SYSTEM and administrators: it holds the key and the password.
     let data_dir = config::data_dir();
-    std::fs::create_dir_all(&data_dir).with_context(|| format!("creazione di {}", data_dir.display()))?;
-    // Le regole si impostano sulla cartella e i file le ereditano: con /T applicate anche ai
-    // file, (OI)(CI) non vale per un file e reinstallando i file restavano senza permessi.
+    std::fs::create_dir_all(&data_dir).with_context(|| format!("creating {}", data_dir.display()))?;
+    // The rules are set on the folder and the files inherit them: with /T applied to the
+    // files too, (OI)(CI) is not valid for a file and on reinstall the files lost all permissions.
     run(Command::new("icacls").arg(&data_dir).args([
         "/inheritance:r",
         "/grant:r",
@@ -118,13 +118,13 @@ pub fn install(opts: InstallOptions) -> Result<()> {
         "*S-1-5-32-544:(OI)(CI)F",
         "/Q",
     ]))
-    .context("protezione della cartella dati")?;
+    .context("protecting the data folder")?;
     if std::fs::read_dir(&data_dir)?.next().is_some() {
         run(Command::new("icacls").arg(data_dir.join("*")).args(["/reset", "/T", "/Q"]))
-            .context("permessi dei file nella cartella dati")?;
+            .context("permissions of the files in the data folder")?;
     }
 
-    // Reinstallando senza --password si tiene quella già impostata.
+    // Reinstalling without --password keeps the one already set.
     let previous = ServiceConfig::load().ok();
     let password = opts
         .password
@@ -144,7 +144,7 @@ pub fn install(opts: InstallOptions) -> Result<()> {
         None => create(&scm, &program_dir.join(config::SERVICE_EXE))?,
     };
 
-    // Regola in ingresso per il percorso diretto (UDP) verso l'agent.
+    // Inbound rule for the direct (UDP) path towards the agent.
     let agent = program_dir.join(config::AGENT_EXE);
     let _ = run(Command::new("netsh").raw_arg(format!(
         "advfirewall firewall delete rule name=\"{FIREWALL_RULE}\""
@@ -153,20 +153,20 @@ pub fn install(opts: InstallOptions) -> Result<()> {
         "advfirewall firewall add rule name=\"{FIREWALL_RULE}\" dir=in action=allow program=\"{}\" enable=yes profile=any",
         agent.display()
     )))
-    .context("regola del firewall")?;
+    .context("firewall rule")?;
 
     allow_software_sas()?;
 
     let _ = std::fs::remove_file(config::online_path());
-    unsafe { StartServiceW(service.0, None) }.context("avvio del servizio")?;
+    unsafe { StartServiceW(service.0, None) }.context("starting the service")?;
     if !wait_state(&service, SERVICE_RUNNING, Duration::from_secs(20))? {
-        bail!("il servizio non è partito: vedi {}", config::service_log().display());
+        bail!("the service did not start: see {}", config::service_log().display());
     }
-    println!("servizio installato e avviato");
+    println!("service installed and started");
     match wait_online(Duration::from_secs(30)) {
         Some(id) => println!("ID {id}, password {password}"),
         None => println!(
-            "l'agent non si è ancora registrato su {}: controlla {}",
+            "the agent has not registered on {} yet: check {}",
             service_config.server,
             config::agent_log().display()
         ),
@@ -174,9 +174,9 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     Ok(())
 }
 
-/// Criterio "Generazione SAS software" (SoftwareSASGeneration): permette ai servizi
-/// di inviare Ctrl+Alt+Canc (`SendSAS`). Valori: 0 nessuno, 1 servizi, 2 app di
-/// accessibilità, 3 entrambi. Si aggiungono i servizi senza togliere il resto.
+/// "Allow software to generate SAS" policy (SoftwareSASGeneration): lets services
+/// send Ctrl+Alt+Del (`SendSAS`). Values: 0 none, 1 services, 2 Ease of Access
+/// applications, 3 both. Services are added without removing the rest.
 fn allow_software_sas() -> Result<()> {
     const KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
     let output = Command::new("reg").args(["query", KEY, "/v", "SoftwareSASGeneration"]).output()?;
@@ -198,7 +198,7 @@ fn allow_software_sas() -> Result<()> {
             &(current | 1).to_string(),
             "/f",
         ]))
-        .context("criterio SoftwareSASGeneration")?;
+        .context("SoftwareSASGeneration policy")?;
     }
     Ok(())
 }
@@ -218,7 +218,7 @@ fn create(scm: &Sc, exe: &Path) -> Result<Sc> {
             PCWSTR::null(),
             None,
             PCWSTR::null(),
-            // Senza account: LocalSystem.
+            // No account: LocalSystem.
             PCWSTR::null(),
             PCWSTR::null(),
         )
@@ -230,7 +230,7 @@ fn create(scm: &Sc, exe: &Path) -> Result<Sc> {
     let info = SERVICE_DESCRIPTIONW { lpDescription: PWSTR(description.as_mut_ptr()) };
     let _ = unsafe { ChangeServiceConfig2W(service.0, SERVICE_CONFIG_DESCRIPTION, Some((&raw const info).cast())) };
 
-    // Se il servizio cade, Windows lo riavvia dopo 5 s (il contatore si azzera ogni giorno).
+    // If the service crashes, Windows restarts it after 5 s (the counter resets every day).
     let mut actions = [SC_ACTION { Type: SC_ACTION_RESTART, Delay: 5_000 }; 3];
     let failure = SERVICE_FAILURE_ACTIONSW {
         dwResetPeriod: 24 * 3600,
@@ -246,7 +246,7 @@ fn create(scm: &Sc, exe: &Path) -> Result<Sc> {
 pub fn uninstall() -> Result<()> {
     let scm = manager(SC_MANAGER_ALL_ACCESS)?;
     let Some(service) = open_service(&scm, SERVICE_ALL_ACCESS)? else {
-        println!("il servizio non è installato");
+        println!("the service is not installed");
         return Ok(());
     };
     stop(&service)?;
@@ -254,9 +254,9 @@ pub fn uninstall() -> Result<()> {
     let _ = run(Command::new("netsh").raw_arg(format!(
         "advfirewall firewall delete rule name=\"{FIREWALL_RULE}\""
     )));
-    println!("servizio rimosso");
+    println!("service removed");
     println!(
-        "restano i programmi in {} e i dati in {} (con l'ID del dispositivo, riusato se lo reinstalli)",
+        "the programs remain in {} and the data in {} (with the device ID, reused if you reinstall)",
         config::program_dir().display(),
         config::data_dir().display()
     );
@@ -266,31 +266,31 @@ pub fn uninstall() -> Result<()> {
 pub fn status() -> Result<()> {
     let scm = manager(SC_MANAGER_CONNECT)?;
     let Some(service) = open_service(&scm, SERVICE_QUERY_STATUS)? else {
-        println!("servizio: non installato");
+        println!("service: not installed");
         return Ok(());
     };
     let state = state(&service)?;
     let text = match state {
-        SERVICE_RUNNING => "in esecuzione",
-        SERVICE_STOPPED => "fermo",
-        _ => "in transizione",
+        SERVICE_RUNNING => "running",
+        SERVICE_STOPPED => "stopped",
+        _ => "changing state",
     };
-    println!("servizio: {text}");
+    println!("service: {text}");
     match std::fs::read_to_string(config::online_path()) {
         Ok(info) => match info.split_whitespace().next() {
             Some(id) => println!("ID {}", format_id(id)),
-            None => println!("ID: non ancora registrato"),
+            None => println!("ID: not registered yet"),
         },
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-            println!("ID: visibile solo da un prompt dei comandi da amministratore")
+            println!("ID: visible only from an administrator command prompt")
         }
-        Err(_) => println!("ID: non ancora registrato"),
+        Err(_) => println!("ID: not registered yet"),
     }
-    println!("log: {} e {}", config::service_log().display(), config::agent_log().display());
+    println!("logs: {} and {}", config::service_log().display(), config::agent_log().display());
     Ok(())
 }
 
-/// Attende che l'agent scriva il file con l'ID dopo la registrazione.
+/// Waits for the agent to write the ID file after registering.
 fn wait_online(timeout: Duration) -> Option<String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -316,7 +316,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 fn run(command: &mut Command) -> Result<()> {
-    let output = command.output().context("avvio del comando")?;
+    let output = command.output().context("starting the command")?;
     if !output.status.success() {
         bail!(
             "{}{}",

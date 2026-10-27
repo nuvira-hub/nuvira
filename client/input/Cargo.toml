@@ -1,6 +1,6 @@
 [package]
 name = "nexodesk-input"
-description = "Simulazione di mouse e tastiera sul dispositivo controllato"
+description = "Mouse and keyboard injection on the controlled device"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

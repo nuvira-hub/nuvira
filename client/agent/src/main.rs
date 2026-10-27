@@ -1,7 +1,7 @@
-//! nexodesk-agent — il dispositivo controllato, da riga di comando (test e uso senza interfaccia).
+//! nexodesk-agent — the controlled device, from the command line (tests and use without an interface).
 //!
-//! Con `--server` si registra su nexodesk-server e accetta le sessioni per ID e
-//! password; senza, attende connessioni dirette in LAN (fase 0, solo reti fidate).
+//! With `--server` it registers with nexodesk-server and accepts sessions by ID
+//! and password; without it, it waits for direct LAN connections (trusted networks only).
 
 use std::sync::{Arc, Mutex};
 
@@ -15,80 +15,80 @@ use tracing::info;
 const COPYRIGHT: &str = "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/NexoDesk";
 
 #[derive(Parser, Debug, Clone)]
-#[command(version, about = "NexoDesk agent: rende controllabile questo PC", after_help = COPYRIGHT)]
+#[command(version, about = "NexoDesk agent: makes this PC controllable", after_help = COPYRIGHT)]
 struct Args {
-    /// Porta UDP su cui attendere il viewer (senza --server).
+    /// UDP port to wait for the viewer on (without --server).
     #[arg(long, default_value_t = nexodesk_transport::DEFAULT_PORT)]
     port: u16,
 
-    /// Schermo da trasmettere (vedi --list-displays). Predefinito: il principale.
+    /// Screen to stream (see --list-displays). Default: the primary one.
     #[arg(long)]
     display: Option<usize>,
 
-    /// Elenca gli schermi ed esce.
+    /// Lists the screens and exits.
     #[arg(long)]
     list_displays: bool,
 
-    /// Test automatici: scrive l'impronta (senza --server) o "ID password" (con --server) in questo file.
+    /// Automated tests: writes the fingerprint (without --server) or "ID password" (with --server) to this file.
     #[arg(long, value_name = "FILE")]
     fingerprint_file: Option<std::path::PathBuf>,
 
-    /// Esce al termine della prima sessione (test automatici, senza --server).
+    /// Exits at the end of the first session (automated tests, without --server).
     #[arg(long)]
     once: bool,
 
-    /// Trasmette un'immagine sintetica invece dello schermo, es. 1920x1080@60.
+    /// Streams a synthetic image instead of the screen, e.g. 1920x1080@60.
     #[arg(long, value_name = "LxA@FPS")]
     synthetic: Option<String>,
 
-    /// Bitrate video massimo in kbit/s.
+    /// Maximum video bitrate in kbit/s.
     #[arg(long, default_value_t = 8000)]
     bitrate: u32,
 
-    /// Frame al secondo massimi.
+    /// Maximum frames per second.
     #[arg(long, default_value_t = 60)]
     fps: u32,
 
-    /// Encoder video: il più veloce tra hardware e software (auto), solo hardware o solo software.
+    /// Video encoder: the fastest of hardware and software (auto), hardware only or software only.
     #[arg(long, value_enum, default_value_t = EncoderArg::Auto)]
     encoder: EncoderArg,
 
-    /// Bitrate fisso (--bitrate) invece di adattarlo alla rete.
+    /// Fixed bitrate (--bitrate) instead of adapting it to the network.
     #[arg(long)]
     fixed_bitrate: bool,
 
-    /// Solo visualizzazione: ignora mouse e tastiera del viewer.
+    /// View only: ignores the viewer's mouse and keyboard.
     #[arg(long)]
     view_only: bool,
 
-    /// nexodesk-server a cui registrarsi (host[:porta]): il viewer si collega per ID.
+    /// nexodesk-server to register with (host[:port]): the viewer connects by ID.
     #[arg(long, value_name = "HOST[:PORTA]")]
     server: Option<String>,
 
-    /// Impronta del certificato del server. Senza, si memorizza quella vista al primo collegamento.
+    /// Server certificate fingerprint. Without it, the one seen at the first connection is remembered.
     #[arg(long, value_name = "IMPRONTA")]
     server_key: Option<String>,
 
-    /// Trasporto verso il server: auto (UDP, poi WebSocket se UDP è bloccato), udp, websocket.
+    /// Transport towards the server: auto (UDP, then WebSocket if UDP is blocked), udp, websocket.
     #[arg(long, value_enum, default_value_t = TransportArg::Auto)]
     transport: TransportArg,
 
-    /// URL WebSocket del server per il ripiego (predefinito: ws://<server>:<porta>/nexodesk),
-    /// es. wss://nexodesk.example.it/nexodesk dietro un reverse proxy.
+    /// WebSocket URL of the server for the fallback (default: ws://<server>:<port>/nexodesk),
+    /// e.g. wss://nexodesk.example.com/nexodesk behind a reverse proxy.
     #[arg(long, value_name = "URL")]
     server_ws: Option<String>,
 
-    /// Password permanente (con --server): chi la usa entra senza conferma. In ogni caso
-    /// a ogni avvio viene generata anche una password temporanea.
+    /// Permanent password (with --server): whoever uses it connects without confirmation.
+    /// A temporary password is also generated at every start.
     #[arg(long, env = "NEXODESK_PASSWORD", hide_env_values = true)]
     password: Option<String>,
 
-    /// Canale locale con l'app NexoDesk (usato da nexodesk-service): l'app mostra ID e
-    /// password temporanea, e chi entra con quella va confermato da chi usa il PC.
+    /// Local channel with the NexoDesk app (used by nexodesk-service): the app shows the ID
+    /// and the temporary password, and whoever uses that one must be confirmed at the PC.
     #[arg(long)]
     ipc: bool,
 
-    /// File con la chiave del dispositivo (predefinito: device.key nella cartella dati).
+    /// File with the device key (default: device.key in the data folder).
     #[arg(long, value_name = "FILE")]
     identity: Option<std::path::PathBuf>,
 }
@@ -127,8 +127,8 @@ impl From<EncoderArg> for EncoderChoice {
     }
 }
 
-/// Colori nei log solo se il terminale li interpreta (il vecchio prompt di Windows
-/// li mostrerebbe come `←[2m`).
+/// Colours in the logs only if the terminal understands them (the old Windows
+/// prompt would show them as `←[2m`).
 fn ansi_colors() -> bool {
     #[cfg(windows)]
     return std::io::IsTerminal::is_terminal(&std::io::stderr())
@@ -157,7 +157,7 @@ fn main() -> Result<()> {
                 d.height,
                 d.left,
                 d.top,
-                if d.primary { " [principale]" } else { "" }
+                if d.primary { " [primary]" } else { "" }
             );
         }
         return Ok(());
@@ -174,7 +174,7 @@ fn main() -> Result<()> {
         fixed_bitrate: args.fixed_bitrate,
         view_only: args.view_only,
     };
-    // Con `auto` gli encoder vengono provati qui, così non ritardano la prima sessione.
+    // With `auto` the encoders are tried here, so they do not delay the first session.
     config.plan = nexodesk_codec::plan_encoder(args.encoder.into(), config.encoder_settings());
 
     let rt = tokio::runtime::Runtime::new()?;
@@ -192,14 +192,14 @@ fn main() -> Result<()> {
             .identity
             .clone()
             .unwrap_or_else(|| nexodesk_transport::identity::data_dir().join("device.key")),
-        // Senza app non c'è nessuno a cui chiedere: basta la password.
+        // Without the app there is nobody to ask: the password is enough.
         confirm: ipc,
         permanent_password: args.password.clone(),
         info_file: args.fingerprint_file.clone(),
     };
     let password = Arc::new(Mutex::new(nexodesk_agent::random_password()));
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
-    // Il canale dei comandi deve restare aperto: chiuderlo fermerebbe l'agent.
+    // The command channel must stay open: closing it would stop the agent.
     let (commands_tx, commands_rx) = mpsc::unbounded_channel();
 
     rt.block_on(async move {
@@ -209,7 +209,7 @@ fn main() -> Result<()> {
             let commands = commands_tx.clone();
             tokio::spawn(async move {
                 if let Err(e) = nexodesk_agent::ipc::serve(server_name, app_rx, commands).await {
-                    tracing::warn!("canale con l'app chiuso: {e:#}");
+                    tracing::warn!("channel with the app closed: {e:#}");
                 }
             });
         }
@@ -219,8 +219,8 @@ fn main() -> Result<()> {
             while let Some(event) = events_rx.recv().await {
                 match &event {
                     AgentEvent::Online { device_id: id, .. } => info!("ID {} {} {}", &id[..3], &id[3..6], &id[6..]),
-                    // Con l'app la password temporanea la vede chi usa il PC, non il log.
-                    AgentEvent::Password { password } if !ipc => info!("password temporanea {password}"),
+                    // With the app the temporary password is seen by the person at the PC, not the log.
+                    AgentEvent::Password { password } if !ipc => info!("temporary password {password}"),
                     _ => {}
                 }
                 if ipc {

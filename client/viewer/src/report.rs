@@ -1,7 +1,7 @@
-//! Risultati di una sessione per i test automatici (`--stats-file`).
+//! Session results for automated tests (`--stats-file`).
 //!
-//! Il file JSON viene scritto all'uscita del viewer e riletto dallo script di
-//! test: dice se la sessione è partita, quanti frame sono arrivati e con che latenza.
+//! The JSON file is written when the viewer exits and read back by the test
+//! script: it tells whether the session started, how many frames arrived and with what latency.
 
 use std::time::Instant;
 
@@ -14,16 +14,16 @@ pub struct Report {
     pub bytes: u64,
     pub encode_us: u64,
     pub decode_us: u64,
-    /// Tempo per caricare e disegnare i frame mostrati.
+    /// Time to upload and draw the frames shown.
     pub render_us: u64,
-    /// Frame decompressi ma superati da uno più recente prima di essere mostrati.
+    /// Frames decoded but overtaken by a more recent one before being shown.
     pub dropped: u64,
-    /// Latenza cattura→visualizzazione di ogni frame, quando gli orologi sono allineati.
+    /// Capture→display latency of every frame, when the clocks are aligned.
     pub latencies_us: Vec<u32>,
     pub rtt_us: Vec<u32>,
     pub first_frame_ms: Option<u64>,
     pub exit_reason: Option<String>,
-    /// Sessione terminata dalla durata del test e non da un errore.
+    /// Session ended by the test duration and not by an error.
     pub completed: bool,
 }
 
@@ -73,7 +73,7 @@ impl Report {
             ("seconds", format!("{secs:.2}")),
             ("first_frame_ms", json_opt(self.first_frame_ms)),
             ("frames", self.frames.to_string()),
-            // Dal primo frame in poi: l'avvio della sessione non conta.
+            // From the first frame on: session start-up does not count.
             ("fps", format!("{:.1}", self.frames as f64 / streaming_secs.max(0.001))),
             ("mbit_s", format!("{:.2}", self.bytes as f64 * 8.0 / secs.max(0.001) / 1e6)),
             ("latency_ms_p50", json_opt(percentile(&lat, 0.5))),
@@ -99,13 +99,13 @@ mod tests {
         let r = Report {
             frames: 3,
             latencies_us: vec![30_000, 10_000, 20_000],
-            exit_reason: Some("fine \"test\"".into()),
+            exit_reason: Some("end \"test\"".into()),
             completed: true,
             ..Default::default()
         };
         let json = r.to_json(Instant::now());
         assert!(json.contains("\"latency_ms_p50\": 20"));
-        assert!(json.contains("\"exit_reason\": \"fine \\\"test\\\"\""));
+        assert!(json.contains("\"exit_reason\": \"end \\\"test\\\"\""));
         assert!(json.contains("\"renderer\": null"));
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "nexodesk-viewer"
-description = "NexoDesk: finestra della sessione remota (wgpu)"
+description = "NexoDesk: remote session window (wgpu)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
