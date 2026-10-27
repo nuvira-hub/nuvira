@@ -174,6 +174,7 @@
   "tb.click_to_change": "(clic per cambiare)",
   "tb.send_file": "Invia file al computer remoto (anche trascinandoli sulla finestra)",
   "tb.chat": "Chat con chi usa il computer remoto",
+  "tb.files": "File manager: file nei due sensi",
   "tb.sas": "Invia Ctrl+Alt+Canc (anche Ctrl+Alt+Fine)",
   "tb.sas_label": "Ctrl+Alt+Canc",
   "tb.view_only": "Solo visualizzazione: mouse e tastiera non vengono inviati",
@@ -248,5 +249,24 @@
   "update.button": "Aggiorna",
   "update.updating": "Scaricamento e verifica della nuova versione…",
   "update.failed": "Aggiornamento non riuscito: {e}",
-  "update.none": "Sul server non c'è una versione più recente."
+  "update.none": "Sul server non c'è una versione più recente.",
+
+  "fm.title": "NexoDesk — File",
+  "fm.this_pc": "Questo computer",
+  "fm.remote_pc": "Computer remoto",
+  "fm.up": "Cartella superiore",
+  "fm.refresh": "Aggiorna",
+  "fm.upload": "Invia →",
+  "fm.download": "← Scarica",
+  "fm.transfers": "Trasferimenti",
+  "fm.clear": "Togli i completati",
+  "fm.roots": "Cartelle e unità",
+  "fm.name": "Nome",
+  "fm.size": "Dimensione",
+  "fm.modified": "Modificato",
+  "fm.empty": "Cartella vuota",
+  "fm.open_remote_folder": "Apri prima una cartella del computer remoto",
+  "fm.open_local_folder": "Apri prima una cartella di questo computer",
+  "fm.resume": "Riprendi",
+  "fm.done": "Completato"
 }

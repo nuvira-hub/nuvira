@@ -55,7 +55,7 @@ async fn write(path: &Path, first: Vec<u8>, rx: &mut FramedRecv) -> Result<u64> 
 }
 
 /// Only the file name, without folders or characters Windows does not accept.
-fn safe_name(name: &str) -> String {
+pub(crate) fn safe_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
     let clean: String = base
         .chars()
@@ -66,7 +66,7 @@ fn safe_name(name: &str) -> String {
 }
 
 /// `name.ext`, or `name (1).ext`, `name (2).ext`… if it already exists.
-fn unique_path(dir: &Path, name: &str) -> PathBuf {
+pub(crate) fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let candidate = dir.join(name);
     if !candidate.exists() {
         return candidate;
@@ -81,25 +81,33 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
         .expect("a free name always exists")
 }
 
-/// Downloads folder of the user signed in to this Windows session.
+/// Token of the user signed in to this Windows session, if the agent is SYSTEM
+/// (the service's); `None` if it runs as a normal user (WTSQueryUserToken is not
+/// allowed then, and its own identity is already the user's). To be closed by the caller.
 #[cfg(windows)]
-fn downloads_dir() -> Result<PathBuf> {
-    use windows::Win32::Foundation::{CloseHandle, ERROR_PRIVILEGE_NOT_HELD, HANDLE};
-    use windows::Win32::System::Com::CoTaskMemFree;
+pub(crate) fn session_user_token() -> Result<Option<windows::Win32::Foundation::HANDLE>> {
+    use windows::Win32::Foundation::{ERROR_PRIVILEGE_NOT_HELD, HANDLE};
     use windows::Win32::System::RemoteDesktop::WTSQueryUserToken;
-    use windows::Win32::UI::Shell::{FOLDERID_Downloads, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
 
-    // As SYSTEM (service) the token of the session's user is used; as a normal user
-    // WTSQueryUserToken is not allowed and the own profile applies.
     let mut token = HANDLE::default();
-    let user_token = match unsafe { WTSQueryUserToken(crate::ipc::current_session(), &mut token) } {
-        Ok(()) => Some(token),
-        Err(e) if e.code() == ERROR_PRIVILEGE_NOT_HELD.to_hresult() => None,
+    match unsafe { WTSQueryUserToken(crate::ipc::current_session(), &mut token) } {
+        Ok(()) => Ok(Some(token)),
+        Err(e) if e.code() == ERROR_PRIVILEGE_NOT_HELD.to_hresult() => Ok(None),
         Err(e) => {
             tracing::warn!("no user token for the session: {e}");
             bail!("@agent.no_user")
         }
-    };
+    }
+}
+
+/// Downloads folder of the user signed in to this Windows session.
+#[cfg(windows)]
+fn downloads_dir() -> Result<PathBuf> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::{FOLDERID_Downloads, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
+
+    let user_token = session_user_token()?;
     let path = unsafe { SHGetKnownFolderPath(&FOLDERID_Downloads, KF_FLAG_DEFAULT, user_token) };
     if let Some(token) = user_token {
         let _ = unsafe { CloseHandle(token) };

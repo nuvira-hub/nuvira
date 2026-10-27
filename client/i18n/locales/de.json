@@ -174,6 +174,7 @@
   "tb.click_to_change": "(zum Ändern klicken)",
   "tb.send_file": "Dateien an den entfernten Computer senden (oder auf das Fenster ziehen)",
   "tb.chat": "Chat mit der Person am entfernten Computer",
+  "tb.files": "Dateimanager: Dateien in beide Richtungen",
   "tb.sas": "Strg+Alt+Entf senden (auch Strg+Alt+Ende)",
   "tb.sas_label": "Strg+Alt+Entf",
   "tb.view_only": "Nur ansehen: Maus und Tastatur werden nicht gesendet",
@@ -248,5 +249,24 @@
   "update.button": "Aktualisieren",
   "update.updating": "Neue Version wird heruntergeladen und geprüft…",
   "update.failed": "Aktualisierung fehlgeschlagen: {e}",
-  "update.none": "Keine neuere Version auf dem Server."
+  "update.none": "Keine neuere Version auf dem Server.",
+
+  "fm.title": "NexoDesk — Dateien",
+  "fm.this_pc": "Dieser Computer",
+  "fm.remote_pc": "Entfernter Computer",
+  "fm.up": "Übergeordneter Ordner",
+  "fm.refresh": "Aktualisieren",
+  "fm.upload": "Senden →",
+  "fm.download": "← Herunterladen",
+  "fm.transfers": "Übertragungen",
+  "fm.clear": "Fertige entfernen",
+  "fm.roots": "Ordner und Laufwerke",
+  "fm.name": "Name",
+  "fm.size": "Größe",
+  "fm.modified": "Geändert",
+  "fm.empty": "Leerer Ordner",
+  "fm.open_remote_folder": "Öffnen Sie zuerst einen Ordner des entfernten Computers",
+  "fm.open_local_folder": "Öffnen Sie zuerst einen Ordner dieses Computers",
+  "fm.resume": "Fortsetzen",
+  "fm.done": "Fertig"
 }

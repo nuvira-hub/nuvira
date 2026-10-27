@@ -8,6 +8,7 @@
 mod abr;
 pub mod cli;
 mod files;
+mod fsops;
 #[cfg(windows)]
 pub mod ipc;
 mod pipeline;
@@ -543,7 +544,11 @@ async fn session(
         bail!("viewer protocol version not supported: {}", hello.protocol_version);
     }
     let viewer_protocol = hello.protocol_version;
-    let hello = Hello { password_required: gate.is_some(), ..local_hello() };
+    let hello = Hello {
+        password_required: gate.is_some(),
+        file_manager: !config.view_only && config.synthetic.is_none(),
+        ..local_hello()
+    };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
     if let Some(gate) = gate {
         let given = match ctrl_rx.recv::<ControlMessage>().await? {
@@ -605,6 +610,8 @@ async fn session(
     });
     // Outcome of the received files, to report to the viewer.
     let (file_tx, mut file_rx) = mpsc::unbounded_channel::<nexodesk_proto::v1::FileReceived>();
+    // Answers of the file manager, computed off the control loop.
+    let (fs_tx, mut fs_rx) = mpsc::unbounded_channel::<nexodesk_proto::v1::FsResponse>();
     // Shared clipboard: what is copied here goes to the viewer, what is copied there arrives here.
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nexodesk_clipboard::Content>();
     let clipboard = if config.view_only || config.synthetic.is_some() {
@@ -670,6 +677,10 @@ async fn session(
                     ctrl_tx.send(&control(Msg::Chat(nexodesk_proto::v1::Chat { text }))).await?;
                     continue;
                 }
+                Some(answer) = fs_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::FsResponse(answer))).await?;
+                    continue;
+                }
                 Some(done) = file_rx.recv() => {
                     ctrl_tx.send(&control(Msg::FileReceived(done))).await?;
                     continue;
@@ -700,6 +711,18 @@ async fn session(
                     ctrl_tx.send(&control(Msg::Pong(pong))).await?;
                 }
                 Some(Msg::RequestKeyframe(_)) => keyframe.store(true, Ordering::Relaxed),
+                Some(Msg::FsRequest(request)) => {
+                    let fs_tx = fs_tx.clone();
+                    if config.view_only || config.synthetic.is_some() {
+                        let error = "@agent.files_view_only".to_string();
+                        let _ = fs_tx.send(nexodesk_proto::v1::FsResponse { id: request.id, error, ..Default::default() });
+                        continue;
+                    }
+                    let conn = conn.clone();
+                    tokio::spawn(async move {
+                        let _ = fs_tx.send(fsops::handle(request.id, request.op, conn).await);
+                    });
+                }
                 Some(Msg::Feedback(fb)) => {
                     unanswered_since_ms.store(0, Ordering::Relaxed);
                     // The network part when the viewer reports it: a slow encoder or
@@ -816,6 +839,25 @@ async fn session(
                             Ok(Some(first)) => first,
                             _ => return,
                         };
+                        // File manager: into the chosen folder, with resume.
+                        if first.transfer_id != 0 {
+                            let (name, transfer_id) = (first.name.clone(), first.transfer_id);
+                            let done = match fsops::receive(first, rx).await {
+                                Ok(path) => nexodesk_proto::v1::FileReceived {
+                                    name,
+                                    ok: true,
+                                    transfer_id,
+                                    path: path.display().to_string(),
+                                    ..Default::default()
+                                },
+                                Err(e) => {
+                                    warn!("file {name} not received: {e:#}");
+                                    nexodesk_proto::v1::FileReceived { name, transfer_id, message: format!("{e:#}"), ..Default::default() }
+                                }
+                            };
+                            let _ = file_tx.send(done);
+                            return;
+                        }
                         if first.clipboard_image {
                             match nexodesk_transport::read_stream(&mut rx, &first, nexodesk_clipboard::MAX_IMAGE_PNG as u64).await {
                                 Ok(png) => if let Some(clipboard) = clipboard {
@@ -831,11 +873,11 @@ async fn session(
                                     let path = path.display().to_string();
                                     let _ = events.send(AgentEvent::FileReceived { name: name.clone(), path });
                                 }
-                                nexodesk_proto::v1::FileReceived { name, ok: true, message: "@agent.downloads".into() }
+                                nexodesk_proto::v1::FileReceived { name, ok: true, message: "@agent.downloads".into(), ..Default::default() }
                             }
                             Err((name, e)) => {
                                 warn!("file {name} not received: {e:#}");
-                                nexodesk_proto::v1::FileReceived { name, ok: false, message: format!("{e:#}") }
+                                nexodesk_proto::v1::FileReceived { name, ok: false, message: format!("{e:#}"), ..Default::default() }
                             }
                         };
                         let _ = file_tx.send(done);
@@ -984,6 +1026,7 @@ fn local_hello() -> Hello {
         os: std::env::consts::OS.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
         password_required: false,
+        file_manager: false,
     }
 }
 

@@ -174,6 +174,7 @@
   "tb.click_to_change": "(clic para cambiar)",
   "tb.send_file": "Enviar archivos al equipo remoto (o arrastrarlos a la ventana)",
   "tb.chat": "Chat con la persona del equipo remoto",
+  "tb.files": "Gestor de archivos: archivos en ambos sentidos",
   "tb.sas": "Enviar Ctrl+Alt+Supr (también Ctrl+Alt+Fin)",
   "tb.sas_label": "Ctrl+Alt+Supr",
   "tb.view_only": "Solo ver: no se envían el ratón ni el teclado",
@@ -248,5 +249,24 @@
   "update.button": "Actualizar",
   "update.updating": "Descargando y comprobando la nueva versión…",
   "update.failed": "No se pudo actualizar: {e}",
-  "update.none": "No hay una versión más reciente en el servidor."
+  "update.none": "No hay una versión más reciente en el servidor.",
+
+  "fm.title": "NexoDesk — Archivos",
+  "fm.this_pc": "Este equipo",
+  "fm.remote_pc": "Equipo remoto",
+  "fm.up": "Carpeta superior",
+  "fm.refresh": "Actualizar",
+  "fm.upload": "Enviar →",
+  "fm.download": "← Descargar",
+  "fm.transfers": "Transferencias",
+  "fm.clear": "Quitar las terminadas",
+  "fm.roots": "Carpetas y unidades",
+  "fm.name": "Nombre",
+  "fm.size": "Tamaño",
+  "fm.modified": "Modificado",
+  "fm.empty": "Carpeta vacía",
+  "fm.open_remote_folder": "Abre primero una carpeta del equipo remoto",
+  "fm.open_local_folder": "Abre primero una carpeta de este equipo",
+  "fm.resume": "Reanudar",
+  "fm.done": "Terminado"
 }

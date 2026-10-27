@@ -48,6 +48,8 @@ pub enum Action {
     ChatSend(String),
     /// Picks files to send to the remote PC.
     SendFile,
+    /// Opens the file manager window.
+    FileManager,
 }
 
 impl Action {
@@ -76,6 +78,7 @@ impl Action {
             "close" => Self::Close,
             "chat" => Self::Chat,
             "sendfile" => Self::SendFile,
+            "files" => Self::FileManager,
             _ => return None,
         })
     }

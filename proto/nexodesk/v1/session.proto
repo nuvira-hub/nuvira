@@ -39,7 +39,54 @@ message ControlMessage {
     Chat chat = 13;
     FileReceived file_received = 14;
     ConfirmationPending confirmation_pending = 15;
+    FsRequest fs_request = 16;
+    FsResponse fs_response = 17;
   }
+}
+
+// File manager (viewer -> agent, on the control channel). On the agent the
+// operations run as the user signed in on the PC, also when the agent is SYSTEM.
+message FsRequest {
+  uint32 id = 1;
+  oneof op {
+    // Folder to list; "" = drives and known folders (Desktop, Documents, Downloads).
+    string list = 2;
+    FsDownload download = 3;
+    FsUploadOffset upload_offset = 4;
+  }
+}
+
+// The agent sends the file on a unidirectional stream (FileChunk with
+// transfer_id = the request id), from `offset` on (resuming an interrupted download).
+message FsDownload {
+  string path = 1;
+  uint64 offset = 2;
+}
+
+// How much of `name` an interrupted upload already left in `dir` (resume).
+message FsUploadOffset {
+  string dir = 1;
+  string name = 2;
+}
+
+message FsResponse {
+  uint32 id = 1;
+  // "" = done; otherwise the reason ("@key" messages are translated).
+  string error = 2;
+  // list: the folder listed and its contents.
+  string path = 3;
+  repeated FsEntry entries = 4;
+  // upload_offset: bytes already received.
+  uint64 offset = 5;
+}
+
+message FsEntry {
+  string name = 1;
+  string path = 2;
+  bool dir = 3;
+  uint64 size = 4;
+  // Last change, seconds since 1970.
+  int64 modified = 5;
 }
 
 // From the agent, after a correct temporary password, while the person at the PC
@@ -54,6 +101,9 @@ message FileReceived {
   bool ok = 2;
   // With ok: where it was saved (e.g. "Downloads"); otherwise the reason.
   string message = 3;
+  // File manager uploads: the transfer and the final path.
+  uint32 transfer_id = 4;
+  string path = 5;
 }
 
 // `file` channel (unidirectional stream viewer -> agent, one per file, opened after
@@ -66,6 +116,11 @@ message FileChunk {
   // In the first chunk: the stream carries an image copied to the clipboard (PNG),
   // to be written to the other side's clipboard instead of a file.
   bool clipboard_image = 4;
+  // File manager (first chunk). Upload: destination folder ("" = Downloads) and
+  // `offset` already there (the data starts from it). Download: the request id.
+  string dir = 5;
+  uint64 offset = 6;
+  uint32 transfer_id = 7;
 }
 
 // Chat message between the controlling side and the person at the PC (both directions).
@@ -154,6 +209,8 @@ message Hello {
   string app_version = 4;
   // From the agent only: the viewer must send Auth before receiving video.
   bool password_required = 5;
+  // From the agent: it answers FsRequest (file manager).
+  bool file_manager = 6;
 }
 
 // Sent by the agent when the video stream starts (or changes).

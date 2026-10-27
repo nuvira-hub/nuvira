@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #161b20;
+    --panel: #1f252b;
+    --line: #2c343c;
+    --hover: #2a3138;
+    --select: #164a5c;
+    --text: #e6eaee;
+    --muted: #9aa6b1;
+    --accent: #3aa7cc;
+    --on: #0b1a20;
+    --ok: #6dd58c;
+    --danger: #f2b8b5;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.35 "Segoe UI", system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+  body { display: flex; flex-direction: column; padding: 10px; gap: 10px; }
+  .panes { flex: 1; display: flex; gap: 10px; min-height: 0; }
+  .pane { flex: 1; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; min-width: 0; }
+  .pane header { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--line); }
+  .pane h2 { margin: 0 6px 0 2px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .path { flex: 1; min-width: 0; padding: 5px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  button { height: 28px; min-width: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on); font-weight: 600; }
+  .list { flex: 1; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 500; text-align: left;
+    padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  th.size, td.size { width: 90px; text-align: right; }
+  th.date, td.date { width: 140px; }
+  tr.item:hover td { background: var(--hover); }
+  tr.item.selected td { background: var(--select); }
+  tr.item.dir td.name::before { content: "\1F4C1  "; }
+  .note { padding: 16px; color: var(--muted); }
+  .note.error { color: var(--danger); }
+  .middle { display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+  .transfers { max-height: 32%; overflow: auto; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 6px 8px; }
+  .transfers header { display: flex; align-items: center; justify-content: space-between; color: var(--muted); padding: 2px 0 6px; }
+  .t { display: grid; grid-template-columns: 22px 1fr 200px 110px; align-items: center; gap: 8px; padding: 3px 0; }
+  .t .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .bar span { display: block; height: 100%; background: var(--accent); }
+  .t.done .bar span { background: var(--ok); }
+  .t.failed .what { color: var(--danger); }
+  .t .state { color: var(--muted); text-align: right; }
+</style>
+</head>
+<body>
+<div class="panes">
+  <section class="pane" id="local">
+    <header>
+      <h2 data-i18n="fm.this_pc">This computer</h2>
+      <button class="up" data-i18n-title="fm.up">↑</button>
+      <div class="path"></div>
+      <button class="refresh" data-i18n-title="fm.refresh">⟳</button>
+    </header>
+    <div class="list"></div>
+  </section>
+  <div class="middle">
+    <button class="primary" id="upload" data-i18n="fm.upload" disabled>Send →</button>
+    <button class="primary" id="download" data-i18n="fm.download" disabled>← Download</button>
+  </div>
+  <section class="pane" id="remote">
+    <header>
+      <h2 data-i18n="fm.remote_pc">Remote computer</h2>
+      <button class="up" data-i18n-title="fm.up">↑</button>
+      <div class="path"></div>
+      <button class="refresh" data-i18n-title="fm.refresh">⟳</button>
+    </header>
+    <div class="list"></div>
+  </section>
+</div>
+<section class="transfers hidden" id="transfers">
+  <header><span data-i18n="fm.transfers">Transfers</span><button id="clear" data-i18n="fm.clear">Clear finished</button></header>
+  <div id="transfer-list"></div>
+</section>
+<script>
+  const STRINGS = window.I18N || {};
+  const t = (key, vars = {}) => {
+    let text = STRINGS[key] || key;
+    for (const [k, v] of Object.entries(vars)) text = text.replaceAll(`{${k}}`, v);
+    return text;
+  };
+  for (const node of document.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
+  const send = (msg) => window.ipc.postMessage(JSON.stringify(msg));
+
+  const finished = new Set();
+  const sides = { local: { path: "", entries: [], selected: new Set() }, remote: { path: "", entries: [], selected: new Set() } };
+
+  function size(n) {
+    if (n < 1024) return `${n} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    let i = -1;
+    do { n /= 1024; i++; } while (n >= 1024 && i < units.length - 1);
+    return `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
+  }
+
+  function parent(path) {
+    const trimmed = path.replace(/[\\/]+$/, "");
+    const cut = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+    // "C:\" -> "" (the list of folders and drives).
+    if (cut < 0 || /^[A-Za-z]:$/.test(trimmed)) return "";
+    const up = trimmed.slice(0, cut);
+    return /^[A-Za-z]:$/.test(up) ? up + "\\" : up;
+  }
+
+  function list(side, path) {
+    sides[side].path = path;
+    send({ op: "list", side, path });
+  }
+
+  function render(side) {
+    const s = sides[side];
+    const pane = document.getElementById(side);
+    pane.querySelector(".path").textContent = s.path || t("fm.roots");
+    pane.querySelector(".up").disabled = !s.path;
+    const box = pane.querySelector(".list");
+    if (s.error) {
+      box.innerHTML = "";
+      const note = document.createElement("div");
+      note.className = "note error";
+      note.textContent = s.error;
+      box.append(note);
+      return;
+    }
+    const table = document.createElement("table");
+    table.innerHTML = `<thead><tr><th class="name"></th><th class="size"></th><th class="date"></th></tr></thead><tbody></tbody>`;
+    const [hName, hSize, hDate] = table.querySelectorAll("th");
+    hName.textContent = t("fm.name");
+    hSize.textContent = t("fm.size");
+    hDate.textContent = t("fm.modified");
+    const body = table.querySelector("tbody");
+    for (const e of s.entries) {
+      const row = document.createElement("tr");
+      row.className = "item" + (e.dir ? " dir" : "") + (s.selected.has(e.path) ? " selected" : "");
+      const cells = [e.name, e.dir ? "" : size(e.size), e.modified ? new Date(e.modified * 1000).toLocaleString(document.documentElement.lang) : ""];
+      for (const [i, text] of cells.entries()) {
+        const td = document.createElement("td");
+        td.className = ["name", "size", "date"][i];
+        td.textContent = text;
+        row.append(td);
+      }
+      row.addEventListener("click", (ev) => {
+        if (e.dir) return;
+        if (!ev.ctrlKey) s.selected.clear();
+        if (s.selected.has(e.path)) s.selected.delete(e.path); else s.selected.add(e.path);
+        render(side);
+        buttons();
+      });
+      row.addEventListener("dblclick", () => {
+        if (e.dir) { s.selected.clear(); list(side, e.path); buttons(); }
+      });
+      body.append(row);
+    }
+    box.replaceChildren(table);
+    if (!s.entries.length) {
+      const note = document.createElement("div");
+      note.className = "note";
+      note.textContent = t("fm.empty");
+      box.append(note);
+    }
+  }
+
+  // Sending needs files on the left and a remote folder open; downloading the opposite.
+  function buttons() {
+    document.getElementById("upload").disabled = !(sides.local.selected.size && sides.remote.path);
+    document.getElementById("download").disabled = !(sides.remote.selected.size && sides.local.path);
+    document.getElementById("upload").title = sides.remote.path ? "" : t("fm.open_remote_folder");
+    document.getElementById("download").title = sides.local.path ? "" : t("fm.open_local_folder");
+  }
+
+  for (const side of ["local", "remote"]) {
+    const pane = document.getElementById(side);
+    pane.querySelector(".up").addEventListener("click", () => { sides[side].selected.clear(); list(side, parent(sides[side].path)); buttons(); });
+    pane.querySelector(".refresh").addEventListener("click", () => list(side, sides[side].path));
+  }
+  document.getElementById("upload").addEventListener("click", () => {
+    for (const path of sides.local.selected) send({ op: "upload", local: path, dir: sides.remote.path });
+    sides.local.selected.clear();
+    render("local");
+    buttons();
+  });
+  document.getElementById("download").addEventListener("click", () => {
+    for (const path of sides.remote.selected) {
+      const e = sides.remote.entries.find((x) => x.path === path);
+      send({ op: "download", remote: path, size: e ? e.size : 0, dir: sides.local.path });
+    }
+    sides.remote.selected.clear();
+    render("remote");
+    buttons();
+  });
+  document.getElementById("clear").addEventListener("click", () => send({ op: "clear" }));
+
+  function renderTransfers(transfers) {
+    const box = document.getElementById("transfer-list");
+    document.getElementById("transfers").classList.toggle("hidden", !transfers.length);
+    box.replaceChildren(...transfers.slice().reverse().map((x) => {
+      const row = document.createElement("div");
+      row.className = "t " + x.state;
+      const arrow = document.createElement("span");
+      arrow.textContent = x.upload ? "→" : "←";
+      const what = document.createElement("span");
+      what.className = "what";
+      what.textContent = x.state === "failed" ? `${x.name}: ${x.message}` : x.name;
+      what.title = x.state === "done" ? x.message : (x.upload ? x.remote : x.local);
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      const fill = document.createElement("span");
+      fill.style.width = `${x.total ? Math.min(100, (x.done * 100) / x.total) : 0}%`;
+      bar.append(fill);
+      let state;
+      if (x.state === "failed") {
+        state = document.createElement("button");
+        state.textContent = t("fm.resume");
+        state.addEventListener("click", () => send({ op: "resume", id: x.id }));
+      } else {
+        state = document.createElement("span");
+        state.className = "state";
+        state.textContent = x.state === "done" ? t("fm.done") : `${size(x.done)} / ${size(x.total)}`;
+      }
+      row.append(arrow, what, bar, state);
+      return row;
+    }));
+  }
+
+  window.fm = {
+    update(state) {
+      for (const side of ["local", "remote"]) {
+        if (!state[side] || state[side].path !== sides[side].path) continue;
+        sides[side].entries = state[side].entries || [];
+        sides[side].error = state[side].error || null;
+        render(side);
+      }
+      if (state.transfers) {
+        renderTransfers(state.transfers);
+        // A transfer just completed: the folders shown may have changed.
+        const fresh = state.transfers.filter((x) => x.state === "done" && !finished.has(x.id));
+        for (const x of fresh) finished.add(x.id);
+        if (fresh.length) {
+          for (const side of ["local", "remote"]) if (sides[side].path) send({ op: "list", side, path: sides[side].path });
+        }
+      }
+    },
+  };
+  const hidden = document.createElement("style");
+  hidden.textContent = ".hidden { display: none !important; }";
+  document.head.append(hidden);
+  list("local", "");
+  list("remote", "");
+  buttons();
+  send({ op: "ready" });
+</script>
+</body>
+</html>

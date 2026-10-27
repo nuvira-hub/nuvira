@@ -27,6 +27,8 @@ pub enum NetEvent {
         direct: bool,
         width: u32,
         height: u32,
+        /// The agent answers the file manager.
+        file_manager: bool,
     },
     /// There is a new frame to show in the [`FrameSlot`].
     FrameReady,
@@ -62,7 +64,26 @@ pub enum NetEvent {
     Chat(String),
     /// Click on the toolbar.
     Toolbar(crate::toolbar::Action),
+    /// File manager: answer of the agent to a request.
+    Fs(nexodesk_proto::v1::FsResponse),
+    /// File manager: progress of a transfer (both directions).
+    Transfer { id: u32, done: u64, total: u64 },
+    /// File manager: end of a transfer; with `ok` the final path, otherwise the reason.
+    TransferDone { id: u32, ok: bool, message: String },
+    /// Message of the file manager page.
+    FileManager(String),
 }
+
+/// What to send to the agent on its own stream.
+pub enum Outgoing {
+    /// "Send files": into the remote Downloads folder.
+    File(std::path::PathBuf),
+    /// File manager: into `dir`, from `offset` on (resume).
+    Upload { id: u32, local: std::path::PathBuf, dir: String, offset: u64 },
+}
+
+/// Downloads in progress: request id → local file to write.
+pub type Downloads = Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>;
 
 pub struct DecodedFrame {
     pub yuv: YuvFrame,
@@ -133,7 +154,9 @@ pub struct Session {
     /// Control messages towards the agent (feedback, screen, quality, chat).
     pub control: mpsc::UnboundedSender<Msg>,
     /// Files to send to the agent, one at a time.
-    pub files: mpsc::UnboundedSender<std::path::PathBuf>,
+    pub files: mpsc::UnboundedSender<Outgoing>,
+    /// Where the downloads requested from the file manager go.
+    pub downloads: Downloads,
     /// To be joined before exiting.
     pub thread: std::thread::JoinHandle<()>,
 }
@@ -148,19 +171,22 @@ pub fn start(
     let (input_tx, input_rx) = mpsc::unbounded_channel();
     let (control_tx, control_rx) = mpsc::unbounded_channel();
     let (files_tx, files_rx) = mpsc::unbounded_channel();
+    let downloads = Downloads::default();
+    let session_downloads = downloads.clone();
     let thread = std::thread::Builder::new()
         .name("network".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            let channels = (input_rx, control_rx, files_rx, session_downloads);
             let reason =
-                match rt.block_on(session(target, password, proxy.clone(), slot, input_rx, control_rx, files_rx)) {
+                match rt.block_on(session(target, password, proxy.clone(), slot, channels)) {
                     Ok(()) => "session ended".to_string(),
                     Err(e) => format!("{e:#}"),
                 };
             let _ = proxy.send_event(NetEvent::Disconnected(reason));
         })
         .expect("network thread");
-    Session { input: input_tx, control: control_tx, files: files_tx, thread }
+    Session { input: input_tx, control: control_tx, files: files_tx, downloads, thread }
 }
 
 fn control(msg: Msg) -> ControlMessage {
@@ -222,9 +248,12 @@ async fn session(
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
-    mut input_rx: mpsc::UnboundedReceiver<InputEvent>,
-    mut control_rx: mpsc::UnboundedReceiver<Msg>,
-    mut files_rx: mpsc::UnboundedReceiver<std::path::PathBuf>,
+    (mut input_rx, mut control_rx, mut files_rx, downloads): (
+        mpsc::UnboundedReceiver<InputEvent>,
+        mpsc::UnboundedReceiver<Msg>,
+        mpsc::UnboundedReceiver<Outgoing>,
+        Downloads,
+    ),
 ) -> Result<()> {
     let (conn, direct) = open_connection(target).await?;
     let (send, recv) = conn.open_bi().await?;
@@ -237,7 +266,7 @@ async fn session(
             device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
             os: std::env::consts::OS.into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
-            password_required: false,
+            ..Default::default()
         })))
         .await?;
     let Some(ControlMessage { msg: Some(Msg::Hello(agent)) }) = ctrl_rx.recv().await? else {
@@ -269,6 +298,7 @@ async fn session(
         direct,
         width: format.width,
         height: format.height,
+        file_manager: agent.file_manager,
     });
 
     let mut input_tx = FramedSend::new(conn.open_uni().await?);
@@ -311,16 +341,30 @@ async fn session(
     };
 
     // After the video one, the agent's unidirectional streams carry images copied to
-    // its clipboard.
+    // its clipboard and the files downloaded with the file manager.
     let streams = {
         let clipboard = clipboard.clone();
         let conn = conn.clone();
+        let proxy = proxy.clone();
         async move {
             loop {
                 let mut rx = FramedRecv::new(conn.accept_uni().await?);
-                let clipboard = clipboard.clone();
+                let (clipboard, proxy, downloads) = (clipboard.clone(), proxy.clone(), downloads.clone());
                 tokio::spawn(async move {
                     let Ok(Some(first)) = rx.recv::<FileChunk>().await else { return };
+                    if first.transfer_id != 0 {
+                        let id = first.transfer_id;
+                        let target = downloads.lock().expect("downloads").get(&id).cloned();
+                        let Some(target) = target else { return };
+                        let outcome = receive_download(first, rx, &target, &proxy).await;
+                        downloads.lock().expect("downloads").remove(&id);
+                        let (ok, message) = match outcome {
+                            Ok(path) => (true, path.display().to_string()),
+                            Err(e) => (false, format!("{e:#}")),
+                        };
+                        let _ = proxy.send_event(NetEvent::TransferDone { id, ok, message });
+                        return;
+                    }
                     if !first.clipboard_image {
                         return;
                     }
@@ -383,8 +427,15 @@ async fn session(
                             all_available: d.all_available,
                         });
                     }
+                    Some(ControlMessage { msg: Some(Msg::FileReceived(f)) }) if f.transfer_id != 0 => {
+                        let message = if f.ok { f.path } else { f.message };
+                        let _ = proxy.send_event(NetEvent::TransferDone { id: f.transfer_id, ok: f.ok, message });
+                    }
                     Some(ControlMessage { msg: Some(Msg::FileReceived(f)) }) => {
                         let _ = proxy.send_event(NetEvent::FileDone { name: f.name, ok: f.ok, message: f.message });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::FsResponse(answer)) }) => {
+                        let _ = proxy.send_event(NetEvent::Fs(answer));
                     }
                     Some(ControlMessage { msg: Some(Msg::Chat(chat)) }) => {
                         let _ = proxy.send_event(NetEvent::Chat(chat.text));
@@ -406,11 +457,22 @@ async fn session(
 
     // Outgoing files, one at a time, each on its own stream.
     let files = async {
-        while let Some(path) = files_rx.recv().await {
-            if let Err(e) = send_file(&conn, &path, &proxy).await {
-                warn!("sending {} failed: {e:#}", path.display());
-                let name = file_name(&path);
-                let _ = proxy.send_event(NetEvent::FileDone { name, ok: false, message: format!("{e:#}") });
+        while let Some(outgoing) = files_rx.recv().await {
+            match outgoing {
+                Outgoing::File(path) => {
+                    if let Err(e) = send_file(&conn, &path, &proxy).await {
+                        warn!("sending {} failed: {e:#}", path.display());
+                        let name = file_name(&path);
+                        let _ = proxy.send_event(NetEvent::FileDone { name, ok: false, message: format!("{e:#}") });
+                    }
+                }
+                Outgoing::Upload { id, local, dir, offset } => {
+                    // The outcome comes from the agent (FileReceived with the id).
+                    if let Err(e) = send_upload(&conn, id, &local, dir, offset, &proxy).await {
+                        warn!("sending {} failed: {e:#}", local.display());
+                        let _ = proxy.send_event(NetEvent::TransferDone { id, ok: false, message: format!("{e:#}") });
+                    }
+                }
             }
         }
         // The channel closes only on exit: the input ends the session.
@@ -437,6 +499,109 @@ async fn session(
     let _ = tokio::time::timeout(Duration::from_secs(1), tokio::task::spawn_blocking(move || decoder.join()))
         .await;
     result
+}
+
+/// File manager upload: `local` from `offset` on, into `dir` on the remote PC.
+async fn send_upload(
+    conn: &nexodesk_transport::Connection,
+    id: u32,
+    local: &std::path::Path,
+    dir: String,
+    offset: u64,
+    proxy: &EventLoopProxy<NetEvent>,
+) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = tokio::fs::File::open(local).await.with_context(|| format!("opening {}", local.display()))?;
+    let total = file.metadata().await?.len();
+    if offset > total {
+        bail!("resume point beyond the end of the file");
+    }
+    file.seek(std::io::SeekFrom::Start(offset)).await?;
+    let mut tx = FramedSend::new(conn.open_uni().await?);
+    tx.send(&FileChunk { name: file_name(local), size: total, dir, offset, transfer_id: id, ..Default::default() }).await?;
+    let mut buf = vec![0u8; 256 * 1024];
+    let (mut done, mut last) = (offset, Instant::now());
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        tx.send(&FileChunk { data: buf[..n].to_vec(), ..Default::default() }).await?;
+        done += n as u64;
+        if last.elapsed() >= Duration::from_millis(250) {
+            last = Instant::now();
+            let _ = proxy.send_event(NetEvent::Transfer { id, done, total });
+        }
+    }
+    tx.finish()?;
+    let _ = proxy.send_event(NetEvent::Transfer { id, done, total });
+    Ok(())
+}
+
+/// File manager download into `target`: written to `target.part` (continued from
+/// the header's offset, if an earlier attempt left it), renamed once complete. If
+/// `target` exists a free name is used. Returns the final path.
+async fn receive_download(
+    first: FileChunk,
+    mut rx: FramedRecv,
+    target: &std::path::Path,
+    proxy: &EventLoopProxy<NetEvent>,
+) -> Result<std::path::PathBuf> {
+    use tokio::io::AsyncWriteExt;
+    let (id, size, offset) = (first.transfer_id, first.size, first.offset);
+    let part = part_path(target);
+    let mut file = if offset == 0 {
+        tokio::fs::File::create(&part).await.with_context(|| format!("creating {}", part.display()))?
+    } else {
+        let file = tokio::fs::OpenOptions::new().append(true).open(&part).await.context("nothing to resume")?;
+        let have = file.metadata().await?.len();
+        if have != offset {
+            bail!("cannot resume: {have} bytes there, not {offset}");
+        }
+        file
+    };
+    let mut done = offset + first.data.len() as u64;
+    file.write_all(&first.data).await?;
+    let mut last = Instant::now();
+    while let Some(chunk) = rx.recv::<FileChunk>().await? {
+        file.write_all(&chunk.data).await?;
+        done += chunk.data.len() as u64;
+        if done > size {
+            bail!("more data than announced");
+        }
+        if last.elapsed() >= Duration::from_millis(250) {
+            last = Instant::now();
+            let _ = proxy.send_event(NetEvent::Transfer { id, done, total: size });
+        }
+    }
+    file.flush().await?;
+    drop(file);
+    let _ = proxy.send_event(NetEvent::Transfer { id, done, total: size });
+    if done != size {
+        // The part stays: the download can be resumed from here.
+        bail!("interrupted at {done} bytes out of {size}");
+    }
+    let final_path = free_path(target);
+    tokio::fs::rename(&part, &final_path).await.with_context(|| format!("saving {}", final_path.display()))?;
+    info!("downloaded {} ({size} bytes, from {offset})", final_path.display());
+    Ok(final_path)
+}
+
+/// `file.ext.part`, where a download is written until complete.
+pub fn part_path(target: &std::path::Path) -> std::path::PathBuf {
+    let mut name = target.file_name().unwrap_or_default().to_os_string();
+    name.push(".part");
+    target.with_file_name(name)
+}
+
+/// `target`, or `name (1).ext`, `name (2).ext`… if it exists.
+fn free_path(target: &std::path::Path) -> std::path::PathBuf {
+    if !target.exists() {
+        return target.to_path_buf();
+    }
+    let stem = target.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let ext = target.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    (1..).map(|i| target.with_file_name(format!("{stem} ({i}){ext}"))).find(|p| !p.exists()).expect("a free name")
 }
 
 fn file_name(path: &std::path::Path) -> String {

@@ -20,6 +20,8 @@ nexodesk-i18n.workspace = true
 nexodesk-proto.workspace = true
 nexodesk-transport.workspace = true
 pollster.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tokio = { workspace = true, features = ["fs"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true

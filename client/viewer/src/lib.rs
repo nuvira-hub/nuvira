@@ -6,6 +6,7 @@
 //! bandwidth; the toolbar is at the top (`toolbar.rs`).
 
 mod cpu;
+mod filemanager;
 mod net;
 mod render;
 mod report;
@@ -113,6 +114,25 @@ struct Args {
     /// Sends this file to the agent once connected (automated tests; repeatable).
     #[arg(long, value_name = "FILE")]
     send_file: Vec<PathBuf>,
+
+    /// File manager, automated tests: downloads this remote file into --download-dir
+    /// once connected (repeatable), then exits when all transfers are over.
+    #[arg(long, value_name = "REMOTE_FILE")]
+    download: Vec<String>,
+
+    #[arg(long, value_name = "DIR", default_value = ".")]
+    download_dir: PathBuf,
+
+    /// File manager, automated tests: sends this file into --upload-dir on the remote PC.
+    #[arg(long, value_name = "FILE")]
+    upload: Vec<PathBuf>,
+
+    #[arg(long, value_name = "REMOTE_DIR", default_value = "")]
+    upload_dir: String,
+
+    /// With --download/--upload: continue what an interrupted transfer left (the `.part`).
+    #[arg(long)]
+    resume: bool,
 }
 
 /// Colours in the logs only if the terminal understands them (the old Windows
@@ -178,6 +198,15 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         control: None,
         files: None,
         pending_files: args.send_file.clone(),
+        fm: Default::default(),
+        cli_transfers: (
+            args.download.clone(),
+            args.download_dir.clone(),
+            args.upload.clone(),
+            args.upload_dir.clone(),
+            args.resume,
+        ),
+        cli_started: false,
         feedback_window: (Instant::now(), Vec::new(), Vec::new()),
         view_only: args.view_only,
         view: render::View { actual: args.actual_size, ..Default::default() },
@@ -246,7 +275,12 @@ struct App {
     /// Control messages towards the agent (feedback, screen, quality, chat).
     control: Option<UnboundedSender<nexodesk_proto::v1::control_message::Msg>>,
     /// Files to send to the agent.
-    files: Option<UnboundedSender<PathBuf>>,
+    files: Option<UnboundedSender<net::Outgoing>>,
+    /// File manager window and transfers.
+    fm: filemanager::FileManager,
+    /// `--download`/`--upload`: transfers to start once connected, and resume.
+    cli_transfers: (Vec<String>, PathBuf, Vec<PathBuf>, String, bool),
+    cli_started: bool,
     /// `--send-file`: to send as soon as connected.
     pending_files: Vec<PathBuf>,
     /// Feedback for the adaptive bitrate: window start, total latencies and network
@@ -400,6 +434,11 @@ impl App {
                 self.send_control(Msg::Chat(nexodesk_proto::v1::Chat { text }));
                 return;
             }
+            Action::FileManager => {
+                if let Err(e) = self.fm.open(event_loop, self.proxy.clone()) {
+                    error!("file manager not available: {e:#}");
+                }
+            }
             Action::SendFile => {
                 // The file picker blocks its own thread, not the session.
                 let proxy = self.proxy.clone();
@@ -431,7 +470,7 @@ impl App {
     fn send_file(&self, path: PathBuf) {
         if let Some(files) = &self.files {
             info!("file to send: {}", path.display());
-            let _ = files.send(path);
+            let _ = files.send(net::Outgoing::File(path));
         }
     }
 
@@ -511,7 +550,12 @@ impl ApplicationHandler<NetEvent> for App {
         if let Some((target, password)) = self.connect.take() {
             let session = net::start(target, password, self.proxy.clone(), self.slot.clone());
             self.input = Some(session.input);
-            self.control = Some(session.control);
+            self.control = Some(session.control.clone());
+            self.fm.connect(filemanager::Link {
+                control: session.control,
+                files: session.files.clone(),
+                downloads: session.downloads.clone(),
+            });
             self.files = Some(session.files);
             self.net_thread = Some(session.thread);
         }
@@ -529,8 +573,20 @@ impl ApplicationHandler<NetEvent> for App {
                     toolbar.update(&format!("{{name:{}}}", toolbar::js_string(&t("viewer.pending"))));
                 }
             }
-            NetEvent::Connected { agent, direct, width, height } => {
+            NetEvent::Connected { agent, direct, width, height, file_manager } => {
                 info!("remote screen {width}x{height}");
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&format!("{{fileManager:{file_manager}}}"));
+                }
+                let (downloads, download_dir, uploads, upload_dir, resume) = std::mem::take(&mut self.cli_transfers);
+                self.cli_started = !downloads.is_empty() || !uploads.is_empty();
+                for remote in downloads {
+                    // The size comes with the data.
+                    self.fm.download(remote, 0, download_dir.clone(), resume);
+                }
+                for local in uploads {
+                    self.fm.upload(local, upload_dir.clone(), resume);
+                }
                 // For the NexoDesk app, which reads the output: the session started (address book).
                 println!("@connected\t{agent}");
                 for path in std::mem::take(&mut self.pending_files) {
@@ -614,6 +670,18 @@ impl ApplicationHandler<NetEvent> for App {
                     toolbar.update(&toolbar::displays_state(&displays, current, all_available));
                 }
             }
+            NetEvent::Fs(answer) => self.fm.response(answer),
+            NetEvent::Transfer { id, done, total } => self.fm.progress(id, done, total),
+            NetEvent::TransferDone { id, ok, message } => {
+                self.fm.finished(id, ok, message);
+                // --download/--upload: done when nothing is running any more.
+                if self.cli_started && self.fm.idle() {
+                    info!("transfers over");
+                    self.exit_reason = Some("transfers over".into());
+                    event_loop.exit();
+                }
+            }
+            NetEvent::FileManager(body) => self.fm.message(&body),
             NetEvent::FilesPicked(paths) => {
                 for path in paths {
                     self.send_file(path);
@@ -659,7 +727,11 @@ impl ApplicationHandler<NetEvent> for App {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if self.fm.owns(id) {
+            self.fm.window_event(&event);
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => {
                 self.release_keys();

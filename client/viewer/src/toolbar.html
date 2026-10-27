@@ -75,6 +75,9 @@
   <button id="sendfile" data-i18n-title="tb.send_file">
     <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
   </button>
+  <button id="files" data-i18n-title="tb.files" hidden>
+    <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+  </button>
   <button id="chat" data-i18n-title="tb.chat">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
   </button>
@@ -110,7 +113,7 @@
   for (const node of document.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
 
   const send = (action) => window.ipc.postMessage(action);
-  for (const id of ["sendfile", "chat", "sas", "viewonly", "actual", "fullscreen", "collapse", "expand", "close"]) {
+  for (const id of ["sendfile", "files", "chat", "sas", "viewonly", "actual", "fullscreen", "collapse", "expand", "close"]) {
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
@@ -151,6 +154,7 @@
         document.getElementById("info").title = t(state.path === "direct" ? "tb.direct" : "tb.relay");
       }
       if ("viewOnly" in state) document.getElementById("viewonly").classList.toggle("on", state.viewOnly);
+      if ("fileManager" in state) document.getElementById("files").hidden = !state.fileManager;
       if ("actualSize" in state) {
         const b = document.getElementById("actual");
         b.classList.toggle("on", state.actualSize);
