@@ -12,6 +12,7 @@ members = [
     "client/service",
     "client/clipboard",
     "client/i18n",
+    "client/update",
 ]
 
 [workspace.package]

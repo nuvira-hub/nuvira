@@ -1,0 +1,27 @@
+[package]
+name = "nexodesk-update"
+description = "NexoDesk automatic updates: signed manifests, download and checks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "nexodesk-release"
+path = "src/bin/release.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+ring = "0.17"
+rustls.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2.workspace = true
+tokio = { workspace = true, features = ["net", "fs"] }
+tokio-rustls = { version = "0.26", default-features = false }
+tracing.workspace = true
+webpki-roots = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "fs", "rt"] }

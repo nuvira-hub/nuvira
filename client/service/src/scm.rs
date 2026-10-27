@@ -127,11 +127,12 @@ fn sas_listener() -> Option<std::thread::JoinHandle<()>> {
 
 fn agent_args(config: &ServiceConfig) -> String {
     let mut args = format!(
-        "--ipc --server \"{}\" --transport {} --identity \"{}\" --fingerprint-file \"{}\"",
+        "--ipc --server \"{}\" --transport {} --identity \"{}\" --fingerprint-file \"{}\" --busy-file \"{}\"",
         config.server,
         config.transport,
         config::identity_path().display(),
-        config::online_path().display()
+        config::online_path().display(),
+        config::busy_path().display()
     );
     if let Some(key) = &config.server_key {
         args += &format!(" --server-key {key}");
@@ -149,6 +150,7 @@ fn run() -> Result<()> {
     let data = config::data_dir();
     let job = Job::new()?;
     let _sas = sas_listener();
+    let _updates = crate::update::spawn(&STOP);
 
     let mut agent: Option<AgentProcess> = None;
     let mut backoff = Duration::from_secs(1);

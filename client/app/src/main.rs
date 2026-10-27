@@ -49,6 +49,9 @@ struct UiState {
     account: Option<address_book::AccountUi>,
     books: Vec<address_book::BookUi>,
     address_book_error: Option<String>,
+    /// Newer version offered by the server (app not installed: the service updates
+    /// an installed one by itself).
+    update: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -653,6 +656,7 @@ fn main() {
             send_chat,
             connect_entry,
             install_service,
+            apply_update,
             address_book::address_book_login,
             address_book::address_book_logout,
             address_book::address_book_refresh,
@@ -671,6 +675,7 @@ fn main() {
             set_language
         ])
         .setup(|app| {
+            start_update_checks(app.handle());
             start_agent(app.handle());
             address_book::restore(app.handle());
             Ok(())
@@ -771,6 +776,71 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
         }
         result
     }
+}
+
+/// The app's own copy before the last update (see `apply_update`).
+fn previous_copy() -> Option<PathBuf> {
+    std::env::current_exe().ok().map(|exe| exe.with_extension("old.exe"))
+}
+
+/// Without the service (which updates an installed NexoDesk by itself) the app asks
+/// its server for a newer version at start-up and every 6 hours, and offers it.
+fn start_update_checks(app: &AppHandle) {
+    if let Some(old) = previous_copy() {
+        let _ = std::fs::remove_file(old);
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            #[cfg(windows)]
+            let installed = nexodesk_agent::ipc::service_installed();
+            #[cfg(not(windows))]
+            let installed = false;
+            let settings = load_settings();
+            if !installed && !settings.server.trim().is_empty() {
+                let base = nexodesk_update::base_url(&settings.server, None, nexodesk_update::DEFAULT_PORT);
+                match nexodesk_update::check(&base, &nexodesk_update::PUBLIC_KEY).await {
+                    Ok(found) => {
+                        let version = found.map(|m| m.version);
+                        app.state::<NexoApp>().update(&app, |ui| ui.update = version);
+                    }
+                    Err(e) => tracing::debug!("update check: {e:#}"),
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+        }
+    });
+}
+
+/// Downloads the newer version, checks it (signature, size, SHA-256) and replaces
+/// this program, keeping its file name (which may carry the server), then starts it.
+/// A running program cannot be overwritten but can be renamed: the old copy is
+/// moved aside and deleted at the next start.
+#[tauri::command]
+async fn apply_update(app: AppHandle) -> Result<(), String> {
+    let settings = load_settings();
+    let base = nexodesk_update::base_url(&settings.server, None, nexodesk_update::DEFAULT_PORT);
+    let error = |e: anyhow::Error| tf("update.failed", &[("e", &format!("{e:#}"))]);
+    let manifest = nexodesk_update::check(&base, &nexodesk_update::PUBLIC_KEY)
+        .await
+        .map_err(error)?
+        .ok_or_else(|| t("update.none"))?;
+    let download = std::env::temp_dir().join(format!("nexodesk-{}.exe", manifest.version));
+    nexodesk_update::download(&base, &manifest, &download).await.map_err(error)?;
+
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let aside = previous_copy().ok_or("program path")?;
+    let _ = std::fs::remove_file(&aside);
+    std::fs::rename(&exe, &aside).map_err(|e| error(e.into()))?;
+    if let Err(e) = std::fs::copy(&download, &exe) {
+        let _ = std::fs::rename(&aside, &exe);
+        return Err(error(e.into()));
+    }
+    let _ = std::fs::remove_file(&download);
+    info!("updated to {}: restarting", manifest.version);
+    std::process::Command::new(&exe).spawn().map_err(|e| error(e.into()))?;
+    app.exit(0);
+    Ok(())
 }
 
 fn run_subcommand(sub: &str, rest: &[std::ffi::OsString]) -> i32 {

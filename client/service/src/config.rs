@@ -87,6 +87,20 @@ pub fn agent_log() -> PathBuf {
     data_dir().join("agent.log")
 }
 
+/// Present while the agent has a session in progress: updates wait for it to end.
+pub fn busy_path() -> PathBuf {
+    data_dir().join("busy")
+}
+
+/// Downloaded updates, in the protected data folder: nobody can swap them before they run.
+pub fn update_dir() -> PathBuf {
+    data_dir().join("update")
+}
+
+pub fn update_log() -> PathBuf {
+    data_dir().join("update.log")
+}
+
 /// Moves a log that is too large to `.1` (only the previous generation is kept).
 pub fn rotate_log(path: &Path, max_bytes: u64) {
     if std::fs::metadata(path).is_ok_and(|m| m.len() > max_bytes) {

@@ -231,5 +231,11 @@
   "install.no_report": "The installation did not report its outcome.",
   "install.done": "NexoDesk is installed: this computer is reachable with the permanent password you chose.",
   "install.done_password": "NexoDesk is installed. Permanent password: {password} (write it down: it is shown only now).",
-  "install.windows_only": "Installation is available only on Windows for now."
+  "install.windows_only": "Installation is available only on Windows for now.",
+
+  "update.available": "NexoDesk {version} is available.",
+  "update.button": "Update",
+  "update.updating": "Downloading and checking the new version…",
+  "update.failed": "Update failed: {e}",
+  "update.none": "No newer version on the server."
 }

@@ -34,6 +34,10 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     fingerprint_file: Option<std::path::PathBuf>,
 
+    /// File present while a session is in progress (the service does not update meanwhile).
+    #[arg(long, value_name = "FILE", hide = true)]
+    busy_file: Option<std::path::PathBuf>,
+
     /// Exits at the end of the first session (automated tests, without --server).
     #[arg(long)]
     once: bool,
@@ -217,8 +221,24 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         }
         #[cfg(not(windows))]
         drop((app_rx, server_name));
+        let busy_file = args.busy_file.clone();
+        if let Some(file) = &busy_file {
+            // Left over by an agent that did not end cleanly.
+            let _ = std::fs::remove_file(file);
+        }
         tokio::spawn(async move {
             while let Some(event) = events_rx.recv().await {
+                if let Some(file) = &busy_file {
+                    match &event {
+                        AgentEvent::SessionStarted { .. } => {
+                            let _ = std::fs::write(file, b"");
+                        }
+                        AgentEvent::SessionEnded { .. } => {
+                            let _ = std::fs::remove_file(file);
+                        }
+                        _ => {}
+                    }
+                }
                 match &event {
                     AgentEvent::Online { device_id: id, .. } => info!("ID {} {} {}", &id[..3], &id[3..6], &id[6..]),
                     // With the app the temporary password is seen by the person at the PC, not the log.

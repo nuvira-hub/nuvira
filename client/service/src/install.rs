@@ -400,6 +400,21 @@ fn create(scm: &Sc, exe: &Path) -> Result<Sc> {
     Ok(service)
 }
 
+/// Automatic update: installs this program with the settings already in place.
+pub fn update() -> Result<()> {
+    let current = ServiceConfig::load()?;
+    println!("updating to {}", env!("CARGO_PKG_VERSION"));
+    install(InstallOptions {
+        server: current.server,
+        server_key: current.server_key,
+        // Kept by install().
+        password: None,
+        transport: current.transport,
+        server_ws: current.server_ws,
+    })
+    .map(|_| ())
+}
+
 pub fn uninstall(remove_program: bool) -> Result<()> {
     if elevate_if_needed()? {
         return Ok(());

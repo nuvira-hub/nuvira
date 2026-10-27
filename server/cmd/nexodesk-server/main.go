@@ -39,6 +39,7 @@ import (
 	nexosignal "github.com/alexbn71/NexoDesk/server/internal/signal"
 	"github.com/alexbn71/NexoDesk/server/internal/store"
 	"github.com/alexbn71/NexoDesk/server/internal/tlsutil"
+	"github.com/alexbn71/NexoDesk/server/internal/updates"
 )
 
 var version = "dev"
@@ -123,6 +124,7 @@ func run() error {
 		conn.WebSockets().SetLogger(log)
 		mux := http.NewServeMux()
 		mux.Handle("/nexodesk", conn.WebSockets())
+		mux.Handle(updates.Prefix, updates.Handler(filepath.Join(dataDir, "updates")))
 		wsServer := &http.Server{Addr: wsListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() {
 			if err := wsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -131,6 +133,7 @@ func run() error {
 		}()
 		defer wsServer.Close()
 		log.Info("WebSocket fallback active", "tcp", wsListen, "path", "/nexodesk")
+		log.Info("updates served", "path", updates.Prefix, "dir", filepath.Join(dataDir, "updates"))
 	}
 	ln, err := tr.Listen(
 		&tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{alpn}, MinVersion: tls.VersionTLS13},

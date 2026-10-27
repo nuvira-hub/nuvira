@@ -21,6 +21,8 @@ pub use install::run_elevated;
 mod launch;
 #[cfg(windows)]
 mod scm;
+#[cfg(windows)]
+mod update;
 
 const COPYRIGHT: &str = "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/NexoDesk";
 
@@ -74,6 +76,10 @@ enum Cmd {
     /// Used by the Windows service manager.
     #[command(hide = true)]
     Run,
+    /// Installs this program over the installed one, keeping its settings (started
+    /// by the service for automatic updates).
+    #[command(hide = true)]
+    Update,
 }
 
 /// The service's command line: `args` as from `std::env::args_os()` (program name first).
@@ -106,6 +112,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         Cmd::Uninstall { remove_program } => install::uninstall(remove_program),
         Cmd::Status => install::status(),
         Cmd::Run => run_service(),
+        Cmd::Update => install::update(),
     }
 }
 

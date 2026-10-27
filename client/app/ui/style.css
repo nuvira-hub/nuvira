@@ -95,6 +95,11 @@ footer { padding: 8px 32px 10px; font-size: 12px; color: var(--muted); border-to
 footer a { color: inherit; }
 
 .page { max-width: 900px; margin: 0 auto; }
+.update-bar {
+  max-width: 900px; margin: 0 auto 18px; padding: 10px 12px 10px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 12px;
+}
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
 h2 { margin: 24px 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
