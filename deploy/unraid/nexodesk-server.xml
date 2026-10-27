@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>nexodesk-server</Name>
+  <Repository>ghcr.io/alexbn71/nexodesk-server:latest</Repository>
+  <Registry>https://github.com/alexbn71/NexoDesk/pkgs/container/nexodesk-server</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/alexbn71/NexoDesk</Support>
+  <Project>https://github.com/alexbn71/NexoDesk</Project>
+  <Overview>NexoDesk signalling and relay server. Forward UDP 21116 (and TCP 21116 for the WebSocket fallback) from the router to this container.</Overview>
+  <Category>Network:Other Tools:</Category>
+  <WebUI/>
+  <TemplateURL/>
+  <Icon/>
+  <!-- Unraid appdata belongs to nobody:users; the image's default user (65532) could not write there. -->
+  <ExtraParams>--user 99:100</ExtraParams>
+  <PostArgs/>
+  <Config Name="Port (UDP)" Target="21116" Default="21116" Mode="udp" Description="Signalling and relay (QUIC). Forward it on the router." Type="Port" Display="always" Required="true" Mask="false">21116</Config>
+  <Config Name="Port (TCP)" Target="21116" Default="21116" Mode="tcp" Description="WebSocket fallback for networks that block UDP. Forward it on the router." Type="Port" Display="always" Required="false" Mask="false">21116</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/nexodesk-server" Mode="rw" Description="Database, server certificate and address book key. Back up the whole folder." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/nexodesk-server</Config>
+  <Config Name="Admin user" Target="NEXODESK_ADMIN_USER" Default="admin" Mode="" Description="First address book administrator, created only if no account exists yet." Type="Variable" Display="always" Required="false" Mask="false">admin</Config>
+  <Config Name="Admin password" Target="NEXODESK_ADMIN_PASSWORD" Default="" Mode="" Description="At least 8 characters. Empty: a random password is written once to the log. Used only at the first start." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Log level" Target="NEXODESK_LOG" Default="info" Mode="" Description="debug, info or warn." Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
+  <Config Name="WebSocket listen" Target="NEXODESK_WS_LISTEN" Default=":21116" Mode="" Description="TCP address of the WebSocket fallback; off to disable it." Type="Variable" Display="advanced" Required="false" Mask="false">:21116</Config>
+</Container>
