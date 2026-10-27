@@ -1,0 +1,68 @@
+# NexoDesk — Installation on Windows
+
+[← Index](README.md)
+
+Choices made with the user (2026-10-27): one program that runs without installing and can install itself (like Supremo and AnyDesk), the server in the file name (like RustDesk), a classic NSIS setup for scripted installations.
+
+## One program
+
+`nexodesk.exe` is the app and also contains the other programs, started on itself:
+
+| Command | What it is |
+|---|---|
+| `nexodesk.exe` | the app (Tauri) |
+| `nexodesk.exe viewer ...` | session window, started by the app for each connection |
+| `nexodesk.exe agent ...` | controlled device from the command line; started this way by the service |
+| `nexodesk.exe service install / status / uninstall / run` | unattended access (see [14-phase3-service.md](14-phase3-service.md)) |
+
+One file to download, copy and sign: 28 MB instead of four programs totalling 41 MB, with the C runtime linked in (no DLLs next to it). The viewer, the agent's command line and the service are libraries with a `run(args)` function; `nexodesk-viewer.exe`, `nexodesk-agent.exe` and `nexodesk-service.exe` are still built for development and tests.
+
+The app is a windowed program: from a command prompt the subcommands attach to the prompt's console and open its handles (Windows does not give them to a windowed program).
+
+## Server in the file name
+
+```
+nexodesk-host=nexodesk.example.com.exe
+nexodesk-host=10.0.0.5,port=21117,key=<64-hex fingerprint>.exe
+```
+
+Whoever hosts a server hands out the same program, renamed: at start-up it saves that server (and the fingerprint, pinned for agent and viewer) in its settings and connects with no setup. `:` is not allowed in Windows file names, hence `port=`. A browser's ` (1)` suffix is ignored; a bad port or key is dropped. Changing the server by hand forgets the fingerprint. The setup reads the same options from its own name (`nexodesk-setup-host=....exe`).
+
+## Install from the app
+
+Settings → Unattended access → "Install on this computer": permanent password (empty: generated and shown once), then the administrator prompt (UAC). The app runs `nexodesk.exe service install` as administrator:
+
+- the password goes in a temporary file deleted at once (`--password-file`), not on the command line, which other programs can read;
+- the outcome comes back as JSON in another file (`--report`): the app cannot see the output of a process started as administrator;
+- once installed the app switches to the service's agent (same ID and passwords as the service).
+
+The installation copies the program to `%ProgramFiles%\NexoDesk\nexodesk.exe`, installs the service, opens the firewall for the direct path, enables Ctrl+Alt+Del for services and adds:
+
+- a Start menu shortcut (all users);
+- an entry in the installed apps, whose uninstall command is `nexodesk.exe service uninstall --remove-program`: it asks for administrator rights by itself and removes service, firewall rule, entry, shortcut and the program folder. The data in `%ProgramData%\NexoDesk` stays, so reinstalling keeps the device ID.
+
+Updating over a running installation: a running program cannot be overwritten but can be renamed, so the installed one is moved aside (`nexodesk.old.exe`, deleted at the next update) when the copy fails.
+
+## Setup (NSIS)
+
+`tools/build-setup.sh` builds `dist/nexodesk-setup.exe` (6.6 MB) from `deploy/windows/nexodesk-setup.nsi`, downloading NSIS 3.08 once into `target/tools` (the archive Tauri uses, checked against its SHA-256).
+
+The setup is a wrapper around the same installation: it unpacks `nexodesk.exe` into a temporary folder and runs `service install`, so there is one installation logic. Pages: welcome, licence (AGPL-3.0), server and permanent password, progress, finish with "Run NexoDesk" (started through Explorer, so not as administrator). Languages: English, Italian, French, German, Spanish, chosen from Windows.
+
+```
+nexodesk-setup.exe                                    wizard
+nexodesk-setup.exe /S /SERVER=host[:port] [/PASSWORD=...] [/KEY=fingerprint]
+```
+
+Silent without a server (neither `/SERVER=` nor in the file name): exit code 2.
+
+## Tests of 2026-10-27
+
+- PC-LABORATORIO, from an administrator prompt: install with password file and report, update over a running service (an earlier installation with separate programs is converted: service command changed, old programs removed), full uninstall and reinstall with the same ID; silent setup with the server from its file name and with `/SERVER=`, and without a server (exit code 2).
+- Laptop (user): renamed program connected to the NAS server by itself; "Install on this computer" with UAC and a generated password.
+
+## To do
+
+- Code signing (SmartScreen warns about the unsigned program and setup): see [09-risks.md](09-risks.md).
+- Automatic updates.
+- Builds of the setup in GitHub Actions.
