@@ -294,7 +294,7 @@ async fn signal_loop(
         opts.transport,
         expected,
         identity,
-        &device_name,
+        &nexodesk_transport::signal::DeviceInfo { name: &device_name, reachable: true },
     )
     .await?;
     let websocket = matches!(signal.transport, nexodesk_transport::ServerTransport::WebSocket(_));

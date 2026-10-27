@@ -10,6 +10,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod rubrica;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -42,6 +44,10 @@ struct UiState {
     viewer_message: Option<String>,
     /// Chat con chi controlla questo PC (sessione in corso o ultima).
     chat: Vec<ChatLine>,
+    /// Account con cui si è entrati nella rubrica del server.
+    account: Option<rubrica::AccountUi>,
+    books: Vec<rubrica::BookUi>,
+    rubrica_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -73,6 +79,9 @@ struct SessionUi {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct Settings {
     server: String,
+    /// Accesso ricordato alla rubrica (gettone del server, non la password).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
 }
 
 fn settings_path() -> PathBuf {
@@ -102,6 +111,7 @@ struct NexoApp {
     agent: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     /// Encoder scelto alla prima sessione (la prova dura un paio di secondi).
     plan: Mutex<Option<EncoderPlan>>,
+    rubrica: rubrica::Link,
 }
 
 impl NexoApp {
@@ -337,8 +347,24 @@ fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(
         nexodesk_transport::resolve_addr(&server, nexodesk_transport::signal::DEFAULT_PORT)
             .map_err(|e| format!("indirizzo non valido: {e}"))?;
     }
-    save_settings(&Settings { server: server.clone() }).map_err(|e| e.to_string())?;
-    state.update(&app, |ui| ui.server = server);
+    let mut settings = load_settings();
+    let changed = settings.server != server;
+    settings.server = server.clone();
+    if changed {
+        // L'accesso alla rubrica vale per il server su cui è stato fatto.
+        settings.token = None;
+    }
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.update(&app, |ui| {
+        ui.server = server;
+        if changed {
+            ui.account = None;
+            ui.books.clear();
+        }
+    });
+    if changed && let Ok(mut client) = state.rubrica.client_slot() {
+        *client = None;
+    }
     start_agent(&app);
     Ok(())
 }
@@ -372,6 +398,26 @@ fn end_session(state: State<NexoApp>) {
 /// Apre la finestra della sessione verso un altro dispositivo (processo `nexodesk-viewer`).
 #[tauri::command]
 fn connect(app: AppHandle, state: State<NexoApp>, device_id: String, password: String) -> Result<(), String> {
+    launch_viewer(&app, &state, device_id, password)
+}
+
+/// Collegamento dalla rubrica, con la password salvata nella scheda.
+#[tauri::command]
+fn connect_entry(app: AppHandle, state: State<NexoApp>, id: i64) -> Result<(), String> {
+    let entry = state
+        .ui
+        .lock()
+        .expect("stato")
+        .books
+        .iter()
+        .flat_map(|b| &b.entries)
+        .find(|e| e.id == id)
+        .cloned()
+        .ok_or("scheda non trovata")?;
+    launch_viewer(&app, &state, entry.device_id, entry.password)
+}
+
+fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: String) -> Result<(), String> {
     let device_id: String = device_id.chars().filter(|c| c.is_ascii_digit()).collect();
     if device_id.len() != 9 {
         return Err("l'ID è di 9 cifre".into());
@@ -389,13 +435,27 @@ fn connect(app: AppHandle, state: State<NexoApp>, device_id: String, password: S
     // (che altri programmi dello stesso PC possono leggere).
     let mut child = std::process::Command::new(&viewer)
         .args(["--server", &server, &device_id])
-        .env("NEXODESK_PASSWORD", password)
-        .stdout(std::process::Stdio::null())
+        .env("NEXODESK_PASSWORD", &password)
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("avvio di nexodesk-viewer: {e}"))?;
     info!("sessione verso {device_id} avviata");
-    state.update(&app, |ui| ui.viewer_message = None);
+    state.update(app, |ui| ui.viewer_message = None);
+
+    // Il viewer segnala la sessione partita: è il momento dell'aggiunta automatica in rubrica.
+    if let Some(stdout) = child.stdout.take() {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+                if let Some(name) = line.strip_prefix("@connected\t") {
+                    rubrica::auto_add(&app, device_id.clone(), name.to_string(), password.clone());
+                }
+            }
+        });
+    }
+    let app = app.clone();
 
     // Se il viewer termina con un errore, il motivo (ultima riga) arriva nell'interfaccia.
     std::thread::spawn(move || {
@@ -458,6 +518,7 @@ fn main() {
         commands: Mutex::new(None),
         agent: Mutex::new(None),
         plan: Mutex::new(None),
+        rubrica: Default::default(),
     };
 
     tauri::Builder::default()
@@ -469,12 +530,25 @@ fn main() {
             new_password,
             respond,
             send_chat,
+            connect_entry,
+            rubrica::rubrica_login,
+            rubrica::rubrica_logout,
+            rubrica::rubrica_refresh,
+            rubrica::rubrica_save_entry,
+            rubrica::rubrica_delete_entry,
+            rubrica::rubrica_change_password,
+            rubrica::rubrica_accounts,
+            rubrica::rubrica_save_account,
+            rubrica::rubrica_delete_account,
+            rubrica::rubrica_save_book,
+            rubrica::rubrica_delete_book,
             end_session,
             connect,
             open_source
         ])
         .setup(|app| {
             start_agent(app.handle());
+            rubrica::restore(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())

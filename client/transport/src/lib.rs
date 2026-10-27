@@ -20,6 +20,7 @@ use rustls::{DigitallySignedStruct, SignatureScheme};
 use sha2::{Digest, Sha256};
 use tracing::warn;
 
+pub mod api;
 pub mod identity;
 pub mod p2p;
 pub mod signal;

@@ -13,6 +13,7 @@
   </header>
 
   <main>
+   <div class="column">
     <section id="session" class="banner hidden">
       <div>
         <strong>Sessione attiva</strong>
@@ -72,6 +73,36 @@
         </div>
       </form>
     </details>
+   </div>
+
+   <div class="column">
+    <section class="card rubrica" id="rubrica">
+      <div class="rubrica-head">
+        <h2>Rubrica</h2>
+        <div id="rubrica-tools" class="tools hidden">
+          <span id="rubrica-user" class="chip"></span>
+          <button id="rubrica-new" class="ghost" title="Nuova scheda">Nuova</button>
+          <button id="rubrica-reload" class="ghost" title="Aggiorna la rubrica">Aggiorna</button>
+          <button id="rubrica-admin" class="ghost hidden" title="Account e rubriche condivise">Gestione</button>
+          <button id="rubrica-password" class="ghost" title="Cambia la tua password">Password</button>
+          <button id="rubrica-logout" class="ghost" title="Esci dalla rubrica">Esci</button>
+        </div>
+      </div>
+
+      <form id="login-form" class="hidden">
+        <p class="hint">Entra con il tuo account per vedere i dispositivi salvati sul server NexoDesk.</p>
+        <input id="login-user" autocomplete="username" placeholder="Nome utente">
+        <input id="login-password" type="password" autocomplete="current-password" placeholder="Password">
+        <button type="submit" class="primary">Entra</button>
+      </form>
+
+      <div id="rubrica-body" class="hidden">
+        <input id="rubrica-search" type="search" autocomplete="off" placeholder="Cerca per nome, azienda, ID, referente…">
+        <div id="rubrica-list" class="rubrica-list"></div>
+      </div>
+      <p id="rubrica-message" class="message hidden"></p>
+    </section>
+   </div>
   </main>
 
   <footer>
@@ -92,6 +123,75 @@
     </div>
   </div>
 
+  <div id="entry-dialog" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="entry-title">
+    <form id="entry-form" class="dialog wide">
+      <h2 id="entry-title">Scheda</h2>
+      <div class="grid">
+        <label>Rubrica<select id="entry-book"></select></label>
+        <label>ID<input id="entry-device" class="mono" inputmode="numeric" autocomplete="off" required></label>
+        <label>Nome<input id="entry-name" autocomplete="off"></label>
+        <label>Azienda<input id="entry-company" autocomplete="off"></label>
+        <label>Referente<input id="entry-contact" autocomplete="off"></label>
+        <label>Telefono<input id="entry-phone" autocomplete="off"></label>
+        <label>Email<input id="entry-email" type="email" autocomplete="off"></label>
+        <label>Password<input id="entry-password" type="password" autocomplete="new-password"></label>
+        <label class="full">Note<textarea id="entry-notes" rows="3"></textarea></label>
+      </div>
+      <p id="entry-message" class="message hidden"></p>
+      <div class="actions">
+        <button type="button" id="entry-delete" class="danger">Elimina</button>
+        <span class="spacer"></span>
+        <button type="button" id="entry-cancel">Annulla</button>
+        <button type="submit" class="primary">Salva</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="password-dialog" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="password-title">
+    <form id="password-form" class="dialog">
+      <h2 id="password-title">Cambia la tua password</h2>
+      <input id="pw-old" type="password" autocomplete="current-password" placeholder="Password attuale" required>
+      <input id="pw-new" type="password" autocomplete="new-password" placeholder="Nuova password (almeno 8 caratteri)" required>
+      <input id="pw-confirm" type="password" autocomplete="new-password" placeholder="Ripeti la nuova password" required>
+      <p id="password-message" class="message hidden"></p>
+      <div class="actions">
+        <button type="button" id="password-cancel">Annulla</button>
+        <button type="submit" class="primary">Cambia</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="admin-dialog" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+    <div class="dialog wide">
+      <h2 id="admin-title">Account e rubriche condivise</h2>
+      <h3>Account</h3>
+      <div id="admin-accounts" class="admin-list"></div>
+      <form id="account-form" class="inline-form">
+        <input id="account-user" autocomplete="off" placeholder="Nome utente" required>
+        <input id="account-password" type="password" autocomplete="new-password" placeholder="Password">
+        <label class="check"><input id="account-admin" type="checkbox"> Amministratore</label>
+        <button type="submit" class="primary" id="account-save">Aggiungi</button>
+        <button type="button" id="account-cancel" class="hidden">Annulla</button>
+      </form>
+      <p class="hint" id="account-hint">Nuovo account: password di almeno 8 caratteri. In modifica lasciala vuota per non cambiarla.</p>
+      <h3>Rubriche condivise</h3>
+      <div id="admin-books" class="admin-list"></div>
+      <form id="book-form" class="book-form">
+        <input id="book-name" autocomplete="off" placeholder="Nome della rubrica condivisa" required>
+        <div id="book-members" class="members"></div>
+        <div class="actions">
+          <button type="button" id="book-cancel" class="hidden">Annulla</button>
+          <button type="submit" class="primary" id="book-save">Crea rubrica</button>
+        </div>
+      </form>
+      <p id="admin-message" class="message hidden"></p>
+      <div class="actions">
+        <button type="button" id="admin-close">Chiudi</button>
+      </div>
+    </div>
+  </div>
+
   <script src="main.js"></script>
+  <script src="rubrica.js"></script>
 </body>
 </html>

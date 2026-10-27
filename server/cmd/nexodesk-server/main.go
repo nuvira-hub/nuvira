@@ -8,6 +8,9 @@
 //	               anche come wss:// su 443 dietro un reverse proxy.
 //	NEXODESK_DATA_DIR  cartella per database e certificato (predefinito "./data")
 //	NEXODESK_LOG       debug | info (predefinito) | warn
+//	NEXODESK_ADMIN_USER, NEXODESK_ADMIN_PASSWORD  primo amministratore della rubrica,
+//	                   creato solo se non esiste nessun account (predefinito "admin"
+//	                   con una password casuale scritta una volta nel log)
 //	NEXODESK_RELAY_FAKE_REFLEXIVE  solo test: comunica indirizzi pubblici irraggiungibili
 //	                   (simula due dispositivi dietro lo stesso router)
 //	NEXODESK_RELAY_IMPAIR  solo test: simula una rete peggiore sul relay, es.
@@ -33,6 +36,7 @@ import (
 
 	"github.com/alexbn71/NexoDesk/server/internal/relay"
 	nexosignal "github.com/alexbn71/NexoDesk/server/internal/signal"
+	"github.com/alexbn71/NexoDesk/server/internal/accounts"
 	"github.com/alexbn71/NexoDesk/server/internal/store"
 	"github.com/alexbn71/NexoDesk/server/internal/tlsutil"
 )
@@ -140,7 +144,21 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	srv := nexosignal.New(st, rl, log)
+	acc, err := accounts.Open(st.DB(), filepath.Join(dataDir, "rubrica.key"))
+	if err != nil {
+		return err
+	}
+	created, generated, err := acc.Bootstrap(os.Getenv("NEXODESK_ADMIN_USER"), os.Getenv("NEXODESK_ADMIN_PASSWORD"))
+	if err != nil {
+		return fmt.Errorf("primo amministratore: %w", err)
+	}
+	if created && generated != "" {
+		log.Warn("creato l'account amministratore della rubrica: cambiare la password dall'app",
+			"utente", env("NEXODESK_ADMIN_USER", "admin"), "password", generated)
+	} else if created {
+		log.Info("creato l'account amministratore della rubrica", "utente", env("NEXODESK_ADMIN_USER", "admin"))
+	}
+	srv := nexosignal.New(st, acc, rl, log)
 	go func() {
 		<-ctx.Done()
 		ln.Close()

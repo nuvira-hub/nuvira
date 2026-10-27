@@ -170,9 +170,11 @@ async fn open_connection(target: Target) -> Result<(nexodesk_transport::Connecti
             let identity = Identity::load_or_create(&identity)?;
             let expected = server_key.or_else(|| signal::known_server::get(&server_name));
             let name = std::env::var("COMPUTERNAME").unwrap_or_default();
+            // Il viewer non riceve collegamenti: più finestre di sessione possono convivere.
+            let device = signal::DeviceInfo { name: &name, reachable: false };
             let ws_url = server_ws.unwrap_or_else(|| nexodesk_transport::ws::default_url(&server_name, server));
             let mut sig =
-                signal::connect_auto(server, &ws_url, transport, expected, &identity, &name).await?;
+                signal::connect_auto(server, &ws_url, transport, expected, &identity, &device).await?;
             if let nexodesk_transport::ServerTransport::WebSocket(url) = &sig.transport {
                 info!("collegato a nexodesk-server attraverso il WebSocket {url}");
             }

@@ -12,8 +12,8 @@
       {
         "label": "main",
         "title": "NexoDesk",
-        "width": 440,
-        "height": 680,
+        "width": 980,
+        "height": 720,
         "minWidth": 380,
         "minHeight": 560
       }

@@ -19,6 +19,7 @@ message ClientMessage {
     Connect connect = 3;
     Accept accept = 4;
     Reject reject = 5;
+    ApiRequest api = 6;
   }
 }
 
@@ -29,6 +30,7 @@ message ServerMessage {
     Incoming incoming = 3;
     Route route = 4;
     Error error = 5;
+    ApiResponse api = 6;
   }
 }
 
@@ -39,6 +41,10 @@ message Register {
   string os = 3;
   string app_version = 4;
   uint32 protocol_version = 5;
+  // Il dispositivo non è raggiungibile: non riceve richieste di collegamento
+  // (viewer, app che usa la rubrica). Più connessioni con la stessa chiave
+  // possono coesistere, ad esempio due finestre di sessione aperte insieme.
+  bool api_only = 6;
 }
 
 // Il dispositivo dimostra di possedere la chiave privata firmando
@@ -99,4 +105,142 @@ message Error {
   string message = 1;
   // Sessione o richiesta a cui si riferisce, se c'è.
   string session_id = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Account e rubrica (vedi docs/17-rubrica.md). Dopo Registered il client può
+// inviare ApiRequest; ogni richiesta riceve un ApiResponse con lo stesso id.
+// Prima serve Login o LoginToken: l'account resta legato alla connessione.
+
+message ApiRequest {
+  uint32 id = 1;
+  oneof call {
+    Login login = 2;
+    LoginToken login_token = 3;
+    Logout logout = 4;
+    GetBooks get_books = 5;
+    Entry put_entry = 6;
+    DeleteEntry delete_entry = 7;
+    ChangePassword change_password = 8;
+    // Solo amministratori.
+    ListAccounts list_accounts = 9;
+    PutAccount put_account = 10;
+    DeleteAccount delete_account = 11;
+    PutBook put_book = 12;
+    DeleteBook delete_book = 13;
+    // Aggiunge il dispositivo alla rubrica personale se non è in nessuna rubrica visibile.
+    Entry auto_add = 14;
+  }
+}
+
+message ApiResponse {
+  uint32 id = 1;
+  // Vuoto se la richiesta è riuscita.
+  string error = 2;
+  oneof result {
+    Session session = 3;
+    Books books = 4;
+    Entry entry = 5;
+    Accounts accounts = 6;
+    Book book = 7;
+    Account account = 8;
+  }
+}
+
+message Login {
+  string username = 1;
+  string password = 2;
+}
+
+// Accesso ricordato dall'app: il gettone sostituisce la password.
+message LoginToken {
+  string token = 1;
+}
+
+// Revoca il gettone in uso.
+message Logout {}
+
+message Session {
+  string token = 1;
+  Account account = 2;
+  // Scadenza del gettone (secondi dal 1970).
+  int64 expires = 3;
+}
+
+message Account {
+  int64 id = 1;
+  string username = 2;
+  bool admin = 3;
+}
+
+message ChangePassword {
+  string old_password = 1;
+  string new_password = 2;
+}
+
+// Tutte le rubriche visibili all'account, con le schede.
+message GetBooks {}
+
+message Books {
+  repeated Book books = 1;
+}
+
+message Book {
+  int64 id = 1;
+  string name = 2;
+  // Rubrica personale dell'account (una sola, non condivisibile).
+  bool personal = 3;
+  // Rubriche condivise: account che la vedono (solo per gli amministratori).
+  repeated int64 member_ids = 4;
+  repeated Entry entries = 5;
+}
+
+// Scheda di un dispositivo. Con id 0 PutEntry ne crea una nuova.
+message Entry {
+  int64 id = 1;
+  int64 book_id = 2;
+  string device_id = 3;
+  string name = 4;
+  string company = 5;
+  string contact = 6;
+  string email = 7;
+  string phone = 8;
+  string notes = 9;
+  // In chiaro solo dentro la connessione cifrata; sul server è cifrata.
+  string password = 10;
+  // Ultima modifica (secondi dal 1970), impostata dal server.
+  int64 updated = 11;
+}
+
+message DeleteEntry {
+  int64 id = 1;
+}
+
+message ListAccounts {}
+
+message Accounts {
+  repeated Account accounts = 1;
+}
+
+// Con id 0 crea l'account; password vuota = invariata.
+message PutAccount {
+  int64 id = 1;
+  string username = 2;
+  string password = 3;
+  bool admin = 4;
+}
+
+message DeleteAccount {
+  int64 id = 1;
+}
+
+// Rubrica condivisa: con id 0 la crea. I membri sostituiscono quelli attuali.
+message PutBook {
+  int64 id = 1;
+  string name = 2;
+  repeated int64 member_ids = 3;
+}
+
+message DeleteBook {
+  int64 id = 1;
 }

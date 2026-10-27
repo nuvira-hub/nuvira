@@ -482,6 +482,8 @@ impl ApplicationHandler<NetEvent> for App {
         match event {
             NetEvent::Connected { agent, direct, width, height } => {
                 info!("schermo remoto {width}x{height}");
+                // Per l'app NexoDesk, che legge l'uscita: la sessione è partita (rubrica).
+                println!("@connected\t{agent}");
                 for path in std::mem::take(&mut self.pending_files) {
                     self.send_file(path);
                 }

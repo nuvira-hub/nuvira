@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS devices (
 
 // Open apre (o crea) il database nel file indicato.
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +51,9 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// DB espone il database agli altri archivi dello stesso file (account e rubrica).
+func (s *Store) DB() *sql.DB { return s.db }
 
 // Register restituisce il dispositivo con questa chiave, creandolo con un ID nuovo
 // se è la prima volta; aggiorna nome, sistema e ultimo accesso.

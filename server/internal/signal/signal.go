@@ -19,6 +19,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"google.golang.org/protobuf/encoding/protodelim"
 
+	"github.com/alexbn71/NexoDesk/server/internal/accounts"
 	"github.com/alexbn71/NexoDesk/server/internal/pb"
 	"github.com/alexbn71/NexoDesk/server/internal/relay"
 	"github.com/alexbn71/NexoDesk/server/internal/store"
@@ -38,8 +39,13 @@ const maxMessage = 64 * 1024
 type client struct {
 	device *store.Device
 	conn   *quic.Conn
-	mu     sync.Mutex // serializza le scritture sullo stream
+	mu     sync.Mutex // serializza le scritture sullo stream e protegge session
 	stream *quic.Stream
+	// Non raggiungibile come dispositivo (viewer, app per la rubrica): non va
+	// tra quelli online e non scollega altre connessioni con la stessa chiave.
+	apiOnly bool
+	// Accesso alla rubrica fatto su questa connessione.
+	session *pb.Session
 }
 
 func (c *client) send(msg *pb.ServerMessage) error {
@@ -57,17 +63,21 @@ type pending struct {
 }
 
 type Server struct {
-	store *store.Store
-	relay *relay.Relay
-	log   *slog.Logger
+	store    *store.Store
+	accounts *accounts.Service
+	relay    *relay.Relay
+	log      *slog.Logger
 
 	mu       sync.Mutex
 	online   map[string]*client // per ID dispositivo
 	sessions map[string]*pending
 }
 
-func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
-	return &Server{store: st, relay: r, log: log, online: map[string]*client{}, sessions: map[string]*pending{}}
+func New(st *store.Store, acc *accounts.Service, r *relay.Relay, log *slog.Logger) *Server {
+	return &Server{
+		store: st, accounts: acc, relay: r, log: log,
+		online: map[string]*client{}, sessions: map[string]*pending{},
+	}
 }
 
 // Serve accetta connessioni finché il listener non viene chiuso.
@@ -130,6 +140,8 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 			s.accept(c, m.Accept.SessionId)
 		case *pb.ClientMessage_Reject:
 			s.reject(c, m.Reject.SessionId, m.Reject.Reason)
+		case *pb.ClientMessage_Api:
+			s.api(c, m.Api)
 		default:
 			_ = c.send(errorMsg("messaggio non previsto", ""))
 		}
@@ -147,7 +159,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	if reg == nil || len(reg.PublicKey) != ed25519.PublicKeySize {
 		return nil, errors.New("Register mancante o chiave non valida")
 	}
-	c := &client{conn: conn, stream: stream}
+	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly}
 	if reg.ProtocolVersion < ProtocolVersion {
 		_ = c.send(errorMsg("versione del protocollo non supportata, aggiornare NexoDesk", ""))
 		return nil, fmt.Errorf("protocollo %d", reg.ProtocolVersion)
@@ -188,6 +200,9 @@ func limit(s string, n int) string {
 }
 
 func (s *Server) setOnline(c *client) {
+	if c.apiOnly {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if old := s.online[c.device.ID]; old != nil {

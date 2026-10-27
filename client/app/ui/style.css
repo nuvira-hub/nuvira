@@ -45,6 +45,11 @@ header h1 { margin: 0; font-size: 22px; font-weight: 600; }
 .logo { width: 32px; height: 32px; }
 
 main { flex: 1; padding: 8px 16px; display: flex; flex-direction: column; gap: 12px; }
+.column { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* Finestra larga: dispositivo a sinistra, rubrica a destra. */
+@media (min-width: 820px) {
+  main { display: grid; grid-template-columns: minmax(340px, 420px) 1fr; align-items: start; }
+}
 
 .card {
   background: var(--card);
@@ -127,5 +132,39 @@ footer a { color: inherit; }
 .chat-log .mine { background: var(--accent); color: var(--accent-text); align-self: flex-end; }
 .chat-log .system { align-self: center; max-width: 100%; font-size: 13px; color: var(--muted); text-align: center; }
 .chat-form { flex-direction: row; }
+
+.rubrica-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.rubrica-head h2 { margin: 0; }
+.tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chip { font-size: 12px; color: var(--muted); padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; }
+.rubrica-list { margin-top: 10px; max-height: calc(100vh - 220px); overflow-y: auto; }
+.book-title { margin: 12px 0 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.book-title:first-child { margin-top: 0; }
+.entry { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+.entry:last-child { border-bottom: 0; }
+.entry .who { flex: 1; min-width: 0; }
+.entry .who strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry .who span { display: block; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry button { padding: 4px 10px; font-size: 13px; }
+.empty { color: var(--muted); font-size: 13px; margin: 8px 0; }
+
+.dialog.wide { max-width: 640px; max-height: calc(100vh - 40px); overflow-y: auto; }
+.dialog h3 { margin: 16px 0 6px; font-size: 14px; }
+.dialog form, form.dialog { gap: 8px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.grid label, .book-form label { display: flex; flex-direction: column; gap: 2px; }
+.grid .full { grid-column: 1 / -1; }
+select, textarea { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+textarea { resize: vertical; }
+.spacer { flex: 1; }
+.actions { align-items: center; }
+.admin-list .row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.admin-list .row span { flex: 1; }
+.admin-list .row button { padding: 3px 10px; font-size: 13px; }
+.inline-form { flex-direction: row; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.inline-form input { flex: 1 1 140px; }
+label.check { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 14px; color: var(--text); text-transform: none; letter-spacing: 0; }
+.members { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.badge { font-size: 11px; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 5px; margin-left: 6px; }
 
 .hidden { display: none !important; }

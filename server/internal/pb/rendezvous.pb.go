@@ -87,6 +87,7 @@ type ClientMessage struct {
 	//	*ClientMessage_Connect
 	//	*ClientMessage_Accept
 	//	*ClientMessage_Reject
+	//	*ClientMessage_Api
 	Msg           isClientMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -174,6 +175,15 @@ func (x *ClientMessage) GetReject() *Reject {
 	return nil
 }
 
+func (x *ClientMessage) GetApi() *ApiRequest {
+	if x != nil {
+		if x, ok := x.Msg.(*ClientMessage_Api); ok {
+			return x.Api
+		}
+	}
+	return nil
+}
+
 type isClientMessage_Msg interface {
 	isClientMessage_Msg()
 }
@@ -198,6 +208,10 @@ type ClientMessage_Reject struct {
 	Reject *Reject `protobuf:"bytes,5,opt,name=reject,proto3,oneof"`
 }
 
+type ClientMessage_Api struct {
+	Api *ApiRequest `protobuf:"bytes,6,opt,name=api,proto3,oneof"`
+}
+
 func (*ClientMessage_Register) isClientMessage_Msg() {}
 
 func (*ClientMessage_Proof) isClientMessage_Msg() {}
@@ -208,6 +222,8 @@ func (*ClientMessage_Accept) isClientMessage_Msg() {}
 
 func (*ClientMessage_Reject) isClientMessage_Msg() {}
 
+func (*ClientMessage_Api) isClientMessage_Msg() {}
+
 type ServerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Msg:
@@ -217,6 +233,7 @@ type ServerMessage struct {
 	//	*ServerMessage_Incoming
 	//	*ServerMessage_Route
 	//	*ServerMessage_Error
+	//	*ServerMessage_Api
 	Msg           isServerMessage_Msg `protobuf_oneof:"msg"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -304,6 +321,15 @@ func (x *ServerMessage) GetError() *Error {
 	return nil
 }
 
+func (x *ServerMessage) GetApi() *ApiResponse {
+	if x != nil {
+		if x, ok := x.Msg.(*ServerMessage_Api); ok {
+			return x.Api
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Msg interface {
 	isServerMessage_Msg()
 }
@@ -328,6 +354,10 @@ type ServerMessage_Error struct {
 	Error *Error `protobuf:"bytes,5,opt,name=error,proto3,oneof"`
 }
 
+type ServerMessage_Api struct {
+	Api *ApiResponse `protobuf:"bytes,6,opt,name=api,proto3,oneof"`
+}
+
 func (*ServerMessage_Challenge) isServerMessage_Msg() {}
 
 func (*ServerMessage_Registered) isServerMessage_Msg() {}
@@ -338,6 +368,8 @@ func (*ServerMessage_Route) isServerMessage_Msg() {}
 
 func (*ServerMessage_Error) isServerMessage_Msg() {}
 
+func (*ServerMessage_Api) isServerMessage_Msg() {}
+
 // Primo messaggio di ogni dispositivo: la sua chiave pubblica Ed25519 (32 byte).
 type Register struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
@@ -346,8 +378,12 @@ type Register struct {
 	Os              string                 `protobuf:"bytes,3,opt,name=os,proto3" json:"os,omitempty"`
 	AppVersion      string                 `protobuf:"bytes,4,opt,name=app_version,json=appVersion,proto3" json:"app_version,omitempty"`
 	ProtocolVersion uint32                 `protobuf:"varint,5,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Il dispositivo non è raggiungibile: non riceve richieste di collegamento
+	// (viewer, app che usa la rubrica). Più connessioni con la stessa chiave
+	// possono coesistere, ad esempio due finestre di sessione aperte insieme.
+	ApiOnly       bool `protobuf:"varint,6,opt,name=api_only,json=apiOnly,proto3" json:"api_only,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Register) Reset() {
@@ -413,6 +449,13 @@ func (x *Register) GetProtocolVersion() uint32 {
 		return x.ProtocolVersion
 	}
 	return 0
+}
+
+func (x *Register) GetApiOnly() bool {
+	if x != nil {
+		return x.ApiOnly
+	}
+	return false
 }
 
 // Il dispositivo dimostra di possedere la chiave privata firmando
@@ -892,18 +935,1385 @@ func (x *Error) GetSessionId() string {
 	return ""
 }
 
+type ApiRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	// Types that are valid to be assigned to Call:
+	//
+	//	*ApiRequest_Login
+	//	*ApiRequest_LoginToken
+	//	*ApiRequest_Logout
+	//	*ApiRequest_GetBooks
+	//	*ApiRequest_PutEntry
+	//	*ApiRequest_DeleteEntry
+	//	*ApiRequest_ChangePassword
+	//	*ApiRequest_ListAccounts
+	//	*ApiRequest_PutAccount
+	//	*ApiRequest_DeleteAccount
+	//	*ApiRequest_PutBook
+	//	*ApiRequest_DeleteBook
+	//	*ApiRequest_AutoAdd
+	Call          isApiRequest_Call `protobuf_oneof:"call"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApiRequest) Reset() {
+	*x = ApiRequest{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApiRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApiRequest) ProtoMessage() {}
+
+func (x *ApiRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApiRequest.ProtoReflect.Descriptor instead.
+func (*ApiRequest) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ApiRequest) GetId() uint32 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *ApiRequest) GetCall() isApiRequest_Call {
+	if x != nil {
+		return x.Call
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetLogin() *Login {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_Login); ok {
+			return x.Login
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetLoginToken() *LoginToken {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_LoginToken); ok {
+			return x.LoginToken
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetLogout() *Logout {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_Logout); ok {
+			return x.Logout
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetGetBooks() *GetBooks {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_GetBooks); ok {
+			return x.GetBooks
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetPutEntry() *Entry {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_PutEntry); ok {
+			return x.PutEntry
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetDeleteEntry() *DeleteEntry {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_DeleteEntry); ok {
+			return x.DeleteEntry
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetChangePassword() *ChangePassword {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_ChangePassword); ok {
+			return x.ChangePassword
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetListAccounts() *ListAccounts {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_ListAccounts); ok {
+			return x.ListAccounts
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetPutAccount() *PutAccount {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_PutAccount); ok {
+			return x.PutAccount
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetDeleteAccount() *DeleteAccount {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_DeleteAccount); ok {
+			return x.DeleteAccount
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetPutBook() *PutBook {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_PutBook); ok {
+			return x.PutBook
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetDeleteBook() *DeleteBook {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_DeleteBook); ok {
+			return x.DeleteBook
+		}
+	}
+	return nil
+}
+
+func (x *ApiRequest) GetAutoAdd() *Entry {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_AutoAdd); ok {
+			return x.AutoAdd
+		}
+	}
+	return nil
+}
+
+type isApiRequest_Call interface {
+	isApiRequest_Call()
+}
+
+type ApiRequest_Login struct {
+	Login *Login `protobuf:"bytes,2,opt,name=login,proto3,oneof"`
+}
+
+type ApiRequest_LoginToken struct {
+	LoginToken *LoginToken `protobuf:"bytes,3,opt,name=login_token,json=loginToken,proto3,oneof"`
+}
+
+type ApiRequest_Logout struct {
+	Logout *Logout `protobuf:"bytes,4,opt,name=logout,proto3,oneof"`
+}
+
+type ApiRequest_GetBooks struct {
+	GetBooks *GetBooks `protobuf:"bytes,5,opt,name=get_books,json=getBooks,proto3,oneof"`
+}
+
+type ApiRequest_PutEntry struct {
+	PutEntry *Entry `protobuf:"bytes,6,opt,name=put_entry,json=putEntry,proto3,oneof"`
+}
+
+type ApiRequest_DeleteEntry struct {
+	DeleteEntry *DeleteEntry `protobuf:"bytes,7,opt,name=delete_entry,json=deleteEntry,proto3,oneof"`
+}
+
+type ApiRequest_ChangePassword struct {
+	ChangePassword *ChangePassword `protobuf:"bytes,8,opt,name=change_password,json=changePassword,proto3,oneof"`
+}
+
+type ApiRequest_ListAccounts struct {
+	// Solo amministratori.
+	ListAccounts *ListAccounts `protobuf:"bytes,9,opt,name=list_accounts,json=listAccounts,proto3,oneof"`
+}
+
+type ApiRequest_PutAccount struct {
+	PutAccount *PutAccount `protobuf:"bytes,10,opt,name=put_account,json=putAccount,proto3,oneof"`
+}
+
+type ApiRequest_DeleteAccount struct {
+	DeleteAccount *DeleteAccount `protobuf:"bytes,11,opt,name=delete_account,json=deleteAccount,proto3,oneof"`
+}
+
+type ApiRequest_PutBook struct {
+	PutBook *PutBook `protobuf:"bytes,12,opt,name=put_book,json=putBook,proto3,oneof"`
+}
+
+type ApiRequest_DeleteBook struct {
+	DeleteBook *DeleteBook `protobuf:"bytes,13,opt,name=delete_book,json=deleteBook,proto3,oneof"`
+}
+
+type ApiRequest_AutoAdd struct {
+	// Aggiunge il dispositivo alla rubrica personale se non è in nessuna rubrica visibile.
+	AutoAdd *Entry `protobuf:"bytes,14,opt,name=auto_add,json=autoAdd,proto3,oneof"`
+}
+
+func (*ApiRequest_Login) isApiRequest_Call() {}
+
+func (*ApiRequest_LoginToken) isApiRequest_Call() {}
+
+func (*ApiRequest_Logout) isApiRequest_Call() {}
+
+func (*ApiRequest_GetBooks) isApiRequest_Call() {}
+
+func (*ApiRequest_PutEntry) isApiRequest_Call() {}
+
+func (*ApiRequest_DeleteEntry) isApiRequest_Call() {}
+
+func (*ApiRequest_ChangePassword) isApiRequest_Call() {}
+
+func (*ApiRequest_ListAccounts) isApiRequest_Call() {}
+
+func (*ApiRequest_PutAccount) isApiRequest_Call() {}
+
+func (*ApiRequest_DeleteAccount) isApiRequest_Call() {}
+
+func (*ApiRequest_PutBook) isApiRequest_Call() {}
+
+func (*ApiRequest_DeleteBook) isApiRequest_Call() {}
+
+func (*ApiRequest_AutoAdd) isApiRequest_Call() {}
+
+type ApiResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	// Vuoto se la richiesta è riuscita.
+	Error string `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	// Types that are valid to be assigned to Result:
+	//
+	//	*ApiResponse_Session
+	//	*ApiResponse_Books
+	//	*ApiResponse_Entry
+	//	*ApiResponse_Accounts
+	//	*ApiResponse_Book
+	//	*ApiResponse_Account
+	Result        isApiResponse_Result `protobuf_oneof:"result"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApiResponse) Reset() {
+	*x = ApiResponse{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApiResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApiResponse) ProtoMessage() {}
+
+func (x *ApiResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApiResponse.ProtoReflect.Descriptor instead.
+func (*ApiResponse) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ApiResponse) GetId() uint32 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *ApiResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *ApiResponse) GetResult() isApiResponse_Result {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+func (x *ApiResponse) GetSession() *Session {
+	if x != nil {
+		if x, ok := x.Result.(*ApiResponse_Session); ok {
+			return x.Session
+		}
+	}
+	return nil
+}
+
+func (x *ApiResponse) GetBooks() *Books {
+	if x != nil {
+		if x, ok := x.Result.(*ApiResponse_Books); ok {
+			return x.Books
+		}
+	}
+	return nil
+}
+
+func (x *ApiResponse) GetEntry() *Entry {
+	if x != nil {
+		if x, ok := x.Result.(*ApiResponse_Entry); ok {
+			return x.Entry
+		}
+	}
+	return nil
+}
+
+func (x *ApiResponse) GetAccounts() *Accounts {
+	if x != nil {
+		if x, ok := x.Result.(*ApiResponse_Accounts); ok {
+			return x.Accounts
+		}
+	}
+	return nil
+}
+
+func (x *ApiResponse) GetBook() *Book {
+	if x != nil {
+		if x, ok := x.Result.(*ApiResponse_Book); ok {
+			return x.Book
+		}
+	}
+	return nil
+}
+
+func (x *ApiResponse) GetAccount() *Account {
+	if x != nil {
+		if x, ok := x.Result.(*ApiResponse_Account); ok {
+			return x.Account
+		}
+	}
+	return nil
+}
+
+type isApiResponse_Result interface {
+	isApiResponse_Result()
+}
+
+type ApiResponse_Session struct {
+	Session *Session `protobuf:"bytes,3,opt,name=session,proto3,oneof"`
+}
+
+type ApiResponse_Books struct {
+	Books *Books `protobuf:"bytes,4,opt,name=books,proto3,oneof"`
+}
+
+type ApiResponse_Entry struct {
+	Entry *Entry `protobuf:"bytes,5,opt,name=entry,proto3,oneof"`
+}
+
+type ApiResponse_Accounts struct {
+	Accounts *Accounts `protobuf:"bytes,6,opt,name=accounts,proto3,oneof"`
+}
+
+type ApiResponse_Book struct {
+	Book *Book `protobuf:"bytes,7,opt,name=book,proto3,oneof"`
+}
+
+type ApiResponse_Account struct {
+	Account *Account `protobuf:"bytes,8,opt,name=account,proto3,oneof"`
+}
+
+func (*ApiResponse_Session) isApiResponse_Result() {}
+
+func (*ApiResponse_Books) isApiResponse_Result() {}
+
+func (*ApiResponse_Entry) isApiResponse_Result() {}
+
+func (*ApiResponse_Accounts) isApiResponse_Result() {}
+
+func (*ApiResponse_Book) isApiResponse_Result() {}
+
+func (*ApiResponse_Account) isApiResponse_Result() {}
+
+type Login struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Login) Reset() {
+	*x = Login{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Login) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Login) ProtoMessage() {}
+
+func (x *Login) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Login.ProtoReflect.Descriptor instead.
+func (*Login) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *Login) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *Login) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+// Accesso ricordato dall'app: il gettone sostituisce la password.
+type LoginToken struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LoginToken) Reset() {
+	*x = LoginToken{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoginToken) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoginToken) ProtoMessage() {}
+
+func (x *LoginToken) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoginToken.ProtoReflect.Descriptor instead.
+func (*LoginToken) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *LoginToken) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+// Revoca il gettone in uso.
+type Logout struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Logout) Reset() {
+	*x = Logout{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Logout) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Logout) ProtoMessage() {}
+
+func (x *Logout) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Logout.ProtoReflect.Descriptor instead.
+func (*Logout) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{16}
+}
+
+type Session struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Token   string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	Account *Account               `protobuf:"bytes,2,opt,name=account,proto3" json:"account,omitempty"`
+	// Scadenza del gettone (secondi dal 1970).
+	Expires       int64 `protobuf:"varint,3,opt,name=expires,proto3" json:"expires,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Session) Reset() {
+	*x = Session{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Session) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Session) ProtoMessage() {}
+
+func (x *Session) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Session.ProtoReflect.Descriptor instead.
+func (*Session) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *Session) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *Session) GetAccount() *Account {
+	if x != nil {
+		return x.Account
+	}
+	return nil
+}
+
+func (x *Session) GetExpires() int64 {
+	if x != nil {
+		return x.Expires
+	}
+	return 0
+}
+
+type Account struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Username      string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
+	Admin         bool                   `protobuf:"varint,3,opt,name=admin,proto3" json:"admin,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Account) Reset() {
+	*x = Account{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Account) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Account) ProtoMessage() {}
+
+func (x *Account) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Account.ProtoReflect.Descriptor instead.
+func (*Account) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *Account) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *Account) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *Account) GetAdmin() bool {
+	if x != nil {
+		return x.Admin
+	}
+	return false
+}
+
+type ChangePassword struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OldPassword   string                 `protobuf:"bytes,1,opt,name=old_password,json=oldPassword,proto3" json:"old_password,omitempty"`
+	NewPassword   string                 `protobuf:"bytes,2,opt,name=new_password,json=newPassword,proto3" json:"new_password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChangePassword) Reset() {
+	*x = ChangePassword{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChangePassword) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChangePassword) ProtoMessage() {}
+
+func (x *ChangePassword) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChangePassword.ProtoReflect.Descriptor instead.
+func (*ChangePassword) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ChangePassword) GetOldPassword() string {
+	if x != nil {
+		return x.OldPassword
+	}
+	return ""
+}
+
+func (x *ChangePassword) GetNewPassword() string {
+	if x != nil {
+		return x.NewPassword
+	}
+	return ""
+}
+
+// Tutte le rubriche visibili all'account, con le schede.
+type GetBooks struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBooks) Reset() {
+	*x = GetBooks{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBooks) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBooks) ProtoMessage() {}
+
+func (x *GetBooks) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBooks.ProtoReflect.Descriptor instead.
+func (*GetBooks) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{20}
+}
+
+type Books struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Books         []*Book                `protobuf:"bytes,1,rep,name=books,proto3" json:"books,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Books) Reset() {
+	*x = Books{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Books) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Books) ProtoMessage() {}
+
+func (x *Books) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Books.ProtoReflect.Descriptor instead.
+func (*Books) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *Books) GetBooks() []*Book {
+	if x != nil {
+		return x.Books
+	}
+	return nil
+}
+
+type Book struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name  string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// Rubrica personale dell'account (una sola, non condivisibile).
+	Personal bool `protobuf:"varint,3,opt,name=personal,proto3" json:"personal,omitempty"`
+	// Rubriche condivise: account che la vedono (solo per gli amministratori).
+	MemberIds     []int64  `protobuf:"varint,4,rep,packed,name=member_ids,json=memberIds,proto3" json:"member_ids,omitempty"`
+	Entries       []*Entry `protobuf:"bytes,5,rep,name=entries,proto3" json:"entries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Book) Reset() {
+	*x = Book{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Book) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Book) ProtoMessage() {}
+
+func (x *Book) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Book.ProtoReflect.Descriptor instead.
+func (*Book) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *Book) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *Book) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Book) GetPersonal() bool {
+	if x != nil {
+		return x.Personal
+	}
+	return false
+}
+
+func (x *Book) GetMemberIds() []int64 {
+	if x != nil {
+		return x.MemberIds
+	}
+	return nil
+}
+
+func (x *Book) GetEntries() []*Entry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+// Scheda di un dispositivo. Con id 0 PutEntry ne crea una nuova.
+type Entry struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Id       int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	BookId   int64                  `protobuf:"varint,2,opt,name=book_id,json=bookId,proto3" json:"book_id,omitempty"`
+	DeviceId string                 `protobuf:"bytes,3,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	Name     string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	Company  string                 `protobuf:"bytes,5,opt,name=company,proto3" json:"company,omitempty"`
+	Contact  string                 `protobuf:"bytes,6,opt,name=contact,proto3" json:"contact,omitempty"`
+	Email    string                 `protobuf:"bytes,7,opt,name=email,proto3" json:"email,omitempty"`
+	Phone    string                 `protobuf:"bytes,8,opt,name=phone,proto3" json:"phone,omitempty"`
+	Notes    string                 `protobuf:"bytes,9,opt,name=notes,proto3" json:"notes,omitempty"`
+	// In chiaro solo dentro la connessione cifrata; sul server è cifrata.
+	Password string `protobuf:"bytes,10,opt,name=password,proto3" json:"password,omitempty"`
+	// Ultima modifica (secondi dal 1970), impostata dal server.
+	Updated       int64 `protobuf:"varint,11,opt,name=updated,proto3" json:"updated,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Entry) Reset() {
+	*x = Entry{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Entry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Entry) ProtoMessage() {}
+
+func (x *Entry) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Entry.ProtoReflect.Descriptor instead.
+func (*Entry) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *Entry) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *Entry) GetBookId() int64 {
+	if x != nil {
+		return x.BookId
+	}
+	return 0
+}
+
+func (x *Entry) GetDeviceId() string {
+	if x != nil {
+		return x.DeviceId
+	}
+	return ""
+}
+
+func (x *Entry) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Entry) GetCompany() string {
+	if x != nil {
+		return x.Company
+	}
+	return ""
+}
+
+func (x *Entry) GetContact() string {
+	if x != nil {
+		return x.Contact
+	}
+	return ""
+}
+
+func (x *Entry) GetEmail() string {
+	if x != nil {
+		return x.Email
+	}
+	return ""
+}
+
+func (x *Entry) GetPhone() string {
+	if x != nil {
+		return x.Phone
+	}
+	return ""
+}
+
+func (x *Entry) GetNotes() string {
+	if x != nil {
+		return x.Notes
+	}
+	return ""
+}
+
+func (x *Entry) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+func (x *Entry) GetUpdated() int64 {
+	if x != nil {
+		return x.Updated
+	}
+	return 0
+}
+
+type DeleteEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteEntry) Reset() {
+	*x = DeleteEntry{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteEntry) ProtoMessage() {}
+
+func (x *DeleteEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteEntry.ProtoReflect.Descriptor instead.
+func (*DeleteEntry) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *DeleteEntry) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+type ListAccounts struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListAccounts) Reset() {
+	*x = ListAccounts{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListAccounts) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListAccounts) ProtoMessage() {}
+
+func (x *ListAccounts) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListAccounts.ProtoReflect.Descriptor instead.
+func (*ListAccounts) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{25}
+}
+
+type Accounts struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Accounts      []*Account             `protobuf:"bytes,1,rep,name=accounts,proto3" json:"accounts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Accounts) Reset() {
+	*x = Accounts{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Accounts) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Accounts) ProtoMessage() {}
+
+func (x *Accounts) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Accounts.ProtoReflect.Descriptor instead.
+func (*Accounts) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *Accounts) GetAccounts() []*Account {
+	if x != nil {
+		return x.Accounts
+	}
+	return nil
+}
+
+// Con id 0 crea l'account; password vuota = invariata.
+type PutAccount struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Username      string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
+	Admin         bool                   `protobuf:"varint,4,opt,name=admin,proto3" json:"admin,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutAccount) Reset() {
+	*x = PutAccount{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutAccount) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutAccount) ProtoMessage() {}
+
+func (x *PutAccount) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutAccount.ProtoReflect.Descriptor instead.
+func (*PutAccount) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *PutAccount) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *PutAccount) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *PutAccount) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+func (x *PutAccount) GetAdmin() bool {
+	if x != nil {
+		return x.Admin
+	}
+	return false
+}
+
+type DeleteAccount struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteAccount) Reset() {
+	*x = DeleteAccount{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteAccount) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteAccount) ProtoMessage() {}
+
+func (x *DeleteAccount) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteAccount.ProtoReflect.Descriptor instead.
+func (*DeleteAccount) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *DeleteAccount) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+// Rubrica condivisa: con id 0 la crea. I membri sostituiscono quelli attuali.
+type PutBook struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	MemberIds     []int64                `protobuf:"varint,3,rep,packed,name=member_ids,json=memberIds,proto3" json:"member_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutBook) Reset() {
+	*x = PutBook{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutBook) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutBook) ProtoMessage() {}
+
+func (x *PutBook) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutBook.ProtoReflect.Descriptor instead.
+func (*PutBook) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *PutBook) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *PutBook) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *PutBook) GetMemberIds() []int64 {
+	if x != nil {
+		return x.MemberIds
+	}
+	return nil
+}
+
+type DeleteBook struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteBook) Reset() {
+	*x = DeleteBook{}
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteBook) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteBook) ProtoMessage() {}
+
+func (x *DeleteBook) ProtoReflect() protoreflect.Message {
+	mi := &file_nexodesk_v1_rendezvous_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteBook.ProtoReflect.Descriptor instead.
+func (*DeleteBook) Descriptor() ([]byte, []int) {
+	return file_nexodesk_v1_rendezvous_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *DeleteBook) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
 var File_nexodesk_v1_rendezvous_proto protoreflect.FileDescriptor
 
 const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\n" +
-	"\x1cnexodesk/v1/rendezvous.proto\x12\vnexodesk.v1\"\x87\x02\n" +
+	"\x1cnexodesk/v1/rendezvous.proto\x12\vnexodesk.v1\"\xb4\x02\n" +
 	"\rClientMessage\x123\n" +
 	"\bregister\x18\x01 \x01(\v2\x15.nexodesk.v1.RegisterH\x00R\bregister\x12*\n" +
 	"\x05proof\x18\x02 \x01(\v2\x12.nexodesk.v1.ProofH\x00R\x05proof\x120\n" +
 	"\aconnect\x18\x03 \x01(\v2\x14.nexodesk.v1.ConnectH\x00R\aconnect\x12-\n" +
 	"\x06accept\x18\x04 \x01(\v2\x13.nexodesk.v1.AcceptH\x00R\x06accept\x12-\n" +
-	"\x06reject\x18\x05 \x01(\v2\x13.nexodesk.v1.RejectH\x00R\x06rejectB\x05\n" +
-	"\x03msg\"\x96\x02\n" +
+	"\x06reject\x18\x05 \x01(\v2\x13.nexodesk.v1.RejectH\x00R\x06reject\x12+\n" +
+	"\x03api\x18\x06 \x01(\v2\x17.nexodesk.v1.ApiRequestH\x00R\x03apiB\x05\n" +
+	"\x03msg\"\xc4\x02\n" +
 	"\rServerMessage\x126\n" +
 	"\tchallenge\x18\x01 \x01(\v2\x16.nexodesk.v1.ChallengeH\x00R\tchallenge\x129\n" +
 	"\n" +
@@ -911,8 +2321,9 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"registered\x123\n" +
 	"\bincoming\x18\x03 \x01(\v2\x15.nexodesk.v1.IncomingH\x00R\bincoming\x12*\n" +
 	"\x05route\x18\x04 \x01(\v2\x12.nexodesk.v1.RouteH\x00R\x05route\x12*\n" +
-	"\x05error\x18\x05 \x01(\v2\x12.nexodesk.v1.ErrorH\x00R\x05errorB\x05\n" +
-	"\x03msg\"\xa6\x01\n" +
+	"\x05error\x18\x05 \x01(\v2\x12.nexodesk.v1.ErrorH\x00R\x05error\x12,\n" +
+	"\x03api\x18\x06 \x01(\v2\x18.nexodesk.v1.ApiResponseH\x00R\x03apiB\x05\n" +
+	"\x03msg\"\xc1\x01\n" +
 	"\bRegister\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\x12\x1f\n" +
@@ -921,7 +2332,8 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\x02os\x18\x03 \x01(\tR\x02os\x12\x1f\n" +
 	"\vapp_version\x18\x04 \x01(\tR\n" +
 	"appVersion\x12)\n" +
-	"\x10protocol_version\x18\x05 \x01(\rR\x0fprotocolVersion\"!\n" +
+	"\x10protocol_version\x18\x05 \x01(\rR\x0fprotocolVersion\x12\x19\n" +
+	"\bapi_only\x18\x06 \x01(\bR\aapiOnly\"!\n" +
 	"\tChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"%\n" +
 	"\x05Proof\x12\x1c\n" +
@@ -956,7 +2368,101 @@ const file_nexodesk_v1_rendezvous_proto_rawDesc = "" +
 	"\x05Error\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x02 \x01(\tR\tsessionId*=\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"\x8e\x06\n" +
+	"\n" +
+	"ApiRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\x12*\n" +
+	"\x05login\x18\x02 \x01(\v2\x12.nexodesk.v1.LoginH\x00R\x05login\x12:\n" +
+	"\vlogin_token\x18\x03 \x01(\v2\x17.nexodesk.v1.LoginTokenH\x00R\n" +
+	"loginToken\x12-\n" +
+	"\x06logout\x18\x04 \x01(\v2\x13.nexodesk.v1.LogoutH\x00R\x06logout\x124\n" +
+	"\tget_books\x18\x05 \x01(\v2\x15.nexodesk.v1.GetBooksH\x00R\bgetBooks\x121\n" +
+	"\tput_entry\x18\x06 \x01(\v2\x12.nexodesk.v1.EntryH\x00R\bputEntry\x12=\n" +
+	"\fdelete_entry\x18\a \x01(\v2\x18.nexodesk.v1.DeleteEntryH\x00R\vdeleteEntry\x12F\n" +
+	"\x0fchange_password\x18\b \x01(\v2\x1b.nexodesk.v1.ChangePasswordH\x00R\x0echangePassword\x12@\n" +
+	"\rlist_accounts\x18\t \x01(\v2\x19.nexodesk.v1.ListAccountsH\x00R\flistAccounts\x12:\n" +
+	"\vput_account\x18\n" +
+	" \x01(\v2\x17.nexodesk.v1.PutAccountH\x00R\n" +
+	"putAccount\x12C\n" +
+	"\x0edelete_account\x18\v \x01(\v2\x1a.nexodesk.v1.DeleteAccountH\x00R\rdeleteAccount\x121\n" +
+	"\bput_book\x18\f \x01(\v2\x14.nexodesk.v1.PutBookH\x00R\aputBook\x12:\n" +
+	"\vdelete_book\x18\r \x01(\v2\x17.nexodesk.v1.DeleteBookH\x00R\n" +
+	"deleteBook\x12/\n" +
+	"\bauto_add\x18\x0e \x01(\v2\x12.nexodesk.v1.EntryH\x00R\aautoAddB\x06\n" +
+	"\x04call\"\xd7\x02\n" +
+	"\vApiResponse\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x120\n" +
+	"\asession\x18\x03 \x01(\v2\x14.nexodesk.v1.SessionH\x00R\asession\x12*\n" +
+	"\x05books\x18\x04 \x01(\v2\x12.nexodesk.v1.BooksH\x00R\x05books\x12*\n" +
+	"\x05entry\x18\x05 \x01(\v2\x12.nexodesk.v1.EntryH\x00R\x05entry\x123\n" +
+	"\baccounts\x18\x06 \x01(\v2\x15.nexodesk.v1.AccountsH\x00R\baccounts\x12'\n" +
+	"\x04book\x18\a \x01(\v2\x11.nexodesk.v1.BookH\x00R\x04book\x120\n" +
+	"\aaccount\x18\b \x01(\v2\x14.nexodesk.v1.AccountH\x00R\aaccountB\b\n" +
+	"\x06result\"?\n" +
+	"\x05Login\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\"\"\n" +
+	"\n" +
+	"LoginToken\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\"\b\n" +
+	"\x06Logout\"i\n" +
+	"\aSession\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\x12.\n" +
+	"\aaccount\x18\x02 \x01(\v2\x14.nexodesk.v1.AccountR\aaccount\x12\x18\n" +
+	"\aexpires\x18\x03 \x01(\x03R\aexpires\"K\n" +
+	"\aAccount\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1a\n" +
+	"\busername\x18\x02 \x01(\tR\busername\x12\x14\n" +
+	"\x05admin\x18\x03 \x01(\bR\x05admin\"V\n" +
+	"\x0eChangePassword\x12!\n" +
+	"\fold_password\x18\x01 \x01(\tR\voldPassword\x12!\n" +
+	"\fnew_password\x18\x02 \x01(\tR\vnewPassword\"\n" +
+	"\n" +
+	"\bGetBooks\"0\n" +
+	"\x05Books\x12'\n" +
+	"\x05books\x18\x01 \x03(\v2\x11.nexodesk.v1.BookR\x05books\"\x93\x01\n" +
+	"\x04Book\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
+	"\bpersonal\x18\x03 \x01(\bR\bpersonal\x12\x1d\n" +
+	"\n" +
+	"member_ids\x18\x04 \x03(\x03R\tmemberIds\x12,\n" +
+	"\aentries\x18\x05 \x03(\v2\x12.nexodesk.v1.EntryR\aentries\"\x8d\x02\n" +
+	"\x05Entry\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
+	"\abook_id\x18\x02 \x01(\x03R\x06bookId\x12\x1b\n" +
+	"\tdevice_id\x18\x03 \x01(\tR\bdeviceId\x12\x12\n" +
+	"\x04name\x18\x04 \x01(\tR\x04name\x12\x18\n" +
+	"\acompany\x18\x05 \x01(\tR\acompany\x12\x18\n" +
+	"\acontact\x18\x06 \x01(\tR\acontact\x12\x14\n" +
+	"\x05email\x18\a \x01(\tR\x05email\x12\x14\n" +
+	"\x05phone\x18\b \x01(\tR\x05phone\x12\x14\n" +
+	"\x05notes\x18\t \x01(\tR\x05notes\x12\x1a\n" +
+	"\bpassword\x18\n" +
+	" \x01(\tR\bpassword\x12\x18\n" +
+	"\aupdated\x18\v \x01(\x03R\aupdated\"\x1d\n" +
+	"\vDeleteEntry\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\"\x0e\n" +
+	"\fListAccounts\"<\n" +
+	"\bAccounts\x120\n" +
+	"\baccounts\x18\x01 \x03(\v2\x14.nexodesk.v1.AccountR\baccounts\"j\n" +
+	"\n" +
+	"PutAccount\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1a\n" +
+	"\busername\x18\x02 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x03 \x01(\tR\bpassword\x12\x14\n" +
+	"\x05admin\x18\x04 \x01(\bR\x05admin\"\x1f\n" +
+	"\rDeleteAccount\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\"L\n" +
+	"\aPutBook\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"member_ids\x18\x03 \x03(\x03R\tmemberIds\"\x1c\n" +
+	"\n" +
+	"DeleteBook\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id*=\n" +
 	"\x04Role\x12\x14\n" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vROLE_VIEWER\x10\x01\x12\x0e\n" +
@@ -976,21 +2482,40 @@ func file_nexodesk_v1_rendezvous_proto_rawDescGZIP() []byte {
 }
 
 var file_nexodesk_v1_rendezvous_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_nexodesk_v1_rendezvous_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_nexodesk_v1_rendezvous_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_nexodesk_v1_rendezvous_proto_goTypes = []any{
-	(Role)(0),             // 0: nexodesk.v1.Role
-	(*ClientMessage)(nil), // 1: nexodesk.v1.ClientMessage
-	(*ServerMessage)(nil), // 2: nexodesk.v1.ServerMessage
-	(*Register)(nil),      // 3: nexodesk.v1.Register
-	(*Challenge)(nil),     // 4: nexodesk.v1.Challenge
-	(*Proof)(nil),         // 5: nexodesk.v1.Proof
-	(*Registered)(nil),    // 6: nexodesk.v1.Registered
-	(*Connect)(nil),       // 7: nexodesk.v1.Connect
-	(*Incoming)(nil),      // 8: nexodesk.v1.Incoming
-	(*Accept)(nil),        // 9: nexodesk.v1.Accept
-	(*Reject)(nil),        // 10: nexodesk.v1.Reject
-	(*Route)(nil),         // 11: nexodesk.v1.Route
-	(*Error)(nil),         // 12: nexodesk.v1.Error
+	(Role)(0),              // 0: nexodesk.v1.Role
+	(*ClientMessage)(nil),  // 1: nexodesk.v1.ClientMessage
+	(*ServerMessage)(nil),  // 2: nexodesk.v1.ServerMessage
+	(*Register)(nil),       // 3: nexodesk.v1.Register
+	(*Challenge)(nil),      // 4: nexodesk.v1.Challenge
+	(*Proof)(nil),          // 5: nexodesk.v1.Proof
+	(*Registered)(nil),     // 6: nexodesk.v1.Registered
+	(*Connect)(nil),        // 7: nexodesk.v1.Connect
+	(*Incoming)(nil),       // 8: nexodesk.v1.Incoming
+	(*Accept)(nil),         // 9: nexodesk.v1.Accept
+	(*Reject)(nil),         // 10: nexodesk.v1.Reject
+	(*Route)(nil),          // 11: nexodesk.v1.Route
+	(*Error)(nil),          // 12: nexodesk.v1.Error
+	(*ApiRequest)(nil),     // 13: nexodesk.v1.ApiRequest
+	(*ApiResponse)(nil),    // 14: nexodesk.v1.ApiResponse
+	(*Login)(nil),          // 15: nexodesk.v1.Login
+	(*LoginToken)(nil),     // 16: nexodesk.v1.LoginToken
+	(*Logout)(nil),         // 17: nexodesk.v1.Logout
+	(*Session)(nil),        // 18: nexodesk.v1.Session
+	(*Account)(nil),        // 19: nexodesk.v1.Account
+	(*ChangePassword)(nil), // 20: nexodesk.v1.ChangePassword
+	(*GetBooks)(nil),       // 21: nexodesk.v1.GetBooks
+	(*Books)(nil),          // 22: nexodesk.v1.Books
+	(*Book)(nil),           // 23: nexodesk.v1.Book
+	(*Entry)(nil),          // 24: nexodesk.v1.Entry
+	(*DeleteEntry)(nil),    // 25: nexodesk.v1.DeleteEntry
+	(*ListAccounts)(nil),   // 26: nexodesk.v1.ListAccounts
+	(*Accounts)(nil),       // 27: nexodesk.v1.Accounts
+	(*PutAccount)(nil),     // 28: nexodesk.v1.PutAccount
+	(*DeleteAccount)(nil),  // 29: nexodesk.v1.DeleteAccount
+	(*PutBook)(nil),        // 30: nexodesk.v1.PutBook
+	(*DeleteBook)(nil),     // 31: nexodesk.v1.DeleteBook
 }
 var file_nexodesk_v1_rendezvous_proto_depIdxs = []int32{
 	3,  // 0: nexodesk.v1.ClientMessage.register:type_name -> nexodesk.v1.Register
@@ -998,17 +2523,42 @@ var file_nexodesk_v1_rendezvous_proto_depIdxs = []int32{
 	7,  // 2: nexodesk.v1.ClientMessage.connect:type_name -> nexodesk.v1.Connect
 	9,  // 3: nexodesk.v1.ClientMessage.accept:type_name -> nexodesk.v1.Accept
 	10, // 4: nexodesk.v1.ClientMessage.reject:type_name -> nexodesk.v1.Reject
-	4,  // 5: nexodesk.v1.ServerMessage.challenge:type_name -> nexodesk.v1.Challenge
-	6,  // 6: nexodesk.v1.ServerMessage.registered:type_name -> nexodesk.v1.Registered
-	8,  // 7: nexodesk.v1.ServerMessage.incoming:type_name -> nexodesk.v1.Incoming
-	11, // 8: nexodesk.v1.ServerMessage.route:type_name -> nexodesk.v1.Route
-	12, // 9: nexodesk.v1.ServerMessage.error:type_name -> nexodesk.v1.Error
-	0,  // 10: nexodesk.v1.Route.role:type_name -> nexodesk.v1.Role
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	13, // 5: nexodesk.v1.ClientMessage.api:type_name -> nexodesk.v1.ApiRequest
+	4,  // 6: nexodesk.v1.ServerMessage.challenge:type_name -> nexodesk.v1.Challenge
+	6,  // 7: nexodesk.v1.ServerMessage.registered:type_name -> nexodesk.v1.Registered
+	8,  // 8: nexodesk.v1.ServerMessage.incoming:type_name -> nexodesk.v1.Incoming
+	11, // 9: nexodesk.v1.ServerMessage.route:type_name -> nexodesk.v1.Route
+	12, // 10: nexodesk.v1.ServerMessage.error:type_name -> nexodesk.v1.Error
+	14, // 11: nexodesk.v1.ServerMessage.api:type_name -> nexodesk.v1.ApiResponse
+	0,  // 12: nexodesk.v1.Route.role:type_name -> nexodesk.v1.Role
+	15, // 13: nexodesk.v1.ApiRequest.login:type_name -> nexodesk.v1.Login
+	16, // 14: nexodesk.v1.ApiRequest.login_token:type_name -> nexodesk.v1.LoginToken
+	17, // 15: nexodesk.v1.ApiRequest.logout:type_name -> nexodesk.v1.Logout
+	21, // 16: nexodesk.v1.ApiRequest.get_books:type_name -> nexodesk.v1.GetBooks
+	24, // 17: nexodesk.v1.ApiRequest.put_entry:type_name -> nexodesk.v1.Entry
+	25, // 18: nexodesk.v1.ApiRequest.delete_entry:type_name -> nexodesk.v1.DeleteEntry
+	20, // 19: nexodesk.v1.ApiRequest.change_password:type_name -> nexodesk.v1.ChangePassword
+	26, // 20: nexodesk.v1.ApiRequest.list_accounts:type_name -> nexodesk.v1.ListAccounts
+	28, // 21: nexodesk.v1.ApiRequest.put_account:type_name -> nexodesk.v1.PutAccount
+	29, // 22: nexodesk.v1.ApiRequest.delete_account:type_name -> nexodesk.v1.DeleteAccount
+	30, // 23: nexodesk.v1.ApiRequest.put_book:type_name -> nexodesk.v1.PutBook
+	31, // 24: nexodesk.v1.ApiRequest.delete_book:type_name -> nexodesk.v1.DeleteBook
+	24, // 25: nexodesk.v1.ApiRequest.auto_add:type_name -> nexodesk.v1.Entry
+	18, // 26: nexodesk.v1.ApiResponse.session:type_name -> nexodesk.v1.Session
+	22, // 27: nexodesk.v1.ApiResponse.books:type_name -> nexodesk.v1.Books
+	24, // 28: nexodesk.v1.ApiResponse.entry:type_name -> nexodesk.v1.Entry
+	27, // 29: nexodesk.v1.ApiResponse.accounts:type_name -> nexodesk.v1.Accounts
+	23, // 30: nexodesk.v1.ApiResponse.book:type_name -> nexodesk.v1.Book
+	19, // 31: nexodesk.v1.ApiResponse.account:type_name -> nexodesk.v1.Account
+	19, // 32: nexodesk.v1.Session.account:type_name -> nexodesk.v1.Account
+	23, // 33: nexodesk.v1.Books.books:type_name -> nexodesk.v1.Book
+	24, // 34: nexodesk.v1.Book.entries:type_name -> nexodesk.v1.Entry
+	19, // 35: nexodesk.v1.Accounts.accounts:type_name -> nexodesk.v1.Account
+	36, // [36:36] is the sub-list for method output_type
+	36, // [36:36] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_nexodesk_v1_rendezvous_proto_init() }
@@ -1022,6 +2572,7 @@ func file_nexodesk_v1_rendezvous_proto_init() {
 		(*ClientMessage_Connect)(nil),
 		(*ClientMessage_Accept)(nil),
 		(*ClientMessage_Reject)(nil),
+		(*ClientMessage_Api)(nil),
 	}
 	file_nexodesk_v1_rendezvous_proto_msgTypes[1].OneofWrappers = []any{
 		(*ServerMessage_Challenge)(nil),
@@ -1029,6 +2580,30 @@ func file_nexodesk_v1_rendezvous_proto_init() {
 		(*ServerMessage_Incoming)(nil),
 		(*ServerMessage_Route)(nil),
 		(*ServerMessage_Error)(nil),
+		(*ServerMessage_Api)(nil),
+	}
+	file_nexodesk_v1_rendezvous_proto_msgTypes[12].OneofWrappers = []any{
+		(*ApiRequest_Login)(nil),
+		(*ApiRequest_LoginToken)(nil),
+		(*ApiRequest_Logout)(nil),
+		(*ApiRequest_GetBooks)(nil),
+		(*ApiRequest_PutEntry)(nil),
+		(*ApiRequest_DeleteEntry)(nil),
+		(*ApiRequest_ChangePassword)(nil),
+		(*ApiRequest_ListAccounts)(nil),
+		(*ApiRequest_PutAccount)(nil),
+		(*ApiRequest_DeleteAccount)(nil),
+		(*ApiRequest_PutBook)(nil),
+		(*ApiRequest_DeleteBook)(nil),
+		(*ApiRequest_AutoAdd)(nil),
+	}
+	file_nexodesk_v1_rendezvous_proto_msgTypes[13].OneofWrappers = []any{
+		(*ApiResponse_Session)(nil),
+		(*ApiResponse_Books)(nil),
+		(*ApiResponse_Entry)(nil),
+		(*ApiResponse_Accounts)(nil),
+		(*ApiResponse_Book)(nil),
+		(*ApiResponse_Account)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1036,7 +2611,7 @@ func file_nexodesk_v1_rendezvous_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nexodesk_v1_rendezvous_proto_rawDesc), len(file_nexodesk_v1_rendezvous_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   12,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

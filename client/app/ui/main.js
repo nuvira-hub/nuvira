@@ -49,6 +49,8 @@ function render(state) {
 
   renderChat(state);
   renderIncoming(state.incoming);
+  // Definita in rubrica.js, caricato dopo questo file.
+  if (typeof renderRubrica === "function") renderRubrica(state);
 }
 
 function renderChat(state) {

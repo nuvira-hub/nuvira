@@ -73,16 +73,16 @@ pub async fn connect_auto(
     mode: TransportMode,
     expected: Option<Fingerprint>,
     identity: &Identity,
-    device_name: &str,
+    device: &DeviceInfo<'_>,
 ) -> Result<Signal> {
     let ws = ServerTransport::WebSocket(ws_url.to_string());
     match mode {
-        TransportMode::Udp => connect(server, &ServerTransport::Udp, expected, identity, device_name).await,
-        TransportMode::WebSocket => connect(server, &ws, expected, identity, device_name).await,
+        TransportMode::Udp => connect(server, &ServerTransport::Udp, expected, identity, device).await,
+        TransportMode::WebSocket => connect(server, &ws, expected, identity, device).await,
         TransportMode::Auto => {
             let udp = tokio::time::timeout(
                 UDP_ATTEMPT,
-                connect(server, &ServerTransport::Udp, expected, identity, device_name),
+                connect(server, &ServerTransport::Udp, expected, identity, device),
             )
             .await;
             match udp {
@@ -97,7 +97,7 @@ pub async fn connect_auto(
                     tracing::info!(
                         "nexodesk-server non raggiungibile via UDP ({why}): provo il WebSocket {ws_url}"
                     );
-                    connect(server, &ws, expected, identity, device_name).await
+                    connect(server, &ws, expected, identity, device).await
                 }
             }
         }
@@ -114,12 +114,19 @@ fn is_unreachable(e: &anyhow::Error) -> bool {
     })
 }
 
+/// Come si presenta il dispositivo al server.
+pub struct DeviceInfo<'a> {
+    pub name: &'a str,
+    /// Non raggiungibile: non riceve richieste di collegamento (viewer, app per la rubrica).
+    pub reachable: bool,
+}
+
 pub async fn connect(
     server: SocketAddr,
     transport: &ServerTransport,
     expected: Option<Fingerprint>,
     identity: &Identity,
-    device_name: &str,
+    device: &DeviceInfo<'_>,
 ) -> Result<Signal> {
     let seen = Arc::new(Mutex::new(None));
     let verifier = PinnedCert { expected, provider: provider(), seen: Some(seen.clone()) };
@@ -144,10 +151,11 @@ pub async fn connect(
     let (mut tx, mut rx) = (SignalSender(FramedSend::new(send)), SignalReceiver(FramedRecv::new(recv)));
     tx.send(client_message::Msg::Register(Register {
         public_key: identity.public_key().to_vec(),
-        device_name: device_name.to_string(),
+        device_name: device.name.to_string(),
         os: std::env::consts::OS.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
         protocol_version: PROTOCOL_VERSION,
+        api_only: !device.reachable,
     }))
     .await?;
 
