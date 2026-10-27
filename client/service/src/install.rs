@@ -109,15 +109,20 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     // Dati leggibili solo da SYSTEM e amministratori: contengono chiave e password.
     let data_dir = config::data_dir();
     std::fs::create_dir_all(&data_dir).with_context(|| format!("creazione di {}", data_dir.display()))?;
+    // Le regole si impostano sulla cartella e i file le ereditano: con /T applicate anche ai
+    // file, (OI)(CI) non vale per un file e reinstallando i file restavano senza permessi.
     run(Command::new("icacls").arg(&data_dir).args([
         "/inheritance:r",
         "/grant:r",
         "*S-1-5-18:(OI)(CI)F",
         "*S-1-5-32-544:(OI)(CI)F",
-        "/T",
         "/Q",
     ]))
     .context("protezione della cartella dati")?;
+    if std::fs::read_dir(&data_dir)?.next().is_some() {
+        run(Command::new("icacls").arg(data_dir.join("*")).args(["/reset", "/T", "/Q"]))
+            .context("permessi dei file nella cartella dati")?;
+    }
 
     // Reinstallando senza --password si tiene quella già impostata.
     let previous = ServiceConfig::load().ok();
