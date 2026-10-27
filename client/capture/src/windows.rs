@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
 use windows::Win32::Graphics::Direct3D11::{
@@ -282,7 +282,8 @@ impl Capturer for DxgiCapturer {
                 Some(code) if code == DXGI_ERROR_WAIT_TIMEOUT => Ok(None),
                 // Cambio risoluzione, desktop sicuro (UAC), blocco schermo: si ricrea.
                 Some(code) if code == DXGI_ERROR_ACCESS_LOST => {
-                    warn!("accesso alla duplicazione perso, la ricreo");
+                    // Normale a ogni cambio di desktop: il passaggio viene registrato in duplicate().
+                    debug!("accesso alla duplicazione perso, la ricreo");
                     self.duplication = None;
                     Ok(None)
                 }
