@@ -112,6 +112,12 @@ message Feedback {
   uint32 latency_ms_min = 2;
   uint32 frames = 3;
   uint32 window_ms = 4;
+  // Network part only (ms): from the end of encoding to the arrival at the viewer,
+  // without the agent's encoding and the viewer's decoding and drawing. The adaptive
+  // bitrate uses it so that a slow encoder or graphics card is not taken for
+  // congestion. Absent from older viewers.
+  optional uint32 transit_ms_p50 = 5;
+  optional uint32 transit_ms_min = 6;
 }
 
 // Session password, sent by the viewer right after Hello when the agent asks for
@@ -162,6 +168,9 @@ message VideoFrame {
   uint32 encode_us = 3;
   bool keyframe = 4;
   bytes data = 5;
+  // Agent clock (microseconds since 1970) when encoding finished: the viewer
+  // measures the network part from here. 0 from older agents.
+  uint64 encoded_us = 6;
 }
 
 // `input` channel (unidirectional stream viewer -> agent).

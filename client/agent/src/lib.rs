@@ -566,8 +566,10 @@ async fn session(
     let bitrate = Arc::new(AtomicU32::new(abr.as_ref().map_or(max_bps, |a| a.bitrate())));
     let fps = Arc::new(AtomicU32::new(config.fps));
     let session_start = Instant::now();
-    // Time of the last frame sent (ms from the start): tells whether feedback is missing.
-    let last_sent_ms = Arc::new(AtomicU64::new(0));
+    // First frame sent after the last feedback (ms from the start, 0 = none): tells
+    // whether feedback is missing. Measuring from the last frame instead would make a
+    // still screen (one frame every few seconds) look like a stuck network.
+    let unanswered_since_ms = Arc::new(AtomicU64::new(0));
     let (frame_tx, mut frame_rx) = mpsc::channel::<VideoFrame>(1);
     let source = VideoSource {
         config: config.clone(),
@@ -610,19 +612,19 @@ async fn session(
     let mut video_tx = FramedSend::new(conn.open_uni().await?);
     tracing::debug!("video channel open");
     let video = {
-        let last_sent_ms = last_sent_ms.clone();
+        let unanswered_since_ms = unanswered_since_ms.clone();
         async move {
             while let Some(frame) = frame_rx.recv().await {
                 tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "sending frame");
                 video_tx.send(&frame).await?;
-                last_sent_ms.store(session_start.elapsed().as_millis() as u64, Ordering::Relaxed);
+                let now_ms = session_start.elapsed().as_millis().max(1) as u64;
+                let _ = unanswered_since_ms.compare_exchange(0, now_ms, Ordering::Relaxed, Ordering::Relaxed);
             }
             anyhow::Ok(())
         }
     };
 
     let control_loop = async {
-        let mut last_feedback = Instant::now();
         let mut tick = tokio::time::interval(Duration::from_millis(250));
         loop {
             let msg = tokio::select! {
@@ -643,12 +645,12 @@ async fn session(
                     continue;
                 }
                 _ = tick.tick() => {
-                    // Frames sent recently but no feedback: the network is probably stuck.
+                    // A frame left long ago and no feedback since: the network is probably stuck.
                     let now_ms = session_start.elapsed().as_millis() as u64;
-                    let sending = now_ms.saturating_sub(last_sent_ms.load(Ordering::Relaxed)) < 1000;
+                    let since = unanswered_since_ms.load(Ordering::Relaxed);
                     if let Some(abr) = abr.as_mut()
-                        && sending
-                        && last_feedback.elapsed() > abr::FEEDBACK_TIMEOUT
+                        && since != 0
+                        && now_ms.saturating_sub(since) > abr::FEEDBACK_TIMEOUT.as_millis() as u64
                         && let Some(bps) = abr.on_silence(Instant::now())
                     {
                         bitrate.store(bps, Ordering::Relaxed);
@@ -664,21 +666,22 @@ async fn session(
                 }
                 Some(Msg::RequestKeyframe(_)) => keyframe.store(true, Ordering::Relaxed),
                 Some(Msg::Feedback(fb)) => {
-                    last_feedback = Instant::now();
+                    unanswered_since_ms.store(0, Ordering::Relaxed);
+                    // The network part when the viewer reports it: a slow encoder or
+                    // graphics card is not congestion and lowering the bitrate would not help.
+                    let (p50, min) = match (fb.transit_ms_p50, fb.transit_ms_min) {
+                        (Some(p50), Some(min)) => (p50, min),
+                        _ => (fb.latency_ms_p50, fb.latency_ms_min),
+                    };
                     if let Some(abr) = abr.as_mut()
                         && fb.frames > 0
-                        && let Some(bps) = abr.on_feedback(
-                            Instant::now(),
-                            fb.latency_ms_p50 as f64,
-                            fb.latency_ms_min as f64,
-                        )
+                        && let Some(bps) = abr.on_feedback(Instant::now(), p50 as f64, min as f64)
                     {
                         bitrate.store(bps, Ordering::Relaxed);
                         info!(
-                            "bitrate {} kbit/s (latency {} ms, minimum {} ms)",
+                            "bitrate {} kbit/s (network {p50} ms, minimum {min} ms; total latency {} ms)",
                             bps / 1000,
-                            fb.latency_ms_p50,
-                            fb.latency_ms_min
+                            fb.latency_ms_p50
                         );
                     }
                 }

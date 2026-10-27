@@ -173,7 +173,7 @@ fn main() -> Result<()> {
         control: None,
         files: None,
         pending_files: args.send_file.clone(),
-        feedback_window: (Instant::now(), Vec::new()),
+        feedback_window: (Instant::now(), Vec::new(), Vec::new()),
         view_only: args.view_only,
         window: None,
         renderer: None,
@@ -243,7 +243,9 @@ struct App {
     files: Option<UnboundedSender<PathBuf>>,
     /// `--send-file`: to send as soon as connected.
     pending_files: Vec<PathBuf>,
-    feedback_window: (Instant, Vec<u32>),
+    /// Feedback for the adaptive bitrate: window start, total latencies and network
+    /// latencies (ms) of the frames shown since then.
+    feedback_window: (Instant, Vec<u32>, Vec<u32>),
     view_only: bool,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
@@ -270,20 +272,26 @@ impl App {
     }
 
     /// Every 250 ms sends the agent the median and minimum latency of the frames shown.
+    /// Called for every frame and for every clock measurement (once a second), so that
+    /// on a still screen the last frames do not wait for the next one to be reported.
     fn send_feedback(&mut self) {
-        let (since, latencies) = &mut self.feedback_window;
+        let (since, latencies, transits) = &mut self.feedback_window;
         let window = since.elapsed();
         if window < Duration::from_millis(250) || latencies.is_empty() {
             return;
         }
         latencies.sort_unstable();
+        transits.sort_unstable();
         let feedback = nexodesk_proto::v1::Feedback {
             latency_ms_p50: latencies[latencies.len() / 2],
             latency_ms_min: latencies[0],
             frames: latencies.len() as u32,
             window_ms: window.as_millis() as u32,
+            transit_ms_p50: transits.get(transits.len() / 2).copied(),
+            transit_ms_min: transits.first().copied(),
         };
         latencies.clear();
+        transits.clear();
         *since = Instant::now();
         self.send_control(nexodesk_proto::v1::control_message::Msg::Feedback(feedback));
     }
@@ -535,6 +543,9 @@ impl ApplicationHandler<NetEvent> for App {
                     self.stats.latency_us += latency.max(0) as u64;
                     self.report.latencies_us.push(latency.clamp(0, u32::MAX as i64) as u32);
                     self.feedback_window.1.push((latency.max(0) / 1000) as u32);
+                    // From the end of encoding to arrival: the network alone.
+                    let transit = frame.received_us as i64 - (frame.encoded_us as i64 - offset);
+                    self.feedback_window.2.push((transit.max(0) / 1000) as u32);
                 }
                 self.send_feedback();
                 let r = &mut self.report;
@@ -553,6 +564,7 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             NetEvent::Clock { rtt_us, offset_us } => {
+                self.send_feedback();
                 self.rtt_us = rtt_us;
                 self.report.rtt_us.push(rtt_us.min(u32::MAX as u64) as u32);
                 // The measurement with the lowest RTT is the least disturbed by network queues.

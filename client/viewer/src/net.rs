@@ -65,6 +65,10 @@ pub struct DecodedFrame {
     /// Capture time according to the agent's clock.
     pub capture_us: u64,
     pub encode_us: u32,
+    /// End of encoding according to the agent's clock.
+    pub encoded_us: u64,
+    /// Arrival time of the complete frame, on our clock.
+    pub received_us: u64,
     pub decode_us: u32,
     pub bytes: usize,
 }
@@ -264,7 +268,7 @@ async fn session(
 
     // Decoding happens on a separate thread so as not to block the network.
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<()>();
-    let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<(VideoFrame, Instant)>(4);
+    let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<(VideoFrame, u64)>(4);
     let decoder_proxy = proxy.clone();
     let decoder = std::thread::Builder::new()
         .name("decoding".into())
@@ -272,7 +276,7 @@ async fn session(
 
     let video = async {
         while let Some(frame) = video_rx.recv::<VideoFrame>().await? {
-            if frame_tx.send((frame, Instant::now())).is_err() {
+            if frame_tx.send((frame, nexodesk_proto::now_us())).is_err() {
                 break;
             }
         }
@@ -421,7 +425,7 @@ async fn send_file(
 }
 
 fn decode_loop(
-    frames: std::sync::mpsc::Receiver<(VideoFrame, Instant)>,
+    frames: std::sync::mpsc::Receiver<(VideoFrame, u64)>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
     request_keyframe: mpsc::UnboundedSender<()>,
@@ -435,7 +439,7 @@ fn decode_loop(
     };
     info!("decoder: {}", decoder.name());
     let mut waiting_key = false;
-    while let Ok((frame, _received)) = frames.recv() {
+    while let Ok((frame, received_us)) = frames.recv() {
         // After an error frames are dropped until the next keyframe.
         if waiting_key && !frame.keyframe {
             continue;
@@ -455,6 +459,12 @@ fn decode_loop(
                     },
                     capture_us: frame.capture_us,
                     encode_us: frame.encode_us,
+                    // Older agents: estimated from capture and encoding times.
+                    encoded_us: match frame.encoded_us {
+                        0 => frame.capture_us + frame.encode_us as u64,
+                        t => t,
+                    },
+                    received_us,
                     decode_us: t.elapsed().as_micros() as u32,
                     bytes: frame.data.len(),
                 };

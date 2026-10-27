@@ -261,6 +261,7 @@ fn encode_loop(
             seq,
             capture_us: image.captured_us,
             encode_us,
+            encoded_us: nexodesk_proto::now_us(),
             keyframe: encoded.keyframe,
             data: encoded.data,
         };

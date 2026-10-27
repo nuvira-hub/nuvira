@@ -1,7 +1,8 @@
 //! Adaptive bitrate based on the latency observed by the viewer.
 //!
 //! When the network is saturated packets queue up (in routers, in QUIC's
-//! buffer) and capture→display latency rises well above its minimum.
+//! buffer) and the network latency (end of encoding → arrival at the viewer, or
+//! capture→display with older viewers) rises well above its minimum.
 //! The controller compares the recent median latency with the minimum of the
 //! last 10 seconds (the "empty network" latency):
 //! - queue above 60 ms → bitrate × 0.8 (at most once per second);
@@ -11,8 +12,8 @@
 //! longer to get through, and an occasional retransmission raises latency by one
 //! RTT; neither is a queue to drain.
 //!
-//! If frames are leaving but no feedback arrives for more than 1.5 s, the network
-//! is probably stuck: the bitrate goes down as for a high queue.
+//! If a frame left more than 2 s ago and no feedback has arrived since, the
+//! network is probably stuck: the bitrate goes down as for a high queue.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -29,7 +30,9 @@ const BASE_WINDOW: Duration = Duration::from_secs(10);
 /// must be restarted for Quick Sync) and the network queue need to settle, and the
 /// latency peak of the change must not be mistaken for congestion.
 const SETTLE: Duration = Duration::from_millis(1500);
-pub const FEEDBACK_TIMEOUT: Duration = Duration::from_millis(1500);
+/// The viewer reports at least once a second (with its clock measurement): beyond
+/// this time without feedback for a frame sent, the network is considered stuck.
+pub const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct Abr {
     bitrate: f64,
