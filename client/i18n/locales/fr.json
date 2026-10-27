@@ -143,7 +143,6 @@
   "err.entry_not_found": "Fiche introuvable",
   "err.id_digits": "L'ID comporte 9 chiffres",
   "err.set_server_first": "Indiquez d'abord le serveur",
-  "err.viewer_missing": "{path} introuvable",
   "err.session_error": "La session s'est terminée par une erreur",
   "err.login_required": "Connectez-vous d'abord au carnet d'adresses",
   "err.unexpected": "Réponse inattendue du serveur",

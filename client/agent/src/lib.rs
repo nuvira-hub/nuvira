@@ -6,6 +6,7 @@
 //! receives. With the server it talks to its user through [`AgentEvent`] and [`AgentCommand`].
 
 mod abr;
+pub mod cli;
 mod files;
 #[cfg(windows)]
 pub mod ipc;

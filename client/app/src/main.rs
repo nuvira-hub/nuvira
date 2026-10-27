@@ -431,22 +431,19 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
     if server.is_empty() {
         return Err(t("err.set_server_first"));
     }
+    // The viewer is in this same program (`nexodesk viewer ...`).
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let viewer = exe.with_file_name(if cfg!(windows) { "nexodesk-viewer.exe" } else { "nexodesk-viewer" });
-    if !viewer.exists() {
-        return Err(tf("err.viewer_missing", &[("path", &viewer.display().to_string())]));
-    }
     // The password goes in the process environment, not on the command line
     // (which other programs on the same PC can read).
-    let mut child = std::process::Command::new(&viewer)
-        .args(["--server", &server, &device_id])
+    let mut child = std::process::Command::new(&exe)
+        .args(["viewer", "--server", &server, &device_id])
         .env("NEXODESK_PASSWORD", &password)
         // The session window uses the app's language.
         .env("NEXODESK_LANG", nexodesk_i18n::lang())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("starting nexodesk-viewer: {e}"))?;
+        .map_err(|e| format!("starting the viewer: {e}"))?;
     info!("session towards {device_id} started");
     state.update(app, |ui| ui.viewer_message = None);
 
@@ -550,7 +547,15 @@ fn init_logging() {
     }
 }
 
+/// The other programs contained in the app, started as `nexodesk.exe <name> ...`:
+/// one file to download, copy and sign instead of four.
+const SUBCOMMANDS: [&str; 3] = ["agent", "viewer", "service"];
+
 fn main() {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if let Some(sub) = args.get(1).and_then(|a| a.to_str()).filter(|a| SUBCOMMANDS.contains(a)) {
+        std::process::exit(run_subcommand(sub, &args[2..]));
+    }
     init_logging();
     nexodesk_input::set_dpi_awareness();
     let settings = load_settings();
@@ -606,4 +611,51 @@ fn main() {
         .expect("starting the application");
     // Leaves time for the agent's connections to close.
     std::thread::sleep(Duration::from_millis(100));
+}
+
+/// The app has no console of its own: from a command prompt its output must go to
+/// that prompt's console. Windows does not hand a windowed program the console's
+/// handles, even after attaching, so they are opened here. Output already redirected
+/// (the app reading its viewer, the service's agent log) is left alone.
+#[cfg(windows)]
+fn attach_console() {
+    use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
+    use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_WRITE, OPEN_EXISTING};
+    use windows::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+    use windows::core::w;
+
+    let redirected = |which| unsafe { GetStdHandle(which) }.is_ok_and(|h| !h.is_invalid() && !h.0.is_null());
+    if redirected(STD_OUTPUT_HANDLE) || unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }.is_err() {
+        return;
+    }
+    let Ok(console) = (unsafe {
+        CreateFileW(w!("CONOUT$"), (GENERIC_READ | GENERIC_WRITE).0, FILE_SHARE_WRITE, None, OPEN_EXISTING, Default::default(), None)
+    }) else {
+        return;
+    };
+    for which in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        if !redirected(which) {
+            let _ = unsafe { SetStdHandle(which, console) };
+        }
+    }
+}
+
+fn run_subcommand(sub: &str, rest: &[std::ffi::OsString]) -> i32 {
+    #[cfg(windows)]
+    attach_console();
+    let args = std::iter::once(format!("nexodesk {sub}").into()).chain(rest.iter().cloned());
+    let result = match sub {
+        "agent" => nexodesk_agent::cli::run(args),
+        "viewer" => nexodesk_viewer::run(args),
+        _ => nexodesk_service::run(args),
+    };
+    match result {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            1
+        }
+    }
 }

@@ -144,8 +144,8 @@ fn agent_args(config: &ServiceConfig) -> String {
 
 fn run() -> Result<()> {
     let config = ServiceConfig::load()?;
-    let args = agent_args(&config);
-    let exe = std::env::current_exe()?.with_file_name(config::AGENT_EXE);
+    let args = format!("agent {}", agent_args(&config));
+    let exe = std::env::current_exe()?;
     let data = config::data_dir();
     let job = Job::new()?;
     let _sas = sas_listener();

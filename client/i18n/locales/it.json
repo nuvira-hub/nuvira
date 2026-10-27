@@ -143,7 +143,6 @@
   "err.entry_not_found": "Scheda non trovata",
   "err.id_digits": "L'ID è di 9 cifre",
   "err.set_server_first": "Imposta prima il server",
-  "err.viewer_missing": "{path} non trovato",
   "err.session_error": "La sessione si è chiusa con un errore",
   "err.login_required": "Entra prima nella rubrica",
   "err.unexpected": "Risposta inattesa del server",

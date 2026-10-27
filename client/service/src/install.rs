@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::ERROR_SERVICE_DOES_NOT_EXIST;
 use windows::Win32::System::Services::{
-    ChangeServiceConfig2W, CloseServiceHandle, ControlService, CreateServiceW, DeleteService, OpenSCManagerW,
+    ChangeServiceConfig2W, ChangeServiceConfigW, CloseServiceHandle, ENUM_SERVICE_TYPE, SERVICE_ERROR,
+    SERVICE_NO_CHANGE, SERVICE_START_TYPE, ControlService, CreateServiceW, DeleteService, OpenSCManagerW,
     OpenServiceW, QueryServiceStatus, SC_ACTION, SC_ACTION_RESTART, SC_HANDLE, SC_MANAGER_ALL_ACCESS,
     SC_MANAGER_CONNECT, SERVICE_ALL_ACCESS, SERVICE_AUTO_START, SERVICE_CONFIG_DESCRIPTION,
     SERVICE_CONFIG_FAILURE_ACTIONS, SERVICE_CONTROL_STOP, SERVICE_DESCRIPTIONW, SERVICE_ERROR_NORMAL,
@@ -91,19 +92,16 @@ pub fn install(opts: InstallOptions) -> Result<()> {
         stop(service)?;
     }
 
-    // Programs in Program Files: the service (SYSTEM) must not run files a user can replace.
-    let here = std::env::current_exe()?;
-    let source_dir = here.parent().context("program folder")?;
+    // The program in Program Files: the service (SYSTEM) must not run files a user can replace.
+    let src = source_program()?;
     let program_dir = config::program_dir();
     std::fs::create_dir_all(&program_dir).with_context(|| format!("creating {}", program_dir.display()))?;
-    for exe in [config::SERVICE_EXE, config::AGENT_EXE] {
-        let (src, dst) = (source_dir.join(exe), program_dir.join(exe));
-        if !src.exists() {
-            bail!("{} not found: it must be in the same folder as nexodesk-service.exe", src.display());
-        }
-        if !same_file(&src, &dst) {
-            std::fs::copy(&src, &dst).with_context(|| format!("copying {} to {}", exe, program_dir.display()))?;
-        }
+    let program = program_dir.join(config::PROGRAM_EXE);
+    if !same_file(&src, &program) {
+        std::fs::copy(&src, &program).with_context(|| format!("copying {} to {}", src.display(), program.display()))?;
+    }
+    for old in config::OLD_EXES {
+        let _ = std::fs::remove_file(program_dir.join(old));
     }
 
     // Data readable only by SYSTEM and administrators: it holds the key and the password.
@@ -140,12 +138,16 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     service_config.save()?;
 
     let service = match existing {
-        Some(service) => service,
-        None => create(&scm, &program_dir.join(config::SERVICE_EXE))?,
+        Some(service) => {
+            // Earlier installations ran nexodesk-service.exe.
+            set_command(&service, &program)?;
+            service
+        }
+        None => create(&scm, &program)?,
     };
 
     // Inbound rule for the direct (UDP) path towards the agent.
-    let agent = program_dir.join(config::AGENT_EXE);
+    let agent = &program;
     let _ = run(Command::new("netsh").raw_arg(format!(
         "advfirewall firewall delete rule name=\"{FIREWALL_RULE}\""
     )));
@@ -203,8 +205,46 @@ fn allow_software_sas() -> Result<()> {
     Ok(())
 }
 
+/// The program to install: this one when it is the app (`nexodesk.exe service install`,
+/// whatever the file is called), otherwise the app next to nexodesk-service.exe.
+fn source_program() -> Result<std::path::PathBuf> {
+    let here = std::env::current_exe()?;
+    let name = here.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_ascii_lowercase();
+    if !name.starts_with("nexodesk-service") {
+        return Ok(here);
+    }
+    let app = here.with_file_name(config::PROGRAM_EXE);
+    if !app.exists() {
+        bail!("{} not found: it must be in the same folder as nexodesk-service.exe", app.display());
+    }
+    Ok(app)
+}
+
+fn service_command(program: &Path) -> String {
+    format!("\"{}\" service run", program.display())
+}
+
+fn set_command(service: &Sc, program: &Path) -> Result<()> {
+    unsafe {
+        ChangeServiceConfigW(
+            service.0,
+            ENUM_SERVICE_TYPE(SERVICE_NO_CHANGE),
+            SERVICE_START_TYPE(SERVICE_NO_CHANGE),
+            SERVICE_ERROR(SERVICE_NO_CHANGE),
+            &HSTRING::from(service_command(program)),
+            PCWSTR::null(),
+            None,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            PCWSTR::null(),
+        )
+    }
+    .context("ChangeServiceConfig")
+}
+
 fn create(scm: &Sc, exe: &Path) -> Result<Sc> {
-    let command = format!("\"{}\" run", exe.display());
+    let command = service_command(exe);
     let service = unsafe {
         CreateServiceW(
             scm.0,

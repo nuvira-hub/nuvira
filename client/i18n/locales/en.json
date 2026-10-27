@@ -143,7 +143,6 @@
   "err.entry_not_found": "Entry not found",
   "err.id_digits": "The ID has 9 digits",
   "err.set_server_first": "Set the server first",
-  "err.viewer_missing": "{path} not found",
   "err.session_error": "The session ended with an error",
   "err.login_required": "Sign in to the address book first",
   "err.unexpected": "Unexpected response from the server",

@@ -14,8 +14,11 @@ pub const SERVICE_NAME: &str = "NexoDesk";
 pub const SERVICE_DISPLAY_NAME: &str = "NexoDesk";
 pub const SERVICE_DESCRIPTION: &str =
     "Unattended remote access with NexoDesk: starts the agent in the session of the person using the PC.";
-pub const AGENT_EXE: &str = "nexodesk-agent.exe";
-pub const SERVICE_EXE: &str = "nexodesk-service.exe";
+/// The single program installed: the app, which also contains agent, viewer and
+/// service (`nexodesk.exe agent ...`, `nexodesk.exe service run`).
+pub const PROGRAM_EXE: &str = "nexodesk.exe";
+/// Programs of earlier installations, removed when updating.
+pub const OLD_EXES: [&str; 2] = ["nexodesk-agent.exe", "nexodesk-service.exe"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {

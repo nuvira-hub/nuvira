@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 anyhow.workspace = true
 nexodesk-agent = { path = "../agent" }
+nexodesk-service = { path = "../service" }
+nexodesk-viewer = { path = "../viewer" }
 nexodesk-codec.workspace = true
 nexodesk-i18n.workspace = true
 nexodesk-input.workspace = true
@@ -28,3 +30,7 @@ tauri-plugin-opener = "2"
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console"]

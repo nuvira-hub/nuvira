@@ -143,7 +143,6 @@
   "err.entry_not_found": "Ficha no encontrada",
   "err.id_digits": "El ID tiene 9 cifras",
   "err.set_server_first": "Indique primero el servidor",
-  "err.viewer_missing": "No se encontró {path}",
   "err.session_error": "La sesión terminó con un error",
   "err.login_required": "Inicie sesión primero en la libreta de direcciones",
   "err.unexpected": "Respuesta inesperada del servidor",
