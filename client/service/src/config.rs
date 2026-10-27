@@ -27,8 +27,10 @@ pub struct ServiceConfig {
     /// Server certificate fingerprint; without it, the one seen at the first connection is remembered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_key: Option<String>,
-    /// Permanent password for unattended access.
-    pub password: String,
+    /// Permanent password for unattended access, as a hash (`nexodesk_secret`).
+    /// Earlier versions stored it in clear text under "password": converted at load.
+    #[serde(alias = "password")]
+    pub password_hash: String,
     /// auto, udp or websocket.
     #[serde(default = "default_transport")]
     pub transport: String,
@@ -44,7 +46,13 @@ impl ServiceConfig {
     pub fn load() -> Result<Self> {
         let path = config_path();
         let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-        serde_json::from_str(&text).with_context(|| format!("{} is not valid", path.display()))
+        let mut config: Self = serde_json::from_str(&text).with_context(|| format!("{} is not valid", path.display()))?;
+        if !nexodesk_secret::is_hash(&config.password_hash) {
+            // Written by an earlier version: from now on only the hash is kept.
+            config.password_hash = nexodesk_secret::hash(&config.password_hash);
+            config.save()?;
+        }
+        Ok(config)
     }
 
     pub fn save(&self) -> Result<()> {

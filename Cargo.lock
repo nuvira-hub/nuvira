@@ -3038,6 +3038,7 @@ dependencies = [
  "nexodesk-codec",
  "nexodesk-input",
  "nexodesk-proto",
+ "nexodesk-secret",
  "nexodesk-transport",
  "nu-ansi-term",
  "quinn",
@@ -3136,11 +3137,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexodesk-secret"
+version = "0.0.2"
+dependencies = [
+ "ring",
+]
+
+[[package]]
 name = "nexodesk-service"
 version = "0.0.2"
 dependencies = [
  "anyhow",
  "clap",
+ "nexodesk-secret",
  "nexodesk-update",
  "ring",
  "serde",

@@ -362,7 +362,9 @@ Section "NexoDesk"
   !insertmacro JsonField "password"
   StrCpy $R7 $R1
   DetailPrint "$(Done) $R6"
-  ${If} $Password == ""
+  ; Generated only on a first installation without a password (otherwise it is kept,
+  ; and only its hash exists).
+  ${If} $R7 != ""
     MessageBox MB_ICONINFORMATION "$(Done) $R6$\r$\n$\r$\n$(GeneratedPassword)$\r$\n$R7" /SD IDOK
   ${EndIf}
 SectionEnd

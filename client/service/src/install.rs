@@ -88,7 +88,9 @@ pub struct InstallOptions {
 pub struct Installed {
     /// Device ID, if the agent registered within the wait.
     pub id: Option<String>,
-    pub password: String,
+    /// The permanent password, if it was generated here (otherwise whoever installs
+    /// knows it, and only its hash is stored).
+    pub generated_password: Option<String>,
 }
 
 pub fn install(opts: InstallOptions) -> Result<Installed> {
@@ -132,16 +134,19 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     // Reinstalling without --password keeps the one already set.
     let previous = ServiceConfig::load().ok();
     // Shown only when generated here: whoever chose it knows it, and the output of an
-    // automatic update goes to a log, where passwords never go.
-    let generated = opts.password.is_none() && previous.is_none();
-    let password = opts
-        .password
-        .or_else(|| previous.map(|c| c.password))
-        .unwrap_or_else(config::random_password);
+    // automatic update goes to a log, where passwords never go. Only the hash is stored.
+    let (password_hash, generated_password) = match (opts.password, previous) {
+        (Some(password), _) => (nexodesk_secret::hash(&password), None),
+        (None, Some(previous)) => (previous.password_hash, None),
+        (None, None) => {
+            let password = config::random_password();
+            (nexodesk_secret::hash(&password), Some(password))
+        }
+    };
     let service_config = ServiceConfig {
         server: opts.server,
         server_key: opts.server_key,
-        password: password.clone(),
+        password_hash,
         transport: opts.transport,
         server_ws: opts.server_ws,
     };
@@ -178,15 +183,17 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     println!("service installed and started");
     let id = wait_online(Duration::from_secs(30));
     match &id {
-        Some(id) if generated => println!("ID {id}, permanent password {password}"),
-        Some(id) => println!("ID {id}"),
+        Some(id) => match &generated_password {
+            Some(password) => println!("ID {id}, permanent password {password}"),
+            None => println!("ID {id}"),
+        },
         None => println!(
             "the agent has not registered on {} yet: check {}",
             service_config.server,
             config::agent_log().display()
         ),
     }
-    Ok(Installed { id, password })
+    Ok(Installed { id, generated_password })
 }
 
 /// Key of the entry in Windows' installed apps.

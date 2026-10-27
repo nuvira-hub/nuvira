@@ -7,6 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+nexodesk-secret = { path = "../secret" }
 anyhow.workspace = true
 clap.workspace = true
 nexodesk-update = { path = "../update" }

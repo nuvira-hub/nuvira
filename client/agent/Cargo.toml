@@ -15,6 +15,7 @@ name = "nexodesk-agent"
 path = "src/main.rs"
 
 [dependencies]
+nexodesk-secret = { path = "../secret" }
 anyhow.workspace = true
 clap.workspace = true
 nexodesk-capture.workspace = true

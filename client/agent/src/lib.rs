@@ -96,7 +96,7 @@ pub struct ServerOptions {
     /// (event [`AgentEvent::Incoming`]). Without it, the password is enough.
     pub confirm: bool,
     /// Permanent password for unattended access: never confirmed.
-    pub permanent_password: Option<String>,
+    pub permanent_password_hash: Option<String>,
     /// Automated tests: where to write "ID password" once registered.
     pub info_file: Option<PathBuf>,
 }
@@ -233,7 +233,7 @@ pub async fn serve_via_server(
     let ctx = Arc::new(SessionContext {
         config,
         password,
-        permanent: opts.permanent_password.clone(),
+        permanent: opts.permanent_password_hash.clone(),
         confirm: opts.confirm,
         pending: Mutex::new(HashMap::new()),
         events,
@@ -475,7 +475,7 @@ impl Gate<'_> {
     /// `Err` with the reason to show to the viewer.
     async fn authorize(&self, given: &str) -> Result<(), String> {
         let ctx = self.ctx;
-        if ctx.permanent.as_deref().is_some_and(|p| same_secret(given, p)) {
+        if ctx.permanent.as_deref().is_some_and(|hash| nexodesk_secret::verify(given, hash)) {
             info!("access with the permanent password");
             return self.started();
         }

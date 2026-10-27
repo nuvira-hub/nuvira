@@ -271,7 +271,7 @@ fn start_agent(app: &AppHandle) {
             server_ws: None,
             identity_path: nexodesk_transport::identity::data_dir().join("device.key"),
             confirm: true,
-            permanent_password: None,
+            permanent_password_hash: None,
             info_file: None,
         };
         let (events_tx, mut events_rx) = mpsc::unbounded_channel();
@@ -760,12 +760,10 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
             if report["ok"] != true {
                 return Err(report["error"].as_str().unwrap_or_default().to_string());
             }
-            let generated = password.is_empty();
-            let installed_password = report["password"].as_str().unwrap_or_default();
-            Ok(if generated {
-                tf("install.done_password", &[("password", installed_password)])
-            } else {
-                t("install.done")
+            // Present only if the installation generated it.
+            Ok(match report["password"].as_str() {
+                Some(generated) => tf("install.done_password", &[("password", generated)]),
+                None => t("install.done"),
             })
         })
         .await

@@ -85,8 +85,13 @@ struct Args {
 
     /// Permanent password (with --server): whoever uses it connects without confirmation.
     /// A temporary password is also generated at every start.
-    #[arg(long, env = "NEXODESK_PASSWORD", hide_env_values = true)]
+    #[arg(long, env = "NEXODESK_PASSWORD", hide_env_values = true, conflicts_with = "password_hash")]
     password: Option<String>,
+
+    /// The permanent password as stored by the service (hash): the agent never sees it
+    /// in clear text.
+    #[arg(long, env = "NEXODESK_PASSWORD_HASH", hide = true, hide_env_values = true)]
+    password_hash: Option<String>,
 
     /// Local channel with the NexoDesk app (used by nexodesk-service): the app shows the ID
     /// and the temporary password, and whoever uses that one must be confirmed at the PC.
@@ -200,7 +205,10 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             .unwrap_or_else(|| nexodesk_transport::identity::data_dir().join("device.key")),
         // Without the app there is nobody to ask: the password is enough.
         confirm: ipc,
-        permanent_password: args.password.clone(),
+        permanent_password_hash: args
+            .password_hash
+            .clone()
+            .or_else(|| args.password.as_deref().map(nexodesk_secret::hash)),
         info_file: args.fingerprint_file.clone(),
     };
     let password = Arc::new(Mutex::new(crate::random_password()));
