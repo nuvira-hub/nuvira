@@ -28,9 +28,21 @@ The app checks at start-up and every 6 hours. A bar shows "NexoDesk X is availab
 
 ## Publishing a version
 
-1. Raise the version in `Cargo.toml` (`[workspace.package]`): devices already on it do not update.
+1. Raise the version in `Cargo.toml` (`[workspace.package]`) as in "Version numbers" below: devices already on it do not update.
 2. `tools/publish-update.sh`: builds and signs into `dist/update/`.
 3. Copy the contents of `dist/update/` into `updates` in the server's data (on Unraid `/mnt/user/appdata/nexodesk-server/updates`).
+
+## Version numbers
+
+One version for the whole workspace (`Cargo.toml`), raised when a release is published, not at every change; each release is tagged `vX.Y.Z` (the tag also builds the server image with that version).
+
+| Change since the last release | Before 1.0 | From 1.0 |
+|---|---|---|
+| Fixes only | patch: 0.2.**1** | patch: 1.2.**1** |
+| New features, compatible | minor: 0.**3**.0 | minor: 1.**3**.0 |
+| Breaks compatibility between app, agent and server (protocol, data) | minor: 0.**3**.0 | major: **2**.0.0 |
+
+1.0.0 is the milestone of the roadmap (end of phase 5), decided with the project owner.
 
 ## Tests of 2026-10-27
 
