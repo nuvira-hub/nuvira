@@ -93,9 +93,16 @@ Tests of 2026-10-27 on PC-LABORATORIO, viewer from the NUC:
 - temporary password with the app closed: refused immediately, the viewer shows "connection not accepted on the device";
 - the app reconnects after an agent update and after two closes in a row. The first version did not recreate the pipe after the app closed ("Access denied" with `FIRST_PIPE_INSTANCE`): fixed by preparing the next instance in advance.
 
+## Remote Desktop sessions
+
+When a user connects to the PC with Remote Desktop their session leaves the console, which is left on the sign-in screen. The service follows the console when someone is signed in there, otherwise the first Remote Desktop session in use with a user (`choose_session` in `launch.rs`, unit-tested); the agent is restarted when the choice changes, as for a user switch. Where DXGI Desktop Duplication is not available (some Remote Desktop sessions, virtual machines) capture falls back to GDI (`client/capture/src/gdi.rs`): a copy of the screen every 33 ms, reported only when it changed; `NEXODESK_CAPTURE=gdi` forces it. On the NUC, forced: 1920x1080, ~14 fps, 17 ms. Not yet tested with a real Remote Desktop session.
+
+## Done since the first version
+
+- The other end of the local channel is checked: a process the user cannot even query (SYSTEM) is accepted, one it can must be the program in Program Files running as SYSTEM. Tested with an impostor agent started by the user: refused.
+- "Waiting for the person to accept" in the viewer and in the app (`ConfirmationPending`, session protocol version 2).
+- Permanent password stored as a PBKDF2-SHA256 hash (`nexodesk-secret`), converted automatically from earlier configurations.
+
 ## To do
 
-- Check on the local channel that the other end really is the service's agent (a SYSTEM process in Program Files) and not a program that took the pipe name before it.
-- In the viewer, a "waiting for confirmation" message while the person at the PC decides (today the window stays on "connecting…").
-- Remote Desktop (RDP) sessions: today only the console is followed.
-- Permanent password stored as a hash instead of in clear text (the check in the agent must change too).
+- Ctrl+Alt+Del inside a Remote Desktop session.

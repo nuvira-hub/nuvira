@@ -10,6 +10,8 @@ use std::time::Duration;
 mod all;
 #[cfg(windows)]
 pub mod desktop;
+#[cfg(windows)]
+mod gdi;
 mod synthetic;
 #[cfg(windows)]
 mod windows;
@@ -64,7 +66,11 @@ pub trait Capturer: Send {
 /// List of the available screens.
 pub fn displays() -> anyhow::Result<Vec<Display>> {
     #[cfg(windows)]
-    return windows::displays();
+    return match windows::displays() {
+        Ok(list) if !list.is_empty() && !force_gdi() => Ok(list),
+        // Without DXGI (some Remote Desktop sessions), as GDI sees them.
+        _ => Ok(gdi::displays()),
+    };
     #[cfg(not(windows))]
     anyhow::bail!("screen capture is not available on this system yet");
 }
@@ -76,16 +82,38 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
     {
         if index == Some(ALL_DISPLAYS) {
             let screens = displays()?;
-            let open = |i| -> anyhow::Result<Box<dyn Capturer>> {
-                Ok(Box::new(windows::DxgiCapturer::new(Some(i))?))
-            };
-            return Ok(Box::new(AllCapturer::new(open, &screens)?));
+            return Ok(Box::new(AllCapturer::new(|i| open_one(Some(i)), &screens)?));
         }
-        Ok(Box::new(windows::DxgiCapturer::new(index)?))
+        open_one(index)
     }
     #[cfg(not(windows))]
     {
         let _ = index;
         anyhow::bail!("screen capture is not available on this system yet");
     }
+}
+
+/// `NEXODESK_CAPTURE=gdi`: GDI capture even where DXGI works (tests).
+#[cfg(windows)]
+fn force_gdi() -> bool {
+    std::env::var("NEXODESK_CAPTURE").is_ok_and(|v| v.eq_ignore_ascii_case("gdi"))
+}
+
+/// DXGI Desktop Duplication, or GDI where it is not available (some Remote Desktop
+/// sessions, virtual machines).
+#[cfg(windows)]
+fn open_one(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
+    if !force_gdi() {
+        match windows::DxgiCapturer::new(index) {
+            Ok(capturer) => return Ok(Box::new(capturer)),
+            Err(e) => tracing::info!("DXGI capture not available ({e:#}): GDI capture"),
+        }
+    }
+    let screens = gdi::displays();
+    let display = match index {
+        Some(i) => screens.into_iter().find(|d| d.index == i),
+        None => screens.into_iter().find(|d| d.primary),
+    }
+    .ok_or_else(|| anyhow::anyhow!("screen not found"))?;
+    Ok(Box::new(gdi::GdiCapturer::new(display)?))
 }
