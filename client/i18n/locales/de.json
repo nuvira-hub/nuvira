@@ -124,6 +124,13 @@
   "settings.language": "Sprache",
   "settings.language_auto": "Automatisch (Windows-Sprache)",
   "settings.language_hint": "Gilt auch für das Sitzungsfenster.",
+  "settings.unattended": "Unbeaufsichtigter Zugriff",
+  "settings.unattended_hint": "Installieren Sie NexoDesk auf diesem Computer, um ihn auch zu erreichen, wenn niemand davor sitzt, auch nach einem Neustart, mit einem dauerhaften Passwort. Ein Administratorkonto ist erforderlich.",
+  "settings.install_pw": "Dauerhaftes Passwort (leer: wird erzeugt)",
+  "settings.install_pw_short": "Das dauerhafte Passwort muss mindestens 8 Zeichen haben.",
+  "settings.install": "Auf diesem Computer installieren",
+  "settings.installing": "Installation läuft: Bestätigen Sie die Administratorabfrage…",
+  "settings.installed": "Installiert: Dieser Computer ist erreichbar, auch wenn niemand davor sitzt. Zum Entfernen von NexoDesk verwenden Sie die installierten Apps in den Windows-Einstellungen.",
 
   "about.version": "Version {v}",
   "about.description": "Open-Source-Fernsteuerung: eigener Server, Ende-zu-Ende-verschlüsselte Direktverbindungen, unbeaufsichtigter Zugriff.",
@@ -218,5 +225,11 @@
   "server.old_version": "Protokollversion nicht unterstützt: Aktualisieren Sie NexoDesk",
   "server.unreachable": "das Gerät ist nicht erreichbar",
   "server.self_connect": "Sie können sich nicht mit dem Gerät verbinden, das Sie gerade verwenden",
-  "server.peer_left": "das Gerät hat die Verbindung getrennt"
+  "server.peer_left": "das Gerät hat die Verbindung getrennt",
+
+  "install.cancelled": "Installation abgebrochen: Die Administratorabfrage wurde abgelehnt.",
+  "install.no_report": "Die Installation hat ihr Ergebnis nicht gemeldet.",
+  "install.done": "NexoDesk ist installiert: Dieser Computer ist mit dem gewählten dauerhaften Passwort erreichbar.",
+  "install.done_password": "NexoDesk ist installiert. Dauerhaftes Passwort: {password} (notieren Sie es: Es wird nur jetzt angezeigt).",
+  "install.windows_only": "Die Installation ist vorerst nur unter Windows verfügbar."
 }

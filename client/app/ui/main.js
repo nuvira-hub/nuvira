@@ -90,6 +90,8 @@ function render(state) {
   $("rail-status").title = text;
   $("status-text").textContent = text;
   $("service-note").classList.toggle("hidden", !state.service);
+  $("install-off").classList.toggle("hidden", state.service);
+  $("install-on").classList.toggle("hidden", !state.service);
   $("password-label").textContent = t(state.service ? "connect.temp_password" : "connect.password");
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password || "—";
@@ -204,6 +206,29 @@ $("server-form").addEventListener("submit", async (e) => {
   } catch (err) {
     $("server-message").textContent = msg(String(err));
     $("server-message").classList.remove("hidden");
+  }
+});
+
+$("install-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const message = $("install-message");
+  const show = (text, ok) => {
+    message.textContent = msg(text);
+    message.classList.toggle("ok", ok);
+    message.classList.remove("hidden");
+  };
+  const password = $("install-pw").value;
+  if (password !== $("install-pw2").value) return show(t("settings.pw_mismatch"), false);
+  if (password && password.length < 8) return show(t("settings.install_pw_short"), false);
+  $("install-button").disabled = true;
+  show(t("settings.installing"), true);
+  try {
+    show(await invoke("install_service", { password }), true);
+    $("install-form").reset();
+  } catch (err) {
+    show(String(err), false);
+  } finally {
+    $("install-button").disabled = false;
   }
 });
 

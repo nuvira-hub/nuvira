@@ -16,6 +16,8 @@ mod config;
 #[cfg(windows)]
 mod install;
 #[cfg(windows)]
+pub use install::run_elevated;
+#[cfg(windows)]
 mod launch;
 #[cfg(windows)]
 mod scm;
@@ -50,9 +52,23 @@ enum Cmd {
         /// WebSocket URL of the server for the fallback.
         #[arg(long, value_name = "URL")]
         server_ws: Option<String>,
+        /// Reads the permanent password from this file and deletes it (used by the app:
+        /// a command line can be read by other programs on the PC).
+        #[arg(long, value_name = "FILE", conflicts_with = "password")]
+        password_file: Option<std::path::PathBuf>,
+        /// Writes the outcome to this file as JSON (used by the app, which cannot see
+        /// the output of a process started as administrator).
+        #[arg(long, value_name = "FILE", hide = true)]
+        report: Option<std::path::PathBuf>,
     },
-    /// Stops and removes the service (data and ID remain).
-    Uninstall,
+    /// Stops and removes the service (data and ID remain). Asks for administrator
+    /// rights by itself when they are missing.
+    Uninstall {
+        /// Also removes the program from Program Files, the Start menu shortcut and the
+        /// entry in the installed apps (used by that entry).
+        #[arg(long)]
+        remove_program: bool,
+    },
     /// Shows the service state and the device ID.
     Status,
     /// Used by the Windows service manager.
@@ -67,11 +83,27 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
 
     let args = Args::parse_from(args);
     match args.command {
-        Cmd::Install { server, password, server_key, transport, server_ws } => {
+        Cmd::Install { server, password, server_key, transport, server_ws, password_file, report } => {
             println!("{COPYRIGHT}");
-            install::install(install::InstallOptions { server, server_key, password, transport, server_ws })
+            let password = match password_file {
+                Some(file) => {
+                    let text = std::fs::read_to_string(&file);
+                    let _ = std::fs::remove_file(&file);
+                    Some(text?.trim().to_string()).filter(|p| !p.is_empty())
+                }
+                None => password,
+            };
+            let result = install::install(install::InstallOptions { server, server_key, password, transport, server_ws });
+            if let Some(report) = report {
+                let json = match &result {
+                    Ok(done) => serde_json::json!({ "ok": true, "id": done.id, "password": done.password }),
+                    Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+                };
+                std::fs::write(report, json.to_string())?;
+            }
+            result.map(|_| ())
         }
-        Cmd::Uninstall => install::uninstall(),
+        Cmd::Uninstall { remove_program } => install::uninstall(remove_program),
         Cmd::Status => install::status(),
         Cmd::Run => run_service(),
     }

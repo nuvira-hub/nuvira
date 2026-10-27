@@ -155,6 +155,21 @@
         <p class="hint" data-i18n="settings.server_hint">NexoDesk server this computer registers with, which also holds the address book.</p>
         <p id="server-message" class="message hidden"></p>
 
+        <h2 data-i18n="settings.unattended">Unattended access</h2>
+        <div id="install-off">
+          <p class="hint" data-i18n="settings.unattended_hint">Install NexoDesk on this computer to reach it even when nobody is in front of it, also after a restart, with a permanent password. An administrator account is needed.</p>
+          <form id="install-form" class="stack">
+            <input id="install-pw" type="password" autocomplete="new-password" data-i18n-placeholder="settings.install_pw" placeholder="Permanent password (empty: one is generated)">
+            <input id="install-pw2" type="password" autocomplete="new-password" data-i18n-placeholder="settings.pw_confirm" placeholder="Repeat the password">
+            <div class="actions">
+              <span class="spacer"></span>
+              <button type="submit" class="primary" id="install-button" data-i18n="settings.install">Install on this computer</button>
+            </div>
+          </form>
+        </div>
+        <p id="install-on" class="hint hidden" data-i18n="settings.installed">Installed: this computer can be reached even when nobody is in front of it. To remove NexoDesk use the installed apps in Windows settings.</p>
+        <p id="install-message" class="message hidden"></p>
+
         <h2 data-i18n="settings.language">Language</h2>
         <select id="language" data-i18n-label="settings.language"></select>
         <p class="hint" data-i18n="settings.language_hint">Also used by the session window.</p>

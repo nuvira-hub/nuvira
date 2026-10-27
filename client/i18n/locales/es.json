@@ -124,6 +124,13 @@
   "settings.language": "Idioma",
   "settings.language_auto": "Automático (idioma de Windows)",
   "settings.language_hint": "También se aplica a la ventana de la sesión.",
+  "settings.unattended": "Acceso desatendido",
+  "settings.unattended_hint": "Instala NexoDesk en este equipo para acceder a él aunque no haya nadie delante, también después de reiniciar, con una contraseña permanente. Se necesita una cuenta de administrador.",
+  "settings.install_pw": "Contraseña permanente (vacía: se genera una)",
+  "settings.install_pw_short": "La contraseña permanente debe tener al menos 8 caracteres.",
+  "settings.install": "Instalar en este equipo",
+  "settings.installing": "Instalando: confirma la solicitud de administrador…",
+  "settings.installed": "Instalado: se puede acceder a este equipo aunque no haya nadie delante. Para quitar NexoDesk usa las aplicaciones instaladas en la configuración de Windows.",
 
   "about.version": "Versión {v}",
   "about.description": "Control remoto de código abierto: servidor propio, conexiones directas cifradas de extremo a extremo, acceso desatendido.",
@@ -218,5 +225,11 @@
   "server.old_version": "versión del protocolo no admitida: actualice NexoDesk",
   "server.unreachable": "el dispositivo no está accesible",
   "server.self_connect": "no puede conectarse al dispositivo que está usando",
-  "server.peer_left": "el dispositivo se ha desconectado"
+  "server.peer_left": "el dispositivo se ha desconectado",
+
+  "install.cancelled": "Instalación cancelada: se rechazó la solicitud de administrador.",
+  "install.no_report": "La instalación no comunicó su resultado.",
+  "install.done": "NexoDesk está instalado: se puede acceder a este equipo con la contraseña permanente que elegiste.",
+  "install.done_password": "NexoDesk está instalado. Contraseña permanente: {password} (anótala: solo se muestra ahora).",
+  "install.windows_only": "Por ahora la instalación solo está disponible en Windows."
 }

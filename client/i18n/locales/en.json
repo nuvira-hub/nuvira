@@ -124,6 +124,13 @@
   "settings.language": "Language",
   "settings.language_auto": "Automatic (Windows language)",
   "settings.language_hint": "Also used by the session window.",
+  "settings.unattended": "Unattended access",
+  "settings.unattended_hint": "Install NexoDesk on this computer to reach it even when nobody is in front of it, also after a restart, with a permanent password. An administrator account is needed.",
+  "settings.install_pw": "Permanent password (empty: one is generated)",
+  "settings.install_pw_short": "The permanent password must have at least 8 characters.",
+  "settings.install": "Install on this computer",
+  "settings.installing": "Installing: confirm the administrator prompt…",
+  "settings.installed": "Installed: this computer can be reached even when nobody is in front of it. To remove NexoDesk use the installed apps in Windows settings.",
 
   "about.version": "Version {v}",
   "about.description": "Open-source remote control: your own server, end-to-end encrypted direct connections, unattended access.",
@@ -218,5 +225,11 @@
   "server.old_version": "protocol version not supported: update NexoDesk",
   "server.unreachable": "the device is not reachable",
   "server.self_connect": "you cannot connect to the device you are using",
-  "server.peer_left": "the device disconnected"
+  "server.peer_left": "the device disconnected",
+
+  "install.cancelled": "Installation cancelled: the administrator prompt was declined.",
+  "install.no_report": "The installation did not report its outcome.",
+  "install.done": "NexoDesk is installed: this computer is reachable with the permanent password you chose.",
+  "install.done_password": "NexoDesk is installed. Permanent password: {password} (write it down: it is shown only now).",
+  "install.windows_only": "Installation is available only on Windows for now."
 }

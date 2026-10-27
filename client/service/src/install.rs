@@ -84,7 +84,14 @@ pub struct InstallOptions {
     pub server_ws: Option<String>,
 }
 
-pub fn install(opts: InstallOptions) -> Result<()> {
+/// Outcome of an installation.
+pub struct Installed {
+    /// Device ID, if the agent registered within the wait.
+    pub id: Option<String>,
+    pub password: String,
+}
+
+pub fn install(opts: InstallOptions) -> Result<Installed> {
     let scm = manager(SC_MANAGER_ALL_ACCESS)?;
     let existing = open_service(&scm, SERVICE_ALL_ACCESS)?;
     if let Some(service) = &existing {
@@ -98,7 +105,7 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     std::fs::create_dir_all(&program_dir).with_context(|| format!("creating {}", program_dir.display()))?;
     let program = program_dir.join(config::PROGRAM_EXE);
     if !same_file(&src, &program) {
-        std::fs::copy(&src, &program).with_context(|| format!("copying {} to {}", src.display(), program.display()))?;
+        replace_program(&src, &program)?;
     }
     for old in config::OLD_EXES {
         let _ = std::fs::remove_file(program_dir.join(old));
@@ -158,6 +165,7 @@ pub fn install(opts: InstallOptions) -> Result<()> {
     .context("firewall rule")?;
 
     allow_software_sas()?;
+    register_app(&program)?;
 
     let _ = std::fs::remove_file(config::online_path());
     unsafe { StartServiceW(service.0, None) }.context("starting the service")?;
@@ -165,7 +173,8 @@ pub fn install(opts: InstallOptions) -> Result<()> {
         bail!("the service did not start: see {}", config::service_log().display());
     }
     println!("service installed and started");
-    match wait_online(Duration::from_secs(30)) {
+    let id = wait_online(Duration::from_secs(30));
+    match &id {
         Some(id) => println!("ID {id}, password {password}"),
         None => println!(
             "the agent has not registered on {} yet: check {}",
@@ -173,7 +182,100 @@ pub fn install(opts: InstallOptions) -> Result<()> {
             config::agent_log().display()
         ),
     }
+    Ok(Installed { id, password })
+}
+
+/// Key of the entry in Windows' installed apps.
+const UNINSTALL_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NexoDesk";
+
+fn start_menu_shortcut() -> std::path::PathBuf {
+    std::env::var_os("ProgramData")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| r"C:\ProgramData".into())
+        .join(r"Microsoft\Windows\Start Menu\Programs\NexoDesk.lnk")
+}
+
+/// Start menu shortcut and entry in the installed apps, so that NexoDesk can be
+/// found and removed like any other program.
+fn register_app(program: &Path) -> Result<()> {
+    let program_s = program.display().to_string();
+    let dir = program.parent().map(|d| d.display().to_string()).unwrap_or_default();
+    let uninstall = format!("\"{program_s}\" service uninstall --remove-program");
+    let values: [(&str, &str, &str); 9] = [
+        ("DisplayName", "REG_SZ", "NexoDesk"),
+        ("DisplayVersion", "REG_SZ", env!("CARGO_PKG_VERSION")),
+        ("Publisher", "REG_SZ", "Alessandro Blason"),
+        ("DisplayIcon", "REG_SZ", &program_s),
+        ("InstallLocation", "REG_SZ", &dir),
+        ("UninstallString", "REG_SZ", &uninstall),
+        ("URLInfoAbout", "REG_SZ", "https://github.com/alexbn71/NexoDesk"),
+        ("NoModify", "REG_DWORD", "1"),
+        ("NoRepair", "REG_DWORD", "1"),
+    ];
+    for (name, kind, data) in values {
+        run(Command::new("reg").args(["add", UNINSTALL_KEY, "/v", name, "/t", kind, "/d", data, "/f"]))
+            .with_context(|| format!("installed apps entry ({name})"))?;
+    }
+    // The shortcut is made by Windows' own scripting object: no extra dependency.
+    let script = format!(
+        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{}'); $s.TargetPath = '{}'; $s.WorkingDirectory = '{}'; $s.Save()",
+        start_menu_shortcut().display().to_string().replace('\'', "''"),
+        program_s.replace('\'', "''"),
+        dir.replace('\'', "''"),
+    );
+    run(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]))
+        .context("Start menu shortcut")?;
     Ok(())
+}
+
+/// Starts `exe` with `params` as administrator (UAC prompt) and waits for it.
+/// Returns its exit code; `Ok(None)` if the person declined the prompt.
+pub fn run_elevated(exe: &Path, params: &str) -> Result<Option<u32>> {
+    use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED};
+    use windows::Win32::System::Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject};
+    use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+    let verb = HSTRING::from("runas");
+    let file = HSTRING::from(exe.as_os_str());
+    let parameters = HSTRING::from(params);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(parameters.as_ptr()),
+        nShow: SW_HIDE.0,
+        ..Default::default()
+    };
+    if let Err(e) = unsafe { ShellExecuteExW(&mut info) } {
+        if e.code() == ERROR_CANCELLED.to_hresult() {
+            return Ok(None);
+        }
+        return Err(e).context("starting as administrator");
+    }
+    let mut code = 1u32;
+    unsafe {
+        WaitForSingleObject(info.hProcess, INFINITE);
+        let _ = GetExitCodeProcess(info.hProcess, &mut code);
+        let _ = CloseHandle(info.hProcess);
+    }
+    Ok(Some(code))
+}
+
+/// Without administrator rights (e.g. from the installed apps entry) the same command
+/// is started again as administrator. Returns true if that happened.
+fn elevate_if_needed() -> Result<bool> {
+    if unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_ALL_ACCESS) }.map(Sc).is_ok() {
+        return Ok(false);
+    }
+    let params = std::env::args()
+        .skip(1)
+        .map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a })
+        .collect::<Vec<_>>()
+        .join(" ");
+    run_elevated(&std::env::current_exe()?, &params)?;
+    Ok(true)
 }
 
 /// "Allow software to generate SAS" policy (SoftwareSASGeneration): lets services
@@ -202,6 +304,21 @@ fn allow_software_sas() -> Result<()> {
         ]))
         .context("SoftwareSASGeneration policy")?;
     }
+    Ok(())
+}
+
+/// Copies the new program over the installed one. The installed one may still be
+/// running (the app opened from the Start menu, or the agent of the service just
+/// stopped, which takes a moment to exit): a running program cannot be overwritten
+/// but can be renamed, so it is moved aside and deleted at the next update.
+fn replace_program(src: &Path, program: &Path) -> Result<()> {
+    let aside = program.with_extension("old.exe");
+    let _ = std::fs::remove_file(&aside);
+    if std::fs::copy(src, program).is_ok() {
+        return Ok(());
+    }
+    std::fs::rename(program, &aside).with_context(|| format!("moving aside {}", program.display()))?;
+    std::fs::copy(src, program).with_context(|| format!("copying {} to {}", src.display(), program.display()))?;
     Ok(())
 }
 
@@ -283,24 +400,52 @@ fn create(scm: &Sc, exe: &Path) -> Result<Sc> {
     Ok(service)
 }
 
-pub fn uninstall() -> Result<()> {
-    let scm = manager(SC_MANAGER_ALL_ACCESS)?;
-    let Some(service) = open_service(&scm, SERVICE_ALL_ACCESS)? else {
-        println!("the service is not installed");
+pub fn uninstall(remove_program: bool) -> Result<()> {
+    if elevate_if_needed()? {
         return Ok(());
-    };
-    stop(&service)?;
-    unsafe { DeleteService(service.0) }.context("DeleteService")?;
+    }
+    let scm = manager(SC_MANAGER_ALL_ACCESS)?;
+    match open_service(&scm, SERVICE_ALL_ACCESS)? {
+        Some(service) => {
+            stop(&service)?;
+            unsafe { DeleteService(service.0) }.context("DeleteService")?;
+            println!("service removed");
+        }
+        None => println!("the service is not installed"),
+    }
     let _ = run(Command::new("netsh").raw_arg(format!(
         "advfirewall firewall delete rule name=\"{FIREWALL_RULE}\""
     )));
-    println!("service removed");
+    if !remove_program {
+        println!(
+            "the program remains in {} and the data in {} (with the device ID, reused if you reinstall)",
+            config::program_dir().display(),
+            config::data_dir().display()
+        );
+        return Ok(());
+    }
+    let _ = run(Command::new("reg").args(["delete", UNINSTALL_KEY, "/f"]));
+    let _ = std::fs::remove_file(start_menu_shortcut());
+    remove_program_dir();
     println!(
-        "the programs remain in {} and the data in {} (with the device ID, reused if you reinstall)",
-        config::program_dir().display(),
+        "NexoDesk removed; the data stays in {} (with the device ID, reused if you reinstall)",
         config::data_dir().display()
     );
     Ok(())
+}
+
+/// Removes the program folder. This program is running from it, so a separate command
+/// deletes it once this process has exited; that command leaves the caller's job if it
+/// can (a remote prompt closes its whole job when it ends). No deletion at restart as a
+/// fallback: a reinstallation before the restart would be deleted too.
+fn remove_program_dir() {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    let command = format!("/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{}\"", config::program_dir().display());
+    let spawn = |flags| Command::new("cmd").raw_arg(&command).creation_flags(flags).spawn();
+    if spawn(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB).is_err() {
+        let _ = spawn(CREATE_NO_WINDOW);
+    }
 }
 
 pub fn status() -> Result<()> {

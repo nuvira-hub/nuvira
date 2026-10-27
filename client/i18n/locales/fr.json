@@ -124,6 +124,13 @@
   "settings.language": "Langue",
   "settings.language_auto": "Automatique (langue de Windows)",
   "settings.language_hint": "S'applique aussi à la fenêtre de session.",
+  "settings.unattended": "Accès sans surveillance",
+  "settings.unattended_hint": "Installez NexoDesk sur cet ordinateur pour l'atteindre même lorsque personne n'est devant, y compris après un redémarrage, avec un mot de passe permanent. Un compte administrateur est nécessaire.",
+  "settings.install_pw": "Mot de passe permanent (vide : il est généré)",
+  "settings.install_pw_short": "Le mot de passe permanent doit comporter au moins 8 caractères.",
+  "settings.install": "Installer sur cet ordinateur",
+  "settings.installing": "Installation en cours : confirmez la demande d'administrateur…",
+  "settings.installed": "Installé : cet ordinateur est accessible même lorsque personne n'est devant. Pour supprimer NexoDesk, utilisez les applications installées dans les paramètres de Windows.",
 
   "about.version": "Version {v}",
   "about.description": "Contrôle à distance open source : votre propre serveur, connexions directes chiffrées de bout en bout, accès sans surveillance.",
@@ -218,5 +225,11 @@
   "server.old_version": "version du protocole non prise en charge : mettez à jour NexoDesk",
   "server.unreachable": "l'appareil n'est pas joignable",
   "server.self_connect": "impossible de se connecter à l'appareil que vous utilisez",
-  "server.peer_left": "l'appareil s'est déconnecté"
+  "server.peer_left": "l'appareil s'est déconnecté",
+
+  "install.cancelled": "Installation annulée : la demande d'administrateur a été refusée.",
+  "install.no_report": "L'installation n'a pas indiqué son résultat.",
+  "install.done": "NexoDesk est installé : cet ordinateur est accessible avec le mot de passe permanent que vous avez choisi.",
+  "install.done_password": "NexoDesk est installé. Mot de passe permanent : {password} (notez-le : il n'est affiché que maintenant).",
+  "install.windows_only": "L'installation n'est disponible que sous Windows pour le moment."
 }

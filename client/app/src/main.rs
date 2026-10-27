@@ -652,6 +652,7 @@ fn main() {
             respond,
             send_chat,
             connect_entry,
+            install_service,
             address_book::address_book_login,
             address_book::address_book_logout,
             address_book::address_book_refresh,
@@ -706,6 +707,69 @@ fn attach_console() {
         if !redirected(which) {
             let _ = unsafe { SetStdHandle(which, console) };
         }
+    }
+}
+
+/// Installs NexoDesk on this PC for unattended access: `nexodesk service install`
+/// started as administrator (UAC prompt). The password travels in a temporary file,
+/// not on the command line, and the outcome comes back the same way. Returns the
+/// message to show, with the permanent password if it was generated.
+#[tauri::command]
+async fn install_service(app: AppHandle, password: String) -> Result<String, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = (app, password);
+        Err(t("install.windows_only"))
+    }
+    #[cfg(windows)]
+    {
+        let settings = load_settings();
+        if settings.server.trim().is_empty() {
+            return Err(t("err.set_server_first"));
+        }
+        let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+            let temp = std::env::temp_dir();
+            let tag = nexodesk_agent::random_password();
+            let (password_file, report) = (temp.join(format!("nexodesk-{tag}.pw")), temp.join(format!("nexodesk-{tag}.json")));
+            let quote = |p: &std::path::Path| format!("\"{}\"", p.display());
+            let mut params = format!("service install --server \"{}\" --report {}", settings.server, quote(&report));
+            if let Some(key) = &settings.server_key {
+                params += &format!(" --server-key {key}");
+            }
+            if !password.is_empty() {
+                std::fs::write(&password_file, &password).map_err(|e| e.to_string())?;
+                params += &format!(" --password-file {}", quote(&password_file));
+            }
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let outcome = nexodesk_service::run_elevated(&exe, &params);
+            let _ = std::fs::remove_file(&password_file);
+            let text = std::fs::read_to_string(&report);
+            let _ = std::fs::remove_file(&report);
+            match outcome {
+                Ok(None) => return Err(t("install.cancelled")),
+                Err(e) => return Err(format!("{e:#}")),
+                Ok(Some(_)) => {}
+            }
+            let report: serde_json::Value =
+                text.ok().and_then(|t| serde_json::from_str(&t).ok()).ok_or_else(|| t("install.no_report"))?;
+            if report["ok"] != true {
+                return Err(report["error"].as_str().unwrap_or_default().to_string());
+            }
+            let generated = password.is_empty();
+            let installed_password = report["password"].as_str().unwrap_or_default();
+            Ok(if generated {
+                tf("install.done_password", &[("password", installed_password)])
+            } else {
+                t("install.done")
+            })
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        // Installed: from now on the ID and passwords are the service's.
+        if result.is_ok() {
+            start_agent(&app);
+        }
+        result
     }
 }
 
