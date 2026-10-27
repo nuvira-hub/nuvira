@@ -109,7 +109,7 @@ impl Link {
 /// Authenticated client: reopened if the connection dropped, with the saved token.
 async fn client(app: &AppHandle) -> Result<ApiClient, String> {
     let state = app.state::<NexoApp>();
-    let mut guard = state.rubrica.client.lock().await;
+    let mut guard = state.address_book.client.lock().await;
     if let Some(client) = guard.as_ref().filter(|c| !c.is_closed()) {
         return Ok(client.clone());
     }
@@ -185,7 +185,7 @@ pub fn restore(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         if let Err(e) = refresh(&app).await {
             warn!("address book not loaded: {e}");
-            app.state::<NexoApp>().update(&app, |ui| ui.rubrica_error = Some(e));
+            app.state::<NexoApp>().update(&app, |ui| ui.address_book_error = Some(e));
         }
     });
 }
@@ -207,7 +207,7 @@ pub async fn refresh(app: &AppHandle) -> Result<(), String> {
         .collect();
     app.state::<NexoApp>().update(app, |ui| {
         ui.books = books;
-        ui.rubrica_error = None;
+        ui.address_book_error = None;
     });
     Ok(())
 }
@@ -234,7 +234,7 @@ pub fn auto_add(app: &AppHandle, device_id: String, name: String, password: Stri
 // --- interface commands ---
 
 #[tauri::command]
-pub async fn rubrica_login(app: AppHandle, username: String, password: String) -> Result<(), String> {
+pub async fn address_book_login(app: AppHandle, username: String, password: String) -> Result<(), String> {
     let client = open(&app).await?;
     let Some(ApiResult::Session(session)) = client
         .call(Call::Login(pb::Login { username, password }))
@@ -247,48 +247,48 @@ pub async fn rubrica_login(app: AppHandle, username: String, password: String) -
     settings.token = Some(session.token.clone());
     save_settings(&settings).map_err(|e| e.to_string())?;
     set_account(&app, session.account);
-    *app.state::<NexoApp>().rubrica.client.lock().await = Some(client);
+    *app.state::<NexoApp>().address_book.client.lock().await = Some(client);
     refresh(&app).await
 }
 
 #[tauri::command]
-pub async fn rubrica_logout(app: AppHandle) {
+pub async fn address_book_logout(app: AppHandle) {
     let _ = call(&app, Call::Logout(pb::Logout {})).await;
-    *app.state::<NexoApp>().rubrica.client.lock().await = None;
+    *app.state::<NexoApp>().address_book.client.lock().await = None;
     forget(&app);
 }
 
 #[tauri::command]
-pub async fn rubrica_refresh(app: AppHandle) -> Result<(), String> {
+pub async fn address_book_refresh(app: AppHandle) -> Result<(), String> {
     refresh(&app).await
 }
 
 #[tauri::command]
-pub async fn rubrica_save_entry(app: AppHandle, entry: EntryUi) -> Result<(), String> {
+pub async fn address_book_save_entry(app: AppHandle, entry: EntryUi) -> Result<(), String> {
     call(&app, Call::PutEntry(entry.into())).await?;
     refresh(&app).await
 }
 
 #[tauri::command]
-pub async fn rubrica_delete_entry(app: AppHandle, id: i64) -> Result<(), String> {
+pub async fn address_book_delete_entry(app: AppHandle, id: i64) -> Result<(), String> {
     call(&app, Call::DeleteEntry(pb::DeleteEntry { id })).await?;
     refresh(&app).await
 }
 
 #[tauri::command]
-pub async fn rubrica_change_password(app: AppHandle, old: String, new: String) -> Result<(), String> {
+pub async fn address_book_change_password(app: AppHandle, old: String, new: String) -> Result<(), String> {
     call(&app, Call::ChangePassword(pb::ChangePassword { old_password: old, new_password: new.clone() })).await?;
     // The server closes the remembered sign-ins: signing in again with the new password.
     let username = app.state::<NexoApp>().ui.lock().expect("state").account.as_ref().map(|a| a.username.clone());
-    *app.state::<NexoApp>().rubrica.client.lock().await = None;
+    *app.state::<NexoApp>().address_book.client.lock().await = None;
     match username {
-        Some(username) => rubrica_login(app, username, new).await,
+        Some(username) => address_book_login(app, username, new).await,
         None => Ok(()),
     }
 }
 
 #[tauri::command]
-pub async fn rubrica_accounts(app: AppHandle) -> Result<Vec<AccountUi>, String> {
+pub async fn address_book_accounts(app: AppHandle) -> Result<Vec<AccountUi>, String> {
     match call(&app, Call::ListAccounts(pb::ListAccounts {})).await? {
         Some(ApiResult::Accounts(list)) => Ok(list.accounts.into_iter().map(Into::into).collect()),
         _ => Err(t("err.unexpected")),
@@ -296,7 +296,7 @@ pub async fn rubrica_accounts(app: AppHandle) -> Result<Vec<AccountUi>, String> 
 }
 
 #[tauri::command]
-pub async fn rubrica_save_account(
+pub async fn address_book_save_account(
     app: AppHandle,
     id: i64,
     username: String,
@@ -308,19 +308,19 @@ pub async fn rubrica_save_account(
 }
 
 #[tauri::command]
-pub async fn rubrica_delete_account(app: AppHandle, id: i64) -> Result<(), String> {
+pub async fn address_book_delete_account(app: AppHandle, id: i64) -> Result<(), String> {
     call(&app, Call::DeleteAccount(pb::DeleteAccount { id })).await?;
     refresh(&app).await
 }
 
 #[tauri::command]
-pub async fn rubrica_save_book(app: AppHandle, id: i64, name: String, member_ids: Vec<i64>) -> Result<(), String> {
+pub async fn address_book_save_book(app: AppHandle, id: i64, name: String, member_ids: Vec<i64>) -> Result<(), String> {
     call(&app, Call::PutBook(pb::PutBook { id, name, member_ids })).await?;
     refresh(&app).await
 }
 
 #[tauri::command]
-pub async fn rubrica_delete_book(app: AppHandle, id: i64) -> Result<(), String> {
+pub async fn address_book_delete_book(app: AppHandle, id: i64) -> Result<(), String> {
     call(&app, Call::DeleteBook(pb::DeleteBook { id })).await?;
     refresh(&app).await
 }

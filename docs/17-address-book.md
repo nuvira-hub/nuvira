@@ -31,7 +31,7 @@ Visibility: an account sees its personal book and the shared books it is a membe
 
 - **Account passwords**: Argon2id (2 passes, 19 MB, OWASP parameters), at least 8 characters; a 1 s pause after a failed sign-in.
 - **Tokens**: random, returned only at sign-in, stored on the server as SHA-256. The app saves the token in `app.json`, never the password. Logout deletes the token; changing the password invalidates all of the account's tokens.
-- **Device passwords**: AES-256-GCM with the key `rubrica.key` in the server's data folder (created at first start, readable only by the owner). The database alone is not enough to read them; the key must be backed up with it.
+- **Device passwords**: AES-256-GCM with the key `address-book.key` in the server's data folder (created at first start, readable only by the owner). The database alone is not enough to read them; the key must be backed up with it.
 - **Transport**: the API runs inside the QUIC/TLS connection to the server, whose certificate the app pins at the first connection (as the agent and viewer do).
 - **Errors** are translation keys (`@server.denied`, `@server.password_too_short`, …) that the app shows in the user's language (D15).
 - **First administrator**: `NEXODESK_ADMIN_USER` and `NEXODESK_ADMIN_PASSWORD` when the server starts with no accounts; without them an `admin` account is created with a random password written once to the server log, to be changed at the first sign-in.
@@ -50,7 +50,7 @@ The app opens a signalling connection with `Register.api_only` (it does not appe
 | `ListAccounts`, `PutAccount`, `DeleteAccount` | administrators | account management |
 | `PutBook`, `DeleteBook` | administrators | shared books and their members |
 
-## App (`client/app/src/rubrica.rs`, `ui/rubrica.js`)
+## App (`client/app/src/address_book.rs`, `ui/address-book.js`)
 
 - Address book section of the icon rail (D18): sign-in panel, then the list of books and entries with a search field; double click or "Connect" starts the session with the saved password.
 - Entry form: all fields, password included (the password field stays masked).

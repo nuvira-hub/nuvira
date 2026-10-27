@@ -1,6 +1,6 @@
 // NexoDesk user interface: receives the state from the Rust process ("state"
 // event) and sends commands with invoke. Sections are picked from the rail on the
-// left; address book and administration live in rubrica.js. Texts come from the
+// left; address book and administration live in address-book.js. Texts come from the
 // nexodesk-i18n strings: t() for keys, msg() for "@key" messages from other programs.
 
 const { invoke } = window.__TAURI__.core;
@@ -111,8 +111,8 @@ function render(state) {
 
   renderChat(state);
   renderIncoming(state.incoming);
-  // Defined in rubrica.js, loaded after this file.
-  if (typeof renderRubrica === "function") renderRubrica(state);
+  // Defined in address-book.js, loaded after this file.
+  if (typeof renderAddressBook === "function") renderAddressBook(state);
 }
 
 function renderChat(state) {
@@ -212,7 +212,7 @@ $("connect-form").addEventListener("submit", async (e) => {
   const message = $("connect-message");
   message.classList.add("hidden");
   const password = $("remote-password").value;
-  // Entry picked from the suggestions (rubrica.js): without a typed password, the saved one is used.
+  // Entry picked from the suggestions (address-book.js): without a typed password, the saved one is used.
   const entry = typeof chosenEntry === "function" ? chosenEntry() : null;
   try {
     if (entry && !password) {

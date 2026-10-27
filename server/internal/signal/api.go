@@ -23,7 +23,7 @@ func (s *Server) api(c *client, req *pb.ApiRequest) {
 
 func (s *Server) apiCall(c *client, req *pb.ApiRequest, resp *pb.ApiResponse) error {
 	if s.accounts == nil {
-		return errors.New("@server.no_rubrica")
+		return errors.New("@server.no_address_book")
 	}
 	switch call := req.Call.(type) {
 	case *pb.ApiRequest_Login:

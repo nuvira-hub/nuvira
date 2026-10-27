@@ -144,7 +144,15 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	acc, err := accounts.Open(st.DB(), filepath.Join(dataDir, "rubrica.key"))
+	keyPath := filepath.Join(dataDir, "address-book.key")
+	// Name used before 2026-10-27: keep the existing key, or the saved passwords become unreadable.
+	if old := filepath.Join(dataDir, "rubrica.key"); fileExists(old) && !fileExists(keyPath) {
+		if err := os.Rename(old, keyPath); err != nil {
+			return err
+		}
+		log.Info("address book key renamed", "from", old, "to", keyPath)
+	}
+	acc, err := accounts.Open(st.DB(), keyPath)
 	if err != nil {
 		return err
 	}
@@ -184,4 +192,9 @@ func healthcheck() error {
 		return err
 	}
 	return conn.CloseWithError(0, "")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

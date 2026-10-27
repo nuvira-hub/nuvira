@@ -10,7 +10,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod rubrica;
+mod address_book;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -46,9 +46,9 @@ struct UiState {
     /// Chat with whoever is controlling this PC (current or last session).
     chat: Vec<ChatLine>,
     /// Account signed in to the server's address book.
-    account: Option<rubrica::AccountUi>,
-    books: Vec<rubrica::BookUi>,
-    rubrica_error: Option<String>,
+    account: Option<address_book::AccountUi>,
+    books: Vec<address_book::BookUi>,
+    address_book_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,7 +116,7 @@ struct NexoApp {
     agent: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     /// Encoder chosen at the first session (the test takes a couple of seconds).
     plan: Mutex<Option<EncoderPlan>>,
-    rubrica: rubrica::Link,
+    address_book: address_book::Link,
 }
 
 impl NexoApp {
@@ -367,7 +367,7 @@ fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(
             ui.books.clear();
         }
     });
-    if changed && let Ok(mut client) = state.rubrica.client_slot() {
+    if changed && let Ok(mut client) = state.address_book.client_slot() {
         *client = None;
     }
     start_agent(&app);
@@ -459,7 +459,7 @@ fn launch_viewer(app: &AppHandle, state: &NexoApp, device_id: String, password: 
             use std::io::BufRead;
             for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
                 if let Some(name) = line.strip_prefix("@connected\t") {
-                    rubrica::auto_add(&app, device_id.clone(), name.to_string(), password.clone());
+                    address_book::auto_add(&app, device_id.clone(), name.to_string(), password.clone());
                 } else if let Some(reason) = line.strip_prefix("@closed\t") {
                     // Already translated by the viewer.
                     *closed_reason.lock().expect("reason") = Some(reason.to_string());
@@ -567,7 +567,7 @@ fn main() {
         commands: Mutex::new(None),
         agent: Mutex::new(None),
         plan: Mutex::new(None),
-        rubrica: Default::default(),
+        address_book: Default::default(),
     };
 
     tauri::Builder::default()
@@ -580,17 +580,17 @@ fn main() {
             respond,
             send_chat,
             connect_entry,
-            rubrica::rubrica_login,
-            rubrica::rubrica_logout,
-            rubrica::rubrica_refresh,
-            rubrica::rubrica_save_entry,
-            rubrica::rubrica_delete_entry,
-            rubrica::rubrica_change_password,
-            rubrica::rubrica_accounts,
-            rubrica::rubrica_save_account,
-            rubrica::rubrica_delete_account,
-            rubrica::rubrica_save_book,
-            rubrica::rubrica_delete_book,
+            address_book::address_book_login,
+            address_book::address_book_logout,
+            address_book::address_book_refresh,
+            address_book::address_book_save_entry,
+            address_book::address_book_delete_entry,
+            address_book::address_book_change_password,
+            address_book::address_book_accounts,
+            address_book::address_book_save_account,
+            address_book::address_book_delete_account,
+            address_book::address_book_save_book,
+            address_book::address_book_delete_book,
             end_session,
             connect,
             open_source,
@@ -599,7 +599,7 @@ fn main() {
         ])
         .setup(|app| {
             start_agent(app.handle());
-            rubrica::restore(app.handle());
+            address_book::restore(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())
