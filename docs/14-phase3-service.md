@@ -8,8 +8,8 @@ An agent started by the user cannot see Windows' **secure desktop**: administrat
 
 ## How it works (Windows)
 
-- `nexodesk-service.exe` is a **LocalSystem** service with automatic start. It runs in session 0, which has no screen.
-- Every half second it reads the console session (`WTSGetActiveConsoleSessionId`) and keeps `nexodesk-agent.exe` running in that session:
+- The service is `nexodesk.exe service run`: the app contains agent, viewer and service (one program to download, copy and sign). It runs as **LocalSystem** with automatic start, in session 0, which has no screen. `nexodesk-service.exe` and `nexodesk-agent.exe` are still built for development and tests.
+- Every half second it reads the console session (`WTSGetActiveConsoleSessionId`) and keeps the agent (`nexodesk.exe agent --ipc ...`) running in that session:
   - the agent starts with a copy of the service's SYSTEM token moved into the session (`SetTokenInformation(TokenSessionId)` + `CreateProcessAsUserW`, desktop `winsta0\default`);
   - at every session change (disconnection, user switch) the agent is closed and restarted in the new one;
   - if the agent exits by itself it is restarted, with a growing delay up to 30 s if it keeps failing right away;
@@ -21,7 +21,7 @@ An agent started by the user cannot see Windows' **secure desktop**: administrat
 
 | Path | Content | Access |
 |---|---|---|
-| `%ProgramFiles%\NexoDesk\` | `nexodesk-service.exe`, `nexodesk-agent.exe` | writable by administrators only (the service must not run files a user can replace) |
+| `%ProgramFiles%\NexoDesk\` | `nexodesk.exe` | writable by administrators only (the service must not run files a user can replace) |
 | `%ProgramData%\NexoDesk\service.json` | server, permanent password, transport | SYSTEM and administrators only |
 | `%ProgramData%\NexoDesk\device.key` | device key: the ID stays the same even after reinstalling | same |
 | `%ProgramData%\NexoDesk\online` | "ID password" written by the agent once registered | same |
@@ -31,15 +31,15 @@ The password is passed to the agent in the `NEXODESK_PASSWORD` variable, not on 
 
 ## Usage
 
-From an administrator command prompt, with `nexodesk-agent.exe` in the same folder:
+From an administrator command prompt:
 
 ```text
-nexodesk-service install --server nexodesk.example.com [--password ...] [--server-key ...]
-nexodesk-service status
-nexodesk-service uninstall
+nexodesk service install --server nexodesk.example.com [--password ...] [--server-key ...]
+nexodesk service status
+nexodesk service uninstall
 ```
 
-`install` copies the programs into Program Files, protects the data folder, registers the service (automatic restart if it fails), adds the "NexoDesk agent" firewall rule and prints ID and password. Run again on an existing service it updates it; without `--password` it keeps the one already set. `uninstall` leaves programs and data, so reinstalling keeps the same ID.
+`install` copies `nexodesk.exe` into Program Files (whatever the file it runs from is called; from `nexodesk-service.exe` it takes the `nexodesk.exe` next to it; an earlier installation is updated: service command changed, old programs removed), protects the data folder, registers the service (automatic restart if it fails), adds the "NexoDesk agent" firewall rule and prints ID and password. Run again on an existing service it updates it; without `--password` it keeps the one already set. `uninstall` leaves programs and data, so reinstalling keeps the same ID.
 
 ## Test of 2026-10-27
 
