@@ -103,7 +103,7 @@
   "admin.account_hint": "Cuenta nueva: contraseña de al menos 8 caracteres. Al editar, déjela vacía para no cambiarla.",
   "admin.shared_books": "Libretas compartidas",
   "admin.book_name": "Nombre de la libreta compartida",
-  "admin.members": "Cuentas que la ven",
+  "admin.members": "Cuentas que la ven y qué pueden hacer",
   "admin.create_book": "Crear libreta",
   "admin.save_book": "Guardar libreta",
   "admin.badge_admin": "administrador",
@@ -301,5 +301,16 @@
   "server.otp_wrong": "código incorrecto o ya usado",
   "server.two_factor_active": "la autenticación de dos factores ya está activa",
   "server.two_factor_not_set": "vuelve a empezar la activación",
-  "server.two_factor_off": "la autenticación de dos factores no está activa"
+  "server.two_factor_off": "la autenticación de dos factores no está activa",
+  "role.admin": "Administrador",
+  "role.technician": "Técnico",
+  "role.readonly": "Solo lectura",
+  "role.hint": "Técnico: se conecta y trabaja en las libretas de las que es miembro, según su nivel. Solo lectura: solo se conecta. Administrador: todo.",
+  "admin.role": "Rol",
+  "level.none": "no es miembro",
+  "level.view": "solo conexión",
+  "level.edit": "edición",
+  "level.manage": "gestión",
+  "server.bad_role": "rol desconocido",
+  "server.bad_level": "nivel de miembro desconocido"
 }

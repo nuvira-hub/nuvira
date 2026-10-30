@@ -103,7 +103,7 @@
   "admin.account_hint": "New account: password of at least 8 characters. When editing, leave it empty to keep it.",
   "admin.shared_books": "Shared address books",
   "admin.book_name": "Name of the shared address book",
-  "admin.members": "Accounts that can see it",
+  "admin.members": "Accounts that can see it, and what they may do",
   "admin.create_book": "Create address book",
   "admin.save_book": "Save address book",
   "admin.badge_admin": "administrator",
@@ -301,5 +301,16 @@
   "server.otp_wrong": "wrong or already used code",
   "server.two_factor_active": "two-factor authentication is already on",
   "server.two_factor_not_set": "start the activation again",
-  "server.two_factor_off": "two-factor authentication is not on"
+  "server.two_factor_off": "two-factor authentication is not on",
+  "role.admin": "Administrator",
+  "role.technician": "Technician",
+  "role.readonly": "Read only",
+  "role.hint": "Technician: connects and works on the books it is a member of, at its level there. Read only: connects only. Administrator: everything.",
+  "admin.role": "Role",
+  "level.none": "not a member",
+  "level.view": "connect only",
+  "level.edit": "edit",
+  "level.manage": "manage",
+  "server.bad_role": "unknown role",
+  "server.bad_level": "unknown member level"
 }

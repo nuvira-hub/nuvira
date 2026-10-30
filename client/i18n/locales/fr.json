@@ -103,7 +103,7 @@
   "admin.account_hint": "Nouveau compte : mot de passe d'au moins 8 caractères. En modification, laissez-le vide pour le conserver.",
   "admin.shared_books": "Carnets partagés",
   "admin.book_name": "Nom du carnet partagé",
-  "admin.members": "Comptes qui y ont accès",
+  "admin.members": "Comptes qui le voient et ce qu'ils peuvent faire",
   "admin.create_book": "Créer le carnet",
   "admin.save_book": "Enregistrer le carnet",
   "admin.badge_admin": "administrateur",
@@ -301,5 +301,16 @@
   "server.otp_wrong": "code erroné ou déjà utilisé",
   "server.two_factor_active": "l'authentification à deux facteurs est déjà activée",
   "server.two_factor_not_set": "recommencez l'activation",
-  "server.two_factor_off": "l'authentification à deux facteurs n'est pas activée"
+  "server.two_factor_off": "l'authentification à deux facteurs n'est pas activée",
+  "role.admin": "Administrateur",
+  "role.technician": "Technicien",
+  "role.readonly": "Lecture seule",
+  "role.hint": "Technicien : se connecte et travaille sur les carnets dont il est membre, à son niveau. Lecture seule : se connecte seulement. Administrateur : tout.",
+  "admin.role": "Rôle",
+  "level.none": "pas membre",
+  "level.view": "connexion seule",
+  "level.edit": "modification",
+  "level.manage": "gestion",
+  "server.bad_role": "rôle inconnu",
+  "server.bad_level": "niveau de membre inconnu"
 }

@@ -43,6 +43,22 @@ Visibility: an account sees its personal book and the shared books it is a membe
 - **Errors** are translation keys (`@server.denied`, `@server.password_too_short`, …) that the app shows in the user's language (D15).
 - **First administrator**: `NUVIRA_ADMIN_USER` and `NUVIRA_ADMIN_PASSWORD` when the server starts with no accounts; without them an `admin` account is created with a random password written once to the server log, to be changed at the first sign-in.
 
+## Roles and member levels (Pro, with the address book)
+
+| Role of the account | What it may do |
+|---|---|
+| Administrator | everything: every shared book, accounts, rules |
+| Technician | connects and works on the shared books it is a member of, at its level there |
+| Read only | connects only, whatever its level (its personal book stays its own) |
+
+| Level of a member of a shared book | What it may do there |
+|---|---|
+| connect only (`view`) | sees the entries and connects; the app hides the passwords and offers no editing. The app still receives them to connect: it keeps them from being read off the screen, not from a determined user of that PC |
+| edit (`edit`) | creates, changes and deletes the entries |
+| manage (`manage`) | also name and members of the book; it does not create or delete books (administrators) |
+
+The server says, for each book, what the signed-in account may do (`Book.access`) and gives the members with their levels to whoever manages it. Accounts that existed before became technicians (administrators stayed so) and the members kept editing: nothing changed until an administrator changed it. Apps before 0.8.0 still work: they see `admin`, and every member they add gets level "edit".
+
 ## Two-factor authentication (Pro, entitlement `TWO_FACTOR`)
 
 Time-based codes (TOTP, RFC 6238: SHA-1, 6 digits, 30 s), the kind of every authenticator app. Each account switches it on by itself, from the app (Settings → Account) or the web console: the server creates a secret, answers its QR code (`TwoFactorSetup`), and activates it when a code of the app is confirmed (`TwoFactorEnable`), answering ten recovery codes shown once. From then on `Login` without `otp` answers `@server.otp_required` and the app asks for the code; a recovery code replaces it once. Switching off needs password and a code (`TwoFactorDisable`); an administrator can remove it from an account whose phone is lost (`TwoFactorReset`). The secret is encrypted with `address-book.key`, the recovery codes kept as SHA-256; each code of the app is accepted once (one step before or after the current one, for clocks a little off). Without `TWO_FACTOR` in the licence it cannot be switched on, but accounts that have it keep needing the code.

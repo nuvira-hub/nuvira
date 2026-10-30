@@ -125,6 +125,7 @@
       <!-- Administration -->
       <section id="sec-admin" class="page hidden">
         <header class="page-head"><h1 data-i18n="admin.title">Administration</h1></header>
+        <div id="admin-only">
         <h2 data-i18n="admin.policy">Rules for all the computers</h2>
         <form id="policy-form" class="stack">
           <label class="check"><input id="policy-confirm" type="checkbox"> <span data-i18n="admin.policy_confirm">The person at the computer must always accept, also with the permanent password</span></label>
@@ -139,16 +140,22 @@
         <form id="account-form" class="inline-form">
           <input id="account-user" autocomplete="off" data-i18n-placeholder="admin.username" placeholder="Username" required>
           <input id="account-password" type="password" autocomplete="new-password" data-i18n-placeholder="admin.password" placeholder="Password">
-          <label class="check"><input id="account-admin" type="checkbox"> <span data-i18n="admin.is_admin">Administrator</span></label>
+          <select id="account-role" data-i18n-title="admin.role">
+            <option value="technician" data-i18n="role.technician">Technician</option>
+            <option value="readonly" data-i18n="role.readonly">Read only</option>
+            <option value="admin" data-i18n="role.admin">Administrator</option>
+          </select>
           <button type="submit" class="primary" id="account-save">Add</button>
           <button type="button" id="account-cancel" class="hidden" data-i18n="admin.cancel">Cancel</button>
         </form>
         <p class="hint" data-i18n="admin.account_hint">New account: password of at least 8 characters. When editing, leave it empty to keep it.</p>
+        <p class="hint" data-i18n="role.hint">Technician: connects and works on the books it is a member of. Read only: connects only. Administrator: everything.</p>
+        </div>
         <h2 data-i18n="admin.shared_books">Shared address books</h2>
         <div id="admin-books" class="list"></div>
         <form id="book-form" class="book-form">
           <input id="book-name" autocomplete="off" data-i18n-placeholder="admin.book_name" placeholder="Name of the shared address book" required>
-          <span class="label" data-i18n="admin.members">Accounts that can see it</span>
+          <span class="label" data-i18n="admin.members">Accounts that can see it, and what they may do</span>
           <div id="book-members" class="members"></div>
           <div class="actions">
             <button type="button" id="book-cancel" class="hidden" data-i18n="admin.cancel">Cancel</button>

@@ -84,7 +84,16 @@ pub fn book() -> BookUi {
         .collect();
     // Like the server: by group, then by name.
     entries.sort_by_key(|e| (e.group.to_lowercase(), e.name.to_lowercase(), e.device_id.clone()));
-    BookUi { id: BOOK_ID, name: String::new(), personal: false, local: true, member_ids: Vec::new(), entries }
+    BookUi {
+        id: BOOK_ID,
+        name: String::new(),
+        personal: false,
+        local: true,
+        access: "owner".into(),
+        member_ids: Vec::new(),
+        members: Vec::new(),
+        entries,
+    }
 }
 
 /// Adds (id 0) or changes an entry.

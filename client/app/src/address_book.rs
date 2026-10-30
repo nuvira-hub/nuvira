@@ -24,14 +24,31 @@ pub struct AccountUi {
     pub id: i64,
     pub username: String,
     pub admin: bool,
+    /// "admin", "technician" or "readonly".
+    pub role: String,
     /// Two-factor authentication on (NuviraHub Pro).
     pub two_factor: bool,
 }
 
 impl From<pb::Account> for AccountUi {
     fn from(a: pb::Account) -> Self {
-        Self { id: a.id, username: a.username, admin: a.admin, two_factor: a.two_factor }
+        // Servers before roles only say admin.
+        let role = if !a.role.is_empty() {
+            a.role
+        } else if a.admin {
+            "admin".into()
+        } else {
+            "technician".into()
+        };
+        Self { id: a.id, username: a.username, admin: a.admin, role, two_factor: a.two_factor }
     }
+}
+
+/// Member of a shared book with its level ("view", "edit", "manage").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberUi {
+    pub account_id: i64,
+    pub level: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,7 +58,11 @@ pub struct BookUi {
     pub personal: bool,
     /// The book kept on this computer.
     pub local: bool,
+    /// What the account may do: "view", "edit", "manage", "owner", "admin"
+    /// ("" from servers before roles: as "edit").
+    pub access: String,
     pub member_ids: Vec<i64>,
+    pub members: Vec<MemberUi>,
     pub entries: Vec<EntryUi>,
 }
 
@@ -278,7 +299,13 @@ fn book_ui(b: pb::Book) -> BookUi {
         name: b.name,
         personal: b.personal,
         local: false,
+        access: b.access,
         member_ids: b.member_ids,
+        members: b
+            .members
+            .into_iter()
+            .map(|m| MemberUi { account_id: m.account_id, level: m.level })
+            .collect(),
         entries: b.entries.into_iter().map(Into::into).collect(),
     }
 }
@@ -425,9 +452,10 @@ pub async fn address_book_save_account(
     id: i64,
     username: String,
     password: String,
-    admin: bool,
+    role: String,
 ) -> Result<(), String> {
-    call(&app, Call::PutAccount(pb::PutAccount { id, username, password, admin })).await?;
+    let admin = role == "admin";
+    call(&app, Call::PutAccount(pb::PutAccount { id, username, password, admin, role })).await?;
     Ok(())
 }
 
@@ -442,9 +470,12 @@ pub async fn address_book_save_book(
     app: AppHandle,
     id: i64,
     name: String,
-    member_ids: Vec<i64>,
+    members: Vec<MemberUi>,
 ) -> Result<(), String> {
-    call(&app, Call::PutBook(pb::PutBook { id, name, member_ids })).await?;
+    let member_ids = members.iter().map(|m| m.account_id).collect();
+    let members =
+        members.into_iter().map(|m| pb::BookMember { account_id: m.account_id, level: m.level }).collect();
+    call(&app, Call::PutBook(pb::PutBook { id, name, member_ids, members })).await?;
     refresh(&app).await
 }
 

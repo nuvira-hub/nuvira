@@ -49,6 +49,19 @@ async function call(command, args, messageId) {
   }
 }
 
+// What the signed-in account may do on a book ("" from servers before roles).
+function canEditBook(book) {
+  return book?.access !== "view";
+}
+
+function bookOf(entry) {
+  return (addressBook?.books ?? []).find((b) => b.id === entry.book_id);
+}
+
+function managesBooks() {
+  return (addressBook?.books ?? []).some((b) => b.access === "manage");
+}
+
 function allEntries() {
   return (addressBook?.books ?? []).flatMap((b) => b.entries);
 }
@@ -72,11 +85,13 @@ function renderAddressBook(state) {
   $("login-form").classList.toggle("hidden", Boolean(account) || !pro);
   $("address-book-list").classList.remove("hidden");
   $("address-book-tools").classList.remove("hidden");
-  $("nav-admin").classList.toggle("hidden", !account?.admin);
+  // Administration: administrators, and who manages a shared book (only its books).
+  $("nav-admin").classList.toggle("hidden", !account?.admin && !managesBooks());
+  $("admin-only").classList.toggle("hidden", !account?.admin);
   $("account-title").classList.toggle("hidden", !pro && !account);
   $("account-out").classList.toggle("hidden", Boolean(account) || !pro);
   $("account-in").classList.toggle("hidden", !account);
-  if (account) $("account-name").textContent = t("settings.signed_in", { name: account.username });
+  if (account) $("account-name").textContent = `${t("settings.signed_in", { name: account.username })} · ${t(`role.${account.role}`)}`;
   renderTwoFactor(account);
   showMessage("address-book-message", state.address_book_error ?? null);
   $("connect-hint").textContent = t("connect.hint_address_book");
@@ -84,7 +99,7 @@ function renderAddressBook(state) {
   renderEntries();
   if (!editingAccount) $("account-save").textContent = t("admin.add");
   if (!editingBook) $("book-save").textContent = t("admin.create_book");
-  if (account?.admin && !adminLoaded) loadAccounts();
+  if ((account?.admin || managesBooks()) && !adminLoaded) loadAccounts();
   if (!account) {
     adminLoaded = false;
     adminAccounts = [];
@@ -154,6 +169,8 @@ function entryRow(entry) {
   avatar.append(presence);
   const edit = el("button", "edit", t("address_book.edit"));
   edit.addEventListener("click", () => openEntry(entry));
+  // Connect only: no editing (the password stays hidden).
+  if (!canEditBook(bookOf(entry))) edit.classList.add("hidden");
   const connect = el("button", "primary", t("address_book.connect"));
   connect.addEventListener("click", () => connectEntry(entry));
   row.addEventListener("dblclick", () => connectEntry(entry));
@@ -252,7 +269,7 @@ $("remote-id").addEventListener("keydown", (e) => {
 
 function openEntry(entry) {
   editingEntry = entry;
-  const books = addressBook?.books ?? [];
+  const books = (addressBook?.books ?? []).filter(canEditBook);
   $("entry-book").replaceChildren(
     ...books.map((b) => {
       const option = el("option", "", b.personal ? t("address_book.personal_option", { name: bookName(b) }) : bookName(b));
@@ -454,7 +471,7 @@ $("policy-form").addEventListener("submit", async (e) => {
 
 async function loadAccounts() {
   adminLoaded = true;
-  call("address_book_policy", {}, "policy-message").then(showPolicy).catch(() => {});
+  if (addressBook?.account?.admin) call("address_book_policy", {}, "policy-message").then(showPolicy).catch(() => {});
   try {
     adminAccounts = await call("address_book_accounts", {}, "admin-message");
   } catch {
@@ -469,7 +486,7 @@ function renderAdmin() {
     ...adminAccounts.map((account) => {
       const row = el("div", "row");
       const name = el("span", "", account.username);
-      if (account.admin) name.append(el("span", "badge", t("admin.badge_admin")));
+      name.append(el("span", "badge", t(`role.${account.role}`)));
       if (account.id === myId) name.append(el("span", "badge", t("admin.badge_you")));
       if (account.two_factor) name.append(el("span", "badge", t("admin.badge_two_factor")));
       const edit = el("button", "", t("admin.edit"));
@@ -500,7 +517,10 @@ function renderAdmin() {
     }),
   );
 
-  const shared = (addressBook?.books ?? []).filter((b) => !b.personal && !b.local);
+  const admin = Boolean(addressBook?.account?.admin);
+  const shared = (addressBook?.books ?? []).filter((b) => !b.personal && !b.local && (admin || b.access === "manage"));
+  // Who manages a book edits it, but creates and deletes none.
+  $("book-form").classList.toggle("hidden", !admin && !editingBook);
   const books = shared.map((book) => {
     const row = el("div", "row");
     const members = book.member_ids.length;
@@ -514,7 +534,8 @@ function renderAdmin() {
     remove.addEventListener("click", () =>
       confirmClick(remove, t("admin.confirm"), () => call("address_book_delete_book", { id: book.id }, "admin-message").catch(() => {})),
     );
-    row.append(edit, remove);
+    row.append(edit);
+    if (admin) row.append(remove);
     return row;
   });
   if (books.length === 0) books.push(el("p", "empty", t("admin.no_books")));
@@ -522,29 +543,36 @@ function renderAdmin() {
   renderMembers();
 }
 
+// One level per account (administrators see every book anyway).
 function renderMembers() {
-  const checked = new Set(
-    [...$("book-members").querySelectorAll("input:checked")].map((b) => Number(b.value)),
+  const chosen = new Map(
+    [...$("book-members").querySelectorAll("select")].map((s) => [Number(s.dataset.account), s.value]),
   );
-  const selected = editingBook && !$("book-members").dataset.touched ? new Set(editingBook.member_ids) : checked;
-  const boxes = adminAccounts.map((account) => {
-    const label = el("label", "check");
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.value = account.id;
-    box.checked = selected.has(account.id);
-    box.addEventListener("change", () => ($("book-members").dataset.touched = "1"));
-    label.append(box, ` ${account.username}`);
-    return label;
-  });
-  $("book-members").replaceChildren(...boxes);
+  const levels =
+    editingBook && !$("book-members").dataset.touched
+      ? new Map((editingBook.members ?? []).map((m) => [m.account_id, m.level]))
+      : chosen;
+  const rows = adminAccounts
+    .filter((account) => account.role !== "admin")
+    .map((account) => {
+      const row = el("label", "member");
+      const select = document.createElement("select");
+      select.dataset.account = account.id;
+      for (const level of ["", "view", "edit", "manage"]) {
+        select.append(new Option(t(level ? `level.${level}` : "level.none"), level, false, (levels.get(account.id) ?? "") === level));
+      }
+      select.addEventListener("change", () => ($("book-members").dataset.touched = "1"));
+      row.append(el("span", "", `${account.username} · ${t(`role.${account.role}`)}`), select);
+      return row;
+    });
+  $("book-members").replaceChildren(...rows);
 }
 
 function editAccount(account) {
   editingAccount = account;
   $("account-user").value = account.username;
   $("account-password").value = "";
-  $("account-admin").checked = account.admin;
+  $("account-role").value = account.role;
   $("account-save").textContent = t("admin.save");
   $("account-cancel").classList.remove("hidden");
   $("account-user").focus();
@@ -564,7 +592,7 @@ $("account-form").addEventListener("submit", async (e) => {
     id: editingAccount?.id ?? 0,
     username: $("account-user").value,
     password: $("account-password").value,
-    admin: $("account-admin").checked,
+    role: $("account-role").value,
   };
   try {
     await call("address_book_save_account", args, "admin-message");
@@ -581,6 +609,7 @@ function editBook(book) {
   $("book-name").value = book.name;
   $("book-save").textContent = t("admin.save_book");
   $("book-cancel").classList.remove("hidden");
+  $("book-form").classList.remove("hidden");
   renderMembers();
   $("book-name").focus();
 }
@@ -591,15 +620,18 @@ function resetBookForm() {
   $("book-form").reset();
   $("book-save").textContent = t("admin.create_book");
   $("book-cancel").classList.add("hidden");
+  $("book-form").classList.toggle("hidden", !addressBook?.account?.admin);
   renderMembers();
 }
 
 $("book-cancel").addEventListener("click", resetBookForm);
 $("book-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const memberIds = [...$("book-members").querySelectorAll("input:checked")].map((b) => Number(b.value));
+  const members = [...$("book-members").querySelectorAll("select")]
+    .filter((s) => s.value)
+    .map((s) => ({ account_id: Number(s.dataset.account), level: s.value }));
   try {
-    await call("address_book_save_book", { id: editingBook?.id ?? 0, name: $("book-name").value, memberIds }, "admin-message");
+    await call("address_book_save_book", { id: editingBook?.id ?? 0, name: $("book-name").value, members }, "admin-message");
     resetBookForm();
   } catch {
     // Message already shown.

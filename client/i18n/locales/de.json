@@ -103,7 +103,7 @@
   "admin.account_hint": "Neues Konto: Passwort mit mindestens 8 Zeichen. Beim Bearbeiten leer lassen, um es beizubehalten.",
   "admin.shared_books": "Geteilte Adressbücher",
   "admin.book_name": "Name des geteilten Adressbuchs",
-  "admin.members": "Konten mit Zugriff",
+  "admin.members": "Konten, die es sehen, und was sie dürfen",
   "admin.create_book": "Adressbuch erstellen",
   "admin.save_book": "Adressbuch speichern",
   "admin.badge_admin": "Administrator",
@@ -301,5 +301,16 @@
   "server.otp_wrong": "falscher oder bereits verwendeter Code",
   "server.two_factor_active": "die Zwei-Faktor-Authentifizierung ist bereits aktiv",
   "server.two_factor_not_set": "starten Sie die Aktivierung erneut",
-  "server.two_factor_off": "die Zwei-Faktor-Authentifizierung ist nicht aktiv"
+  "server.two_factor_off": "die Zwei-Faktor-Authentifizierung ist nicht aktiv",
+  "role.admin": "Administrator",
+  "role.technician": "Techniker",
+  "role.readonly": "Nur lesen",
+  "role.hint": "Techniker: verbindet sich und arbeitet in den Adressbüchern, in denen er Mitglied ist, auf seiner Stufe. Nur lesen: verbindet sich nur. Administrator: alles.",
+  "admin.role": "Rolle",
+  "level.none": "kein Mitglied",
+  "level.view": "nur verbinden",
+  "level.edit": "bearbeiten",
+  "level.manage": "verwalten",
+  "server.bad_role": "unbekannte Rolle",
+  "server.bad_level": "unbekannte Mitgliedsstufe"
 }

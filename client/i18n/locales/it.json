@@ -103,7 +103,7 @@
   "admin.account_hint": "Nuovo account: password di almeno 8 caratteri. In modifica lasciala vuota per non cambiarla.",
   "admin.shared_books": "Rubriche condivise",
   "admin.book_name": "Nome della rubrica condivisa",
-  "admin.members": "Account che la vedono",
+  "admin.members": "Account che la vedono e cosa possono fare",
   "admin.create_book": "Crea rubrica",
   "admin.save_book": "Salva rubrica",
   "admin.badge_admin": "amministratore",
@@ -301,5 +301,16 @@
   "server.otp_wrong": "codice errato o già usato",
   "server.two_factor_active": "l'autenticazione a due fattori è già attiva",
   "server.two_factor_not_set": "ricomincia l'attivazione",
-  "server.two_factor_off": "l'autenticazione a due fattori non è attiva"
+  "server.two_factor_off": "l'autenticazione a due fattori non è attiva",
+  "role.admin": "Amministratore",
+  "role.technician": "Tecnico",
+  "role.readonly": "Sola lettura",
+  "role.hint": "Tecnico: si collega e lavora sulle rubriche di cui è membro, al livello assegnato. Sola lettura: si collega e basta. Amministratore: tutto.",
+  "admin.role": "Ruolo",
+  "level.none": "non membro",
+  "level.view": "solo collegamento",
+  "level.edit": "modifica",
+  "level.manage": "gestione",
+  "server.bad_role": "ruolo sconosciuto",
+  "server.bad_level": "livello del membro sconosciuto"
 }
