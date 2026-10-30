@@ -184,6 +184,12 @@ message ApiRequest {
     TwoFactorDisable two_factor_disable = 20;
     // Administrators: removes the two-factor authentication of an account (lost phone).
     TwoFactorReset two_factor_reset = 21;
+    // Single sign-on (NuviraHub Pro, feature "pro.sso=<provider name>"): the app
+    // sends the SHA-256 of a random secret, opens the answered URL in the browser,
+    // then sends the secret until the server answers the session (or an error
+    // other than "@server.sso_pending").
+    SsoBegin sso_begin = 22;
+    SsoFinish sso_finish = 23;
   }
 }
 
@@ -220,6 +226,7 @@ message ApiResponse {
     PresenceList presence = 10;
     TwoFactorSecret two_factor_secret = 11;
     RecoveryCodes recovery_codes = 12;
+    SsoUrl sso_url = 13;
   }
 }
 
@@ -229,6 +236,21 @@ message Login {
   // Accounts with two-factor authentication: the code of the authenticator app,
   // or a recovery code. Without it the answer is the error "@server.otp_required".
   string otp = 3;
+}
+
+// challenge: base64url (no padding) of the SHA-256 of the secret.
+message SsoBegin {
+  string challenge = 1;
+}
+
+// Page to open in the browser.
+message SsoUrl {
+  string url = 1;
+}
+
+// verifier: the secret (43 to 128 characters); answered with a Session.
+message SsoFinish {
+  string verifier = 1;
 }
 
 message TwoFactorSetup {}
