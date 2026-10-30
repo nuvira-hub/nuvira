@@ -44,6 +44,9 @@ import (
 
 var version = "dev"
 
+// "open", or set by builds with modules (NuviraHub Pro).
+var edition = "open"
+
 const copyright = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/nuvira-hub/nuvira"
 
 // Signalling ALPN (different from the one of sessions between devices).
@@ -153,7 +156,7 @@ func run() error {
 		return err
 	}
 
-	log.Info("nuvira-server started", "version", version, "udp", udp.LocalAddr(), "fingerprint", tlsutil.Fingerprint(cert))
+	log.Info("nuvira-server started", "version", version, "edition", edition, "udp", udp.LocalAddr(), "fingerprint", tlsutil.Fingerprint(cert))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
