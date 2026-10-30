@@ -134,16 +134,19 @@ impl Drop for TraceTime {
     }
 }
 
-/// Native graphics API of each system, with OpenGL as a fallback where it exists.
-/// On Windows Vulkan is excluded: some Intel drivers crash already at enumeration.
-/// `WGPU_BACKEND` (e.g. `vulkan`, `gl`) still allows forcing one.
-fn native_backends() -> wgpu::Backends {
+/// Graphics APIs tried in turn: the native one of each system, then OpenGL where it
+/// exists. One at a time, because enumerating a backend loads its drivers: the Intel
+/// OpenGL driver (ig9icd64.dll) sometimes crashes when the process exits, so it is
+/// loaded only on cards without DirectX 12. On Windows Vulkan is excluded: some Intel
+/// drivers crash already at enumeration. `WGPU_BACKEND` (e.g. `vulkan`, `gl`) still
+/// allows forcing one.
+fn native_backends() -> &'static [wgpu::Backends] {
     if cfg!(windows) {
-        wgpu::Backends::DX12 | wgpu::Backends::GL
+        &[wgpu::Backends::DX12, wgpu::Backends::GL]
     } else if cfg!(target_os = "macos") {
-        wgpu::Backends::METAL
+        &[wgpu::Backends::METAL]
     } else {
-        wgpu::Backends::VULKAN | wgpu::Backends::GL
+        &[wgpu::Backends::VULKAN, wgpu::Backends::GL]
     }
 }
 
@@ -208,19 +211,35 @@ pub struct GpuRenderer {
 impl GpuRenderer {
     pub fn new(window: Arc<Window>) -> Result<Self> {
         let size = window.inner_size();
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
-        if std::env::var_os("WGPU_BACKEND").is_none() {
-            desc.backends = native_backends();
+        let from_env = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+        let attempts =
+            if std::env::var_os("WGPU_BACKEND").is_some() { &[from_env.backends][..] } else { native_backends() };
+        let mut found = None;
+        for &backends in attempts {
+            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+            desc.backends = backends;
+            let instance = wgpu::Instance::new(desc);
+            let surface = match instance.create_surface(window.clone()) {
+                Ok(surface) => surface,
+                Err(e) => {
+                    tracing::debug!(?backends, "no surface: {e}");
+                    continue;
+                }
+            };
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            })) {
+                Ok(adapter) => {
+                    found = Some((instance, surface, adapter));
+                    break;
+                }
+                Err(e) => tracing::debug!(?backends, "no graphics card: {e}"),
+            }
         }
-        let instance = wgpu::Instance::new(desc);
-        let surface = instance.create_surface(window).context("wgpu surface")?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-        }))
-        .context("no compatible graphics card")?;
+        let (_instance, surface, adapter) = found.context("no compatible graphics card")?;
         let info = adapter.get_info();
         let adapter_info = format!("{} ({:?})", info.name, info.backend);
         let backend = info.backend;
