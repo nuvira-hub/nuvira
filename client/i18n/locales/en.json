@@ -245,6 +245,7 @@
   "server.entry_exists": "this computer is already in that address book",
   "server.no_address_book": "the address book is not available on this server",
   "server.pro_required": "this function needs NuviraHub Pro on the server",
+  "server.license_required": "this server's NuviraHub Pro licence is missing, expired or does not include this function",
   "server.old_version": "protocol version not supported: update NuviraHub",
   "server.unreachable": "the device is not reachable",
   "server.self_connect": "you cannot connect to the device you are using",

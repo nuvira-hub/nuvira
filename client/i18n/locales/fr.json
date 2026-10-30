@@ -245,6 +245,7 @@
   "server.entry_exists": "cet ordinateur est déjà dans ce carnet",
   "server.no_address_book": "le carnet d'adresses n'est pas disponible sur ce serveur",
   "server.pro_required": "cette fonction nécessite NuviraHub Pro sur le serveur",
+  "server.license_required": "la licence NuviraHub Pro de ce serveur est absente, expirée ou n'inclut pas cette fonction",
   "server.old_version": "version du protocole non prise en charge : mettez à jour NuviraHub",
   "server.unreachable": "l'appareil n'est pas joignable",
   "server.self_connect": "impossible de se connecter à l'appareil que vous utilisez",

@@ -245,6 +245,7 @@
   "server.entry_exists": "este equipo ya está en esa libreta",
   "server.no_address_book": "la libreta de direcciones no está disponible en este servidor",
   "server.pro_required": "esta función requiere NuviraHub Pro en el servidor",
+  "server.license_required": "la licencia NuviraHub Pro de este servidor falta, ha caducado o no incluye esta función",
   "server.old_version": "versión del protocolo no admitida: actualice NuviraHub",
   "server.unreachable": "el dispositivo no está accesible",
   "server.self_connect": "no puede conectarse al dispositivo que está usando",
