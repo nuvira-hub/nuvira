@@ -16,7 +16,8 @@
 // Builds with modules (NuviraHub Pro) register them with package ext and read
 // their own variables.
 //
-// `nuvira-server healthcheck` checks that the server answers (used by Docker).
+// `nuvira-server healthcheck` checks that the server answers (used by Docker);
+// modules can add maintenance commands (`nuvira-server help` lists them).
 package main
 
 import (
@@ -68,6 +69,9 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+	if len(os.Args) > 1 {
+		os.Exit(command(os.Args[1], os.Args[2:]))
 	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -169,6 +173,38 @@ func run() error {
 	}
 	log.Info("nuvira-server stopped")
 	return nil
+}
+
+// command runs a maintenance command of a module, on the same data as the server.
+func command(name string, args []string) int {
+	for _, c := range ext.Commands() {
+		if c.Name != name {
+			continue
+		}
+		dataDir := env("NUVIRA_DATA_DIR", "./data")
+		st, err := store.Open(filepath.Join(dataDir, "nuvira.db"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "database:", err)
+			return 1
+		}
+		defer st.Close()
+		log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		if err := c.Run(ext.Env{DB: st.DB(), DataDir: dataDir, Log: log}, args, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, "nuvira-server", version, "("+edition+")")
+	fmt.Fprintln(os.Stderr, "\nCommands:\n  healthcheck")
+	for _, c := range ext.Commands() {
+		fmt.Fprintln(os.Stderr, " ", c.Name, c.Usage)
+	}
+	if name == "help" || name == "-h" || name == "--help" {
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "\nunknown command %q\n", name)
+	return 2
 }
 
 // healthcheck completes a QUIC handshake with the local server.

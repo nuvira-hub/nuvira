@@ -7,6 +7,7 @@ package ext
 import (
 	"database/sql"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -65,6 +66,22 @@ var factories []Factory
 
 // Register adds a module; called from init functions.
 func Register(f Factory) { factories = append(factories, f) }
+
+// Command is a maintenance command of a module, run as "nuvira-server <name> args…"
+// (in Docker with docker exec, also while the server runs). Env.Host is nil.
+type Command struct {
+	Name  string
+	Usage string
+	Run   func(env Env, args []string, out io.Writer) error
+}
+
+var commands []Command
+
+// RegisterCommand adds a command; called from init functions.
+func RegisterCommand(c Command) { commands = append(commands, c) }
+
+// Commands returns the registered commands.
+func Commands() []Command { return commands }
 
 // Open starts every registered module.
 func Open(env Env) ([]Module, error) {
