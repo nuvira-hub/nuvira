@@ -244,7 +244,8 @@ pub async fn serve_via_server(
         pending: Mutex::new(HashMap::new()),
         events,
         chat: Mutex::new(None),
-        busy: AtomicBool::new(false),
+        busy: AtomicU32::new(0),
+        waiting: Mutex::new(None),
         end_session: Notify::new(),
         policy: Default::default(),
     });
@@ -336,7 +337,13 @@ struct SessionContext {
     events: mpsc::UnboundedSender<AgentEvent>,
     /// Chat towards the viewer of the session in progress.
     chat: Mutex<Option<mpsc::UnboundedSender<String>>>,
-    busy: AtomicBool,
+    /// Sessions started and not ended: one at most, except for a moment when a viewer
+    /// that gave up asks again (see `waiting`).
+    busy: AtomicU32,
+    /// Viewer the agent is waiting for (its connection not open yet) and how to stop
+    /// waiting: a new request from the same viewer (window closed while connecting,
+    /// then reopened) replaces the attempt instead of finding the PC busy.
+    waiting: Mutex<Option<(String, Arc<Notify>)>>,
     end_session: Notify,
     /// Rules of the server (confirmation always, no files, no clipboard).
     policy: Mutex<nuvira_proto::v1::Policy>,
@@ -416,7 +423,19 @@ async fn signal_loop(
                 Some(server_message::Msg::Incoming(inc)) => {
                     let request = Request { viewer_id: inc.viewer_id, viewer_name: inc.viewer_name };
                     info!("connection request from {} ({})", request.viewer_name, request.viewer_id);
-                    if ctx.busy.load(Ordering::Relaxed) {
+                    let retry = ctx
+                        .waiting
+                        .lock()
+                        .expect("waiting")
+                        .as_ref()
+                        .filter(|(viewer, _)| *viewer == request.viewer_id)
+                        .map(|(_, cancel)| cancel.clone());
+                    if let Some(cancel) = retry {
+                        info!("same viewer again: its previous attempt is abandoned");
+                        cancel.notify_one();
+                        accepted.insert(inc.session_id.clone(), request);
+                        Some(client_message::Msg::Accept(Accept { session_id: inc.session_id }))
+                    } else if ctx.busy.load(Ordering::Relaxed) > 0 {
                         Some(client_message::Msg::Reject(Reject {
                             session_id: inc.session_id,
                             reason: "@agent.busy".into(),
@@ -441,7 +460,7 @@ async fn signal_loop(
                         role: nuvira_transport::p2p::Role::Agent,
                     };
                     let request = request.unwrap_or(Request { viewer_id: route.peer_id, viewer_name: String::new() });
-                    ctx.busy.store(true, Ordering::Relaxed);
+                    ctx.busy.fetch_add(1, Ordering::Relaxed);
                     let (ctx, identity) = (ctx.clone(), identity.clone());
                     let session_id = route.session_id.clone();
                     let report_tx = report_tx.clone();
@@ -468,7 +487,7 @@ async fn signal_loop(
                                 .map(|e| format!("{e:#}"))
                                 .unwrap_or_default(),
                         });
-                        ctx.busy.store(false, Ordering::Relaxed);
+                        ctx.busy.fetch_sub(1, Ordering::Relaxed);
                         let _ = ctx.events.send(AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) });
                     });
                     None
@@ -538,11 +557,22 @@ async fn relayed_session(
             }
         })
     };
-    let (conn, streams) = tokio::time::timeout(Duration::from_secs(20), rx.recv())
-        .await
-        .context("the viewer did not connect within 20 s")?
-        .context("endpoint closed")?;
+    let cancel = Arc::new(Notify::new());
+    *ctx.waiting.lock().expect("waiting") = Some((request.viewer_id.clone(), cancel.clone()));
+    let connected = tokio::select! {
+        r = tokio::time::timeout(Duration::from_secs(20), rx.recv()) => {
+            r.context("the viewer did not connect within 20 s").map(|c| c.context("endpoint closed"))
+        }
+        () = cancel.notified() => Err(anyhow::anyhow!("the viewer asked again before connecting")),
+    };
+    {
+        let mut waiting = ctx.waiting.lock().expect("waiting");
+        if waiting.as_ref().is_some_and(|(_, c)| Arc::ptr_eq(c, &cancel)) {
+            *waiting = None;
+        }
+    }
     acceptor.abort();
+    let (conn, streams) = connected??;
     let direct = conn.remote_address() != route.relay;
     outcome.connected = Some(std::time::Instant::now());
     outcome.direct = direct;

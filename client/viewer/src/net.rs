@@ -248,19 +248,30 @@ async fn open_connection(target: Target) -> Result<(nuvira_transport::Connection
     }
 }
 
-async fn session(
-    target: Target,
+/// Waits for the viewer to drop the input channel (the events sent meanwhile, before
+/// the session starts, are discarded).
+async fn viewer_gone(input_rx: &mut mpsc::UnboundedReceiver<InputEvent>) {
+    while input_rx.recv().await.is_some() {}
+}
+
+/// Closes the connection and gives the close message time to leave: without it the
+/// agent would notice only at the timeout and stay "busy" in the meantime.
+async fn close(conn: &nuvira_transport::Connection) {
+    conn.close(0u32.into(), b"end of session");
+    let _ = tokio::time::timeout(Duration::from_millis(500), conn.closed()).await;
+    // With the WebSocket tunnel datagrams go through a queue emptied by a task:
+    // a moment for the close message to really leave.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+}
+
+/// From the connection to the start of the session: introductions, password (and the
+/// confirmation at the remote PC), video format, input and video channels.
+async fn handshake(
+    conn: &nuvira_transport::Connection,
+    direct: bool,
     password: Option<String>,
-    proxy: EventLoopProxy<NetEvent>,
-    slot: Arc<FrameSlot>,
-    (mut input_rx, mut control_rx, mut files_rx, downloads): (
-        mpsc::UnboundedReceiver<InputEvent>,
-        mpsc::UnboundedReceiver<Msg>,
-        mpsc::UnboundedReceiver<Outgoing>,
-        Downloads,
-    ),
-) -> Result<()> {
-    let (conn, direct) = open_connection(target).await?;
+    proxy: &EventLoopProxy<NetEvent>,
+) -> Result<(FramedSend, FramedRecv, FramedSend, FramedRecv)> {
     let (send, recv) = conn.open_bi().await?;
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -309,10 +320,46 @@ async fn session(
         file_manager: agent.file_manager,
     });
 
-    let mut input_tx = FramedSend::new(conn.open_uni().await?);
+    let input_tx = FramedSend::new(conn.open_uni().await?);
     tracing::debug!("input channel open");
-    let mut video_rx = FramedRecv::new(conn.accept_uni().await?);
+    let video_rx = FramedRecv::new(conn.accept_uni().await?);
     tracing::debug!("video channel accepted");
+    Ok((ctrl_tx, ctrl_rx, input_tx, video_rx))
+}
+
+async fn session(
+    target: Target,
+    password: Option<String>,
+    proxy: EventLoopProxy<NetEvent>,
+    slot: Arc<FrameSlot>,
+    (mut input_rx, mut control_rx, mut files_rx, downloads): (
+        mpsc::UnboundedReceiver<InputEvent>,
+        mpsc::UnboundedReceiver<Msg>,
+        mpsc::UnboundedReceiver<Outgoing>,
+        Downloads,
+    ),
+) -> Result<()> {
+    // Until the session starts the viewer may close (window closed while connecting
+    // or waiting for the confirmation): then nothing more is done, and a connection
+    // already open is closed, or the agent would stay "busy" until the timeout.
+    let (conn, direct) = tokio::select! {
+        r = open_connection(target) => r?,
+        () = viewer_gone(&mut input_rx) => return Ok(()),
+    };
+    let (mut ctrl_tx, mut ctrl_rx, mut input_tx, mut video_rx) = tokio::select! {
+        r = handshake(&conn, direct, password, &proxy) => match r {
+            Ok(channels) => channels,
+            Err(e) => {
+                close(&conn).await;
+                return Err(e);
+            }
+        },
+        () = viewer_gone(&mut input_rx) => {
+            info!("viewer closed while connecting");
+            close(&conn).await;
+            return Ok(());
+        }
+    };
 
     // Decoding happens on a separate thread so as not to block the network.
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<()>();
@@ -508,13 +555,7 @@ async fn session(
         r = control_loop => r.context("control channel"),
         r = streams => r.context("streams from the agent"),
     };
-    conn.close(0u32.into(), b"end of session");
-    // Give the close message time to leave: without it the agent would notice only
-    // at the timeout and stay "busy" in the meantime.
-    let _ = tokio::time::timeout(Duration::from_millis(500), conn.closed()).await;
-    // With the WebSocket tunnel datagrams go through a queue emptied by a task:
-    // a moment for the close message to really leave.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    close(&conn).await;
     // The decoder ends when its channel closes: it is waited for, so that on exit
     // none of our threads is still working.
     drop(frame_tx);
