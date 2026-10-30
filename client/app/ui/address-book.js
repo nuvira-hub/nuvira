@@ -77,6 +77,7 @@ function renderAddressBook(state) {
   $("account-out").classList.toggle("hidden", Boolean(account) || !pro);
   $("account-in").classList.toggle("hidden", !account);
   if (account) $("account-name").textContent = t("settings.signed_in", { name: account.username });
+  renderTwoFactor(account);
   showMessage("address-book-message", state.address_book_error ?? null);
   $("connect-hint").textContent = t("connect.hint_address_book");
   $("remote-id").placeholder = t("connect.id_placeholder_address_book");
@@ -317,11 +318,22 @@ $("entry-cancel").addEventListener("click", closeEntry);
 
 $("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const otp = $("login-otp").value.trim();
   try {
-    await call("address_book_login", { username: $("login-user").value, password: $("login-password").value }, "address-book-message");
+    await call(
+      "address_book_login",
+      { username: $("login-user").value, password: $("login-password").value, otp: otp || null },
+      "address-book-message",
+    );
     $("login-password").value = "";
-  } catch {
-    // Message already shown.
+    $("login-otp").value = "";
+    $("login-otp").classList.add("hidden");
+  } catch (err) {
+    if (String(err) === "@server.otp_required") {
+      // Password right: the code of the authenticator app is needed.
+      $("login-otp").classList.remove("hidden");
+      $("login-otp").focus();
+    }
   }
 });
 
@@ -344,6 +356,72 @@ $("password-form").addEventListener("submit", async (e) => {
     await call("address_book_change_password", { old: $("pw-old").value, new: $("pw-new").value }, "password-message");
     $("password-form").reset();
     showMessage("password-message", null);
+  } catch {
+    // Message already shown.
+  }
+});
+
+// --- two-factor authentication of the account ---
+
+let tfShownFor = null;
+
+function renderTwoFactor(account) {
+  if (!account) {
+    tfShownFor = null;
+    return;
+  }
+  const available = (addressBook?.features ?? []).includes("pro.two_factor");
+  $("tf-status").textContent = t(account.two_factor ? "tf.state_on" : "tf.state_off");
+  // A new state from the app: start over (unless recovery codes are on screen).
+  const key = `${account.id}:${account.two_factor}`;
+  if (tfShownFor === key) return;
+  tfShownFor = key;
+  if ($("tf-codes").classList.contains("hidden")) {
+    $("tf-setup").classList.add("hidden");
+    showMessage("tf-message", null);
+  }
+  $("tf-start").classList.toggle("hidden", account.two_factor || !available);
+  $("tf-disable-form").classList.toggle("hidden", !account.two_factor);
+}
+
+$("tf-start").addEventListener("click", async () => {
+  let setup;
+  try {
+    setup = await call("address_book_two_factor_setup", {}, "tf-message");
+  } catch {
+    return;
+  }
+  const bytes = new Uint8Array(setup.qr_png);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  $("tf-qr").src = `data:image/png;base64,${btoa(binary)}`;
+  $("tf-secret").textContent = setup.secret.replace(/(.{4})/g, "$1 ").trim();
+  $("tf-start").classList.add("hidden");
+  $("tf-codes").classList.add("hidden");
+  $("tf-setup").classList.remove("hidden");
+  $("tf-code").value = "";
+  $("tf-code").focus();
+});
+
+$("tf-enable-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const codes = await call("address_book_two_factor_enable", { code: $("tf-code").value }, "tf-message");
+    $("tf-setup").classList.add("hidden");
+    $("tf-codes-list").replaceChildren(...codes.map((c) => el("li", "", c)));
+    $("tf-codes").classList.remove("hidden");
+  } catch {
+    // Message already shown.
+  }
+});
+
+$("tf-disable-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await call("address_book_two_factor_disable", { password: $("tf-password").value, code: $("tf-disable-code").value }, "tf-message");
+    $("tf-disable-form").reset();
+    $("tf-codes").classList.add("hidden");
+    showMessage("tf-message", t("tf.disabled"));
   } catch {
     // Message already shown.
   }
@@ -393,9 +471,21 @@ function renderAdmin() {
       const name = el("span", "", account.username);
       if (account.admin) name.append(el("span", "badge", t("admin.badge_admin")));
       if (account.id === myId) name.append(el("span", "badge", t("admin.badge_you")));
+      if (account.two_factor) name.append(el("span", "badge", t("admin.badge_two_factor")));
       const edit = el("button", "", t("admin.edit"));
       edit.addEventListener("click", () => editAccount(account));
-      row.append(name, edit);
+      row.append(name);
+      if (account.two_factor) {
+        const reset = el("button", "", t("admin.reset_two_factor"));
+        reset.addEventListener("click", () =>
+          confirmClick(reset, t("admin.confirm"), async () => {
+            await call("address_book_two_factor_reset", { id: account.id }, "admin-message").catch(() => {});
+            loadAccounts();
+          }),
+        );
+        row.append(reset);
+      }
+      row.append(edit);
       if (account.id !== myId) {
         const remove = el("button", "danger", t("admin.delete"));
         remove.addEventListener("click", () =>

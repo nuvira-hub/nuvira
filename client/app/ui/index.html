@@ -105,6 +105,7 @@
           <p data-i18n="address_book.login_hint">Sign in with your account to see the computers saved on the NuviraHub server.</p>
           <input id="login-user" autocomplete="username" data-i18n-placeholder="address_book.username" placeholder="Username">
           <input id="login-password" type="password" autocomplete="current-password" data-i18n-placeholder="address_book.password" placeholder="Password">
+          <input id="login-otp" class="hidden" autocomplete="one-time-code" inputmode="numeric" data-i18n-placeholder="address_book.otp" placeholder="Code from the authenticator app">
           <button type="submit" class="primary" data-i18n="address_book.login">Sign in</button>
         </form>
         <p id="address-book-message" class="message hidden"></p>
@@ -205,6 +206,31 @@
             </div>
           </form>
           <p id="password-message" class="message hidden"></p>
+
+          <h2 data-i18n="tf.title">Two-factor authentication</h2>
+          <p id="tf-status" class="hint"></p>
+          <button type="button" id="tf-start" class="hidden" data-i18n="tf.start">Enable</button>
+          <div id="tf-setup" class="stack hidden">
+            <p class="hint" data-i18n="tf.scan">Scan the QR code with the authenticator app, or type the key, then enter the code it shows.</p>
+            <img id="tf-qr" class="qr" alt="QR">
+            <p><span data-i18n="tf.key">Key</span>: <code id="tf-secret"></code></p>
+            <form id="tf-enable-form" class="actions">
+              <input id="tf-code" autocomplete="one-time-code" inputmode="numeric" required data-i18n-placeholder="tf.code" placeholder="Code (6 digits)">
+              <button type="submit" class="primary" data-i18n="tf.confirm">Confirm</button>
+            </form>
+          </div>
+          <div id="tf-codes" class="stack hidden">
+            <p><b data-i18n="tf.codes_title">Recovery codes</b></p>
+            <p class="hint" data-i18n="tf.codes_hint">Keep them somewhere safe.</p>
+            <ul id="tf-codes-list" class="codes"></ul>
+          </div>
+          <form id="tf-disable-form" class="stack hidden">
+            <p class="hint" data-i18n="tf.disable_hint">To switch it off: your password and a code.</p>
+            <input id="tf-password" type="password" autocomplete="current-password" required data-i18n-placeholder="settings.pw_old" placeholder="Current password">
+            <input id="tf-disable-code" autocomplete="one-time-code" required data-i18n-placeholder="address_book.otp" placeholder="Code">
+            <div class="actions"><span class="spacer"></span><button type="submit" class="danger" data-i18n="tf.disable">Disable</button></div>
+          </form>
+          <p id="tf-message" class="message hidden"></p>
         </div>
       </section>
 

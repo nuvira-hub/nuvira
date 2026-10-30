@@ -39,6 +39,9 @@
   }
 }
 
+.qr { width: 196px; height: 196px; image-rendering: pixelated; background: #fff; padding: 8px; border-radius: 8px; }
+.codes { columns: 2; margin: 0; padding-left: 20px; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+
 * { box-sizing: border-box; }
 
 html, body { height: 100%; }

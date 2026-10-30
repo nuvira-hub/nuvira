@@ -24,11 +24,13 @@ pub struct AccountUi {
     pub id: i64,
     pub username: String,
     pub admin: bool,
+    /// Two-factor authentication on (NuviraHub Pro).
+    pub two_factor: bool,
 }
 
 impl From<pb::Account> for AccountUi {
     fn from(a: pb::Account) -> Self {
-        Self { id: a.id, username: a.username, admin: a.admin }
+        Self { id: a.id, username: a.username, admin: a.admin, two_factor: a.two_factor }
     }
 }
 
@@ -334,13 +336,20 @@ pub fn auto_add(app: &AppHandle, device_id: String, name: String, password: Stri
 // --- interface commands ---
 
 #[tauri::command]
-pub async fn address_book_login(app: AppHandle, username: String, password: String) -> Result<(), String> {
+pub async fn address_book_login(
+    app: AppHandle,
+    username: String,
+    password: String,
+    otp: Option<String>,
+) -> Result<(), String> {
     let client = open(&app).await?;
     if !client.features().iter().any(|f| f == PRO_ADDRESS_BOOK) {
         return Err(t("server.pro_required"));
     }
-    let Some(ApiResult::Session(session)) =
-        client.call(Call::Login(pb::Login { username, password })).await.map_err(|e| format!("{e:#}"))?
+    let Some(ApiResult::Session(session)) = client
+        .call(Call::Login(pb::Login { username, password, otp: otp.unwrap_or_default() }))
+        .await
+        .map_err(|e| format!("{e:#}"))?
     else {
         return Err(t("err.unexpected"));
     };
@@ -395,7 +404,9 @@ pub async fn address_book_change_password(app: AppHandle, old: String, new: Stri
         app.state::<NuviraApp>().ui.lock().expect("state").account.as_ref().map(|a| a.username.clone());
     *app.state::<NuviraApp>().address_book.client.lock().await = None;
     match username {
-        Some(username) => address_book_login(app, username, new).await,
+        // The code of the authenticator app is not at hand here: with two-factor
+        // authentication the app goes back to the sign-in panel.
+        Some(username) => address_book_login(app, username, new, None).await,
         None => Ok(()),
     }
 }
@@ -471,6 +482,63 @@ pub async fn address_book_save_policy(app: AppHandle, policy: PolicyUi) -> Resul
         Some(ApiResult::Policy(policy)) => Ok(policy.into()),
         _ => Err(t("err.unexpected")),
     }
+}
+
+/// New secret for two-factor authentication, not active until confirmed.
+#[derive(Debug, Clone, Serialize)]
+pub struct TwoFactorUi {
+    pub secret: String,
+    pub uri: String,
+    /// QR code of the URI (PNG): the interface makes a data URL of it.
+    pub qr_png: Vec<u8>,
+}
+
+#[tauri::command]
+pub async fn address_book_two_factor_setup(app: AppHandle) -> Result<TwoFactorUi, String> {
+    match call(&app, Call::TwoFactorSetup(pb::TwoFactorSetup {})).await? {
+        Some(ApiResult::TwoFactorSecret(s)) => {
+            Ok(TwoFactorUi { secret: s.secret, uri: s.uri, qr_png: s.qr_png })
+        }
+        _ => Err(t("err.unexpected")),
+    }
+}
+
+/// Confirms the secret with a code; answers the recovery codes (shown once).
+#[tauri::command]
+pub async fn address_book_two_factor_enable(app: AppHandle, code: String) -> Result<Vec<String>, String> {
+    let Some(ApiResult::RecoveryCodes(codes)) =
+        call(&app, Call::TwoFactorEnable(pb::TwoFactorEnable { code })).await?
+    else {
+        return Err(t("err.unexpected"));
+    };
+    set_two_factor(&app, true);
+    Ok(codes.codes)
+}
+
+#[tauri::command]
+pub async fn address_book_two_factor_disable(
+    app: AppHandle,
+    password: String,
+    code: String,
+) -> Result<(), String> {
+    call(&app, Call::TwoFactorDisable(pb::TwoFactorDisable { password, code })).await?;
+    set_two_factor(&app, false);
+    Ok(())
+}
+
+/// Administrators: removes the two-factor authentication of an account.
+#[tauri::command]
+pub async fn address_book_two_factor_reset(app: AppHandle, id: i64) -> Result<(), String> {
+    call(&app, Call::TwoFactorReset(pb::TwoFactorReset { account_id: id })).await?;
+    Ok(())
+}
+
+fn set_two_factor(app: &AppHandle, on: bool) {
+    app.state::<NuviraApp>().update(app, |ui| {
+        if let Some(account) = ui.account.as_mut() {
+            account.two_factor = on;
+        }
+    });
 }
 
 #[tauri::command]
