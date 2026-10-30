@@ -154,6 +154,14 @@ message ApiRequest {
     Policy put_policy = 16;
     // Whether some devices are connected now; needs no sign-in (local address book).
     GetPresence get_presence = 17;
+    // Two-factor authentication of the signed-in account (NuviraHub Pro): Setup
+    // creates a new secret (not active yet), Enable activates it with a code and
+    // answers the recovery codes, Disable needs password and code.
+    TwoFactorSetup two_factor_setup = 18;
+    TwoFactorEnable two_factor_enable = 19;
+    TwoFactorDisable two_factor_disable = 20;
+    // Administrators: removes the two-factor authentication of an account (lost phone).
+    TwoFactorReset two_factor_reset = 21;
   }
 }
 
@@ -188,12 +196,46 @@ message ApiResponse {
     Account account = 8;
     Policy policy = 9;
     PresenceList presence = 10;
+    TwoFactorSecret two_factor_secret = 11;
+    RecoveryCodes recovery_codes = 12;
   }
 }
 
 message Login {
   string username = 1;
   string password = 2;
+  // Accounts with two-factor authentication: the code of the authenticator app,
+  // or a recovery code. Without it the answer is the error "@server.otp_required".
+  string otp = 3;
+}
+
+message TwoFactorSetup {}
+
+message TwoFactorSecret {
+  // Base32, for typing it into the authenticator app by hand.
+  string secret = 1;
+  // otpauth:// URI, the content of the QR code.
+  string uri = 2;
+  // QR code of the URI, PNG.
+  bytes qr_png = 3;
+}
+
+message TwoFactorEnable {
+  string code = 1;
+}
+
+// Shown once: each one replaces a code of the app a single time.
+message RecoveryCodes {
+  repeated string codes = 1;
+}
+
+message TwoFactorDisable {
+  string password = 1;
+  string code = 2;
+}
+
+message TwoFactorReset {
+  int64 account_id = 1;
 }
 
 // Sign-in remembered by the app: the token replaces the password.
@@ -215,6 +257,8 @@ message Account {
   int64 id = 1;
   string username = 2;
   bool admin = 3;
+  // Two-factor authentication active (read only).
+  bool two_factor = 4;
 }
 
 message ChangePassword {
