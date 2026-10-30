@@ -312,5 +312,11 @@
   "level.edit": "modification",
   "level.manage": "gestion",
   "server.bad_role": "rôle inconnu",
-  "server.bad_level": "niveau de membre inconnu"
+  "server.bad_level": "niveau de membre inconnu",
+  "address_book.sso": "Se connecter avec {name}",
+  "address_book.sso_waiting": "Terminez la connexion dans le navigateur…",
+  "server.sso_pending": "connexion dans le navigateur pas encore terminée",
+  "server.sso_expired": "la connexion a expiré : recommencez",
+  "server.sso_failed": "échec de la connexion avec le fournisseur",
+  "server.sso_username_taken": "un compte portant ce nom existe déjà sur le serveur : contactez un administrateur"
 }

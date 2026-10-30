@@ -312,5 +312,11 @@
   "level.edit": "modifica",
   "level.manage": "gestione",
   "server.bad_role": "ruolo sconosciuto",
-  "server.bad_level": "livello del membro sconosciuto"
+  "server.bad_level": "livello del membro sconosciuto",
+  "address_book.sso": "Accedi con {name}",
+  "address_book.sso_waiting": "Completa l'accesso nel browser…",
+  "server.sso_pending": "accesso nel browser non ancora completato",
+  "server.sso_expired": "l'accesso è scaduto: ricomincia",
+  "server.sso_failed": "accesso con il provider non riuscito",
+  "server.sso_username_taken": "sul server esiste già un account con questo nome: rivolgiti a un amministratore"
 }

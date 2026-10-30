@@ -3180,6 +3180,7 @@ dependencies = [
  "nuvira-transport",
  "nuvira-update",
  "nuvira-viewer",
+ "ring",
  "serde",
  "serde_json",
  "tauri",

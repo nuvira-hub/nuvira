@@ -82,6 +82,10 @@ function renderAddressBook(state) {
   // Accounts and shared books only with the server's address book module (Pro);
   // the book on this computer is always there.
   const pro = (state.features ?? []).includes("pro.address_book");
+  // Single sign-on: "pro.sso=<provider name>".
+  const sso = (state.features ?? []).find((f) => f.startsWith("pro.sso="))?.slice(8);
+  $("login-sso").classList.toggle("hidden", !sso || Boolean(account));
+  if (sso && !$("login-sso").disabled) $("login-sso").textContent = t("address_book.sso", { name: sso });
   $("login-form").classList.toggle("hidden", Boolean(account) || !pro);
   $("address-book-list").classList.remove("hidden");
   $("address-book-tools").classList.remove("hidden");
@@ -355,6 +359,21 @@ $("login-form").addEventListener("submit", async (e) => {
 });
 
 $("address-book-logout").addEventListener("click", () => invoke("address_book_logout"));
+
+$("login-sso").addEventListener("click", async () => {
+  const button = $("login-sso");
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = t("address_book.sso_waiting");
+  try {
+    await call("address_book_sso_login", {}, "address-book-message");
+  } catch {
+    // Message already shown.
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+});
 $("goto-login").addEventListener("click", () => {
   showSection("address-book");
   $("login-user").focus();

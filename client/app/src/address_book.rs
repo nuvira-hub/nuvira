@@ -388,6 +388,72 @@ pub async fn address_book_login(
     refresh(&app).await
 }
 
+/// Feature of servers with single sign-on: "pro.sso=<provider name>".
+pub fn sso_name(features: &[String]) -> Option<&str> {
+    features.iter().find_map(|f| f.strip_prefix("pro.sso="))
+}
+
+/// Single sign-on: opens the provider's page in the browser through the server,
+/// then waits (at most 10 minutes) for the server to hand over the session to
+/// whoever has the secret of this sign-in.
+#[tauri::command]
+pub async fn address_book_sso_login(app: AppHandle) -> Result<(), String> {
+    use ring::rand::SecureRandom;
+    use tauri_plugin_opener::OpenerExt;
+
+    let client = open(&app).await?;
+    if sso_name(client.features()).is_none() {
+        return Err(t("server.pro_required"));
+    }
+    let mut secret = [0u8; 32];
+    ring::rand::SystemRandom::new().fill(&mut secret).map_err(|_| t("err.unexpected"))?;
+    let verifier = base64url(&secret);
+    let challenge = base64url(ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes()).as_ref());
+    let Some(ApiResult::SsoUrl(page)) =
+        client.call(Call::SsoBegin(pb::SsoBegin { challenge })).await.map_err(|e| format!("{e:#}"))?
+    else {
+        return Err(t("err.unexpected"));
+    };
+    app.opener().open_url(&page.url, None::<&str>).map_err(|e| e.to_string())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    let session = loop {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        match client.call(Call::SsoFinish(pb::SsoFinish { verifier: verifier.clone() })).await {
+            Ok(Some(ApiResult::Session(session))) => break session,
+            Ok(_) => return Err(t("err.unexpected")),
+            Err(e) => {
+                let text = format!("{e:#}");
+                if text != "@server.sso_pending" || std::time::Instant::now() > deadline {
+                    return Err(if text == "@server.sso_pending" {
+                        "@server.sso_expired".into()
+                    } else {
+                        text
+                    });
+                }
+            }
+        }
+    };
+    let mut settings = load_settings();
+    settings.token = Some(session.token.clone());
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    info!("address book sign-in through the browser");
+    set_account(&app, session.account);
+    *app.state::<NuviraApp>().address_book.client.lock().await = Some(client);
+    refresh(&app).await
+}
+
+fn base64url(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity(bytes.len() * 4 / 3 + 2);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..=chunk.len() {
+            out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+        }
+    }
+    out
+}
+
 #[tauri::command]
 pub async fn address_book_logout(app: AppHandle) {
     let _ = call(&app, Call::Logout(pb::Logout {})).await;
@@ -576,4 +642,22 @@ fn set_two_factor(app: &AppHandle, on: bool) {
 pub async fn address_book_delete_book(app: AppHandle, id: i64) -> Result<(), String> {
     call(&app, Call::DeleteBook(pb::DeleteBook { id })).await?;
     refresh(&app).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64url_without_padding() {
+        assert_eq!(base64url(b""), "");
+        assert_eq!(base64url(b"f"), "Zg");
+        assert_eq!(base64url(b"fo"), "Zm8");
+        assert_eq!(base64url(b"foo"), "Zm9v");
+        assert_eq!(base64url(&[0xfb, 0xff]), "-_8");
+        // RFC 7636, appendix B.
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let digest = ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes());
+        assert_eq!(base64url(digest.as_ref()), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    }
 }

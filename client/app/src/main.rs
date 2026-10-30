@@ -703,6 +703,7 @@ fn main() {
             address_book::address_book_delete_account,
             address_book::address_book_save_book,
             address_book::address_book_delete_book,
+            address_book::address_book_sso_login,
             address_book::address_book_two_factor_setup,
             address_book::address_book_two_factor_enable,
             address_book::address_book_two_factor_disable,

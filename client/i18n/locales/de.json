@@ -312,5 +312,11 @@
   "level.edit": "bearbeiten",
   "level.manage": "verwalten",
   "server.bad_role": "unbekannte Rolle",
-  "server.bad_level": "unbekannte Mitgliedsstufe"
+  "server.bad_level": "unbekannte Mitgliedsstufe",
+  "address_book.sso": "Mit {name} anmelden",
+  "address_book.sso_waiting": "Schließen Sie die Anmeldung im Browser ab…",
+  "server.sso_pending": "Anmeldung im Browser noch nicht abgeschlossen",
+  "server.sso_expired": "die Anmeldung ist abgelaufen: bitte erneut starten",
+  "server.sso_failed": "Anmeldung beim Anbieter fehlgeschlagen",
+  "server.sso_username_taken": "auf dem Server gibt es bereits ein Konto mit diesem Namen: wenden Sie sich an einen Administrator"
 }

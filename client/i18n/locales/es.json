@@ -312,5 +312,11 @@
   "level.edit": "edición",
   "level.manage": "gestión",
   "server.bad_role": "rol desconocido",
-  "server.bad_level": "nivel de miembro desconocido"
+  "server.bad_level": "nivel de miembro desconocido",
+  "address_book.sso": "Iniciar sesión con {name}",
+  "address_book.sso_waiting": "Completa el inicio de sesión en el navegador…",
+  "server.sso_pending": "inicio de sesión en el navegador aún no completado",
+  "server.sso_expired": "el inicio de sesión ha caducado: vuelve a empezar",
+  "server.sso_failed": "no se ha podido iniciar sesión con el proveedor",
+  "server.sso_username_taken": "ya existe una cuenta con este nombre en el servidor: consulta a un administrador"
 }
