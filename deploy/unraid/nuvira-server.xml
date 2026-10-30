@@ -12,7 +12,7 @@
   <Category>Network:Other Tools:</Category>
   <WebUI/>
   <TemplateURL/>
-  <Icon>https://raw.githubusercontent.com/nuvira-hub/nuvira/main/deploy/unraid/nuvira-server.png</Icon>
+  <Icon>https://raw.githubusercontent.com/nuvira-hub/.github/main/assets/nuvira-server.png</Icon>
   <!-- Unraid appdata belongs to nobody:users; the image's default user (65532) could not write there. -->
   <ExtraParams>--user 99:100</ExtraParams>
   <PostArgs/>
