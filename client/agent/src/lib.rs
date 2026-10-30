@@ -296,6 +296,27 @@ pub(crate) mod stats {
     }
 }
 
+/// The viewer closed the session on purpose (QUIC close with code 0): not an error
+/// for the session log.
+fn closed_normally(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        let closed = |c: &quinn::ConnectionError| {
+            matches!(c, quinn::ConnectionError::ApplicationClosed(a) if a.error_code == quinn::VarInt::from_u32(0))
+        };
+        cause.downcast_ref::<quinn::ConnectionError>().is_some_and(closed)
+            || cause.downcast_ref::<quinn::ReadError>().is_some_and(|r| matches!(r, quinn::ReadError::ConnectionLost(c) if closed(c)))
+            || cause.downcast_ref::<quinn::WriteError>().is_some_and(|w| matches!(w, quinn::WriteError::ConnectionLost(c) if closed(c)))
+            || cause
+                .downcast_ref::<std::io::Error>()
+                .and_then(|io| io.get_ref())
+                .and_then(|inner| inner.downcast_ref::<quinn::ReadError>())
+                .is_some_and(|r| matches!(r, quinn::ReadError::ConnectionLost(c) if closed(c)))
+            || cause
+                .downcast_ref::<quinn::ReadExactError>()
+                .is_some_and(|r| matches!(r, quinn::ReadExactError::ReadError(quinn::ReadError::ConnectionLost(c)) if closed(c)))
+    })
+}
+
 /// What the report to the server says about a session, filled while it runs.
 #[derive(Default)]
 struct Outcome {
@@ -440,7 +461,12 @@ async fn signal_loop(
                             files_out: stats::FILES_OUT.load(Ordering::Relaxed),
                             bytes_in: stats::BYTES_IN.load(Ordering::Relaxed),
                             bytes_out: stats::BYTES_OUT.load(Ordering::Relaxed),
-                            error: result.as_ref().err().map(|e| format!("{e:#}")).unwrap_or_default(),
+                            error: result
+                                .as_ref()
+                                .err()
+                                .filter(|e| !closed_normally(e))
+                                .map(|e| format!("{e:#}"))
+                                .unwrap_or_default(),
                         });
                         ctx.busy.store(false, Ordering::Relaxed);
                         let _ = ctx.events.send(AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) });
