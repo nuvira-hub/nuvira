@@ -318,5 +318,7 @@
   "server.sso_pending": "sign-in in the browser not finished yet",
   "server.sso_expired": "the sign-in expired: start it again",
   "server.sso_failed": "sign-in with the provider failed",
-  "server.sso_username_taken": "an account with this name already exists on the server: ask an administrator"
+  "server.sso_username_taken": "an account with this name already exists on the server: ask an administrator",
+  "support.title": "Support",
+  "err.locked": "this setting is fixed by whoever provided the program"
 }

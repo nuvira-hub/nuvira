@@ -112,6 +112,11 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     for old in config::OLD_EXES {
         let _ = std::fs::remove_file(program_dir.join(old));
     }
+    // Customised installer: its configuration stays next to the program, for
+    // the app of every user and across the updates (which bring the standard program).
+    if let Some(doc) = crate::branding::read_trailer(&src) {
+        std::fs::write(program_dir.join("branding.json"), doc).context("saving the customisation")?;
+    }
 
     // Data readable only by SYSTEM and administrators: it holds the key and the password.
     let data_dir = config::data_dir();

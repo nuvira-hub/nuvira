@@ -11,6 +11,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod address_book;
+mod branding;
 mod local_book;
 
 use std::path::PathBuf;
@@ -138,6 +139,45 @@ fn file_config(file_name: &str) -> FileConfig {
         }),
         server_key: key,
     }
+}
+
+/// Server and language of a customised program (they win over the file name).
+fn apply_branding(settings: &mut Settings) {
+    let Some(b) = branding::get() else { return };
+    let mut changed = false;
+    if !b.server.is_empty() && settings.server != b.server {
+        info!("server from the customisation: {}", b.server);
+        settings.token = None;
+        settings.server = b.server.clone();
+        settings.server_key = (!b.server_key.is_empty()).then(|| b.server_key.clone());
+        changed = true;
+    }
+    if !b.language.is_empty()
+        && (b.lock_language || settings.language.is_none())
+        && settings.language.as_deref() != Some(&b.language)
+    {
+        settings.language = Some(b.language.clone());
+        changed = true;
+    }
+    if changed && let Err(e) = save_settings(settings) {
+        tracing::warn!("settings not saved: {e:#}");
+    }
+}
+
+/// The customisation for the interface (null for the standard program).
+#[tauri::command]
+fn get_branding() -> Option<branding::Branding> {
+    branding::get().cloned()
+}
+
+/// Opens the support site of the customisation (only that address).
+#[tauri::command]
+fn open_support(app: AppHandle) -> Result<(), String> {
+    let url = branding::get().map(|b| b.support_url.clone()).unwrap_or_default();
+    if url.is_empty() {
+        return Err(t("err.unexpected"));
+    }
+    app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
 }
 
 /// Applies the server in the file name, if any, to the saved settings.
@@ -428,6 +468,9 @@ fn get_state(state: State<NuviraApp>) -> UiState {
 
 #[tauri::command]
 fn set_server(app: AppHandle, state: State<NuviraApp>, server: String) -> Result<(), String> {
+    if branding::get().is_some_and(|b| b.lock_server) {
+        return Err(t("err.locked"));
+    }
     let server = server.trim().to_string();
     if !server.is_empty() {
         nuvira_transport::resolve_addr(&server, nuvira_transport::signal::DEFAULT_PORT)
@@ -623,6 +666,9 @@ fn i18n() -> I18nUi {
 
 #[tauri::command]
 fn set_language(language: String) -> Result<I18nUi, String> {
+    if branding::get().is_some_and(|b| b.lock_language) {
+        return Err(t("err.locked"));
+    }
     let mut settings = load_settings();
     settings.language = (language != "auto").then_some(language);
     save_settings(&settings).map_err(|e| e.to_string())?;
@@ -664,6 +710,7 @@ fn main() {
     nuvira_input::set_dpi_awareness();
     let mut settings = load_settings();
     apply_file_config(&mut settings);
+    apply_branding(&mut settings);
     nuvira_i18n::init(settings.language.as_deref());
     let password = nuvira_agent::random_password();
     let state = NuviraApp {
@@ -713,10 +760,17 @@ fn main() {
             end_session,
             connect,
             open_source,
+            get_branding,
+            open_support,
             i18n,
             set_language
         ])
         .setup(|app| {
+            if let Some(b) = branding::get().filter(|b| !b.name.is_empty())
+                && let Some(window) = app.get_webview_window("main")
+            {
+                let _ = window.set_title(&b.name);
+            }
             start_update_checks(app.handle());
             start_agent(app.handle());
             address_book::restore(app.handle());
@@ -772,6 +826,10 @@ fn attach_console() {
 /// message to show, with the permanent password if it was generated.
 #[tauri::command]
 async fn install_service(app: AppHandle, password: String) -> Result<String, String> {
+    // Quick support runs and goes: it does not install.
+    if branding::get().is_some_and(branding::Branding::quick) {
+        return Err(t("err.locked"));
+    }
     #[cfg(not(windows))]
     {
         let _ = (app, password);

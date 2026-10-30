@@ -90,7 +90,7 @@ function renderAddressBook(state) {
   $("address-book-list").classList.remove("hidden");
   $("address-book-tools").classList.remove("hidden");
   // Administration: administrators, and who manages a shared book (only its books).
-  $("nav-admin").classList.toggle("hidden", !account?.admin && !managesBooks());
+  $("nav-admin").classList.toggle("hidden", document.body.classList.contains("quick") || (!account?.admin && !managesBooks()));
   $("admin-only").classList.toggle("hidden", !account?.admin);
   $("account-title").classList.toggle("hidden", !pro && !account);
   $("account-out").classList.toggle("hidden", Boolean(account) || !pro);

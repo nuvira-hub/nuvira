@@ -318,5 +318,7 @@
   "server.sso_pending": "accesso nel browser non ancora completato",
   "server.sso_expired": "l'accesso è scaduto: ricomincia",
   "server.sso_failed": "accesso con il provider non riuscito",
-  "server.sso_username_taken": "sul server esiste già un account con questo nome: rivolgiti a un amministratore"
+  "server.sso_username_taken": "sul server esiste già un account con questo nome: rivolgiti a un amministratore",
+  "support.title": "Assistenza",
+  "err.locked": "questa impostazione è stabilita da chi ha fornito il programma"
 }

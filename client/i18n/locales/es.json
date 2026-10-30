@@ -318,5 +318,7 @@
   "server.sso_pending": "inicio de sesión en el navegador aún no completado",
   "server.sso_expired": "el inicio de sesión ha caducado: vuelve a empezar",
   "server.sso_failed": "no se ha podido iniciar sesión con el proveedor",
-  "server.sso_username_taken": "ya existe una cuenta con este nombre en el servidor: consulta a un administrador"
+  "server.sso_username_taken": "ya existe una cuenta con este nombre en el servidor: consulta a un administrador",
+  "support.title": "Asistencia",
+  "err.locked": "este ajuste lo fija quien ha proporcionado el programa"
 }

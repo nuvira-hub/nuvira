@@ -36,6 +36,39 @@ function applyStrings() {
   for (const node of document.querySelectorAll("[data-i18n-label]")) node.setAttribute("aria-label", t(node.dataset.i18nLabel));
 }
 
+// Customised program (NuviraHub Pro installer): name, logo, colour, support,
+// locked settings, quick support (only this computer's ID and password).
+function applyBranding(b) {
+  if (!b) return;
+  if (b.name) document.title = b.name;
+  if (b.logo) document.querySelector(".rail-logo").src = b.logo;
+  if (b.color) {
+    document.documentElement.style.setProperty("--accent", b.color);
+    document.documentElement.style.setProperty("--accent-soft", `${b.color}1f`);
+  }
+  const contact = b.support_text || b.support_phone || b.support_email || b.support_url;
+  $("support-box").classList.toggle("hidden", !contact);
+  $("support-text").textContent = b.support_text;
+  $("support-phone").textContent = b.support_phone;
+  $("support-email").textContent = b.support_email;
+  if (b.support_url) {
+    $("support-url").textContent = b.support_url.replace(/^https:\/\//, "");
+    $("support-url").classList.remove("hidden");
+    $("support-url").addEventListener("click", () => invoke("open_support").catch(() => {}));
+  }
+  if (b.kind === "quick") {
+    document.body.classList.add("quick");
+    for (const name of ["address-book", "admin", "settings"]) {
+      document.querySelector(`.nav[data-section="${name}"]`)?.classList.add("hidden", "locked");
+    }
+  }
+  if (b.lock_server) {
+    $("server").disabled = true;
+    $("server-form").querySelector("button").disabled = true;
+  }
+  if (b.lock_language) $("language").disabled = true;
+}
+
 function useStrings(info) {
   strings = info.strings;
   document.documentElement.lang = info.lang;
@@ -287,6 +320,7 @@ document.addEventListener("keydown", (e) => {
       $("app-version").textContent = t("about.version", { v });
     })
     .catch(() => {});
+  applyBranding(await invoke("get_branding"));
   listen("state", (event) => render(event.payload));
   render(await invoke("get_state"));
 })();

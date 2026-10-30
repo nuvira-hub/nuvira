@@ -11,6 +11,7 @@
 //! nuvira-service uninstall
 //! ```
 
+pub mod branding;
 #[cfg(windows)]
 mod config;
 #[cfg(windows)]

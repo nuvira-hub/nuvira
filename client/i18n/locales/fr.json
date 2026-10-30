@@ -318,5 +318,7 @@
   "server.sso_pending": "connexion dans le navigateur pas encore terminée",
   "server.sso_expired": "la connexion a expiré : recommencez",
   "server.sso_failed": "échec de la connexion avec le fournisseur",
-  "server.sso_username_taken": "un compte portant ce nom existe déjà sur le serveur : contactez un administrateur"
+  "server.sso_username_taken": "un compte portant ce nom existe déjà sur le serveur : contactez un administrateur",
+  "support.title": "Assistance",
+  "err.locked": "ce réglage est fixé par le fournisseur du programme"
 }
