@@ -19,6 +19,7 @@ type Reply = oneshot::Sender<Result<ApiResponse>>;
 #[derive(Clone)]
 pub struct ApiClient {
     requests: mpsc::UnboundedSender<(api_request::Call, Reply)>,
+    features: Vec<String>,
 }
 
 impl ApiClient {
@@ -37,6 +38,7 @@ impl ApiClient {
         if expected.is_none() {
             signal::known_server::remember(server_name, &sig.server_fingerprint)?;
         }
+        let features = std::mem::take(&mut sig.features);
         let (tx, mut rx) = mpsc::unbounded_channel::<(api_request::Call, Reply)>();
         tokio::spawn(async move {
             let mut pending: HashMap<u32, Reply> = HashMap::new();
@@ -70,7 +72,7 @@ impl ApiClient {
                 let _ = reply.send(Err(anyhow!("connection with the server lost: {reason}")));
             }
         });
-        Ok(Self { requests: tx })
+        Ok(Self { requests: tx, features })
     }
 
     /// Runs a request; `Err` with the server's message if it fails.
@@ -85,6 +87,11 @@ impl ApiClient {
             bail!("{}", resp.error);
         }
         Ok(resp.result)
+    }
+
+    /// Optional modules of the server, from its registration answer.
+    pub fn features(&self) -> &[String] {
+        &self.features
     }
 
     /// The client cannot be used any more (connection dropped).

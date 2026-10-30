@@ -53,6 +53,7 @@
   "address_book.personal": "{name} · only you",
   "address_book.shared": "{name} · shared",
   "address_book.personal_option": "{name} (only you)",
+  "address_book.local": "On this computer",
   "address_book.empty_book": "No entries yet: add one with “New entry”.",
   "address_book.not_found": "No entries found.",
   "address_book.edit": "Edit",
@@ -160,6 +161,7 @@
 
   "err.invalid_address": "Invalid address: {e}",
   "err.entry_not_found": "Entry not found",
+  "err.already_in_book": "This ID is already in the address book",
   "err.id_digits": "The ID has 9 digits",
   "err.set_server_first": "Set the server first",
   "err.session_error": "The session ended with an error",
@@ -242,6 +244,7 @@
   "server.delete_shared_only": "only shared address books can be deleted",
   "server.entry_exists": "this computer is already in that address book",
   "server.no_address_book": "the address book is not available on this server",
+  "server.pro_required": "this function needs NuviraHub Pro on the server",
   "server.old_version": "protocol version not supported: update NuviraHub",
   "server.unreachable": "the device is not reachable",
   "server.self_connect": "you cannot connect to the device you are using",

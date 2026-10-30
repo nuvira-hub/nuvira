@@ -35,7 +35,8 @@ use crate::net::{FrameSlot, NetEvent};
 use crate::render::Renderer;
 use crate::report::Report;
 
-const COPYRIGHT: &str = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/nuvira-hub/nuvira";
+const COPYRIGHT: &str =
+    "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/nuvira-hub/nuvira";
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 enum TransportArg {

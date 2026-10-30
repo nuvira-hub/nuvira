@@ -53,6 +53,7 @@
   "address_book.personal": "{name} · vous seul",
   "address_book.shared": "{name} · partagé",
   "address_book.personal_option": "{name} (vous seul)",
+  "address_book.local": "Sur cet ordinateur",
   "address_book.empty_book": "Aucune fiche : ajoutez-en une avec « Nouvelle fiche ».",
   "address_book.not_found": "Aucune fiche trouvée.",
   "address_book.edit": "Modifier",
@@ -160,6 +161,7 @@
 
   "err.invalid_address": "Adresse non valide : {e}",
   "err.entry_not_found": "Fiche introuvable",
+  "err.already_in_book": "Cet ID est déjà dans le carnet d'adresses",
   "err.id_digits": "L'ID comporte 9 chiffres",
   "err.set_server_first": "Indiquez d'abord le serveur",
   "err.session_error": "La session s'est terminée par une erreur",
@@ -242,6 +244,7 @@
   "server.delete_shared_only": "seuls les carnets partagés peuvent être supprimés",
   "server.entry_exists": "cet ordinateur est déjà dans ce carnet",
   "server.no_address_book": "le carnet d'adresses n'est pas disponible sur ce serveur",
+  "server.pro_required": "cette fonction nécessite NuviraHub Pro sur le serveur",
   "server.old_version": "version du protocole non prise en charge : mettez à jour NuviraHub",
   "server.unreachable": "l'appareil n'est pas joignable",
   "server.self_connect": "impossible de se connecter à l'appareil que vous utilisez",

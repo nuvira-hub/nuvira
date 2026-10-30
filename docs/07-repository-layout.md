@@ -8,11 +8,12 @@ NuviraHub/
 ├─ server/                 # Go: nuvira-server
 │  ├─ cmd/nuvira-server/ # entry point, configuration from environment variables
 │  └─ internal/
-│     ├─ signal/           # registration, presence, connection requests, address book API
+│     ├─ signal/           # registration, presence, connection requests, app API
+│     ├─ ext/              # extension points for the NuviraHub Pro modules
 │     ├─ relay/            # UDP relay, WebSocket fallback, network simulation for tests
-│     ├─ accounts/         # accounts, address books, entries
 │     ├─ store/            # devices (SQLite)
 │     ├─ tlsutil/          # server certificate
+│     ├─ updates/          # program versions served to the devices
 │     └─ pb/               # Go code generated from proto/ (tools/gen-proto.sh)
 ├─ client/                 # Rust workspace
 │  ├─ proto/               # protocol messages and framing (no OS dependencies)

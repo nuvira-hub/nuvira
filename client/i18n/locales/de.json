@@ -53,6 +53,7 @@
   "address_book.personal": "{name} · nur Sie",
   "address_book.shared": "{name} · geteilt",
   "address_book.personal_option": "{name} (nur Sie)",
+  "address_book.local": "Auf diesem Computer",
   "address_book.empty_book": "Noch keine Einträge: Fügen Sie einen mit „Neuer Eintrag“ hinzu.",
   "address_book.not_found": "Keine Einträge gefunden.",
   "address_book.edit": "Bearbeiten",
@@ -160,6 +161,7 @@
 
   "err.invalid_address": "Ungültige Adresse: {e}",
   "err.entry_not_found": "Eintrag nicht gefunden",
+  "err.already_in_book": "Diese ID ist bereits im Adressbuch",
   "err.id_digits": "Die ID hat 9 Ziffern",
   "err.set_server_first": "Legen Sie zuerst den Server fest",
   "err.session_error": "Die Sitzung wurde mit einem Fehler beendet",
@@ -242,6 +244,7 @@
   "server.delete_shared_only": "nur geteilte Adressbücher können gelöscht werden",
   "server.entry_exists": "dieser Computer ist bereits in diesem Adressbuch",
   "server.no_address_book": "das Adressbuch ist auf diesem Server nicht verfügbar",
+  "server.pro_required": "diese Funktion erfordert NuviraHub Pro auf dem Server",
   "server.old_version": "Protokollversion nicht unterstützt: Aktualisieren Sie NuviraHub",
   "server.unreachable": "das Gerät ist nicht erreichbar",
   "server.self_connect": "Sie können sich nicht mit dem Gerät verbinden, das Sie gerade verwenden",

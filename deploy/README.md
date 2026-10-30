@@ -14,15 +14,15 @@ Images for `linux/amd64` and `linux/arm64`, built `FROM scratch` (only the stati
 |---|---|---|---|
 | Port | UDP 21116 | 21116/udp | signalling (QUIC) and relay; **required** |
 | Port | TCP 21116 | 21116/tcp | WebSocket fallback for networks that block UDP |
-| Volume | `/data` | e.g. `/mnt/user/appdata/nuvira-server` | `nuvira.db`, `cert.pem`/`key.pem` (server identity), `address-book.key` |
-| Variable | `NUVIRA_ADMIN_USER` | `admin` | first administrator, only when no account exists |
-| Variable | `NUVIRA_ADMIN_PASSWORD` | ≥ 8 characters | empty: a random password is printed once in the log |
+| Volume | `/data` | e.g. `/mnt/user/appdata/nuvira-server` | `nuvira.db`, `cert.pem`/`key.pem` (server identity) |
 | Variable | `NUVIRA_LOG` | `info` | `debug`, `info`, `warn` |
 | Variable | `NUVIRA_WS_LISTEN` | `:21116` | `off` disables the WebSocket fallback |
 
 The image runs as user 65532. With a bind mount owned by another user, run the container with that user (`--user UID:GID`) or give the folder to 65532.
 
-**Back up the whole `/data` folder.** Losing `cert.pem`/`key.pem` makes every client refuse the server (they pin its certificate at the first connection); losing `address-book.key` makes the saved device passwords unreadable.
+**Back up the whole `/data` folder.** Losing `cert.pem`/`key.pem` makes every client refuse the server (they pin its certificate at the first connection).
+
+This is the open server: signalling, relay and updates; each app keeps its own address book. Server address books, accounts and central rules are NuviraHub Pro modules, with their own image (see [docs/20-open-core.md](../docs/20-open-core.md)).
 
 No public address has to be configured: clients reach the relay at the same address and port they use for the server.
 
@@ -33,7 +33,7 @@ See [docker-compose.yml](docker-compose.yml).
 ## Unraid
 
 1. Copy [unraid/nuvira-server.xml](unraid/nuvira-server.xml) to the flash drive as `/boot/config/plugins/dockerMan/templates-user/my-nuvira-server.xml`.
-2. Docker → Add Container → Template: `nuvira-server`. Set the admin password, check the appdata path, Apply.
+2. Docker → Add Container → Template: `nuvira-server`. Check the appdata path, Apply.
 3. The template adds `--user 99:100` (Extra Parameters) so the container can write to appdata, which belongs to `nobody:users`.
 4. Check the log: `nuvira-server started` with the certificate fingerprint.
 

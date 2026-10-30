@@ -53,6 +53,7 @@
   "address_book.personal": "{name} · solo tua",
   "address_book.shared": "{name} · condivisa",
   "address_book.personal_option": "{name} (solo tua)",
+  "address_book.local": "Su questo computer",
   "address_book.empty_book": "Nessuna scheda: aggiungine una con «Nuova scheda».",
   "address_book.not_found": "Nessuna scheda trovata.",
   "address_book.edit": "Modifica",
@@ -160,6 +161,7 @@
 
   "err.invalid_address": "Indirizzo non valido: {e}",
   "err.entry_not_found": "Scheda non trovata",
+  "err.already_in_book": "Questo ID è già in rubrica",
   "err.id_digits": "L'ID è di 9 cifre",
   "err.set_server_first": "Imposta prima il server",
   "err.session_error": "La sessione si è chiusa con un errore",
@@ -242,6 +244,7 @@
   "server.delete_shared_only": "si possono eliminare solo le rubriche condivise",
   "server.entry_exists": "questo computer è già in quella rubrica",
   "server.no_address_book": "la rubrica non è disponibile su questo server",
+  "server.pro_required": "questa funzione richiede NuviraHub Pro sul server",
   "server.old_version": "versione del protocollo non supportata: aggiorna NuviraHub",
   "server.unreachable": "il dispositivo non è raggiungibile",
   "server.self_connect": "non ci si può collegare al dispositivo che si sta usando",

@@ -2,18 +2,25 @@ package signal
 
 import (
 	"errors"
+	"time"
 
-	"github.com/nuvira-hub/nuvira/server/internal/accounts"
+	"github.com/nuvira-hub/nuvira/server/internal/ext"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
 )
 
-// api answers a request about accounts and address book. First of all a sign-in
-// is needed (Login or LoginToken), which stays bound to the connection.
+// Limits of GetPresence, which needs no sign-in.
+const (
+	maxPresenceIDs   = 256
+	presenceInterval = 2 * time.Second
+)
+
+// api answers a request of the app. The open server only answers GetPresence;
+// the rest belongs to the modules (address book, accounts, rules).
 func (s *Server) api(c *client, req *pb.ApiRequest) {
 	resp := &pb.ApiResponse{Id: req.Id}
 	if err := s.apiCall(c, req, resp); err != nil {
-		if !errors.Is(err, accounts.ErrDenied) {
-			s.log.Warn("address book request failed", "device", c.device.ID, "err", err)
+		if !errors.Is(err, ext.ErrDenied) && !errors.Is(err, ext.ErrNotAvailable) {
+			s.log.Warn("app request failed", "device", c.device.ID, "err", err)
 		}
 		resp.Result = nil
 		resp.Error = err.Error()
@@ -22,109 +29,66 @@ func (s *Server) api(c *client, req *pb.ApiRequest) {
 }
 
 func (s *Server) apiCall(c *client, req *pb.ApiRequest, resp *pb.ApiResponse) error {
-	if s.accounts == nil {
-		return errors.New("@server.no_address_book")
+	if call, ok := req.Call.(*pb.ApiRequest_GetPresence); ok {
+		return s.getPresence(c, call.GetPresence, resp)
 	}
-	switch call := req.Call.(type) {
-	case *pb.ApiRequest_Login:
-		session, err := s.accounts.Login(call.Login.Username, call.Login.Password)
-		if err != nil {
-			s.log.Info("address book sign-in rejected", "user", call.Login.Username, "from", c.conn.RemoteAddr())
+	for _, m := range s.modules {
+		if handled, err := m.Api(c, req, resp); handled {
 			return err
 		}
-		s.log.Info("address book sign-in", "user", session.Account.Username, "device", c.device.ID)
-		c.setSession(session)
-		resp.Result = &pb.ApiResponse_Session{Session: session}
-		return nil
-	case *pb.ApiRequest_LoginToken:
-		session, err := s.accounts.LoginToken(call.LoginToken.Token)
-		if err != nil {
-			return err
-		}
-		c.setSession(session)
-		resp.Result = &pb.ApiResponse_Session{Session: session}
-		return nil
 	}
-
-	account, token := c.currentSession()
-	if account == nil {
-		return errors.New("@err.login_required")
-	}
-	switch call := req.Call.(type) {
-	case *pb.ApiRequest_Logout:
-		c.setSession(nil)
-		return s.accounts.Logout(token)
-	case *pb.ApiRequest_ChangePassword:
-		return s.accounts.ChangePassword(account, call.ChangePassword.OldPassword, call.ChangePassword.NewPassword)
-	case *pb.ApiRequest_GetBooks:
-		books, err := s.accounts.Books(account)
-		if err == nil {
-			s.presence(books)
-		}
-		resp.Result = &pb.ApiResponse_Books{Books: books}
-		return err
-	case *pb.ApiRequest_PutEntry:
-		entry, err := s.accounts.PutEntry(account, call.PutEntry)
-		resp.Result = &pb.ApiResponse_Entry{Entry: entry}
-		return err
-	case *pb.ApiRequest_AutoAdd:
-		entry, err := s.accounts.AutoAdd(account, call.AutoAdd)
-		if entry != nil {
-			resp.Result = &pb.ApiResponse_Entry{Entry: entry}
-		}
-		return err
-	case *pb.ApiRequest_DeleteEntry:
-		return s.accounts.DeleteEntry(account, call.DeleteEntry.Id)
-	case *pb.ApiRequest_ListAccounts:
-		list, err := s.accounts.ListAccounts(account)
-		resp.Result = &pb.ApiResponse_Accounts{Accounts: list}
-		return err
-	case *pb.ApiRequest_PutAccount:
-		saved, err := s.accounts.PutAccount(account, call.PutAccount)
-		resp.Result = &pb.ApiResponse_Account{Account: saved}
-		return err
-	case *pb.ApiRequest_DeleteAccount:
-		return s.accounts.DeleteAccount(account, call.DeleteAccount.Id)
-	case *pb.ApiRequest_PutBook:
-		book, err := s.accounts.PutBook(account, call.PutBook)
-		resp.Result = &pb.ApiResponse_Book{Book: book}
-		return err
-	case *pb.ApiRequest_DeleteBook:
-		return s.accounts.DeleteBook(account, call.DeleteBook.Id)
-	case *pb.ApiRequest_GetPolicy:
-		policy, err := s.accounts.Policy()
-		resp.Result = &pb.ApiResponse_Policy{Policy: policy}
-		return err
-	case *pb.ApiRequest_PutPolicy:
-		policy, err := s.accounts.PutPolicy(account, call.PutPolicy)
-		if err == nil {
-			s.broadcastPolicy(policy)
-		}
-		resp.Result = &pb.ApiResponse_Policy{Policy: policy}
-		return err
-	default:
-		return errors.New("unknown request")
-	}
+	return ext.ErrNotAvailable
 }
 
-func (c *client) setSession(session *pb.Session) {
+// getPresence tells which of the devices are connected, for the address books
+// kept in the apps.
+func (s *Server) getPresence(c *client, req *pb.GetPresence, resp *pb.ApiResponse) error {
+	if len(req.GetDeviceIds()) > maxPresenceIDs {
+		return errors.New("too many devices")
+	}
+	c.mu.Lock()
+	early := time.Since(c.lastPresence) < presenceInterval
+	if !early {
+		c.lastPresence = time.Now()
+	}
+	c.mu.Unlock()
+	if early {
+		return errors.New("too many requests")
+	}
+	s.mu.Lock()
+	list := make([]*pb.Presence, 0, len(req.GetDeviceIds()))
+	for _, id := range req.GetDeviceIds() {
+		list = append(list, &pb.Presence{DeviceId: id, Online: s.online[id] != nil})
+	}
+	s.mu.Unlock()
+	for _, p := range list {
+		if d, err := s.store.ByID(p.DeviceId); err == nil && d != nil {
+			p.LastSeen = d.LastSeen.Unix()
+		}
+	}
+	resp.Result = &pb.ApiResponse_Presence{Presence: &pb.PresenceList{Devices: list}}
+	return nil
+}
+
+// DeviceID, RemoteAddr, Session and SetSession make the connection an ext.Conn.
+func (c *client) DeviceID() string   { return c.device.ID }
+func (c *client) RemoteAddr() string { return c.conn.RemoteAddr().String() }
+
+func (c *client) Session() *pb.Session {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.session
+}
+
+func (c *client) SetSession(session *pb.Session) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.session = session
 }
 
-func (c *client) currentSession() (*pb.Account, string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.session == nil {
-		return nil, ""
-	}
-	return c.session.Account, c.session.Token
-}
-
-// presence fills in whether each device of the books is connected now, or when it
+// Presence fills in whether each device of the books is connected now, or when it
 // was last seen.
-func (s *Server) presence(books *pb.Books) {
+func (s *Server) Presence(books *pb.Books) {
 	s.mu.Lock()
 	online := make(map[string]bool, len(s.online))
 	for id := range s.online {
@@ -141,8 +105,8 @@ func (s *Server) presence(books *pb.Books) {
 	}
 }
 
-// broadcastPolicy sends the new rules to every device connected.
-func (s *Server) broadcastPolicy(policy *pb.Policy) {
+// BroadcastPolicy sends the new rules to every device connected.
+func (s *Server) BroadcastPolicy(policy *pb.Policy) {
 	s.mu.Lock()
 	devices := make([]*client, 0, len(s.online))
 	for _, c := range s.online {

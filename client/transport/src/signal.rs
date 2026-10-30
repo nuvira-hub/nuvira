@@ -25,6 +25,8 @@ pub struct Signal {
     pub device_id: String,
     /// Rules of the server for its devices (all off from servers without them).
     pub policy: nuvira_proto::v1::Policy,
+    /// Optional modules of the server (NuviraHub Pro), e.g. "pro.address_book".
+    pub features: Vec<String>,
     /// Server address: it is also the relay address.
     pub server: SocketAddr,
     /// Fingerprint of the server certificate seen in this connection.
@@ -169,12 +171,21 @@ pub async fn connect(
     };
     let signature = identity.sign(&[REGISTER_CONTEXT, &nonce].concat())?;
     tx.send(client_message::Msg::Proof(Proof { signature })).await?;
-    let (device_id, policy) = match rx.recv().await? {
-        Some(server_message::Msg::Registered(r)) => (r.device_id, r.policy.unwrap_or_default()),
+    let (device_id, policy, features) = match rx.recv().await? {
+        Some(server_message::Msg::Registered(r)) => (r.device_id, r.policy.unwrap_or_default(), r.features),
         Some(server_message::Msg::Error(e)) => bail!("the server refuses the registration: {}", e.message),
         other => bail!("unexpected answer to the registration: {other:?}"),
     };
-    Ok(Signal { device_id, policy, server, server_fingerprint, transport: transport.clone(), tx, rx })
+    Ok(Signal {
+        device_id,
+        policy,
+        features,
+        server,
+        server_fingerprint,
+        transport: transport.clone(),
+        tx,
+        rx,
+    })
 }
 
 /// Fingerprints of the servers already seen (`servers.txt` in the data folder): at

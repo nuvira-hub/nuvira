@@ -21,3 +21,4 @@
 | 17 | [Address book](17-address-book.md) | Accounts, personal and shared address books on the server |
 | 18 | [Installation on Windows](18-installer.md) | One program, server in the file name, install from the app, NSIS setup |
 | 19 | [Automatic updates](19-updates.md) | Signed versions from the own server, service and portable copies |
+| 20 | [Open core and Pro](20-open-core.md) | Open client and server, Pro modules with a licence, repositories, licence check |

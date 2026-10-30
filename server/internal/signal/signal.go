@@ -19,7 +19,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"google.golang.org/protobuf/encoding/protodelim"
 
-	"github.com/nuvira-hub/nuvira/server/internal/accounts"
+	"github.com/nuvira-hub/nuvira/server/internal/ext"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
 	"github.com/nuvira-hub/nuvira/server/internal/relay"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
@@ -44,8 +44,10 @@ type client struct {
 	// Not reachable as a device (viewer, app using the address book): it is not
 	// listed as online and does not disconnect other connections with the same key.
 	apiOnly bool
-	// Address book sign-in made on this connection.
+	// Sign-in made on this connection (modules with accounts).
 	session *pb.Session
+	// Last GetPresence, to limit how often it is asked.
+	lastPresence time.Time
 }
 
 func (c *client) send(msg *pb.ServerMessage) error {
@@ -63,22 +65,25 @@ type pending struct {
 }
 
 type Server struct {
-	store    *store.Store
-	accounts *accounts.Service
-	relay    *relay.Relay
-	log      *slog.Logger
+	store   *store.Store
+	modules []ext.Module
+	relay   *relay.Relay
+	log     *slog.Logger
 
 	mu       sync.Mutex
 	online   map[string]*client // by device ID
 	sessions map[string]*pending
 }
 
-func New(st *store.Store, acc *accounts.Service, r *relay.Relay, log *slog.Logger) *Server {
+func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
 	return &Server{
-		store: st, accounts: acc, relay: r, log: log,
+		store: st, relay: r, log: log,
 		online: map[string]*client{}, sessions: map[string]*pending{},
 	}
 }
+
+// SetModules sets the optional modules, before Serve.
+func (s *Server) SetModules(modules []ext.Module) { s.modules = modules }
 
 // Serve accepts connections until the listener is closed.
 func (s *Server) Serve(ctx context.Context, ln *quic.Listener) error {
@@ -189,9 +194,12 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	}
 	c.device = device
 	registered := &pb.Registered{DeviceId: device.ID}
-	if s.accounts != nil {
-		if registered.Policy, err = s.accounts.Policy(); err != nil {
-			return nil, err
+	for _, m := range s.modules {
+		registered.Features = append(registered.Features, m.Features()...)
+		if registered.Policy == nil {
+			if registered.Policy, err = m.Policy(); err != nil {
+				return nil, err
+			}
 		}
 	}
 	err = c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Registered{Registered: registered}})

@@ -18,9 +18,7 @@
   <PostArgs/>
   <Config Name="Port (UDP)" Target="21116" Default="21116" Mode="udp" Description="Signalling and relay (QUIC). Forward it on the router." Type="Port" Display="always" Required="true" Mask="false">21116</Config>
   <Config Name="Port (TCP)" Target="21116" Default="21116" Mode="tcp" Description="WebSocket fallback for networks that block UDP. Forward it on the router." Type="Port" Display="always" Required="false" Mask="false">21116</Config>
-  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/nuvira-server" Mode="rw" Description="Database, server certificate and address book key. Back up the whole folder." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/nuvira-server</Config>
-  <Config Name="Admin user" Target="NUVIRA_ADMIN_USER" Default="admin" Mode="" Description="First address book administrator, created only if no account exists yet." Type="Variable" Display="always" Required="false" Mask="false">admin</Config>
-  <Config Name="Admin password" Target="NUVIRA_ADMIN_PASSWORD" Default="" Mode="" Description="At least 8 characters. Empty: a random password is written once to the log. Used only at the first start." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/nuvira-server" Mode="rw" Description="Database and server certificate. Back up the whole folder." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/nuvira-server</Config>
   <Config Name="Log level" Target="NUVIRA_LOG" Default="info" Mode="" Description="debug, info or warn." Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
   <Config Name="WebSocket listen" Target="NUVIRA_WS_LISTEN" Default=":21116" Mode="" Description="TCP address of the WebSocket fallback; off to disable it." Type="Variable" Display="advanced" Required="false" Mask="false">:21116</Config>
 </Container>

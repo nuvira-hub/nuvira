@@ -53,6 +53,7 @@
   "address_book.personal": "{name} · solo usted",
   "address_book.shared": "{name} · compartida",
   "address_book.personal_option": "{name} (solo usted)",
+  "address_book.local": "En este equipo",
   "address_book.empty_book": "Aún no hay fichas: añada una con «Nueva ficha».",
   "address_book.not_found": "No se encontraron fichas.",
   "address_book.edit": "Editar",
@@ -160,6 +161,7 @@
 
   "err.invalid_address": "Dirección no válida: {e}",
   "err.entry_not_found": "Ficha no encontrada",
+  "err.already_in_book": "Este ID ya está en la libreta de direcciones",
   "err.id_digits": "El ID tiene 9 cifras",
   "err.set_server_first": "Indique primero el servidor",
   "err.session_error": "La sesión terminó con un error",
@@ -242,6 +244,7 @@
   "server.delete_shared_only": "solo se pueden eliminar las libretas compartidas",
   "server.entry_exists": "este equipo ya está en esa libreta",
   "server.no_address_book": "la libreta de direcciones no está disponible en este servidor",
+  "server.pro_required": "esta función requiere NuviraHub Pro en el servidor",
   "server.old_version": "versión del protocolo no admitida: actualice NuviraHub",
   "server.unreachable": "el dispositivo no está accesible",
   "server.self_connect": "no puede conectarse al dispositivo que está usando",

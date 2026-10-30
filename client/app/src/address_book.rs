@@ -1,9 +1,11 @@
-//! Address book on the server: sign-in with the account, device entries,
-//! management of accounts and shared address books (administrators). See
-//! docs/17-address-book.md.
+//! Address books: the one on this computer ([`crate::local_book`]) and, when the
+//! server has the address book module (NuviraHub Pro, feature "pro.address_book"),
+//! the server's: sign-in with the account, device entries, management of accounts
+//! and shared address books (administrators). See docs/17-address-book.md.
 //!
 //! The connection with the server opens at first use and reopens by itself if it
-//! drops; the sign-in is remembered with the token saved in `app.json`, never the password.
+//! drops; it also tells which devices of the local book are online. The sign-in is
+//! remembered with the token saved in `app.json`, never the password.
 
 use nuvira_i18n::{t, tf};
 use nuvira_proto::v1::{self as pb, api_request::Call, api_response::Result as ApiResult};
@@ -12,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
 
-use crate::{NuviraApp, load_settings, save_settings};
+use crate::{NuviraApp, load_settings, local_book, save_settings};
+
+/// Feature of servers with the address book module (accounts, shared books).
+pub const PRO_ADDRESS_BOOK: &str = "pro.address_book";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AccountUi {
@@ -32,6 +37,8 @@ pub struct BookUi {
     pub id: i64,
     pub name: String,
     pub personal: bool,
+    /// The book kept on this computer.
+    pub local: bool,
     pub member_ids: Vec<i64>,
     pub entries: Vec<EntryUi>,
 }
@@ -131,16 +138,20 @@ async fn client(app: &AppHandle) -> Result<ApiClient, String> {
     if let Some(client) = guard.as_ref().filter(|c| !c.is_closed()) {
         return Ok(client.clone());
     }
-    let token = load_settings().token.ok_or_else(|| t("err.login_required"))?;
     let client = open(app).await?;
-    match client.call(Call::LoginToken(pb::LoginToken { token })).await {
-        Ok(Some(ApiResult::Session(session))) => set_account(app, session.account),
-        Ok(_) => return Err(t("err.unexpected")),
-        Err(e) => {
-            // Expired or revoked token: back to the sign-in panel.
-            warn!("remembered sign-in not valid: {e:#}");
-            forget(app);
-            return Err(t("err.session_expired"));
+    let features = client.features().to_vec();
+    let pro = features.iter().any(|f| f == PRO_ADDRESS_BOOK);
+    state.update(app, |ui| ui.features = features);
+    if pro && let Some(token) = load_settings().token {
+        match client.call(Call::LoginToken(pb::LoginToken { token })).await {
+            Ok(Some(ApiResult::Session(session))) => set_account(app, session.account),
+            Ok(_) => return Err(t("err.unexpected")),
+            Err(e) => {
+                // Expired or revoked token: back to the sign-in panel.
+                warn!("remembered sign-in not valid: {e:#}");
+                forget(app);
+                return Err(t("err.session_expired"));
+            }
         }
     }
     *guard = Some(client.clone());
@@ -196,11 +207,8 @@ fn forget(app: &AppHandle) {
     });
 }
 
-/// At start-up: if there is a remembered sign-in, loads the address book.
+/// At start-up and when the server changes: loads the address books.
 pub fn restore(app: &AppHandle) {
-    if load_settings().token.is_none() {
-        return;
-    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(e) = refresh(&app).await {
@@ -210,48 +218,106 @@ pub fn restore(app: &AppHandle) {
     });
 }
 
-/// While signed in, the books are read again every 30 s: who is online changes.
+/// The books are read again every 30 s: who is online changes.
 pub fn start_presence(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            let signed_in = app.state::<NuviraApp>().ui.lock().expect("state").account.is_some();
-            if signed_in && let Err(e) = refresh(&app).await {
+            if let Err(e) = refresh(&app).await {
                 tracing::debug!("address book not refreshed: {e}");
             }
         }
     });
 }
 
+/// Reads the books again: the local one always, the server's when signed in.
 pub async fn refresh(app: &AppHandle) -> Result<(), String> {
-    let Some(ApiResult::Books(books)) = call(app, Call::GetBooks(pb::GetBooks {})).await? else {
+    let state = app.state::<NuviraApp>();
+    let mut local = local_book::book();
+    let server_set = !state.ui.lock().expect("state").server.is_empty();
+    let mut books = Vec::new();
+    let mut error = None;
+    if server_set {
+        // Opens the connection (and the remembered sign-in) if needed.
+        match client(app).await {
+            Ok(_) => {
+                if state.ui.lock().expect("state").account.is_some() {
+                    match call(app, Call::GetBooks(pb::GetBooks {})).await {
+                        Ok(Some(ApiResult::Books(list))) => {
+                            books = list.books.into_iter().map(book_ui).collect()
+                        }
+                        Ok(_) => error = Some(t("err.unexpected")),
+                        Err(e) => error = Some(e),
+                    }
+                }
+                if let Err(e) = presence(app, &mut local).await {
+                    tracing::debug!("presence of the local book not read: {e}");
+                }
+            }
+            // Without a sign-in the local book needs no server: no error shown.
+            Err(e) if state.ui.lock().expect("state").account.is_none() => {
+                tracing::debug!("server not reachable for the address book: {e}");
+            }
+            Err(e) => error = Some(e),
+        }
+    }
+    books.push(local);
+    state.update(app, |ui| {
+        ui.books = books;
+        ui.address_book_error = error.clone();
+    });
+    error.map_or(Ok(()), Err)
+}
+
+fn book_ui(b: pb::Book) -> BookUi {
+    BookUi {
+        id: b.id,
+        name: b.name,
+        personal: b.personal,
+        local: false,
+        member_ids: b.member_ids,
+        entries: b.entries.into_iter().map(Into::into).collect(),
+    }
+}
+
+/// Online state of the local entries, from the server (no sign-in needed).
+async fn presence(app: &AppHandle, book: &mut BookUi) -> Result<(), String> {
+    if book.entries.is_empty() {
+        return Ok(());
+    }
+    let device_ids = book.entries.iter().map(|e| e.device_id.clone()).collect();
+    let Some(ApiResult::Presence(list)) =
+        call(app, Call::GetPresence(pb::GetPresence { device_ids })).await?
+    else {
         return Err(t("err.unexpected"));
     };
-    let books = books
-        .books
-        .into_iter()
-        .map(|b| BookUi {
-            id: b.id,
-            name: b.name,
-            personal: b.personal,
-            member_ids: b.member_ids,
-            entries: b.entries.into_iter().map(Into::into).collect(),
-        })
-        .collect();
-    app.state::<NuviraApp>().update(app, |ui| {
-        ui.books = books;
-        ui.address_book_error = None;
-    });
+    for p in list.devices {
+        for e in book.entries.iter_mut().filter(|e| e.device_id == p.device_id) {
+            e.online = p.online;
+            e.last_seen = p.last_seen;
+        }
+    }
     Ok(())
 }
 
-/// At the first successful connection to an ID that is in no address book, adds it to the personal one.
+/// At the first successful connection to an ID that is in no address book, adds it
+/// to the personal one on the server when signed in, otherwise to the local one.
 pub fn auto_add(app: &AppHandle, device_id: String, name: String, password: String) {
+    let app = app.clone();
     if app.state::<NuviraApp>().ui.lock().expect("state").account.is_none() {
+        match local_book::auto_add(&device_id, &name, &password) {
+            Ok(true) => {
+                info!("device {device_id} added to the local address book");
+                tauri::async_runtime::spawn(async move {
+                    let _ = refresh(&app).await;
+                });
+            }
+            Ok(false) => {}
+            Err(e) => warn!("automatic add to the local address book failed: {e}"),
+        }
         return;
     }
-    let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let entry = pb::Entry { device_id, name, password, ..Default::default() };
         match call(&app, Call::AutoAdd(entry)).await {
@@ -270,6 +336,9 @@ pub fn auto_add(app: &AppHandle, device_id: String, name: String, password: Stri
 #[tauri::command]
 pub async fn address_book_login(app: AppHandle, username: String, password: String) -> Result<(), String> {
     let client = open(&app).await?;
+    if !client.features().iter().any(|f| f == PRO_ADDRESS_BOOK) {
+        return Err(t("server.pro_required"));
+    }
     let Some(ApiResult::Session(session)) =
         client.call(Call::Login(pb::Login { username, password })).await.map_err(|e| format!("{e:#}"))?
     else {
@@ -288,6 +357,7 @@ pub async fn address_book_logout(app: AppHandle) {
     let _ = call(&app, Call::Logout(pb::Logout {})).await;
     *app.state::<NuviraApp>().address_book.client.lock().await = None;
     forget(&app);
+    let _ = refresh(&app).await;
 }
 
 #[tauri::command]
@@ -297,13 +367,22 @@ pub async fn address_book_refresh(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn address_book_save_entry(app: AppHandle, entry: EntryUi) -> Result<(), String> {
-    call(&app, Call::PutEntry(entry.into())).await?;
+    if entry.book_id == local_book::BOOK_ID {
+        local_book::put(entry)?;
+    } else {
+        call(&app, Call::PutEntry(entry.into())).await?;
+    }
     refresh(&app).await
 }
 
 #[tauri::command]
 pub async fn address_book_delete_entry(app: AppHandle, id: i64) -> Result<(), String> {
-    call(&app, Call::DeleteEntry(pb::DeleteEntry { id })).await?;
+    // Local entries have negative IDs.
+    if id < 0 {
+        local_book::delete(id)?;
+    } else {
+        call(&app, Call::DeleteEntry(pb::DeleteEntry { id })).await?;
+    }
     refresh(&app).await
 }
 

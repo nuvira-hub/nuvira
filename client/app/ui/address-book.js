@@ -66,16 +66,20 @@ function entryDetails(entry) {
 function renderAddressBook(state) {
   addressBook = state;
   const account = state.account;
-  $("login-form").classList.toggle("hidden", Boolean(account));
-  $("address-book-list").classList.toggle("hidden", !account);
-  $("address-book-tools").classList.toggle("hidden", !account);
+  // Accounts and shared books only with the server's address book module (Pro);
+  // the book on this computer is always there.
+  const pro = (state.features ?? []).includes("pro.address_book");
+  $("login-form").classList.toggle("hidden", Boolean(account) || !pro);
+  $("address-book-list").classList.remove("hidden");
+  $("address-book-tools").classList.remove("hidden");
   $("nav-admin").classList.toggle("hidden", !account?.admin);
-  $("account-out").classList.toggle("hidden", Boolean(account));
+  $("account-title").classList.toggle("hidden", !pro && !account);
+  $("account-out").classList.toggle("hidden", Boolean(account) || !pro);
   $("account-in").classList.toggle("hidden", !account);
   if (account) $("account-name").textContent = t("settings.signed_in", { name: account.username });
-  if (state.address_book_error) showMessage("address-book-message", state.address_book_error);
-  $("connect-hint").textContent = t(account ? "connect.hint_address_book" : "connect.hint");
-  $("remote-id").placeholder = t(account ? "connect.id_placeholder_address_book" : "connect.id_placeholder");
+  showMessage("address-book-message", state.address_book_error ?? null);
+  $("connect-hint").textContent = t("connect.hint_address_book");
+  $("remote-id").placeholder = t("connect.id_placeholder_address_book");
   renderEntries();
   if (!editingAccount) $("account-save").textContent = t("admin.add");
   if (!editingBook) $("book-save").textContent = t("admin.create_book");
@@ -103,7 +107,11 @@ function renderEntries() {
   for (const book of books) {
     const entries = book.entries.filter((e) => matches(e, query));
     if (query && entries.length === 0) continue;
-    const label = book.personal ? t("address_book.personal", { name: bookName(book) }) : t("address_book.shared", { name: book.name });
+    const label = book.local
+      ? bookName(book)
+      : book.personal
+        ? t("address_book.personal", { name: bookName(book) })
+        : t("address_book.shared", { name: book.name });
     children.push(el("p", "book-title", `${label} (${book.entries.length})`));
     if (entries.length === 0) children.push(el("p", "empty", t("address_book.empty_book")));
     // The server sends them sorted by group: a heading where the group changes.
@@ -118,8 +126,9 @@ function renderEntries() {
   $("address-book-list").replaceChildren(...children);
 }
 
-// The personal address book is named in the interface language.
+// The personal and the local address book are named in the interface language.
 function bookName(book) {
+  if (book.local) return t("address_book.local");
   return book.personal ? t("address_book.personal_book") : book.name;
 }
 
@@ -190,7 +199,7 @@ function hideSuggestions() {
 function renderSuggestions() {
   const query = $("remote-id").value.trim().toLowerCase();
   if (!chosenEntry()) $("remote-password").placeholder = t("connect.password_placeholder");
-  if (!addressBook?.account || query.length < 2) {
+  if (query.length < 2) {
     hideSuggestions();
     return;
   }
@@ -245,13 +254,13 @@ function openEntry(entry) {
   const books = addressBook?.books ?? [];
   $("entry-book").replaceChildren(
     ...books.map((b) => {
-      const option = el("option", "", b.personal ? t("address_book.personal_option", { name: bookName(b) }) : b.name);
+      const option = el("option", "", b.personal ? t("address_book.personal_option", { name: bookName(b) }) : bookName(b));
       option.value = b.id;
       return option;
     }),
   );
   $("entry-title").textContent = t(entry ? "entry.edit" : "entry.new");
-  $("entry-book").value = entry ? entry.book_id : (books.find((b) => b.personal) ?? books[0])?.id;
+  $("entry-book").value = entry ? entry.book_id : (books.find((b) => b.personal) ?? books.find((b) => b.local) ?? books[0])?.id;
   $("entry-device").value = entry ? formatId(entry.device_id) : "";
   $("entry-group").value = entry ? entry.group : "";
   $("entry-tags").value = entry ? entry.tags.join(", ") : "";
@@ -401,7 +410,7 @@ function renderAdmin() {
     }),
   );
 
-  const shared = (addressBook?.books ?? []).filter((b) => !b.personal);
+  const shared = (addressBook?.books ?? []).filter((b) => !b.personal && !b.local);
   const books = shared.map((book) => {
     const row = el("div", "row");
     const members = book.member_ids.length;

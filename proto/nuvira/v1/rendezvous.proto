@@ -64,6 +64,9 @@ message Registered {
   string device_id = 1;
   // Rules of this server for its devices (see Policy).
   Policy policy = 2;
+  // Optional modules of this server (NuviraHub Pro), e.g. "pro.address_book",
+  // "pro.policy": the app shows their functions only when they are listed.
+  repeated string features = 3;
 }
 
 // Rules the server's administrator sets for all its devices, sent at registration
@@ -149,10 +152,28 @@ message ApiRequest {
     // Rules for the devices: anyone signed in reads them, administrators change them.
     GetPolicy get_policy = 15;
     Policy put_policy = 16;
+    // Whether some devices are connected now; needs no sign-in (local address book).
+    GetPresence get_presence = 17;
   }
 }
 
 message GetPolicy {}
+
+// At most 256 IDs per request.
+message GetPresence {
+  repeated string device_ids = 1;
+}
+
+message Presence {
+  string device_id = 1;
+  bool online = 2;
+  // Seconds since 1970; 0 = never on this server.
+  int64 last_seen = 3;
+}
+
+message PresenceList {
+  repeated Presence devices = 1;
+}
 
 message ApiResponse {
   uint32 id = 1;
@@ -166,6 +187,7 @@ message ApiResponse {
     Book book = 7;
     Account account = 8;
     Policy policy = 9;
+    PresenceList presence = 10;
   }
 }
 

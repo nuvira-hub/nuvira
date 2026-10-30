@@ -8,13 +8,13 @@
 //	               as wss:// on 443 behind a reverse proxy.
 //	NUVIRA_DATA_DIR  folder for database and certificate (default "./data")
 //	NUVIRA_LOG       debug | info (default) | warn
-//	NUVIRA_ADMIN_USER, NUVIRA_ADMIN_PASSWORD  first address book administrator,
-//	                   created only if no account exists (default "admin" with a
-//	                   random password written once to the log)
 //	NUVIRA_RELAY_FAKE_REFLEXIVE  tests only: announces unreachable public addresses
 //	                   (simulates two devices behind the same router)
 //	NUVIRA_RELAY_IMPAIR  tests only: simulates a worse network on the relay, e.g.
 //	                   "delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
+//
+// Builds with modules (NuviraHub Pro) register them with package ext and read
+// their own variables.
 //
 // `nuvira-server healthcheck` checks that the server answers (used by Docker).
 package main
@@ -34,7 +34,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/nuvira-hub/nuvira/server/internal/accounts"
+	"github.com/nuvira-hub/nuvira/server/internal/ext"
 	"github.com/nuvira-hub/nuvira/server/internal/relay"
 	nuvirasignal "github.com/nuvira-hub/nuvira/server/internal/signal"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
@@ -67,7 +67,7 @@ func main() {
 		return
 	}
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "errore:", err)
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
@@ -120,11 +120,21 @@ func run() error {
 	}
 	tr := &quic.Transport{Conn: conn}
 
+	srv := nuvirasignal.New(st, rl, log)
+	modules, err := ext.Open(ext.Env{DB: st.DB(), DataDir: dataDir, Log: log, Host: srv})
+	if err != nil {
+		return fmt.Errorf("modules: %w", err)
+	}
+	srv.SetModules(modules)
+
 	if wsListen := env("NUVIRA_WS_LISTEN", ":21116"); wsListen != "off" {
 		conn.WebSockets().SetLogger(log)
 		mux := http.NewServeMux()
 		mux.Handle("/nuvira", conn.WebSockets())
 		mux.Handle(updates.Prefix, updates.Handler(filepath.Join(dataDir, "updates")))
+		for _, m := range modules {
+			m.Routes(mux)
+		}
 		wsServer := &http.Server{Addr: wsListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		go func() {
 			if err := wsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -147,29 +157,6 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	keyPath := filepath.Join(dataDir, "address-book.key")
-	// Name used before 2026-10-27: keep the existing key, or the saved passwords become unreadable.
-	if old := filepath.Join(dataDir, "rubrica.key"); fileExists(old) && !fileExists(keyPath) {
-		if err := os.Rename(old, keyPath); err != nil {
-			return err
-		}
-		log.Info("address book key renamed", "from", old, "to", keyPath)
-	}
-	acc, err := accounts.Open(st.DB(), keyPath)
-	if err != nil {
-		return err
-	}
-	created, generated, err := acc.Bootstrap(os.Getenv("NUVIRA_ADMIN_USER"), os.Getenv("NUVIRA_ADMIN_PASSWORD"))
-	if err != nil {
-		return fmt.Errorf("first administrator: %w", err)
-	}
-	if created && generated != "" {
-		log.Warn("address book administrator account created: change the password from the app",
-			"user", env("NUVIRA_ADMIN_USER", "admin"), "password", generated)
-	} else if created {
-		log.Info("address book administrator account created", "user", env("NUVIRA_ADMIN_USER", "admin"))
-	}
-	srv := nuvirasignal.New(st, acc, rl, log)
 	go func() {
 		<-ctx.Done()
 		ln.Close()
@@ -195,9 +182,4 @@ func healthcheck() error {
 		return err
 	}
 	return conn.CloseWithError(0, "")
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

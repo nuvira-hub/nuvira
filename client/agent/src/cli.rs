@@ -13,7 +13,8 @@ use nuvira_codec::EncoderChoice;
 use tokio::sync::mpsc;
 use tracing::info;
 
-const COPYRIGHT: &str = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/nuvira-hub/nuvira";
+const COPYRIGHT: &str =
+    "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/nuvira-hub/nuvira";
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about = "NuviraHub agent: makes this PC controllable", after_help = COPYRIGHT)]
@@ -68,11 +69,11 @@ struct Args {
     view_only: bool,
 
     /// nuvira-server to register with (host[:port]): the viewer connects by ID.
-    #[arg(long, value_name = "HOST[:PORTA]")]
+    #[arg(long, value_name = "HOST[:PORT]")]
     server: Option<String>,
 
     /// Server certificate fingerprint. Without it, the one seen at the first connection is remembered.
-    #[arg(long, value_name = "IMPRONTA")]
+    #[arg(long, value_name = "FINGERPRINT")]
     server_key: Option<String>,
 
     /// Transport towards the server: auto (UDP, then WebSocket if UDP is blocked), udp, websocket.

@@ -10,10 +10,6 @@ services:
       - "21116:21116/tcp"
     environment:
       NUVIRA_LOG: info
-      # First address book administrator (only if no account exists yet); without
-      # a password a random one is written once to the log.
-      # NUVIRA_ADMIN_USER: admin
-      # NUVIRA_ADMIN_PASSWORD: change-me
     volumes:
       - nuvira-data:/data
 

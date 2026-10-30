@@ -1,6 +1,13 @@
-# NuviraHub — Central address book
+# NuviraHub — Address books
 
 [← Index](README.md)
+
+Since 0.4.0 (decision D20, [20-open-core.md](20-open-core.md)) there are two address books:
+
+- **Local** (open): kept by each app in `address-book.json` next to `app.json`, with the device passwords protected with DPAPI (only the same Windows user on the same PC reads them). Entries have negative IDs; groups, tags, search and the automatic add at the first connection work as in the server's books. The online state comes from the server with `GetPresence` (at most 256 IDs, once every 2 s per connection, no sign-in).
+- **Central** (NuviraHub Pro, feature `pro.address_book`): described below. Its code (`server/internal/accounts` until 0.3.0) is in the private `nuvira-pro` repository. With a Pro server the app shows the local book next to the server's books.
+
+## Central address book (Pro)
 
 Part of phase 2 (decision D16). Like Supremo or RustDesk Pro, the address book is kept **on the server**: a technician signs in from the NuviraHub app with an account and finds their devices on any PC.
 
@@ -13,7 +20,7 @@ Part of phase 2 (decision D16). Like Supremo or RustDesk Pro, the address book i
 | Account and book management | Only from the NuviraHub app (no web console before phase 5) |
 | Adding devices | Automatically at the first successful connection, plus by hand |
 
-## Model (`server/internal/accounts`)
+## Model (Pro module)
 
 | Table | Content |
 |---|---|

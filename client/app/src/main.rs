@@ -11,6 +11,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod address_book;
+mod local_book;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -49,6 +50,9 @@ struct UiState {
     account: Option<address_book::AccountUi>,
     books: Vec<address_book::BookUi>,
     address_book_error: Option<String>,
+    /// Optional modules of the server (NuviraHub Pro): the interface shows their
+    /// functions only when listed.
+    features: Vec<String>,
     /// Newer version offered by the server (app not installed: the service updates
     /// an installed one by itself).
     update: Option<String>,
@@ -444,12 +448,16 @@ fn set_server(app: AppHandle, state: State<NuviraApp>, server: String) -> Result
         if changed {
             ui.account = None;
             ui.books.clear();
+            ui.features.clear();
         }
     });
     if changed && let Ok(mut client) = state.address_book.client_slot() {
         *client = None;
     }
     start_agent(&app);
+    if changed {
+        address_book::restore(&app);
+    }
     Ok(())
 }
 

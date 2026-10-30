@@ -570,7 +570,10 @@ type Registered struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	DeviceId string                 `protobuf:"bytes,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
 	// Rules of this server for its devices (see Policy).
-	Policy        *Policy `protobuf:"bytes,2,opt,name=policy,proto3" json:"policy,omitempty"`
+	Policy *Policy `protobuf:"bytes,2,opt,name=policy,proto3" json:"policy,omitempty"`
+	// Optional modules of this server (NuviraHub Pro), e.g. "pro.address_book",
+	// "pro.policy": the app shows their functions only when they are listed.
+	Features      []string `protobuf:"bytes,3,rep,name=features,proto3" json:"features,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -615,6 +618,13 @@ func (x *Registered) GetDeviceId() string {
 func (x *Registered) GetPolicy() *Policy {
 	if x != nil {
 		return x.Policy
+	}
+	return nil
+}
+
+func (x *Registered) GetFeatures() []string {
+	if x != nil {
+		return x.Features
 	}
 	return nil
 }
@@ -1047,6 +1057,7 @@ type ApiRequest struct {
 	//	*ApiRequest_AutoAdd
 	//	*ApiRequest_GetPolicy
 	//	*ApiRequest_PutPolicy
+	//	*ApiRequest_GetPresence
 	Call          isApiRequest_Call `protobuf_oneof:"call"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1231,6 +1242,15 @@ func (x *ApiRequest) GetPutPolicy() *Policy {
 	return nil
 }
 
+func (x *ApiRequest) GetGetPresence() *GetPresence {
+	if x != nil {
+		if x, ok := x.Call.(*ApiRequest_GetPresence); ok {
+			return x.GetPresence
+		}
+	}
+	return nil
+}
+
 type isApiRequest_Call interface {
 	isApiRequest_Call()
 }
@@ -1298,6 +1318,11 @@ type ApiRequest_PutPolicy struct {
 	PutPolicy *Policy `protobuf:"bytes,16,opt,name=put_policy,json=putPolicy,proto3,oneof"`
 }
 
+type ApiRequest_GetPresence struct {
+	// Whether some devices are connected now; needs no sign-in (local address book).
+	GetPresence *GetPresence `protobuf:"bytes,17,opt,name=get_presence,json=getPresence,proto3,oneof"`
+}
+
 func (*ApiRequest_Login) isApiRequest_Call() {}
 
 func (*ApiRequest_LoginToken) isApiRequest_Call() {}
@@ -1327,6 +1352,8 @@ func (*ApiRequest_AutoAdd) isApiRequest_Call() {}
 func (*ApiRequest_GetPolicy) isApiRequest_Call() {}
 
 func (*ApiRequest_PutPolicy) isApiRequest_Call() {}
+
+func (*ApiRequest_GetPresence) isApiRequest_Call() {}
 
 type GetPolicy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1364,6 +1391,156 @@ func (*GetPolicy) Descriptor() ([]byte, []int) {
 	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{14}
 }
 
+// At most 256 IDs per request.
+type GetPresence struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DeviceIds     []string               `protobuf:"bytes,1,rep,name=device_ids,json=deviceIds,proto3" json:"device_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPresence) Reset() {
+	*x = GetPresence{}
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPresence) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPresence) ProtoMessage() {}
+
+func (x *GetPresence) ProtoReflect() protoreflect.Message {
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPresence.ProtoReflect.Descriptor instead.
+func (*GetPresence) Descriptor() ([]byte, []int) {
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *GetPresence) GetDeviceIds() []string {
+	if x != nil {
+		return x.DeviceIds
+	}
+	return nil
+}
+
+type Presence struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	DeviceId string                 `protobuf:"bytes,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	Online   bool                   `protobuf:"varint,2,opt,name=online,proto3" json:"online,omitempty"`
+	// Seconds since 1970; 0 = never on this server.
+	LastSeen      int64 `protobuf:"varint,3,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Presence) Reset() {
+	*x = Presence{}
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Presence) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Presence) ProtoMessage() {}
+
+func (x *Presence) ProtoReflect() protoreflect.Message {
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Presence.ProtoReflect.Descriptor instead.
+func (*Presence) Descriptor() ([]byte, []int) {
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *Presence) GetDeviceId() string {
+	if x != nil {
+		return x.DeviceId
+	}
+	return ""
+}
+
+func (x *Presence) GetOnline() bool {
+	if x != nil {
+		return x.Online
+	}
+	return false
+}
+
+func (x *Presence) GetLastSeen() int64 {
+	if x != nil {
+		return x.LastSeen
+	}
+	return 0
+}
+
+type PresenceList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Devices       []*Presence            `protobuf:"bytes,1,rep,name=devices,proto3" json:"devices,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PresenceList) Reset() {
+	*x = PresenceList{}
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PresenceList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PresenceList) ProtoMessage() {}
+
+func (x *PresenceList) ProtoReflect() protoreflect.Message {
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PresenceList.ProtoReflect.Descriptor instead.
+func (*PresenceList) Descriptor() ([]byte, []int) {
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *PresenceList) GetDevices() []*Presence {
+	if x != nil {
+		return x.Devices
+	}
+	return nil
+}
+
 type ApiResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1378,6 +1555,7 @@ type ApiResponse struct {
 	//	*ApiResponse_Book
 	//	*ApiResponse_Account
 	//	*ApiResponse_Policy
+	//	*ApiResponse_Presence
 	Result        isApiResponse_Result `protobuf_oneof:"result"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1385,7 +1563,7 @@ type ApiResponse struct {
 
 func (x *ApiResponse) Reset() {
 	*x = ApiResponse{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[15]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1397,7 +1575,7 @@ func (x *ApiResponse) String() string {
 func (*ApiResponse) ProtoMessage() {}
 
 func (x *ApiResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[15]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1410,7 +1588,7 @@ func (x *ApiResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApiResponse.ProtoReflect.Descriptor instead.
 func (*ApiResponse) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{15}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ApiResponse) GetId() uint32 {
@@ -1497,6 +1675,15 @@ func (x *ApiResponse) GetPolicy() *Policy {
 	return nil
 }
 
+func (x *ApiResponse) GetPresence() *PresenceList {
+	if x != nil {
+		if x, ok := x.Result.(*ApiResponse_Presence); ok {
+			return x.Presence
+		}
+	}
+	return nil
+}
+
 type isApiResponse_Result interface {
 	isApiResponse_Result()
 }
@@ -1529,6 +1716,10 @@ type ApiResponse_Policy struct {
 	Policy *Policy `protobuf:"bytes,9,opt,name=policy,proto3,oneof"`
 }
 
+type ApiResponse_Presence struct {
+	Presence *PresenceList `protobuf:"bytes,10,opt,name=presence,proto3,oneof"`
+}
+
 func (*ApiResponse_Session) isApiResponse_Result() {}
 
 func (*ApiResponse_Books) isApiResponse_Result() {}
@@ -1543,6 +1734,8 @@ func (*ApiResponse_Account) isApiResponse_Result() {}
 
 func (*ApiResponse_Policy) isApiResponse_Result() {}
 
+func (*ApiResponse_Presence) isApiResponse_Result() {}
+
 type Login struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
@@ -1553,7 +1746,7 @@ type Login struct {
 
 func (x *Login) Reset() {
 	*x = Login{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[16]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1565,7 +1758,7 @@ func (x *Login) String() string {
 func (*Login) ProtoMessage() {}
 
 func (x *Login) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[16]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1578,7 +1771,7 @@ func (x *Login) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Login.ProtoReflect.Descriptor instead.
 func (*Login) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{16}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Login) GetUsername() string {
@@ -1605,7 +1798,7 @@ type LoginToken struct {
 
 func (x *LoginToken) Reset() {
 	*x = LoginToken{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[17]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1617,7 +1810,7 @@ func (x *LoginToken) String() string {
 func (*LoginToken) ProtoMessage() {}
 
 func (x *LoginToken) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[17]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1630,7 +1823,7 @@ func (x *LoginToken) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoginToken.ProtoReflect.Descriptor instead.
 func (*LoginToken) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{17}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *LoginToken) GetToken() string {
@@ -1649,7 +1842,7 @@ type Logout struct {
 
 func (x *Logout) Reset() {
 	*x = Logout{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[18]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1661,7 +1854,7 @@ func (x *Logout) String() string {
 func (*Logout) ProtoMessage() {}
 
 func (x *Logout) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[18]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1674,7 +1867,7 @@ func (x *Logout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Logout.ProtoReflect.Descriptor instead.
 func (*Logout) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{18}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{21}
 }
 
 type Session struct {
@@ -1689,7 +1882,7 @@ type Session struct {
 
 func (x *Session) Reset() {
 	*x = Session{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[19]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1701,7 +1894,7 @@ func (x *Session) String() string {
 func (*Session) ProtoMessage() {}
 
 func (x *Session) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[19]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1714,7 +1907,7 @@ func (x *Session) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Session.ProtoReflect.Descriptor instead.
 func (*Session) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{19}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Session) GetToken() string {
@@ -1749,7 +1942,7 @@ type Account struct {
 
 func (x *Account) Reset() {
 	*x = Account{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[20]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1761,7 +1954,7 @@ func (x *Account) String() string {
 func (*Account) ProtoMessage() {}
 
 func (x *Account) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[20]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1774,7 +1967,7 @@ func (x *Account) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Account.ProtoReflect.Descriptor instead.
 func (*Account) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{20}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Account) GetId() int64 {
@@ -1808,7 +2001,7 @@ type ChangePassword struct {
 
 func (x *ChangePassword) Reset() {
 	*x = ChangePassword{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[21]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1820,7 +2013,7 @@ func (x *ChangePassword) String() string {
 func (*ChangePassword) ProtoMessage() {}
 
 func (x *ChangePassword) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[21]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1833,7 +2026,7 @@ func (x *ChangePassword) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePassword.ProtoReflect.Descriptor instead.
 func (*ChangePassword) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{21}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ChangePassword) GetOldPassword() string {
@@ -1859,7 +2052,7 @@ type GetBooks struct {
 
 func (x *GetBooks) Reset() {
 	*x = GetBooks{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[22]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1871,7 +2064,7 @@ func (x *GetBooks) String() string {
 func (*GetBooks) ProtoMessage() {}
 
 func (x *GetBooks) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[22]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1884,7 +2077,7 @@ func (x *GetBooks) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBooks.ProtoReflect.Descriptor instead.
 func (*GetBooks) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{22}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{25}
 }
 
 type Books struct {
@@ -1896,7 +2089,7 @@ type Books struct {
 
 func (x *Books) Reset() {
 	*x = Books{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[23]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1908,7 +2101,7 @@ func (x *Books) String() string {
 func (*Books) ProtoMessage() {}
 
 func (x *Books) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[23]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1921,7 +2114,7 @@ func (x *Books) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Books.ProtoReflect.Descriptor instead.
 func (*Books) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{23}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Books) GetBooks() []*Book {
@@ -1946,7 +2139,7 @@ type Book struct {
 
 func (x *Book) Reset() {
 	*x = Book{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[24]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1958,7 +2151,7 @@ func (x *Book) String() string {
 func (*Book) ProtoMessage() {}
 
 func (x *Book) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[24]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1971,7 +2164,7 @@ func (x *Book) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Book.ProtoReflect.Descriptor instead.
 func (*Book) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{24}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Book) GetId() int64 {
@@ -2038,7 +2231,7 @@ type Entry struct {
 
 func (x *Entry) Reset() {
 	*x = Entry{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[25]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2050,7 +2243,7 @@ func (x *Entry) String() string {
 func (*Entry) ProtoMessage() {}
 
 func (x *Entry) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[25]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2063,7 +2256,7 @@ func (x *Entry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Entry.ProtoReflect.Descriptor instead.
 func (*Entry) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{25}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *Entry) GetId() int64 {
@@ -2180,7 +2373,7 @@ type DeleteEntry struct {
 
 func (x *DeleteEntry) Reset() {
 	*x = DeleteEntry{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[26]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2192,7 +2385,7 @@ func (x *DeleteEntry) String() string {
 func (*DeleteEntry) ProtoMessage() {}
 
 func (x *DeleteEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[26]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2205,7 +2398,7 @@ func (x *DeleteEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteEntry.ProtoReflect.Descriptor instead.
 func (*DeleteEntry) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{26}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *DeleteEntry) GetId() int64 {
@@ -2223,7 +2416,7 @@ type ListAccounts struct {
 
 func (x *ListAccounts) Reset() {
 	*x = ListAccounts{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[27]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2235,7 +2428,7 @@ func (x *ListAccounts) String() string {
 func (*ListAccounts) ProtoMessage() {}
 
 func (x *ListAccounts) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[27]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2248,7 +2441,7 @@ func (x *ListAccounts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAccounts.ProtoReflect.Descriptor instead.
 func (*ListAccounts) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{27}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{30}
 }
 
 type Accounts struct {
@@ -2260,7 +2453,7 @@ type Accounts struct {
 
 func (x *Accounts) Reset() {
 	*x = Accounts{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[28]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2272,7 +2465,7 @@ func (x *Accounts) String() string {
 func (*Accounts) ProtoMessage() {}
 
 func (x *Accounts) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[28]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2285,7 +2478,7 @@ func (x *Accounts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Accounts.ProtoReflect.Descriptor instead.
 func (*Accounts) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{28}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *Accounts) GetAccounts() []*Account {
@@ -2308,7 +2501,7 @@ type PutAccount struct {
 
 func (x *PutAccount) Reset() {
 	*x = PutAccount{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[29]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2320,7 +2513,7 @@ func (x *PutAccount) String() string {
 func (*PutAccount) ProtoMessage() {}
 
 func (x *PutAccount) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[29]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2333,7 +2526,7 @@ func (x *PutAccount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutAccount.ProtoReflect.Descriptor instead.
 func (*PutAccount) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{29}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *PutAccount) GetId() int64 {
@@ -2373,7 +2566,7 @@ type DeleteAccount struct {
 
 func (x *DeleteAccount) Reset() {
 	*x = DeleteAccount{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[30]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2385,7 +2578,7 @@ func (x *DeleteAccount) String() string {
 func (*DeleteAccount) ProtoMessage() {}
 
 func (x *DeleteAccount) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[30]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2398,7 +2591,7 @@ func (x *DeleteAccount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteAccount.ProtoReflect.Descriptor instead.
 func (*DeleteAccount) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{30}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *DeleteAccount) GetId() int64 {
@@ -2420,7 +2613,7 @@ type PutBook struct {
 
 func (x *PutBook) Reset() {
 	*x = PutBook{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[31]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2432,7 +2625,7 @@ func (x *PutBook) String() string {
 func (*PutBook) ProtoMessage() {}
 
 func (x *PutBook) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[31]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2445,7 +2638,7 @@ func (x *PutBook) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutBook.ProtoReflect.Descriptor instead.
 func (*PutBook) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{31}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *PutBook) GetId() int64 {
@@ -2478,7 +2671,7 @@ type DeleteBook struct {
 
 func (x *DeleteBook) Reset() {
 	*x = DeleteBook{}
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[32]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2490,7 +2683,7 @@ func (x *DeleteBook) String() string {
 func (*DeleteBook) ProtoMessage() {}
 
 func (x *DeleteBook) ProtoReflect() protoreflect.Message {
-	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[32]
+	mi := &file_nuvira_v1_rendezvous_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2503,7 +2696,7 @@ func (x *DeleteBook) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBook.ProtoReflect.Descriptor instead.
 func (*DeleteBook) Descriptor() ([]byte, []int) {
-	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{32}
+	return file_nuvira_v1_rendezvous_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *DeleteBook) GetId() int64 {
@@ -2550,11 +2743,12 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\tChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"%\n" +
 	"\x05Proof\x12\x1c\n" +
-	"\tsignature\x18\x01 \x01(\fR\tsignature\"T\n" +
+	"\tsignature\x18\x01 \x01(\fR\tsignature\"p\n" +
 	"\n" +
 	"Registered\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12)\n" +
-	"\x06policy\x18\x02 \x01(\v2\x11.nuvira.v1.PolicyR\x06policy\"m\n" +
+	"\x06policy\x18\x02 \x01(\v2\x11.nuvira.v1.PolicyR\x06policy\x12\x1a\n" +
+	"\bfeatures\x18\x03 \x03(\tR\bfeatures\"m\n" +
 	"\x06Policy\x12%\n" +
 	"\x0econfirm_always\x18\x01 \x01(\bR\rconfirmAlways\x12\x19\n" +
 	"\bno_files\x18\x02 \x01(\bR\anoFiles\x12!\n" +
@@ -2586,7 +2780,7 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\x05Error\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x02 \x01(\tR\tsessionId\"\xdf\x06\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"\x9c\a\n" +
 	"\n" +
 	"ApiRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12(\n" +
@@ -2610,9 +2804,19 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\n" +
 	"get_policy\x18\x0f \x01(\v2\x14.nuvira.v1.GetPolicyH\x00R\tgetPolicy\x122\n" +
 	"\n" +
-	"put_policy\x18\x10 \x01(\v2\x11.nuvira.v1.PolicyH\x00R\tputPolicyB\x06\n" +
+	"put_policy\x18\x10 \x01(\v2\x11.nuvira.v1.PolicyH\x00R\tputPolicy\x12;\n" +
+	"\fget_presence\x18\x11 \x01(\v2\x16.nuvira.v1.GetPresenceH\x00R\vgetPresenceB\x06\n" +
 	"\x04call\"\v\n" +
-	"\tGetPolicy\"\xf8\x02\n" +
+	"\tGetPolicy\",\n" +
+	"\vGetPresence\x12\x1d\n" +
+	"\n" +
+	"device_ids\x18\x01 \x03(\tR\tdeviceIds\"\\\n" +
+	"\bPresence\x12\x1b\n" +
+	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12\x16\n" +
+	"\x06online\x18\x02 \x01(\bR\x06online\x12\x1b\n" +
+	"\tlast_seen\x18\x03 \x01(\x03R\blastSeen\"=\n" +
+	"\fPresenceList\x12-\n" +
+	"\adevices\x18\x01 \x03(\v2\x13.nuvira.v1.PresenceR\adevices\"\xaf\x03\n" +
 	"\vApiResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12.\n" +
@@ -2622,7 +2826,9 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\baccounts\x18\x06 \x01(\v2\x13.nuvira.v1.AccountsH\x00R\baccounts\x12%\n" +
 	"\x04book\x18\a \x01(\v2\x0f.nuvira.v1.BookH\x00R\x04book\x12.\n" +
 	"\aaccount\x18\b \x01(\v2\x12.nuvira.v1.AccountH\x00R\aaccount\x12+\n" +
-	"\x06policy\x18\t \x01(\v2\x11.nuvira.v1.PolicyH\x00R\x06policyB\b\n" +
+	"\x06policy\x18\t \x01(\v2\x11.nuvira.v1.PolicyH\x00R\x06policy\x125\n" +
+	"\bpresence\x18\n" +
+	" \x01(\v2\x17.nuvira.v1.PresenceListH\x00R\bpresenceB\b\n" +
 	"\x06result\"?\n" +
 	"\x05Login\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
@@ -2710,7 +2916,7 @@ func file_nuvira_v1_rendezvous_proto_rawDescGZIP() []byte {
 }
 
 var file_nuvira_v1_rendezvous_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_nuvira_v1_rendezvous_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_nuvira_v1_rendezvous_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_nuvira_v1_rendezvous_proto_goTypes = []any{
 	(Role)(0),              // 0: nuvira.v1.Role
 	(*ClientMessage)(nil),  // 1: nuvira.v1.ClientMessage
@@ -2728,24 +2934,27 @@ var file_nuvira_v1_rendezvous_proto_goTypes = []any{
 	(*Error)(nil),          // 13: nuvira.v1.Error
 	(*ApiRequest)(nil),     // 14: nuvira.v1.ApiRequest
 	(*GetPolicy)(nil),      // 15: nuvira.v1.GetPolicy
-	(*ApiResponse)(nil),    // 16: nuvira.v1.ApiResponse
-	(*Login)(nil),          // 17: nuvira.v1.Login
-	(*LoginToken)(nil),     // 18: nuvira.v1.LoginToken
-	(*Logout)(nil),         // 19: nuvira.v1.Logout
-	(*Session)(nil),        // 20: nuvira.v1.Session
-	(*Account)(nil),        // 21: nuvira.v1.Account
-	(*ChangePassword)(nil), // 22: nuvira.v1.ChangePassword
-	(*GetBooks)(nil),       // 23: nuvira.v1.GetBooks
-	(*Books)(nil),          // 24: nuvira.v1.Books
-	(*Book)(nil),           // 25: nuvira.v1.Book
-	(*Entry)(nil),          // 26: nuvira.v1.Entry
-	(*DeleteEntry)(nil),    // 27: nuvira.v1.DeleteEntry
-	(*ListAccounts)(nil),   // 28: nuvira.v1.ListAccounts
-	(*Accounts)(nil),       // 29: nuvira.v1.Accounts
-	(*PutAccount)(nil),     // 30: nuvira.v1.PutAccount
-	(*DeleteAccount)(nil),  // 31: nuvira.v1.DeleteAccount
-	(*PutBook)(nil),        // 32: nuvira.v1.PutBook
-	(*DeleteBook)(nil),     // 33: nuvira.v1.DeleteBook
+	(*GetPresence)(nil),    // 16: nuvira.v1.GetPresence
+	(*Presence)(nil),       // 17: nuvira.v1.Presence
+	(*PresenceList)(nil),   // 18: nuvira.v1.PresenceList
+	(*ApiResponse)(nil),    // 19: nuvira.v1.ApiResponse
+	(*Login)(nil),          // 20: nuvira.v1.Login
+	(*LoginToken)(nil),     // 21: nuvira.v1.LoginToken
+	(*Logout)(nil),         // 22: nuvira.v1.Logout
+	(*Session)(nil),        // 23: nuvira.v1.Session
+	(*Account)(nil),        // 24: nuvira.v1.Account
+	(*ChangePassword)(nil), // 25: nuvira.v1.ChangePassword
+	(*GetBooks)(nil),       // 26: nuvira.v1.GetBooks
+	(*Books)(nil),          // 27: nuvira.v1.Books
+	(*Book)(nil),           // 28: nuvira.v1.Book
+	(*Entry)(nil),          // 29: nuvira.v1.Entry
+	(*DeleteEntry)(nil),    // 30: nuvira.v1.DeleteEntry
+	(*ListAccounts)(nil),   // 31: nuvira.v1.ListAccounts
+	(*Accounts)(nil),       // 32: nuvira.v1.Accounts
+	(*PutAccount)(nil),     // 33: nuvira.v1.PutAccount
+	(*DeleteAccount)(nil),  // 34: nuvira.v1.DeleteAccount
+	(*PutBook)(nil),        // 35: nuvira.v1.PutBook
+	(*DeleteBook)(nil),     // 36: nuvira.v1.DeleteBook
 }
 var file_nuvira_v1_rendezvous_proto_depIdxs = []int32{
 	3,  // 0: nuvira.v1.ClientMessage.register:type_name -> nuvira.v1.Register
@@ -2759,41 +2968,44 @@ var file_nuvira_v1_rendezvous_proto_depIdxs = []int32{
 	9,  // 8: nuvira.v1.ServerMessage.incoming:type_name -> nuvira.v1.Incoming
 	12, // 9: nuvira.v1.ServerMessage.route:type_name -> nuvira.v1.Route
 	13, // 10: nuvira.v1.ServerMessage.error:type_name -> nuvira.v1.Error
-	16, // 11: nuvira.v1.ServerMessage.api:type_name -> nuvira.v1.ApiResponse
+	19, // 11: nuvira.v1.ServerMessage.api:type_name -> nuvira.v1.ApiResponse
 	7,  // 12: nuvira.v1.ServerMessage.policy:type_name -> nuvira.v1.Policy
 	7,  // 13: nuvira.v1.Registered.policy:type_name -> nuvira.v1.Policy
 	0,  // 14: nuvira.v1.Route.role:type_name -> nuvira.v1.Role
-	17, // 15: nuvira.v1.ApiRequest.login:type_name -> nuvira.v1.Login
-	18, // 16: nuvira.v1.ApiRequest.login_token:type_name -> nuvira.v1.LoginToken
-	19, // 17: nuvira.v1.ApiRequest.logout:type_name -> nuvira.v1.Logout
-	23, // 18: nuvira.v1.ApiRequest.get_books:type_name -> nuvira.v1.GetBooks
-	26, // 19: nuvira.v1.ApiRequest.put_entry:type_name -> nuvira.v1.Entry
-	27, // 20: nuvira.v1.ApiRequest.delete_entry:type_name -> nuvira.v1.DeleteEntry
-	22, // 21: nuvira.v1.ApiRequest.change_password:type_name -> nuvira.v1.ChangePassword
-	28, // 22: nuvira.v1.ApiRequest.list_accounts:type_name -> nuvira.v1.ListAccounts
-	30, // 23: nuvira.v1.ApiRequest.put_account:type_name -> nuvira.v1.PutAccount
-	31, // 24: nuvira.v1.ApiRequest.delete_account:type_name -> nuvira.v1.DeleteAccount
-	32, // 25: nuvira.v1.ApiRequest.put_book:type_name -> nuvira.v1.PutBook
-	33, // 26: nuvira.v1.ApiRequest.delete_book:type_name -> nuvira.v1.DeleteBook
-	26, // 27: nuvira.v1.ApiRequest.auto_add:type_name -> nuvira.v1.Entry
+	20, // 15: nuvira.v1.ApiRequest.login:type_name -> nuvira.v1.Login
+	21, // 16: nuvira.v1.ApiRequest.login_token:type_name -> nuvira.v1.LoginToken
+	22, // 17: nuvira.v1.ApiRequest.logout:type_name -> nuvira.v1.Logout
+	26, // 18: nuvira.v1.ApiRequest.get_books:type_name -> nuvira.v1.GetBooks
+	29, // 19: nuvira.v1.ApiRequest.put_entry:type_name -> nuvira.v1.Entry
+	30, // 20: nuvira.v1.ApiRequest.delete_entry:type_name -> nuvira.v1.DeleteEntry
+	25, // 21: nuvira.v1.ApiRequest.change_password:type_name -> nuvira.v1.ChangePassword
+	31, // 22: nuvira.v1.ApiRequest.list_accounts:type_name -> nuvira.v1.ListAccounts
+	33, // 23: nuvira.v1.ApiRequest.put_account:type_name -> nuvira.v1.PutAccount
+	34, // 24: nuvira.v1.ApiRequest.delete_account:type_name -> nuvira.v1.DeleteAccount
+	35, // 25: nuvira.v1.ApiRequest.put_book:type_name -> nuvira.v1.PutBook
+	36, // 26: nuvira.v1.ApiRequest.delete_book:type_name -> nuvira.v1.DeleteBook
+	29, // 27: nuvira.v1.ApiRequest.auto_add:type_name -> nuvira.v1.Entry
 	15, // 28: nuvira.v1.ApiRequest.get_policy:type_name -> nuvira.v1.GetPolicy
 	7,  // 29: nuvira.v1.ApiRequest.put_policy:type_name -> nuvira.v1.Policy
-	20, // 30: nuvira.v1.ApiResponse.session:type_name -> nuvira.v1.Session
-	24, // 31: nuvira.v1.ApiResponse.books:type_name -> nuvira.v1.Books
-	26, // 32: nuvira.v1.ApiResponse.entry:type_name -> nuvira.v1.Entry
-	29, // 33: nuvira.v1.ApiResponse.accounts:type_name -> nuvira.v1.Accounts
-	25, // 34: nuvira.v1.ApiResponse.book:type_name -> nuvira.v1.Book
-	21, // 35: nuvira.v1.ApiResponse.account:type_name -> nuvira.v1.Account
-	7,  // 36: nuvira.v1.ApiResponse.policy:type_name -> nuvira.v1.Policy
-	21, // 37: nuvira.v1.Session.account:type_name -> nuvira.v1.Account
-	25, // 38: nuvira.v1.Books.books:type_name -> nuvira.v1.Book
-	26, // 39: nuvira.v1.Book.entries:type_name -> nuvira.v1.Entry
-	21, // 40: nuvira.v1.Accounts.accounts:type_name -> nuvira.v1.Account
-	41, // [41:41] is the sub-list for method output_type
-	41, // [41:41] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	16, // 30: nuvira.v1.ApiRequest.get_presence:type_name -> nuvira.v1.GetPresence
+	17, // 31: nuvira.v1.PresenceList.devices:type_name -> nuvira.v1.Presence
+	23, // 32: nuvira.v1.ApiResponse.session:type_name -> nuvira.v1.Session
+	27, // 33: nuvira.v1.ApiResponse.books:type_name -> nuvira.v1.Books
+	29, // 34: nuvira.v1.ApiResponse.entry:type_name -> nuvira.v1.Entry
+	32, // 35: nuvira.v1.ApiResponse.accounts:type_name -> nuvira.v1.Accounts
+	28, // 36: nuvira.v1.ApiResponse.book:type_name -> nuvira.v1.Book
+	24, // 37: nuvira.v1.ApiResponse.account:type_name -> nuvira.v1.Account
+	7,  // 38: nuvira.v1.ApiResponse.policy:type_name -> nuvira.v1.Policy
+	18, // 39: nuvira.v1.ApiResponse.presence:type_name -> nuvira.v1.PresenceList
+	24, // 40: nuvira.v1.Session.account:type_name -> nuvira.v1.Account
+	28, // 41: nuvira.v1.Books.books:type_name -> nuvira.v1.Book
+	29, // 42: nuvira.v1.Book.entries:type_name -> nuvira.v1.Entry
+	24, // 43: nuvira.v1.Accounts.accounts:type_name -> nuvira.v1.Account
+	44, // [44:44] is the sub-list for method output_type
+	44, // [44:44] is the sub-list for method input_type
+	44, // [44:44] is the sub-list for extension type_name
+	44, // [44:44] is the sub-list for extension extendee
+	0,  // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_nuvira_v1_rendezvous_proto_init() }
@@ -2834,8 +3046,9 @@ func file_nuvira_v1_rendezvous_proto_init() {
 		(*ApiRequest_AutoAdd)(nil),
 		(*ApiRequest_GetPolicy)(nil),
 		(*ApiRequest_PutPolicy)(nil),
+		(*ApiRequest_GetPresence)(nil),
 	}
-	file_nuvira_v1_rendezvous_proto_msgTypes[15].OneofWrappers = []any{
+	file_nuvira_v1_rendezvous_proto_msgTypes[18].OneofWrappers = []any{
 		(*ApiResponse_Session)(nil),
 		(*ApiResponse_Books)(nil),
 		(*ApiResponse_Entry)(nil),
@@ -2843,6 +3056,7 @@ func file_nuvira_v1_rendezvous_proto_init() {
 		(*ApiResponse_Book)(nil),
 		(*ApiResponse_Account)(nil),
 		(*ApiResponse_Policy)(nil),
+		(*ApiResponse_Presence)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -2850,7 +3064,7 @@ func file_nuvira_v1_rendezvous_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nuvira_v1_rendezvous_proto_rawDesc), len(file_nuvira_v1_rendezvous_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   33,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
