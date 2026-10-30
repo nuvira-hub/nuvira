@@ -43,6 +43,10 @@ Visibility: an account sees its personal book and the shared books it is a membe
 - **Errors** are translation keys (`@server.denied`, `@server.password_too_short`, …) that the app shows in the user's language (D15).
 - **First administrator**: `NUVIRA_ADMIN_USER` and `NUVIRA_ADMIN_PASSWORD` when the server starts with no accounts; without them an `admin` account is created with a random password written once to the server log, to be changed at the first sign-in.
 
+## Two-factor authentication (Pro, entitlement `TWO_FACTOR`)
+
+Time-based codes (TOTP, RFC 6238: SHA-1, 6 digits, 30 s), the kind of every authenticator app. Each account switches it on by itself, from the app (Settings → Account) or the web console: the server creates a secret, answers its QR code (`TwoFactorSetup`), and activates it when a code of the app is confirmed (`TwoFactorEnable`), answering ten recovery codes shown once. From then on `Login` without `otp` answers `@server.otp_required` and the app asks for the code; a recovery code replaces it once. Switching off needs password and a code (`TwoFactorDisable`); an administrator can remove it from an account whose phone is lost (`TwoFactorReset`). The secret is encrypted with `address-book.key`, the recovery codes kept as SHA-256; each code of the app is accepted once (one step before or after the current one, for clocks a little off). Without `TWO_FACTOR` in the licence it cannot be switched on, but accounts that have it keep needing the code.
+
 ## API (`proto/nuvira/v1/rendezvous.proto`)
 
 The app opens a signalling connection with `Register.api_only` (it does not appear as a device) and sends `ApiRequest` messages, each answered by an `ApiResponse` with a result or an error.
