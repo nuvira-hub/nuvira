@@ -20,6 +20,8 @@ message ClientMessage {
     Accept accept = 4;
     Reject reject = 5;
     ApiRequest api = 6;
+    // From the agent at the end of a session the server routed.
+    SessionReport session_report = 7;
   }
 }
 
@@ -34,6 +36,26 @@ message ServerMessage {
     // The rules changed (to every device connected).
     Policy policy = 7;
   }
+}
+
+// How a session went, seen by the agent (for the session log of NuviraHub Pro;
+// a server without it ignores the report).
+message SessionReport {
+  string session_id = 1;
+  // From the viewer's connection to the end; 0 if it never connected.
+  uint32 duration_s = 2;
+  // Direct connection between the two devices, or through the relay.
+  bool direct = 3;
+  // "permanent", "temporary", "confirmed" (password and person at the PC),
+  // "wrong_password", "not_accepted", "no_answer", or "" (never got that far).
+  string access = 4;
+  // Files received by the agent's PC and sent from it, with their bytes.
+  uint32 files_in = 5;
+  uint32 files_out = 6;
+  uint64 bytes_in = 7;
+  uint64 bytes_out = 8;
+  // Why the session ended badly, if it did.
+  string error = 9;
 }
 
 // First message of every device: its Ed25519 public key (32 bytes).

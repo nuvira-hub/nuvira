@@ -73,12 +73,13 @@ type Server struct {
 	mu       sync.Mutex
 	online   map[string]*client // by device ID
 	sessions map[string]*pending
+	routed   map[string]*routed // accepted sessions, until the agent's report
 }
 
 func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
 	return &Server{
 		store: st, relay: r, log: log,
-		online: map[string]*client{}, sessions: map[string]*pending{},
+		online: map[string]*client{}, sessions: map[string]*pending{}, routed: map[string]*routed{},
 	}
 }
 
@@ -147,6 +148,8 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 			s.reject(c, m.Reject.SessionId, m.Reject.Reason)
 		case *pb.ClientMessage_Api:
 			s.api(c, m.Api)
+		case *pb.ClientMessage_SessionReport:
+			s.report(c, m.SessionReport)
 		default:
 			_ = c.send(errorMsg("unexpected message", ""))
 		}
@@ -253,6 +256,7 @@ func (s *Server) connect(viewer *client, target string) {
 
 	if agent == nil {
 		_ = viewer.send(errorMsg("@server.unreachable", ""))
+		s.event(ext.SessionEvent{Kind: ext.SessionUnreachable, ViewerID: viewer.device.ID, ViewerName: viewer.device.Name, AgentID: target})
 		return
 	}
 	if p == nil {
@@ -269,7 +273,10 @@ func (s *Server) connect(viewer *client, target string) {
 	if err != nil {
 		s.dropSession(p.id)
 		_ = viewer.send(errorMsg("@server.unreachable", p.id))
+		return
 	}
+	s.event(ext.SessionEvent{ID: p.id, Kind: ext.SessionRequested, ViewerID: viewer.device.ID, ViewerName: viewer.device.Name,
+		AgentID: agent.device.ID, AgentName: agent.device.Name})
 }
 
 // take removes the session from the pending requests, if it belongs to this agent.
@@ -317,6 +324,10 @@ func (s *Server) accept(agent *client, id string) {
 		s.log.Debug("viewer not reachable", "session", id, "err", err)
 	}
 	s.log.Info("session accepted", "session", id)
+	s.mu.Lock()
+	s.routed[id] = &routed{agentID: agent.device.ID, accepted: time.Now()}
+	s.mu.Unlock()
+	s.event(ext.SessionEvent{ID: id, Kind: ext.SessionAccepted, AgentID: agent.device.ID})
 }
 
 func (s *Server) reject(agent *client, id, reason string) {
@@ -329,6 +340,7 @@ func (s *Server) reject(agent *client, id, reason string) {
 	}
 	_ = p.viewer.send(errorMsg(reason, id))
 	s.log.Info("session rejected", "session", id, "reason", reason)
+	s.event(ext.SessionEvent{ID: id, Kind: ext.SessionRejected, AgentID: agent.device.ID, Reason: reason})
 }
 
 func (s *Server) expireLoop(ctx context.Context) {
@@ -350,7 +362,9 @@ func (s *Server) expireLoop(ctx context.Context) {
 			s.mu.Unlock()
 			for _, p := range expired {
 				_ = p.viewer.send(errorMsg("@agent.no_answer", p.id))
+				s.event(ext.SessionEvent{ID: p.id, Kind: ext.SessionExpired, AgentID: p.agentID})
 			}
+			s.forgetRouted(now)
 		}
 	}
 }

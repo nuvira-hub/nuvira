@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
 )
@@ -76,4 +77,33 @@ func Open(env Env) ([]Module, error) {
 		modules = append(modules, m)
 	}
 	return modules, nil
+}
+
+// Kinds of SessionEvent.
+const (
+	SessionRequested   = "requested"   // a viewer asked to connect to an online agent
+	SessionUnreachable = "unreachable" // the agent is not connected to the server
+	SessionAccepted    = "accepted"    // the agent accepted: routes sent to both
+	SessionRejected    = "rejected"    // the agent refused (Reason)
+	SessionExpired     = "expired"     // the agent did not answer in time
+	SessionEnded       = "ended"       // the agent's report at the end (Report)
+)
+
+// SessionEvent is a step of a session between two devices.
+type SessionEvent struct {
+	ID         string
+	Kind       string
+	Time       time.Time
+	ViewerID   string
+	ViewerName string
+	AgentID    string
+	AgentName  string
+	Reason     string
+	Report     *pb.SessionReport
+}
+
+// SessionObserver is implemented by modules that want the steps of the sessions
+// (session log). The call is synchronous: keep it short.
+type SessionObserver interface {
+	SessionEvent(ev SessionEvent)
 }

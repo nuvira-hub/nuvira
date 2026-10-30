@@ -39,6 +39,7 @@ pub async fn receive(
         let target = unique_path(&dir, &name);
         std::fs::rename(&part, &target).with_context(|| format!("saving {}", target.display()))?;
         info!("file received: {} ({size} bytes)", target.display());
+        crate::stats::file_in(size);
         Ok(target)
     }
     .await;

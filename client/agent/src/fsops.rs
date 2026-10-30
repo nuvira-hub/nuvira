@@ -92,6 +92,7 @@ async fn send(
     }
     tx.finish()?;
     info!("sent {name} ({} bytes from {offset})", size - offset);
+    crate::stats::file_out(size - offset);
     Ok(())
 }
 
@@ -144,6 +145,7 @@ pub async fn receive(first: FileChunk, mut rx: FramedRecv) -> Result<PathBuf> {
     })
     .await?;
     info!("file received: {} ({size} bytes, from {offset})", target.display());
+    crate::stats::file_in(size - offset);
     Ok(target)
 }
 

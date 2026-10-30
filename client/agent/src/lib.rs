@@ -267,6 +267,43 @@ pub async fn serve_via_server(
 }
 
 /// State shared between the signalling loop and the session in progress.
+/// Counters of the session in progress (one at a time), for the report to the server.
+pub(crate) mod stats {
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+    pub static FILES_IN: AtomicU32 = AtomicU32::new(0);
+    pub static FILES_OUT: AtomicU32 = AtomicU32::new(0);
+    pub static BYTES_IN: AtomicU64 = AtomicU64::new(0);
+    pub static BYTES_OUT: AtomicU64 = AtomicU64::new(0);
+
+    pub fn reset() {
+        for c in [&FILES_IN, &FILES_OUT] {
+            c.store(0, Ordering::Relaxed);
+        }
+        for c in [&BYTES_IN, &BYTES_OUT] {
+            c.store(0, Ordering::Relaxed);
+        }
+    }
+
+    pub fn file_in(bytes: u64) {
+        FILES_IN.fetch_add(1, Ordering::Relaxed);
+        BYTES_IN.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn file_out(bytes: u64) {
+        FILES_OUT.fetch_add(1, Ordering::Relaxed);
+        BYTES_OUT.fetch_add(bytes, Ordering::Relaxed);
+    }
+}
+
+/// What the report to the server says about a session, filled while it runs.
+#[derive(Default)]
+struct Outcome {
+    connected: Option<std::time::Instant>,
+    direct: bool,
+    access: std::sync::Mutex<&'static str>,
+}
+
 struct SessionContext {
     config: AgentConfig,
     /// Temporary password, shown to the person at the PC.
@@ -345,9 +382,11 @@ async fn signal_loop(
     let _ = ctx.events.send(AgentEvent::Online { device_id: id, websocket });
 
     let mut accepted: HashMap<String, Request> = HashMap::new();
+    let (report_tx, mut reports) = mpsc::unbounded_channel::<nuvira_proto::v1::SessionReport>();
 
     loop {
         let reply = tokio::select! {
+            Some(report) = reports.recv() => Some(client_message::Msg::SessionReport(report)),
             msg = signal.rx.recv() => match msg? {
                 Some(server_message::Msg::Policy(policy)) => {
                     set_policy(ctx, policy);
@@ -384,11 +423,25 @@ async fn signal_loop(
                     ctx.busy.store(true, Ordering::Relaxed);
                     let (ctx, identity) = (ctx.clone(), identity.clone());
                     let session_id = route.session_id.clone();
+                    let report_tx = report_tx.clone();
                     tokio::spawn(async move {
-                        let result = relayed_session(&ctx, &identity, &p2p_route, &request, &session_id).await;
+                        let mut outcome = Outcome::default();
+                        stats::reset();
+                        let result = relayed_session(&ctx, &identity, &p2p_route, &request, &session_id, &mut outcome).await;
                         if let Err(e) = &result {
                             warn!("session ended: {e:#}");
                         }
+                        let _ = report_tx.send(nuvira_proto::v1::SessionReport {
+                            session_id: session_id.clone(),
+                            duration_s: outcome.connected.map_or(0, |t| t.elapsed().as_secs() as u32),
+                            direct: outcome.direct,
+                            access: outcome.access.lock().expect("access").to_string(),
+                            files_in: stats::FILES_IN.load(Ordering::Relaxed),
+                            files_out: stats::FILES_OUT.load(Ordering::Relaxed),
+                            bytes_in: stats::BYTES_IN.load(Ordering::Relaxed),
+                            bytes_out: stats::BYTES_OUT.load(Ordering::Relaxed),
+                            error: result.as_ref().err().map(|e| format!("{e:#}")).unwrap_or_default(),
+                        });
                         ctx.busy.store(false, Ordering::Relaxed);
                         let _ = ctx.events.send(AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) });
                     });
@@ -439,6 +492,7 @@ async fn relayed_session(
     route: &nuvira_transport::p2p::Route,
     request: &Request,
     session_id: &str,
+    outcome: &mut Outcome,
 ) -> Result<()> {
     let endpoint = nuvira_transport::p2p::agent_endpoint(identity, route).await?;
     // The viewer may open several connections (direct and through the relay): the one
@@ -464,12 +518,14 @@ async fn relayed_session(
         .context("endpoint closed")?;
     acceptor.abort();
     let direct = conn.remote_address() != route.relay;
+    outcome.connected = Some(std::time::Instant::now());
+    outcome.direct = direct;
     info!(
         "viewer connected {} ({})",
         if direct { "directly" } else { "through the relay" },
         conn.remote_address()
     );
-    let gate = Gate { ctx, session_id, request, direct };
+    let gate = Gate { ctx, session_id, request, direct, access: &outcome.access };
     let result = tokio::select! {
         r = session(conn.clone(), streams, &ctx.config, Some(&gate)) => r,
         _ = ctx.end_session.notified() => {
@@ -495,6 +551,8 @@ struct Gate<'a> {
     session_id: &'a str,
     request: &'a Request,
     direct: bool,
+    /// How access went, for the report to the server.
+    access: &'a std::sync::Mutex<&'static str>,
 }
 
 impl Gate<'_> {
@@ -502,8 +560,10 @@ impl Gate<'_> {
     async fn authorize(&self, given: &str, pending: Option<&mut FramedSend>) -> Result<(), String> {
         let ctx = self.ctx;
         let confirm_always = ctx.policy.lock().expect("policy").confirm_always;
+        let set = |access: &'static str| *self.access.lock().expect("access") = access;
         if ctx.permanent.as_deref().is_some_and(|hash| nuvira_secret::verify(given, hash)) {
             info!("access with the permanent password");
+            set("permanent");
             if !confirm_always {
                 return self.started();
             }
@@ -511,8 +571,10 @@ impl Gate<'_> {
         } else {
             let temporary = ctx.password.lock().expect("password").clone();
             if !same_secret(given, &temporary) {
+                set("wrong_password");
                 return Err(WRONG_PASSWORD.into());
             }
+            set("temporary");
             if !ctx.confirm && !confirm_always {
                 return self.started();
             }
@@ -533,14 +595,19 @@ impl Gate<'_> {
         ctx.pending.lock().expect("requests").remove(self.session_id);
         let _ = ctx.events.send(AgentEvent::IncomingClosed { session_id: self.session_id.to_string() });
         match answer {
-            Ok(Ok(true)) => self.started(),
+            Ok(Ok(true)) => {
+                set("confirmed");
+                self.started()
+            }
             // Rejected by the person at the PC, or no app open to ask them.
             Ok(Ok(false)) => {
                 info!("connection not accepted on the device");
+                set("not_accepted");
                 Err("@agent.not_accepted".into())
             }
             _ => {
                 info!("no answer to the connection request: rejected");
+                set("no_answer");
                 Err("@agent.no_answer".into())
             }
         }
