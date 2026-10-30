@@ -34,9 +34,12 @@ use crate::{AgentCommand, AgentEvent};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToApp {
-    /// First message: server the agent is registered on.
+    /// First message: server the agent is registered on and version of the program
+    /// (an app started before the service updated it is older: it offers a restart).
     Info {
         server: String,
+        #[serde(default)]
+        version: String,
     },
     Event {
         event: AgentEvent,
@@ -212,7 +215,7 @@ async fn serve_app(
 ) -> Result<()> {
     let (read, mut write) = tokio::io::split(pipe);
     let mut lines = BufReader::new(read).lines();
-    send_line(&mut write, &ToApp::Info { server: server.to_string() }).await?;
+    send_line(&mut write, &ToApp::Info { server: server.to_string(), version: env!("CARGO_PKG_VERSION").into() }).await?;
     for event in snapshot.events() {
         send_line(&mut write, &ToApp::Event { event: event.clone() }).await?;
     }

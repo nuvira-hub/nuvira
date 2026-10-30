@@ -262,6 +262,8 @@
   "update.updating": "Scaricamento e verifica della nuova versione…",
   "update.failed": "Aggiornamento non riuscito: {e}",
   "update.none": "Sul server non c'è una versione più recente.",
+  "update.installed": "NuviraHub {version} è stato installato: riavvia l'app per usarlo.",
+  "update.restart": "Riavvia",
 
   "fm.title": "NuviraHub — File",
   "fm.this_pc": "Questo computer",

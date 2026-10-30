@@ -41,7 +41,7 @@ Visibility: an account sees its personal book and the shared books it is a membe
 - **Device passwords**: AES-256-GCM with the key `address-book.key` in the server's data folder (created at first start, readable only by the owner). The database alone is not enough to read them; the key must be backed up with it.
 - **Transport**: the API runs inside the QUIC/TLS connection to the server, whose certificate the app pins at the first connection (as the agent and viewer do).
 - **Errors** are translation keys (`@server.denied`, `@server.password_too_short`, …) that the app shows in the user's language (D15).
-- **First administrator**: `NUVIRA_ADMIN_USER` and `NUVIRA_ADMIN_PASSWORD` when the server starts with no accounts; without them an `admin` account is created with a random password written once to the server log, to be changed at the first sign-in.
+- **First administrator**: `NUVIRA_ADMIN_USER` and `NUVIRA_ADMIN_PASSWORD` when the server starts with no accounts; without them an `admin` account is created with a random password written once to the server log, to be changed at the first sign-in. A lost password is reset on the server with `nuvira-server reset-password` (NuviraHub Pro README).
 
 ## Roles and member levels (Pro, with the address book)
 

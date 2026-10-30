@@ -22,6 +22,8 @@ nuvira-release sign  ──copy──►  data/updates/windows-x64.json   ◄─
 
 The service checks 2 minutes after starting and then every 6 hours (1 hour after an error). A newer, correctly signed version is downloaded into `%ProgramData%\nuvira\update` (writable only by SYSTEM and administrators, so nobody can swap it before it runs). If a session is in progress (the agent keeps the file `busy` in the data folder while it lasts) the update waits for it to end. Then the service starts `nuvira-<version>.exe service update`, which stops the service, replaces the program in Program Files and starts the service again with the settings in place: server, ID and passwords do not change. Its output goes to `update.log`; passwords are never written there.
 
+The app open at the PC keeps running the old program (moved aside as `nuvira.old.exe`). When its link with the service's agent comes back after the update, the agent tells it its version: if newer, a bar shows "NuviraHub X has been installed" with "Restart", which starts the installed program in place of the app. It works from the update after 0.11.0 on: the open app must already have this check.
+
 ## Portable copies (app without the service)
 
 The app checks at start-up and every 6 hours. A bar shows "NuviraHub X is available" with "Update": the new version is downloaded and checked like above, the running program is renamed aside (a running program cannot be overwritten), the new one takes its file name (so the server in `nuvira-host=....exe` stays) and is started; the old copy is deleted at the next start. With the service installed the app does not check: the service updates the installed program.

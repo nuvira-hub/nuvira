@@ -20,6 +20,12 @@ mod install;
 pub use install::run_elevated;
 #[cfg(windows)]
 mod launch;
+
+/// The program installed with the service (in Program Files).
+#[cfg(windows)]
+pub fn installed_program() -> std::path::PathBuf {
+    config::program_dir().join(config::PROGRAM_EXE)
+}
 #[cfg(windows)]
 mod scm;
 #[cfg(windows)]

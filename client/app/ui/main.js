@@ -124,8 +124,16 @@ function render(state) {
   $("status-text").textContent = text;
   $("service-note").classList.toggle("hidden", !state.service);
   $("install-off").classList.toggle("hidden", state.service);
-  $("update-bar").classList.toggle("hidden", !state.update);
-  if (state.update && !$("update-button").disabled) $("update-text").textContent = t("update.available", { version: state.update });
+  $("update-bar").classList.toggle("hidden", !state.update && !state.installed);
+  if (!$("update-button").disabled) {
+    if (state.installed) {
+      $("update-text").textContent = t("update.installed", { version: state.installed });
+      $("update-button").textContent = t("update.restart");
+    } else if (state.update) {
+      $("update-text").textContent = t("update.available", { version: state.update });
+      $("update-button").textContent = t("update.button");
+    }
+  }
   $("install-on").classList.toggle("hidden", !state.service);
   $("password-label").textContent = t(state.service ? "connect.temp_password" : "connect.password");
   $("device-id").textContent = formatId(state.device_id);
@@ -248,8 +256,12 @@ $("server-form").addEventListener("submit", async (e) => {
 
 $("update-button").addEventListener("click", async () => {
   $("update-button").disabled = true;
-  $("update-text").textContent = t("update.updating");
   try {
+    if (current.installed) {
+      await invoke("restart_app");
+      return;
+    }
+    $("update-text").textContent = t("update.updating");
     await invoke("apply_update");
   } catch (err) {
     $("update-text").textContent = msg(String(err));

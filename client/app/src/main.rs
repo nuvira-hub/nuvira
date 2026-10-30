@@ -57,6 +57,8 @@ struct UiState {
     /// Newer version offered by the server (app not installed: the service updates
     /// an installed one by itself).
     update: Option<String>,
+    /// Newer version installed by the service while this app was open: restart it.
+    installed: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -371,10 +373,11 @@ fn start_service_link(app: &AppHandle) {
                     while let Some(msg) = messages.recv().await {
                         match msg {
                             // The service's server also applies to outgoing connections, unless another one is set.
-                            ToApp::Info { server } => state.update(&app, |ui| {
+                            ToApp::Info { server, version } => state.update(&app, |ui| {
                                 if ui.server.is_empty() {
                                     ui.server = server;
                                 }
+                                ui.installed = nuvira_update::newer(&version, nuvira_update::CURRENT).then_some(version);
                             }),
                             ToApp::Event { event } => on_agent_event(&app, event),
                         }
@@ -739,6 +742,7 @@ fn main() {
             connect_entry,
             install_service,
             apply_update,
+            restart_app,
             address_book::address_book_login,
             address_book::address_book_logout,
             address_book::address_book_refresh,
@@ -950,6 +954,20 @@ async fn apply_update(app: AppHandle) -> Result<(), String> {
     let _ = std::fs::remove_file(&download);
     info!("updated to {}: restarting", manifest.version);
     std::process::Command::new(&exe).spawn().map_err(|e| error(e.into()))?;
+    app.exit(0);
+    Ok(())
+}
+
+/// Starts the program installed by the service (updated while this app was open)
+/// in place of this one.
+#[tauri::command]
+fn restart_app(app: AppHandle) -> Result<(), String> {
+    #[cfg(windows)]
+    let program = nuvira_service::installed_program();
+    #[cfg(not(windows))]
+    let program = std::env::current_exe().map_err(|e| e.to_string())?;
+    info!("restarting with the installed program {}", program.display());
+    std::process::Command::new(&program).spawn().map_err(|e| tf("update.failed", &[("e", &e.to_string())]))?;
     app.exit(0);
     Ok(())
 }
