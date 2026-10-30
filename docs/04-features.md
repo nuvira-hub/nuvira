@@ -1,4 +1,4 @@
-# NexoDesk — Features — complete list
+# NuviraHub — Features — complete list
 
 [← Index](README.md)
 
@@ -67,6 +67,6 @@ Priority legend: **M** = MVP, **1** = version 1.0, **2** = later versions.
 | Feature | Priority |
 |---|---|
 | Chat during the session | M |
-| Credits "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · Source code" in the client and the console (licence requirement) | M |
+| Credits "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · Source code" in the client and the console (licence requirement) | M |
 | Interface in English, Italian, French, German and Spanish (D15) | M |
 | Whiteboard/annotations on the remote screen | 2 |

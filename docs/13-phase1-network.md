@@ -1,8 +1,8 @@
-# NexoDesk — Phase 1: server and connection over the Internet
+# NuviraHub — Phase 1: server and connection over the Internet
 
 [← Index](README.md)
 
-Goal ([08-roadmap.md](08-roadmap.md)): two devices on different networks connect through `nexodesk-server`, directly (P2P) when possible, otherwise through the relay, with real authentication instead of a hand-copied fingerprint.
+Goal ([08-roadmap.md](08-roadmap.md)): two devices on different networks connect through `nuvira-server`, directly (P2P) when possible, otherwise through the relay, with real authentication instead of a hand-copied fingerprint.
 
 ## Choices
 
@@ -16,7 +16,7 @@ Goal ([08-roadmap.md](08-roadmap.md)): two devices on different networks connect
 ## Components
 
 ```
-            ┌──────────────────── nexodesk-server (Go) ──────────────────────┐
+            ┌──────────────────── nuvira-server (Go) ──────────────────────┐
             │  UDP :21116                                                    │
             │   ├─ demux: address bound to a relay session? ─► relay         │
             │   └─ otherwise ─► QUIC (quic-go): signalling                   │
@@ -71,7 +71,7 @@ Both sides send opening packets to all candidates; the viewer tries QUIC towards
 
 Unlike `rustdesk-server`, which recognises devices behind the same router by their identical public IP and only then asks for the local address, here local candidates are always tried: there is no need to guess the topology, and it also covers cases where the public IP seen by the server does not match (CGNAT with several exits, IPv4/IPv6).
 
-Test: `NEXODESK_RELAY_FAKE_REFLEXIVE=1` on the server replaces the address seen by the relay with an unreachable one (203.0.113.1); the connection must still succeed directly through the local address.
+Test: `NUVIRA_RELAY_FAKE_REFLEXIVE=1` on the server replaces the address seen by the relay with an unreachable one (203.0.113.1); the connection must still succeed directly through the local address.
 
 ## Steps
 
@@ -79,8 +79,8 @@ Test: `NEXODESK_RELAY_FAKE_REFLEXIVE=1` on the server replaces the address seen 
 |---|---|---|
 | 1 | Go server: QUIC signalling, registration with signature, SQLite, 9-digit IDs. Agent: `--server`, prints ID and password | ✅ |
 | 2 | Connection request, UDP relay, viewer connecting by ID with verified keys, session password | ✅ |
-| 3 | Automated tests through the server in a LAN (`NEXODESK_VIA_SERVER=1`, `NEXODESK_FORCE_RELAY=1`) | ✅ |
-| 4 | Docker image (`ghcr.io/alexbn71/nexodesk-server`, GitHub Actions) | ✅ image; publishing on the Internet postponed |
+| 3 | Automated tests through the server in a LAN (`NUVIRA_VIA_SERVER=1`, `NUVIRA_FORCE_RELAY=1`) | ✅ |
+| 4 | Docker image (`ghcr.io/alexbn71/nuvira-server`, GitHub Actions) | ✅ image; publishing on the Internet postponed |
 | 5 | Hole punching and path choice (direct preferred, relay as fallback) | ✅ |
 | 5b | Local addresses as candidates (devices behind the same router, hairpin) | ✅ |
 | 6 | WebSocket fallback for networks that block UDP | ✅ |
@@ -88,16 +88,16 @@ Test: `NEXODESK_RELAY_FAKE_REFLEXIVE=1` on the server replaces the address seen 
 ## Usage
 
 ```powershell
-nexodesk-server.exe                                   # UDP 21116, data in .\data
-nexodesk-agent.exe --server 192.168.1.10              # prints ID and password
-nexodesk-viewer.exe --server 192.168.1.10 123456789 --password abcd2345
+nuvira-server.exe                                   # UDP 21116, data in .\data
+nuvira-agent.exe --server 192.168.1.10              # prints ID and password
+nuvira-viewer.exe --server 192.168.1.10 123456789 --password abcd2345
 ```
 
 At the first connection agent and viewer remember the fingerprint of the server's certificate (`servers.txt` in the data folder) and then refuse a server with a different certificate; `--server-key` pins it by hand.
 
 ## LAN measurements (2026-10-26)
 
-NUC (agent + nexodesk-server) → PC-LABORATORIO (viewer), real screen with animation, Quick Sync.
+NUC (agent + nuvira-server) → PC-LABORATORIO (viewer), real screen with animation, Quick Sync.
 
 | Path | fps | Latency p50 | p95 | RTT |
 |---|---|---|---|---|
@@ -106,12 +106,12 @@ NUC (agent + nexodesk-server) → PC-LABORATORIO (viewer), real screen with anim
 
 ## WebSocket fallback (networks that block UDP)
 
-Instead of a second session protocol over TCP (like RustDesk's `hbbr`, which forwards TCP/WebSocket connections), NexoDesk carries **the same QUIC datagrams inside a WebSocket**:
+Instead of a second session protocol over TCP (like RustDesk's `hbbr`, which forwards TCP/WebSocket connections), NuviraHub carries **the same QUIC datagrams inside a WebSocket**:
 
 - **client** (`client/transport/src/ws.rs`): a socket for quinn that sends and receives datagrams through the WebSocket. QUIC, end-to-end encryption, key verification and relay stay identical. Direct path attempts are skipped (UDP does not get through on these networks).
 - **server** (`server/internal/relay/websocket.go`): each WebSocket connection becomes a virtual address in the same dispatching as the UDP port; the relay pairs a UDP side with a WebSocket side with no difference.
-- **Choice**: `--transport auto` (default) tries UDP for 4 s and then switches to `ws://<server>:21116/nexodesk`; `--transport udp|websocket` forces one; `--server-ws wss://…` gives the URL published behind a reverse proxy. The session uses the same transport as signalling.
-- Server: `NEXODESK_WS_LISTEN` (default `:21116` on TCP, `off` to disable it), path `/nexodesk`.
+- **Choice**: `--transport auto` (default) tries UDP for 4 s and then switches to `ws://<server>:21116/nuvira`; `--transport udp|websocket` forces one; `--server-ws wss://…` gives the URL published behind a reverse proxy. The session uses the same transport as signalling.
+- Server: `NUVIRA_WS_LISTEN` (default `:21116` on TCP, `off` to disable it), path `/nuvira`.
 
 Local tests (agent and viewer on the same PC, 1280x720 at 30 fps):
 
@@ -122,7 +122,7 @@ Local tests (agent and viewer on the same PC, 1280x720 at 30 fps):
 | WebSocket → WebSocket | 0.6 s | 18 ms | 44 ms |
 | UDP blocked, automatic choice | 5.5 s | 25 ms | 44 ms |
 
-Between the two PCs (NUC → PC-LABORATORIO through nexodesk-server, Quick Sync, animated screen):
+Between the two PCs (NUC → PC-LABORATORIO through nuvira-server, Quick Sync, animated screen):
 
 | Viewer | Path | fps | Latency p50 | p95 |
 |---|---|---|---|---|
@@ -136,7 +136,7 @@ Fixes that came up: QUIC's close message goes through a queue drained by a task,
 
 ## Degraded network: adaptive bitrate and BBR (2026-10-26)
 
-Simulation on the relay (`NEXODESK_RELAY_IMPAIR`, tests only), all traffic forced through the relay, real screen with animation, 25 s.
+Simulation on the relay (`NUVIRA_RELAY_IMPAIR`, tests only), all traffic forced through the relay, real screen with animation, 25 s.
 
 | Simulated network | Before (fixed bitrate, Cubic) | After (adaptive + BBR), hardware | After, software |
 |---|---|---|---|
@@ -152,7 +152,7 @@ What was done:
 - **Still screen**: the bitrate changes only while the video sends at least a quarter of the bitrate or 150 kbit/s. On a mobile network sparse traffic alone makes latency jump (30–185 ms with 1 kbit/s sent); before this rule the bitrate fell from 4 to 0.5 Mbit/s in 16 s with nothing moving.
 - **Single peaks**: with the screen moving, the mobile network still had 150–600 ms peaks every few seconds while 0.3 Mbit/s were sent on a 143 Mbit/s link; reacting to each one brought the bitrate to the minimum (blurry photos). Only a queue lasting a second counts now. On congestion the bitrate goes to 85% of the rate actually sent when that is lower than 80% of the cap: the encoder often stays well below the cap, and lowering only the cap changed nothing. Simulated on the relay (synthetic source, Quick Sync, 30 s): with `stall=300ms,every=3s` the bitrate climbs to the maximum in 7 s with no decrease (p50 75 ms); with `rate=1mbit` it drops at once below 1 Mbit/s, p50 102 ms and p95 1158 ms (before: 118 and 1975 ms).
 - **Quick Sync ignores bitrate changes once the session has started** (Media Foundation): the new bitrate is applied by restarting the encoder (~0.3 s), with hysteresis (drops ≥ 15% at most once per second, rises ≥ 25% every 3 s). OpenH264 changes on the fly.
-- **BBR** as QUIC's congestion control: with random losses NewReno/Cubic used less than half of the bandwidth (`NEXODESK_CC_CUBIC=1` to compare).
+- **BBR** as QUIC's congestion control: with random losses NewReno/Cubic used less than half of the bandwidth (`NUVIRA_CC_CUBIC=1` to compare).
 - **QUIC send buffer limited to 256 KB**: beyond that, the agent skips frames instead of queueing them.
 - Simulator: delay, jitter without reordering, loss, limited bandwidth with a finite queue.
 

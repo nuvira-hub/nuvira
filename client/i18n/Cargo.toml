@@ -1,5 +1,5 @@
 [package]
-name = "nexodesk-i18n"
+name = "nuvira-i18n"
 description = "User interface strings in English, Italian, French, German and Spanish"
 version.workspace = true
 edition.workspace = true

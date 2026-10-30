@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use nexodesk_proto::v1::control_message::Msg;
-use nexodesk_proto::v1::{FsDownload, FsEntry, FsRequest, FsResponse, FsUploadOffset, fs_request};
+use nuvira_proto::v1::control_message::Msg;
+use nuvira_proto::v1::{FsDownload, FsEntry, FsRequest, FsResponse, FsUploadOffset, fs_request};
 use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
@@ -96,7 +96,7 @@ impl FileManager {
             return Ok(());
         }
         let mut attrs = Window::default_attributes()
-            .with_title(nexodesk_i18n::t("fm.title"))
+            .with_title(nuvira_i18n::t("fm.title"))
             .with_inner_size(winit::dpi::LogicalSize::new(1000.0, 640.0));
         #[cfg(windows)]
         {
@@ -114,7 +114,7 @@ impl FileManager {
         }
         let window = Arc::new(event_loop.create_window(attrs).context("file manager window")?);
         let data_dir =
-            std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("NexoDesk").join("WebView2"));
+            std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("nuvira").join("WebView2"));
         let mut context = WebContext::new(data_dir);
         let webview = crate::toolbar::retry_in_use(|| {
             let proxy = proxy.clone();
@@ -122,7 +122,7 @@ impl FileManager {
                 .with_html(HTML)
                 .with_background_color((0x1f, 0x25, 0x2b, 0xff))
                 .with_bounds(full(&window))
-                .with_initialization_script(format!("window.I18N = {};", nexodesk_i18n::json()))
+                .with_initialization_script(format!("window.I18N = {};", nuvira_i18n::json()))
                 .with_ipc_handler(move |request| {
                     let _ = proxy.send_event(NetEvent::FileManager(request.body().clone()));
                 })
@@ -266,7 +266,7 @@ impl FileManager {
     /// Answer of the agent.
     pub fn response(&mut self, answer: FsResponse) {
         let Some(pending) = self.pending.remove(&answer.id) else { return };
-        let error = (!answer.error.is_empty()).then(|| nexodesk_i18n::message(&answer.error));
+        let error = (!answer.error.is_empty()).then(|| nuvira_i18n::message(&answer.error));
         match pending {
             Pending::List => {
                 let update = match error {

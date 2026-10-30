@@ -106,8 +106,8 @@ fn set_status(state: SERVICE_STATUS_CURRENT_STATE, exit_code: u32) {
     }
 }
 
-/// Event the agent uses to ask for Ctrl+Alt+Del (same name in nexodesk-input).
-const SAS_EVENT: &str = r"Global\NexoDeskSAS";
+/// Event the agent uses to ask for Ctrl+Alt+Del (same name in nuvira-input).
+const SAS_EVENT: &str = r"Global\nuvira-sas";
 
 /// Thread that performs Ctrl+Alt+Del when the agent signals [`SAS_EVENT`]. Windows
 /// accepts `SendSAS` only from a service, not from the agent even though it is SYSTEM.

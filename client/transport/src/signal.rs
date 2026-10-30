@@ -1,11 +1,11 @@
-//! Signalling connection with nexodesk-server: device registration (proof of
+//! Signalling connection with nuvira-server: device registration (proof of
 //! the key), then exchange of requests and routes.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
-use nexodesk_proto::v1::{ClientMessage, Proof, Register, ServerMessage, client_message, server_message};
+use nuvira_proto::v1::{ClientMessage, Proof, Register, ServerMessage, client_message, server_message};
 use quinn::ClientConfig;
 use quinn::crypto::rustls::QuicClientConfig;
 
@@ -13,18 +13,18 @@ use crate::identity::Identity;
 use crate::{Fingerprint, FramedRecv, FramedSend, PinnedCert, ServerTransport, provider, transport_config};
 
 /// Signalling ALPN (must match the server's).
-const ALPN: &[u8] = b"nexodesk-signal/1";
+const ALPN: &[u8] = b"nuvira-signal/1";
 /// Signalling protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
 /// Prefix signed together with the nonce (as in the server).
-const REGISTER_CONTEXT: &[u8] = b"nexodesk-register-v1";
-/// Default UDP port of nexodesk-server.
+const REGISTER_CONTEXT: &[u8] = b"nuvira-register-v1";
+/// Default UDP port of nuvira-server.
 pub const DEFAULT_PORT: u16 = 21116;
 
 pub struct Signal {
     pub device_id: String,
     /// Rules of the server for its devices (all off from servers without them).
-    pub policy: nexodesk_proto::v1::Policy,
+    pub policy: nuvira_proto::v1::Policy,
     /// Server address: it is also the relay address.
     pub server: SocketAddr,
     /// Fingerprint of the server certificate seen in this connection.
@@ -94,7 +94,7 @@ pub async fn connect_auto(
                         _ => "no answer".into(),
                     };
                     tracing::info!(
-                        "nexodesk-server not reachable over UDP ({why}): trying the WebSocket {ws_url}"
+                        "nuvira-server not reachable over UDP ({why}): trying the WebSocket {ws_url}"
                     );
                     connect(server, &ws, expected, identity, device).await
                 }
@@ -120,7 +120,7 @@ pub struct DeviceInfo<'a> {
     pub reachable: bool,
 }
 
-/// Connects to nexodesk-server and registers the device. With `expected` the server
+/// Connects to nuvira-server and registers the device. With `expected` the server
 /// certificate must have that fingerprint; without it, any fingerprint is accepted
 /// and returned in `server_fingerprint` (to be remembered: see [`known_server`]).
 pub async fn connect(
@@ -144,9 +144,9 @@ pub async fn connect(
     let mut endpoint = crate::endpoint_for(transport, server, None, None).await?;
     endpoint.set_default_client_config(config);
     let conn = endpoint
-        .connect(server, "nexodesk-server")?
+        .connect(server, "nuvira-server")?
         .await
-        .with_context(|| format!("connecting to nexodesk-server {server}"))?;
+        .with_context(|| format!("connecting to nuvira-server {server}"))?;
     let server_fingerprint =
         seen.lock().expect("fingerprint").expect("fingerprint stored during the handshake");
 

@@ -12,7 +12,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use nexodesk_codec::YuvFrame;
+use nuvira_codec::YuvFrame;
 use winit::window::Window;
 
 use crate::render::{View, Viewport, place};

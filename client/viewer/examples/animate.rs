@@ -1,7 +1,7 @@
 //! Full-screen window with a continuous animation, to measure capture of the
 //! real screen with content that changes at every frame.
 //!
-//! `cargo run --release -p nexodesk-viewer --example animate -- [seconds]`
+//! `cargo run --release -p nuvira-viewer --example animate -- [seconds]`
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ struct App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
-            .with_title("NexoDesk — test animation")
+            .with_title("NuviraHub — test animation")
             .with_fullscreen(Some(Fullscreen::Borderless(None)));
         let window = Arc::new(el.create_window(attrs).expect("window"));
         let context = softbuffer::Context::new(window.clone()).expect("context");

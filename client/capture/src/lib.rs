@@ -93,10 +93,10 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
     }
 }
 
-/// `NEXODESK_CAPTURE=gdi`: GDI capture even where DXGI works (tests).
+/// `NUVIRA_CAPTURE=gdi`: GDI capture even where DXGI works (tests).
 #[cfg(windows)]
 fn force_gdi() -> bool {
-    std::env::var("NEXODESK_CAPTURE").is_ok_and(|v| v.eq_ignore_ascii_case("gdi"))
+    std::env::var("NUVIRA_CAPTURE").is_ok_and(|v| v.eq_ignore_ascii_case("gdi"))
 }
 
 /// DXGI Desktop Duplication, or GDI where it is not available (some Remote Desktop

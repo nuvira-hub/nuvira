@@ -1,7 +1,7 @@
-// NexoDesk user interface: receives the state from the Rust process ("state"
+// NuviraHub user interface: receives the state from the Rust process ("state"
 // event) and sends commands with invoke. Sections are picked from the rail on the
 // left; address book and administration live in address-book.js. Texts come from the
-// nexodesk-i18n strings: t() for keys, msg() for "@key" messages from other programs.
+// nuvira-i18n strings: t() for keys, msg() for "@key" messages from other programs.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;

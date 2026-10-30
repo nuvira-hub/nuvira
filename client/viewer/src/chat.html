@@ -55,7 +55,7 @@
     <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
   </button>
 </header>
-<div id="log"><span id="empty" data-i18n="chatpanel.empty">Write to the person at the remote computer: they will see the message in the NexoDesk app.</span></div>
+<div id="log"><span id="empty" data-i18n="chatpanel.empty">Write to the person at the remote computer: they will see the message in the NuviraHub app.</span></div>
 <form id="form">
   <input id="text" autocomplete="off" data-i18n-placeholder="chatpanel.placeholder" placeholder="Write a message">
   <button type="submit" data-i18n="chatpanel.send">Send</button>
@@ -80,7 +80,7 @@
   });
 
   // Called by the viewer.
-  window.nexodesk = {
+  window.nuvira = {
     add(line) {
       document.getElementById("empty")?.remove();
       const log = document.getElementById("log");

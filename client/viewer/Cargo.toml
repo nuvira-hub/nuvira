@@ -1,24 +1,24 @@
 [package]
-name = "nexodesk-viewer"
-description = "NexoDesk: remote session window (wgpu)"
+name = "nuvira-viewer"
+description = "NuviraHub: remote session window (wgpu)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [[bin]]
-name = "nexodesk-viewer"
+name = "nuvira-viewer"
 path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
 bytemuck.workspace = true
 clap.workspace = true
-nexodesk-clipboard.workspace = true
-nexodesk-codec.workspace = true
-nexodesk-i18n.workspace = true
-nexodesk-proto.workspace = true
-nexodesk-transport.workspace = true
+nuvira-clipboard.workspace = true
+nuvira-codec.workspace = true
+nuvira-i18n.workspace = true
+nuvira-proto.workspace = true
+nuvira-transport.workspace = true
 pollster.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

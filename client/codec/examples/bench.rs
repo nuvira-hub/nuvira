@@ -1,11 +1,11 @@
-//! Compares the encoders: `cargo run --release -p nexodesk-codec --example bench [WxH]`.
+//! Compares the encoders: `cargo run --release -p nuvira-codec --example bench [WxH]`.
 //!
 //! Encodes 120 frames of a desktop-like image with a moving window and checks
 //! that OpenH264 can decode the result.
 
 use std::time::Instant;
 
-use nexodesk_codec::{BgraImage, EncoderPlan, EncoderSettings, VideoDecoder, VideoEncoder};
+use nuvira_codec::{BgraImage, EncoderPlan, EncoderSettings, VideoDecoder, VideoEncoder};
 
 const FRAMES: usize = 120;
 
@@ -34,7 +34,7 @@ fn desktop(w: usize, h: usize, t: usize) -> Vec<u8> {
 
 fn run(label: &str, mut enc: Box<dyn VideoEncoder>, w: usize, h: usize) {
     let frames: Vec<Vec<u8>> = (0..30).map(|t| desktop(w, h, t)).collect();
-    let mut dec = nexodesk_codec::OpenH264Decoder::new().unwrap();
+    let mut dec = nuvira_codec::OpenH264Decoder::new().unwrap();
     let (mut total, mut bytes, mut decoded, mut encoded) = (0u128, 0usize, 0, 0);
     let mut worst = 0u128;
     for i in 0..FRAMES {
@@ -73,17 +73,17 @@ fn main() {
     let settings = EncoderSettings::default();
 
     #[cfg(windows)]
-    match nexodesk_codec::hardware_encoders() {
+    match nuvira_codec::hardware_encoders() {
         Ok(list) => println!("hardware encoders found: {list:?}"),
         Err(e) => println!("hardware encoder enumeration failed: {e:#}"),
     }
-    match nexodesk_codec::create_encoder(EncoderPlan::Hardware, settings, None) {
+    match nuvira_codec::create_encoder(EncoderPlan::Hardware, settings, None) {
         Ok(enc) => run("hardware (Media Foundation)", enc, w, h),
         Err(e) => println!("hardware not available: {e:#}"),
     }
     run(
         "software (OpenH264)",
-        nexodesk_codec::create_encoder(EncoderPlan::Software, settings, None).unwrap(),
+        nuvira_codec::create_encoder(EncoderPlan::Software, settings, None).unwrap(),
         w,
         h,
     );

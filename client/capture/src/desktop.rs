@@ -5,7 +5,7 @@
 //! Ctrl+Alt+Del. Capture and input injection act on the desktop of their own
 //! thread, so the threads doing them must follow the active one.
 //!
-//! Only a SYSTEM process (started by nexodesk-service) can open `Winlogon`: as a
+//! Only a SYSTEM process (started by nuvira-service) can open `Winlogon`: as a
 //! normal user the switch fails and capture resumes when the user's desktop
 //! comes back.
 

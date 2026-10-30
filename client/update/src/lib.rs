@@ -1,15 +1,15 @@
 //! Automatic updates.
 //!
-//! Each nexodesk-server distributes the version its devices should run, from the
+//! Each nuvira-server distributes the version its devices should run, from the
 //! `updates` folder of its data, on the TCP port of the WebSocket fallback:
 //!
 //! ```text
-//! GET /nexodesk/update/windows-x64.json                 manifest (this module's `Manifest`)
-//! GET /nexodesk/update/windows-x64/nexodesk-0.1.0.exe   the program
+//! GET /nuvira/update/windows-x64.json                 manifest (this module's `Manifest`)
+//! GET /nuvira/update/windows-x64/nuvira-0.1.0.exe   the program
 //! ```
 //!
-//! The manifest is signed with the NexoDesk release key (Ed25519, kept by whoever
-//! builds the releases; `nexodesk-release` makes and uses it) and the program is
+//! The manifest is signed with the NuviraHub release key (Ed25519, kept by whoever
+//! builds the releases; `nuvira-release` makes and uses it) and the program is
 //! checked against the size and SHA-256 in it. The public key is built into the
 //! program: a tampered server or download cannot get anything installed.
 
@@ -23,14 +23,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Public half of the NexoDesk release key (see `nexodesk-release keygen`).
+/// Public half of the NuviraHub release key (see `nuvira-release keygen`).
 /// 59fbcd29526e30ef3b4ad1b44eea9c4393eab3f5affa45baf3d0375da95df7a8
 pub const PUBLIC_KEY: [u8; 32] = [
     0x59, 0xfb, 0xcd, 0x29, 0x52, 0x6e, 0x30, 0xef, 0x3b, 0x4a, 0xd1, 0xb4, 0x4e, 0xea, 0x9c, 0x43, //
     0x93, 0xea, 0xb3, 0xf5, 0xaf, 0xfa, 0x45, 0xba, 0xf3, 0xd0, 0x37, 0x5d, 0xa9, 0x5d, 0xf7, 0xa8,
 ];
 
-/// Port of nexodesk-server when the address has none.
+/// Port of nuvira-server when the address has none.
 pub const DEFAULT_PORT: u16 = 21116;
 
 /// Version of this program.
@@ -67,15 +67,15 @@ pub struct Manifest {
 impl Manifest {
     /// Path of the program under the update URL.
     pub fn program_path(&self) -> String {
-        format!("{}/nexodesk-{}.exe", self.platform, self.version)
+        format!("{}/nuvira-{}.exe", self.platform, self.version)
     }
 
     fn signed_message(&self) -> Vec<u8> {
-        format!("nexodesk-update\n{}\n{}\n{}\n{}", self.version, self.platform, self.size, self.sha256)
+        format!("nuvira-update\n{}\n{}\n{}\n{}", self.version, self.platform, self.size, self.sha256)
             .into_bytes()
     }
 
-    /// Makes a signed manifest for `program` (used by `nexodesk-release`).
+    /// Makes a signed manifest for `program` (used by `nuvira-release`).
     pub fn sign(key: &Ed25519KeyPair, version: &str, platform: &str, program: &[u8]) -> Self {
         let mut manifest = Self {
             version: version.to_string(),
@@ -97,7 +97,7 @@ impl Manifest {
     }
 }
 
-/// Public key of a key pair in PKCS#8 (as written by `nexodesk-release keygen`).
+/// Public key of a key pair in PKCS#8 (as written by `nuvira-release keygen`).
 pub fn public_key_of(pkcs8: &[u8]) -> Result<[u8; 32]> {
     let key = Ed25519KeyPair::from_pkcs8(pkcs8).map_err(|_| anyhow::anyhow!("not an Ed25519 PKCS#8 key"))?;
     Ok(key.public_key().as_ref().try_into()?)
@@ -115,7 +115,7 @@ pub fn newer(a: &str, b: &str) -> bool {
 
 /// Base URL of the updates on a server: next to the WebSocket fallback.
 /// `server` is host[:port]; `server_ws`, if set, the published WebSocket URL
-/// (e.g. `wss://nexodesk.example.com/nexodesk` behind a reverse proxy).
+/// (e.g. `wss://nuvira.example.com/nuvira` behind a reverse proxy).
 pub fn base_url(server: &str, server_ws: Option<&str>, default_port: u16) -> String {
     if let Some(ws) = server_ws {
         let http = ws.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1);
@@ -124,9 +124,9 @@ pub fn base_url(server: &str, server_ws: Option<&str>, default_port: u16) -> Str
     let has_port =
         server.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()) && !server.ends_with(']');
     if has_port {
-        format!("http://{server}/nexodesk/update")
+        format!("http://{server}/nuvira/update")
     } else {
-        format!("http://{server}:{default_port}/nexodesk/update")
+        format!("http://{server}:{default_port}/nuvira/update")
     }
 }
 
@@ -201,7 +201,7 @@ async fn get(
         .with_context(|| format!("{url}: timed out"))?
         .with_context(|| format!("connecting to {address}"))?;
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: NexoDesk/{CURRENT}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: nuvira/{CURRENT}\r\nConnection: close\r\n\r\n"
     );
     if tls {
         let config =
@@ -331,7 +331,7 @@ mod tests {
             tamper(&mut t);
             assert!(t.verify(key.public_key().as_ref()).is_err());
         }
-        assert_eq!(m.program_path(), "windows-x64/nexodesk-0.2.0.exe");
+        assert_eq!(m.program_path(), "windows-x64/nuvira-0.2.0.exe");
     }
 
     #[test]
@@ -346,11 +346,11 @@ mod tests {
 
     #[test]
     fn urls() {
-        assert_eq!(base_url("alexbn.ddns.net", None, 21116), "http://alexbn.ddns.net:21116/nexodesk/update");
-        assert_eq!(base_url("10.0.0.5:21117", None, 21116), "http://10.0.0.5:21117/nexodesk/update");
+        assert_eq!(base_url("alexbn.ddns.net", None, 21116), "http://alexbn.ddns.net:21116/nuvira/update");
+        assert_eq!(base_url("10.0.0.5:21117", None, 21116), "http://10.0.0.5:21117/nuvira/update");
         assert_eq!(
-            base_url("x", Some("wss://nexodesk.example.com/nexodesk"), 21116),
-            "https://nexodesk.example.com/nexodesk/update"
+            base_url("x", Some("wss://nuvira.example.com/nuvira"), 21116),
+            "https://nuvira.example.com/nuvira/update"
         );
     }
 
@@ -373,8 +373,8 @@ mod tests {
                     let _ = s.write_all(&served).await;
                 }
             });
-            let base = format!("http://127.0.0.1:{port}/nexodesk/update");
-            let dir = std::env::temp_dir().join(format!("nexodesk-update-test-{port}"));
+            let base = format!("http://127.0.0.1:{port}/nuvira/update");
+            let dir = std::env::temp_dir().join(format!("nuvira-update-test-{port}"));
             std::fs::create_dir_all(&dir).expect("dir");
             let dest = dir.join("new.exe");
             let key = test_key();

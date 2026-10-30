@@ -1,11 +1,11 @@
-# NexoDesk — Architecture
+# NuviraHub — Architecture
 
 [← Index](README.md)
 
 > **Implementation status.** This is the original design. Where the implementation took another route, the decision log ([10-decisions.md](10-decisions.md)) and the phase documents describe what was built: sessions use **TLS 1.3 end-to-end with the devices' Ed25519 keys** instead of Noise (D10), the relay works on UDP datagrams (D11), the server listens on **UDP 21116 plus TCP 21116** for the WebSocket fallback instead of 443 (D12), the session toolbar is a small WebView instead of egui (D5), and the address book is managed from the app (D16; no web console yet).
 
 ```
-                    ┌──────────────────── "nexodesk-server" container ─────────────────────┐
+                    ┌──────────────────── "nuvira-server" container ─────────────────────┐
                     │                                                                     │
  Technician ───────►│  TLS gateway :443 (HTTP/2, WebSocket, QUIC on UDP :443/udp)         │
                     │   ├─ Rendezvous / Signalling  (presence, NAT candidate exchange)    │
@@ -39,16 +39,16 @@ Reference `docker-compose.yml` of the design (the current one is [deploy/docker-
 
 ```yaml
 services:
-  nexodesk:
-    image: nexodesk/server:latest
+  nuvira:
+    image: nuvira/server:latest
     ports:
       - "443:443/tcp"
       - "443:443/udp"
     volumes:
       - ./data:/data
     environment:
-      NEXODESK_PUBLIC_HOST: remote.example.com
-      NEXODESK_DB: sqlite:///data/nexodesk.db
+      NUVIRA_PUBLIC_HOST: remote.example.com
+      NUVIRA_DB: sqlite:///data/nuvira.db
     restart: unless-stopped
 ```
 
@@ -63,17 +63,17 @@ services:
   - Alternatives considered: everything in Flutter (RustDesk's choice, video rendered through a native texture, but a second language, Dart); everything in Slint/egui (no webview, management interface harder to build and less polished).
   - Tauri v2 supports Windows, macOS and Linux with the same code; it uses the system webview, which sets these minimum requirements:
 
-    | System | Webview used by Tauri | Minimum NexoDesk version | Limit set by |
+    | System | Webview used by Tauri | Minimum NuviraHub version | Limit set by |
     |---|---|---|---|
     | Windows | WebView2 (Edge, already present on Windows 10/11; can be installed by the installer) | Windows 10 1903 | Windows.Graphics.Capture |
     | macOS | WKWebView | macOS 12.3 | ScreenCaptureKit (Tauri alone would reach 10.15) |
     | Linux | WebKitGTK 4.1 | Ubuntu 22.04, Debian 12, Fedora 36 or equivalent | WebKitGTK 4.1 required by Tauri v2 |
 
   - Differences between webviews (Edge/Safari/WebKitGTK) only affect the interface: it must be tested on the three systems at every release.
-  - **Credits** (licence, [ADDITIONAL-TERMS.md](../ADDITIONAL-TERMS.md)): "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · Source code" visible in the main window and in the "About" section.
+  - **Credits** (licence, [ADDITIONAL-TERMS.md](../ADDITIONAL-TERMS.md)): "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · Source code" visible in the main window and in the "About" section.
 - **Processes**:
-  - `nexodesk` — user application (UI, outgoing sessions, "on-the-fly support" mode); the session window is the separate `nexodesk-viewer` process.
-  - `nexodesk-service` — system service for unattended access:
+  - `nuvira` — user application (UI, outgoing sessions, "on-the-fly support" mode); the session window is the separate `nuvira-viewer` process.
+  - `nuvira-service` — system service for unattended access:
     - Windows: LocalSystem service that starts the agent in the active session and on the **secure desktop** (UAC, sign-in screen, Ctrl+Alt+Del).
     - macOS: LaunchDaemon + LaunchAgent (sign-in screen included).
     - Linux: systemd unit; graphical session through the portal or the display manager.

@@ -7,7 +7,7 @@ import (
 )
 
 func TestRegisterKeepsID(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "nexodesk.db"))
+	s, err := Open(filepath.Join(t.TempDir(), "nuvira.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

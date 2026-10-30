@@ -19,17 +19,17 @@ import (
 	"github.com/quic-go/quic-go"
 	"google.golang.org/protobuf/encoding/protodelim"
 
-	"github.com/alexbn71/NexoDesk/server/internal/accounts"
-	"github.com/alexbn71/NexoDesk/server/internal/pb"
-	"github.com/alexbn71/NexoDesk/server/internal/relay"
-	"github.com/alexbn71/NexoDesk/server/internal/store"
+	"github.com/alexbn71/nuvira/server/internal/accounts"
+	"github.com/alexbn71/nuvira/server/internal/pb"
+	"github.com/alexbn71/nuvira/server/internal/relay"
+	"github.com/alexbn71/nuvira/server/internal/store"
 )
 
 // ProtocolVersion is the version of the signalling protocol spoken by the server.
 const ProtocolVersion = 1
 
 // Prefix signed together with the nonce: prevents reusing the signature elsewhere.
-const registerContext = "nexodesk-register-v1"
+const registerContext = "nuvira-register-v1"
 
 // Time given to the agent to accept a request.
 const pendingTimeout = 60 * time.Second

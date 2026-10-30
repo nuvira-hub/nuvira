@@ -1,21 +1,21 @@
-# nexodesk-server: signalling and relay. Open/forward UDP port 21116, and TCP 21116
+# nuvira-server: signalling and relay. Open/forward UDP port 21116, and TCP 21116
 # for the WebSocket fallback (networks that block UDP).
 services:
-  nexodesk-server:
-    image: ghcr.io/alexbn71/nexodesk-server:latest
-    container_name: nexodesk-server
+  nuvira-server:
+    image: ghcr.io/alexbn71/nuvira-server:latest
+    container_name: nuvira-server
     restart: unless-stopped
     ports:
       - "21116:21116/udp"
       - "21116:21116/tcp"
     environment:
-      NEXODESK_LOG: info
+      NUVIRA_LOG: info
       # First address book administrator (only if no account exists yet); without
       # a password a random one is written once to the log.
-      # NEXODESK_ADMIN_USER: admin
-      # NEXODESK_ADMIN_PASSWORD: change-me
+      # NUVIRA_ADMIN_USER: admin
+      # NUVIRA_ADMIN_PASSWORD: change-me
     volumes:
-      - nexodesk-data:/data
+      - nuvira-data:/data
 
 volumes:
-  nexodesk-data:
+  nuvira-data:

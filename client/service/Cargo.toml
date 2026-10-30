@@ -1,16 +1,16 @@
 [package]
-name = "nexodesk-service"
-description = "NexoDesk: system service for unattended access"
+name = "nuvira-service"
+description = "NuviraHub: system service for unattended access"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [dependencies]
-nexodesk-secret = { path = "../secret" }
+nuvira-secret = { path = "../secret" }
 anyhow.workspace = true
 clap.workspace = true
-nexodesk-update = { path = "../update" }
+nuvira-update = { path = "../update" }
 ring = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

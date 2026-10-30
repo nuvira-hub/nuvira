@@ -1,29 +1,29 @@
 [package]
-name = "nexodesk-agent"
-description = "NexoDesk: the controlled device (agent library and command-line program)"
+name = "nuvira-agent"
+description = "NuviraHub: the controlled device (agent library and command-line program)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [lib]
-name = "nexodesk_agent"
+name = "nuvira_agent"
 path = "src/lib.rs"
 
 [[bin]]
-name = "nexodesk-agent"
+name = "nuvira-agent"
 path = "src/main.rs"
 
 [dependencies]
-nexodesk-secret = { path = "../secret" }
+nuvira-secret = { path = "../secret" }
 anyhow.workspace = true
 clap.workspace = true
-nexodesk-capture.workspace = true
-nexodesk-clipboard.workspace = true
-nexodesk-codec.workspace = true
-nexodesk-input.workspace = true
-nexodesk-proto.workspace = true
-nexodesk-transport.workspace = true
+nuvira-capture.workspace = true
+nuvira-clipboard.workspace = true
+nuvira-codec.workspace = true
+nuvira-input.workspace = true
+nuvira-proto.workspace = true
+nuvira-transport.workspace = true
 quinn.workspace = true
 ring = "0.17"
 serde = { version = "1", features = ["derive"] }

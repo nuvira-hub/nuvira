@@ -1,8 +1,8 @@
 //! Service configuration and paths.
 //!
-//! - Programs: `%ProgramFiles%\NexoDesk` (writable by administrators only: the
+//! - Programs: `%ProgramFiles%\nuvira` (writable by administrators only: the
 //!   service runs as SYSTEM and must not run files that users can modify).
-//! - Data: `%ProgramData%\NexoDesk`, accessible only to SYSTEM and administrators:
+//! - Data: `%ProgramData%\nuvira`, accessible only to SYSTEM and administrators:
 //!   it holds the device key (hence the ID) and the permanent password.
 
 use std::path::{Path, PathBuf};
@@ -10,24 +10,24 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-pub const SERVICE_NAME: &str = "NexoDesk";
-pub const SERVICE_DISPLAY_NAME: &str = "NexoDesk";
+pub const SERVICE_NAME: &str = "nuvira";
+pub const SERVICE_DISPLAY_NAME: &str = "NuviraHub";
 pub const SERVICE_DESCRIPTION: &str =
-    "Unattended remote access with NexoDesk: starts the agent in the session of the person using the PC.";
+    "Unattended remote access with NuviraHub: starts the agent in the session of the person using the PC.";
 /// The single program installed: the app, which also contains agent, viewer and
-/// service (`nexodesk.exe agent ...`, `nexodesk.exe service run`).
-pub const PROGRAM_EXE: &str = "nexodesk.exe";
+/// service (`nuvira.exe agent ...`, `nuvira.exe service run`).
+pub const PROGRAM_EXE: &str = "nuvira.exe";
 /// Programs of earlier installations, removed when updating.
-pub const OLD_EXES: [&str; 2] = ["nexodesk-agent.exe", "nexodesk-service.exe"];
+pub const OLD_EXES: [&str; 2] = ["nuvira-agent.exe", "nuvira-service.exe"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
-    /// nexodesk-server to register with (host[:port]).
+    /// nuvira-server to register with (host[:port]).
     pub server: String,
     /// Server certificate fingerprint; without it, the one seen at the first connection is remembered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_key: Option<String>,
-    /// Permanent password for unattended access, as a hash (`nexodesk_secret`).
+    /// Permanent password for unattended access, as a hash (`nuvira_secret`).
     /// Earlier versions stored it in clear text under "password": converted at load.
     #[serde(alias = "password")]
     pub password_hash: String,
@@ -48,9 +48,9 @@ impl ServiceConfig {
         let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
         let mut config: Self =
             serde_json::from_str(&text).with_context(|| format!("{} is not valid", path.display()))?;
-        if !nexodesk_secret::is_hash(&config.password_hash) {
+        if !nuvira_secret::is_hash(&config.password_hash) {
             // Written by an earlier version: from now on only the hash is kept.
-            config.password_hash = nexodesk_secret::hash(&config.password_hash);
+            config.password_hash = nuvira_secret::hash(&config.password_hash);
             config.save()?;
         }
         Ok(config)
@@ -64,7 +64,7 @@ impl ServiceConfig {
 }
 
 fn env_dir(var: &str, fallback: &str) -> PathBuf {
-    std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| fallback.into()).join("NexoDesk")
+    std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| fallback.into()).join("nuvira")
 }
 
 pub fn program_dir() -> PathBuf {

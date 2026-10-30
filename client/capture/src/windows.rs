@@ -206,7 +206,7 @@ impl DxgiCapturer {
         let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
         let mut resource: Option<IDXGIResource> = None;
         unsafe { dup.AcquireNextFrame(timeout.as_millis() as u32, &mut info, &mut resource) }?;
-        let captured_us = nexodesk_proto::now_us();
+        let captured_us = nuvira_proto::now_us();
 
         // LastPresentTime == 0: only the pointer changed, the image is the same.
         let changed = info.LastPresentTime != 0;

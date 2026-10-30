@@ -5,14 +5,14 @@
 //! The connection with the server opens at first use and reopens by itself if it
 //! drops; the sign-in is remembered with the token saved in `app.json`, never the password.
 
-use nexodesk_i18n::{t, tf};
-use nexodesk_proto::v1::{self as pb, api_request::Call, api_response::Result as ApiResult};
-use nexodesk_transport::api::ApiClient;
+use nuvira_i18n::{t, tf};
+use nuvira_proto::v1::{self as pb, api_request::Call, api_response::Result as ApiResult};
+use nuvira_transport::api::ApiClient;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
 
-use crate::{NexoApp, load_settings, save_settings};
+use crate::{NuviraApp, load_settings, save_settings};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AccountUi {
@@ -126,7 +126,7 @@ impl Link {
 
 /// Authenticated client: reopened if the connection dropped, with the saved token.
 async fn client(app: &AppHandle) -> Result<ApiClient, String> {
-    let state = app.state::<NexoApp>();
+    let state = app.state::<NuviraApp>();
     let mut guard = state.address_book.client.lock().await;
     if let Some(client) = guard.as_ref().filter(|c| !c.is_closed()) {
         return Ok(client.clone());
@@ -149,20 +149,20 @@ async fn client(app: &AppHandle) -> Result<ApiClient, String> {
 
 /// New connection with the server set in the app.
 async fn open(app: &AppHandle) -> Result<ApiClient, String> {
-    let server_name = app.state::<NexoApp>().ui.lock().expect("state").server.clone();
+    let server_name = app.state::<NuviraApp>().ui.lock().expect("state").server.clone();
     if server_name.is_empty() {
         return Err(t("err.set_server_first"));
     }
-    let server = nexodesk_transport::resolve_addr(&server_name, nexodesk_transport::signal::DEFAULT_PORT)
+    let server = nuvira_transport::resolve_addr(&server_name, nuvira_transport::signal::DEFAULT_PORT)
         .map_err(|e| format!("{e:#}"))?;
-    let identity_path = nexodesk_transport::identity::data_dir().join("app.key");
-    let identity = nexodesk_transport::identity::Identity::load_or_create(&identity_path)
-        .map_err(|e| format!("{e:#}"))?;
-    let ws_url = nexodesk_transport::ws::default_url(&server_name, server);
+    let identity_path = nuvira_transport::identity::data_dir().join("app.key");
+    let identity =
+        nuvira_transport::identity::Identity::load_or_create(&identity_path).map_err(|e| format!("{e:#}"))?;
+    let ws_url = nuvira_transport::ws::default_url(&server_name, server);
     let name = std::env::var("COMPUTERNAME").unwrap_or_default();
     ApiClient::connect(&server_name, server, &ws_url, Default::default(), &identity, &name)
         .await
-        .map_err(|e| tf("err.server_connect", &[("e", &nexodesk_i18n::message(&format!("{e:#}")))]))
+        .map_err(|e| tf("err.server_connect", &[("e", &nuvira_i18n::message(&format!("{e:#}")))]))
 }
 
 /// Request with a new connection if the open one dropped in the meantime.
@@ -180,7 +180,7 @@ async fn call(app: &AppHandle, call: Call) -> Result<Option<ApiResult>, String> 
 }
 
 fn set_account(app: &AppHandle, account: Option<pb::Account>) {
-    let state = app.state::<NexoApp>();
+    let state = app.state::<NuviraApp>();
     state.update(app, |ui| ui.account = account.map(Into::into));
 }
 
@@ -189,7 +189,7 @@ fn forget(app: &AppHandle) {
     let mut settings = load_settings();
     settings.token = None;
     let _ = save_settings(&settings);
-    let state = app.state::<NexoApp>();
+    let state = app.state::<NuviraApp>();
     state.update(app, |ui| {
         ui.account = None;
         ui.books.clear();
@@ -205,7 +205,7 @@ pub fn restore(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         if let Err(e) = refresh(&app).await {
             warn!("address book not loaded: {e}");
-            app.state::<NexoApp>().update(&app, |ui| ui.address_book_error = Some(e));
+            app.state::<NuviraApp>().update(&app, |ui| ui.address_book_error = Some(e));
         }
     });
 }
@@ -216,7 +216,7 @@ pub fn start_presence(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            let signed_in = app.state::<NexoApp>().ui.lock().expect("state").account.is_some();
+            let signed_in = app.state::<NuviraApp>().ui.lock().expect("state").account.is_some();
             if signed_in && let Err(e) = refresh(&app).await {
                 tracing::debug!("address book not refreshed: {e}");
             }
@@ -239,7 +239,7 @@ pub async fn refresh(app: &AppHandle) -> Result<(), String> {
             entries: b.entries.into_iter().map(Into::into).collect(),
         })
         .collect();
-    app.state::<NexoApp>().update(app, |ui| {
+    app.state::<NuviraApp>().update(app, |ui| {
         ui.books = books;
         ui.address_book_error = None;
     });
@@ -248,7 +248,7 @@ pub async fn refresh(app: &AppHandle) -> Result<(), String> {
 
 /// At the first successful connection to an ID that is in no address book, adds it to the personal one.
 pub fn auto_add(app: &AppHandle, device_id: String, name: String, password: String) {
-    if app.state::<NexoApp>().ui.lock().expect("state").account.is_none() {
+    if app.state::<NuviraApp>().ui.lock().expect("state").account.is_none() {
         return;
     }
     let app = app.clone();
@@ -279,14 +279,14 @@ pub async fn address_book_login(app: AppHandle, username: String, password: Stri
     settings.token = Some(session.token.clone());
     save_settings(&settings).map_err(|e| e.to_string())?;
     set_account(&app, session.account);
-    *app.state::<NexoApp>().address_book.client.lock().await = Some(client);
+    *app.state::<NuviraApp>().address_book.client.lock().await = Some(client);
     refresh(&app).await
 }
 
 #[tauri::command]
 pub async fn address_book_logout(app: AppHandle) {
     let _ = call(&app, Call::Logout(pb::Logout {})).await;
-    *app.state::<NexoApp>().address_book.client.lock().await = None;
+    *app.state::<NuviraApp>().address_book.client.lock().await = None;
     forget(&app);
 }
 
@@ -313,8 +313,8 @@ pub async fn address_book_change_password(app: AppHandle, old: String, new: Stri
         .await?;
     // The server closes the remembered sign-ins: signing in again with the new password.
     let username =
-        app.state::<NexoApp>().ui.lock().expect("state").account.as_ref().map(|a| a.username.clone());
-    *app.state::<NexoApp>().address_book.client.lock().await = None;
+        app.state::<NuviraApp>().ui.lock().expect("state").account.as_ref().map(|a| a.username.clone());
+    *app.state::<NuviraApp>().address_book.client.lock().await = None;
     match username {
         Some(username) => address_book_login(app, username, new).await,
         None => Ok(()),

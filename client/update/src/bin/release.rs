@@ -1,15 +1,15 @@
-//! nexodesk-release — release key and signed updates.
+//! nuvira-release — release key and signed updates.
 //!
 //! ```text
-//! nexodesk-release keygen                      creates the release key (once)
-//! nexodesk-release sign target\release\nexodesk.exe --out dist\update
+//! nuvira-release keygen                      creates the release key (once)
+//! nuvira-release sign target\release\nuvira.exe --out dist\update
 //! ```
 //!
-//! `sign` writes `<out>/windows-x64.json` and `<out>/windows-x64/nexodesk-<version>.exe`:
+//! `sign` writes `<out>/windows-x64.json` and `<out>/windows-x64/nuvira-<version>.exe`:
 //! the contents of the `updates` folder in the server's data.
 //!
 //! The private key stays on the machine that builds the releases, outside the
-//! repository: whoever has it can get any program installed on every NexoDesk
+//! repository: whoever has it can get any program installed on every NuviraHub
 //! device, and without it no further update can be published (devices would need
 //! a new program with the new public key, installed by hand). Back it up offline.
 
@@ -17,11 +17,11 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use nexodesk_update::{Manifest, hex, public_key_of};
+use nuvira_update::{Manifest, hex, public_key_of};
 use ring::signature::Ed25519KeyPair;
 
 #[derive(Parser)]
-#[command(version, about = "NexoDesk release key and signed updates")]
+#[command(version, about = "NuviraHub release key and signed updates")]
 struct Args {
     #[command(subcommand)]
     command: Cmd,
@@ -36,7 +36,7 @@ enum Cmd {
     },
     /// Signs a program and writes the files to publish on the server.
     Sign {
-        /// The program to publish (nexodesk.exe).
+        /// The program to publish (nuvira.exe).
         program: PathBuf,
         /// Version of the program; default: this tool's (same workspace).
         #[arg(long)]
@@ -57,7 +57,7 @@ fn default_key() -> PathBuf {
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
         .unwrap_or_default()
-        .join(".nexodesk")
+        .join(".nuvira")
         .join("release-signing.pk8")
 }
 
@@ -88,7 +88,7 @@ fn main() -> Result<()> {
                 .with_context(|| format!("reading the release key {}", path.display()))?;
             let key = Ed25519KeyPair::from_pkcs8(&pkcs8)
                 .map_err(|_| anyhow::anyhow!("not an Ed25519 PKCS#8 key"))?;
-            if public_key_of(&pkcs8)? != nexodesk_update::PUBLIC_KEY {
+            if public_key_of(&pkcs8)? != nuvira_update::PUBLIC_KEY {
                 bail!(
                     "this key does not match the public key built into the program (client/update/src/lib.rs)"
                 );

@@ -11,9 +11,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use nexodesk_capture::{Capturer, Display};
-use nexodesk_codec::{BgraImage, GpuDevice, VideoEncoder};
-use nexodesk_proto::v1::VideoFrame;
+use nuvira_capture::{Capturer, Display};
+use nuvira_codec::{BgraImage, GpuDevice, VideoEncoder};
+use nuvira_proto::v1::VideoFrame;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -26,7 +26,7 @@ struct Captured {
     captured_us: u64,
     /// GPU mode: the image is in this texture and `data` is empty.
     #[cfg(windows)]
-    texture: Option<nexodesk_codec::GpuTexture>,
+    texture: Option<nuvira_codec::GpuTexture>,
 }
 
 #[derive(Default)]
@@ -126,7 +126,7 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
             Ok(Some(frame)) => frame,
             Ok(None) => continue,
             Err(e) => {
-                // E.g. secure desktop without nexodesk-service: it is retried without closing
+                // E.g. secure desktop without nuvira-service: it is retried without closing
                 // the session, reporting it only once.
                 if !failing {
                     warn!("capture failed, retrying every half second: {e:#}");
@@ -149,7 +149,7 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
             data,
             captured_us: frame.captured_us,
             #[cfg(windows)]
-            texture: frame.texture.clone().map(nexodesk_codec::GpuTexture),
+            texture: frame.texture.clone().map(nuvira_codec::GpuTexture),
         };
         shared.captured.fetch_add(1, Ordering::Relaxed);
         let old = shared.slot.lock().expect("slot").replace(captured);
@@ -275,9 +275,9 @@ fn encode_loop(
         let msg = VideoFrame {
             seq,
             // A repeated image is still what is on screen now.
-            capture_us: if repeat { nexodesk_proto::now_us() } else { image.captured_us },
+            capture_us: if repeat { nuvira_proto::now_us() } else { image.captured_us },
             encode_us,
-            encoded_us: nexodesk_proto::now_us(),
+            encoded_us: nuvira_proto::now_us(),
             keyframe: encoded.keyframe,
             data: encoded.data,
         };
@@ -293,7 +293,7 @@ fn encode_loop(
 }
 
 #[cfg(windows)]
-fn image_texture(image: &Captured) -> Option<&nexodesk_codec::GpuTexture> {
+fn image_texture(image: &Captured) -> Option<&nuvira_codec::GpuTexture> {
     image.texture.as_ref()
 }
 
@@ -351,10 +351,8 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let keyframe = Arc::new(AtomicBool::new(true));
         let (display, pipeline) = Pipeline::start(
-            || Ok(Box::new(nexodesk_capture::SyntheticCapturer::new(320, 180, 60)) as Box<dyn Capturer>),
-            |gpu| {
-                nexodesk_codec::create_encoder(nexodesk_codec::EncoderPlan::Software, Default::default(), gpu)
-            },
+            || Ok(Box::new(nuvira_capture::SyntheticCapturer::new(320, 180, 60)) as Box<dyn Capturer>),
+            |gpu| nuvira_codec::create_encoder(nuvira_codec::EncoderPlan::Software, Default::default(), gpu),
             false,
             Arc::new(AtomicU32::new(60)),
             tx,

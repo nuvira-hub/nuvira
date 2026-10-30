@@ -7,12 +7,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use nexodesk_codec::YuvFrame;
-use nexodesk_proto::v1::{
+use nuvira_codec::YuvFrame;
+use nuvira_proto::v1::{
     ControlMessage, DisplayInfo, FileChunk, Hello, InputEvent, Ping, RequestKeyframe, VideoFrame,
     control_message::Msg,
 };
-use nexodesk_transport::{Fingerprint, FramedRecv, FramedSend};
+use nuvira_transport::{Fingerprint, FramedRecv, FramedSend};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 use winit::event_loop::EventLoopProxy;
@@ -65,7 +65,7 @@ pub enum NetEvent {
     /// Click on the toolbar.
     Toolbar(crate::toolbar::Action),
     /// File manager: answer of the agent to a request.
-    Fs(nexodesk_proto::v1::FsResponse),
+    Fs(nuvira_proto::v1::FsResponse),
     /// File manager: progress of a transfer (both directions).
     Transfer {
         id: u32,
@@ -143,12 +143,12 @@ impl FrameSlot {
 pub enum Target {
     /// Direct LAN connection (phase 0), with the agent's fingerprint.
     Direct { addr: SocketAddr, fingerprint: Option<Fingerprint> },
-    /// By ID through nexodesk-server and its relay.
+    /// By ID through nuvira-server and its relay.
     Server {
         server: SocketAddr,
         server_name: String,
         server_key: Option<Fingerprint>,
-        transport: nexodesk_transport::signal::TransportMode,
+        transport: nuvira_transport::signal::TransportMode,
         server_ws: Option<String>,
         device_id: String,
         identity: std::path::PathBuf,
@@ -200,14 +200,14 @@ fn control(msg: Msg) -> ControlMessage {
     ControlMessage { msg: Some(msg) }
 }
 
-/// Connection to the agent: direct, or asking nexodesk-server for the route.
+/// Connection to the agent: direct, or asking nuvira-server for the route.
 /// Also returns whether the path is direct (`false`: through the server's relay).
-async fn open_connection(target: Target) -> Result<(nexodesk_transport::Connection, bool)> {
-    use nexodesk_proto::v1::{Connect, Role, client_message, server_message};
-    use nexodesk_transport::{identity::Identity, p2p, signal};
+async fn open_connection(target: Target) -> Result<(nuvira_transport::Connection, bool)> {
+    use nuvira_proto::v1::{Connect, Role, client_message, server_message};
+    use nuvira_transport::{identity::Identity, p2p, signal};
     match target {
         Target::Direct { addr, fingerprint } => {
-            Ok((nexodesk_transport::connect(addr, fingerprint).await?, true))
+            Ok((nuvira_transport::connect(addr, fingerprint).await?, true))
         }
         Target::Server { server, server_name, server_key, transport, server_ws, device_id, identity } => {
             let identity = Identity::load_or_create(&identity)?;
@@ -215,12 +215,11 @@ async fn open_connection(target: Target) -> Result<(nexodesk_transport::Connecti
             let name = std::env::var("COMPUTERNAME").unwrap_or_default();
             // The viewer receives no connections: several session windows can coexist.
             let device = signal::DeviceInfo { name: &name, reachable: false };
-            let ws_url =
-                server_ws.unwrap_or_else(|| nexodesk_transport::ws::default_url(&server_name, server));
+            let ws_url = server_ws.unwrap_or_else(|| nuvira_transport::ws::default_url(&server_name, server));
             let mut sig =
                 signal::connect_auto(server, &ws_url, transport, expected, &identity, &device).await?;
-            if let nexodesk_transport::ServerTransport::WebSocket(url) = &sig.transport {
-                info!("connected to nexodesk-server through the WebSocket {url}");
+            if let nuvira_transport::ServerTransport::WebSocket(url) = &sig.transport {
+                info!("connected to nuvira-server through the WebSocket {url}");
             }
             if expected.is_none() {
                 signal::known_server::remember(&server_name, &sig.server_fingerprint)?;
@@ -230,9 +229,9 @@ async fn open_connection(target: Target) -> Result<(nexodesk_transport::Connecti
             let route = loop {
                 match sig.rx.recv().await? {
                     Some(server_message::Msg::Route(r)) if r.role() == Role::Viewer => break r,
-                    Some(server_message::Msg::Error(e)) => bail!("{}", nexodesk_i18n::message(&e.message)),
+                    Some(server_message::Msg::Error(e)) => bail!("{}", nuvira_i18n::message(&e.message)),
                     Some(_) => {}
-                    None => bail!("nexodesk-server closed the connection"),
+                    None => bail!("nuvira-server closed the connection"),
                 }
             };
             let route = p2p::Route {
@@ -268,7 +267,7 @@ async fn session(
 
     ctrl_tx
         .send(&control(Msg::Hello(Hello {
-            protocol_version: nexodesk_proto::PROTOCOL_VERSION,
+            protocol_version: nuvira_proto::PROTOCOL_VERSION,
             device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
             os: std::env::consts::OS.into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
@@ -279,8 +278,8 @@ async fn session(
         bail!("the agent did not introduce itself");
     };
     if agent.password_required {
-        let password = password.with_context(|| nexodesk_i18n::t("viewer.password_required"))?;
-        ctrl_tx.send(&control(Msg::Auth(nexodesk_proto::v1::Auth { password }))).await?;
+        let password = password.with_context(|| nuvira_i18n::t("viewer.password_required"))?;
+        ctrl_tx.send(&control(Msg::Auth(nuvira_proto::v1::Auth { password }))).await?;
         let mut answer = ctrl_rx.recv().await?;
         if let Some(ControlMessage { msg: Some(Msg::ConfirmationPending(_)) }) = answer {
             info!("waiting for the person at the remote computer to accept");
@@ -292,10 +291,7 @@ async fn session(
             Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) => {
                 bail!(
                     "{}",
-                    nexodesk_i18n::tf(
-                        "viewer.access_denied",
-                        &[("reason", &nexodesk_i18n::message(&r.message))]
-                    )
+                    nuvira_i18n::tf("viewer.access_denied", &[("reason", &nuvira_i18n::message(&r.message))])
                 )
             }
             _ => bail!("no answer to the password"),
@@ -328,7 +324,7 @@ async fn session(
 
     let video = async {
         while let Some(frame) = video_rx.recv::<VideoFrame>().await? {
-            if frame_tx.send((frame, nexodesk_proto::now_us())).is_err() {
+            if frame_tx.send((frame, nuvira_proto::now_us())).is_err() {
                 break;
             }
         }
@@ -343,8 +339,8 @@ async fn session(
     };
 
     // Shared clipboard: what is copied here goes to the agent, what is copied there arrives here.
-    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nexodesk_clipboard::Content>();
-    let clipboard = match nexodesk_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
+    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nuvira_clipboard::Content>();
+    let clipboard = match nuvira_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
         Ok(tx) => Some(tx),
         Err(e) => {
             warn!("clipboard not shared: {e:#}");
@@ -380,16 +376,16 @@ async fn session(
                     if !first.clipboard_image {
                         return;
                     }
-                    match nexodesk_transport::read_stream(
+                    match nuvira_transport::read_stream(
                         &mut rx,
                         &first,
-                        nexodesk_clipboard::MAX_IMAGE_PNG as u64,
+                        nuvira_clipboard::MAX_IMAGE_PNG as u64,
                     )
                     .await
                     {
                         Ok(png) => {
                             if let Some(clipboard) = clipboard {
-                                let _ = clipboard.send(nexodesk_clipboard::Content::Image(png));
+                                let _ = clipboard.send(nuvira_clipboard::Content::Image(png));
                             }
                         }
                         Err(e) => warn!("clipboard image not received: {e:#}"),
@@ -406,21 +402,21 @@ async fn session(
         loop {
             tokio::select! {
                 _ = ping.tick() => {
-                    ctrl_tx.send(&control(Msg::Ping(Ping { sent_us: nexodesk_proto::now_us() }))).await?;
+                    ctrl_tx.send(&control(Msg::Ping(Ping { sent_us: nuvira_proto::now_us() }))).await?;
                 }
                 Some(msg) = control_rx.recv() => {
                     ctrl_tx.send(&control(msg)).await?;
                 }
                 Some(content) = clip_rx.recv() => match content {
-                    nexodesk_clipboard::Content::Text(text) => {
-                        ctrl_tx.send(&control(Msg::Clipboard(nexodesk_proto::v1::Clipboard { text }))).await?;
+                    nuvira_clipboard::Content::Text(text) => {
+                        ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text }))).await?;
                     }
                     // On its own stream, not to hold up the control channel.
-                    nexodesk_clipboard::Content::Image(png) => {
+                    nuvira_clipboard::Content::Image(png) => {
                         let conn = conn.clone();
                         tokio::spawn(async move {
                             let header = FileChunk { clipboard_image: true, ..Default::default() };
-                            if let Err(e) = nexodesk_transport::send_stream(&conn, header, &png).await {
+                            if let Err(e) = nuvira_transport::send_stream(&conn, header, &png).await {
                                 warn!("clipboard image not sent: {e:#}");
                             }
                         });
@@ -431,7 +427,7 @@ async fn session(
                 }
                 msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
                     Some(ControlMessage { msg: Some(Msg::Pong(pong)) }) => {
-                        let now = nexodesk_proto::now_us();
+                        let now = nuvira_proto::now_us();
                         let rtt_us = now.saturating_sub(pong.ping_sent_us);
                         // Agent clock minus ours, assuming a symmetric round trip.
                         let midpoint = (pong.ping_sent_us + now) / 2;
@@ -460,7 +456,7 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::Clipboard(clip)) }) => {
                         if let Some(clipboard) = &clipboard {
-                            let _ = clipboard.send(nexodesk_clipboard::Content::Text(clip.text));
+                            let _ = clipboard.send(nuvira_clipboard::Content::Text(clip.text));
                         }
                     }
                     Some(ControlMessage { msg: Some(Msg::VideoFormat(f)) }) => {
@@ -529,7 +525,7 @@ async fn session(
 
 /// File manager upload: `local` from `offset` on, into `dir` on the remote PC.
 async fn send_upload(
-    conn: &nexodesk_transport::Connection,
+    conn: &nuvira_transport::Connection,
     id: u32,
     local: &std::path::Path,
     dir: String,
@@ -651,7 +647,7 @@ fn file_name(path: &std::path::Path) -> String {
 
 /// Sends a file on a new stream; the outcome then comes from the agent (`FileReceived`).
 async fn send_file(
-    conn: &nexodesk_transport::Connection,
+    conn: &nuvira_transport::Connection,
     path: &std::path::Path,
     proxy: &EventLoopProxy<NetEvent>,
 ) -> Result<()> {
@@ -659,7 +655,7 @@ async fn send_file(
 
     let name = file_name(path);
     if tokio::fs::metadata(path).await.is_ok_and(|m| m.is_dir()) {
-        bail!("{}", nexodesk_i18n::t("viewer.folder_not_supported"));
+        bail!("{}", nuvira_i18n::t("viewer.folder_not_supported"));
     }
     let mut file =
         tokio::fs::File::open(path).await.with_context(|| format!("opening {}", path.display()))?;
@@ -693,7 +689,7 @@ fn decode_loop(
     slot: Arc<FrameSlot>,
     request_keyframe: mpsc::UnboundedSender<()>,
 ) {
-    let mut decoder = match nexodesk_codec::best_decoder() {
+    let mut decoder = match nuvira_codec::best_decoder() {
         Ok(d) => d,
         Err(e) => {
             let _ = proxy.send_event(NetEvent::Disconnected(format!("decoder not available: {e:#}")));

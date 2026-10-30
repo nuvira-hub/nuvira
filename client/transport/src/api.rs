@@ -1,4 +1,4 @@
-//! Accounts and address book on nexodesk-server.
+//! Accounts and address book on nuvira-server.
 //!
 //! Requests travel on the signalling connection (registered as an unreachable
 //! device), each with a number that comes back in the answer. If the connection
@@ -8,9 +8,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use anyhow::{Result, anyhow, bail};
-use nexodesk_proto::v1::{
-    ApiRequest, ApiResponse, api_request, api_response, client_message, server_message,
-};
+use nuvira_proto::v1::{ApiRequest, ApiResponse, api_request, api_response, client_message, server_message};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::identity::Identity;

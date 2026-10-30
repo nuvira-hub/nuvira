@@ -1,5 +1,5 @@
-//! nexodesk-viewer: the remote session window (see the `nexodesk_viewer` library).
+//! nuvira-viewer: the remote session window (see the `nuvira_viewer` library).
 
 fn main() -> anyhow::Result<()> {
-    nexodesk_viewer::run(std::env::args_os())
+    nuvira_viewer::run(std::env::args_os())
 }

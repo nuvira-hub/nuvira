@@ -1,11 +1,11 @@
-//! NexoDesk — desktop application.
+//! NuviraHub — desktop application.
 //!
 //! Main window (Tauri) with the ID and password of this device, the state of the
-//! connection to nexodesk-server, confirmation of incoming requests and start of
+//! connection to nuvira-server, confirmation of incoming requests and start of
 //! sessions towards other devices. The agent runs in this process (the
-//! `nexodesk_agent` library) or, if nexodesk-service is installed, it is the
-//! service's and the app talks to it through the local channel (`nexodesk_agent::ipc`).
-//! The remote session window is `nexodesk-viewer`, started as a separate process
+//! `nuvira_agent` library) or, if nuvira-service is installed, it is the
+//! service's and the app talks to it through the local channel (`nuvira_agent::ipc`).
+//! The remote session window is `nuvira-viewer`, started as a separate process
 //! (native wgpu window, decision D5).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -16,16 +16,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use nexodesk_agent::{AgentCommand, AgentConfig, AgentEvent, ServerOptions};
-use nexodesk_codec::{EncoderChoice, EncoderPlan};
-use nexodesk_i18n::{t, tf};
+use nuvira_agent::{AgentCommand, AgentConfig, AgentEvent, ServerOptions};
+use nuvira_codec::{EncoderChoice, EncoderPlan};
+use nuvira_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-const SOURCE_URL: &str = "https://github.com/alexbn71/NexoDesk";
+const SOURCE_URL: &str = "https://github.com/alexbn71/nuvira";
 
 /// State shown by the interface (sent with the "state" event).
 #[derive(Debug, Default, Clone, Serialize)]
@@ -86,7 +86,7 @@ struct Settings {
     /// Remembered address book sign-in (server token, not the password).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     token: Option<String>,
-    /// Interface language ("auto" or a code from `nexodesk_i18n::LANGUAGES`).
+    /// Interface language ("auto" or a code from `nuvira_i18n::LANGUAGES`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
     /// Server certificate fingerprint, when it came with the server in the file name.
@@ -94,8 +94,8 @@ struct Settings {
     server_key: Option<String>,
 }
 
-/// Server written in the program's file name, e.g. `nexodesk-host=nexodesk.example.com.exe`
-/// or `nexodesk-host=example.com,port=21117,key=<fingerprint>.exe`: whoever hosts a
+/// Server written in the program's file name, e.g. `nuvira-host=nuvira.example.com.exe`
+/// or `nuvira-host=example.com,port=21117,key=<fingerprint>.exe`: whoever hosts a
 /// server hands out the same program, renamed, and it connects there with no setup.
 /// Windows does not allow `:` in file names, hence `port=`. A copy saved twice by a
 /// browser (`... (1).exe`) still works.
@@ -122,7 +122,7 @@ fn file_config(file_name: &str) -> FileConfig {
         match option.trim().split_once('=') {
             Some(("host", v)) if !v.is_empty() => host = Some(v.to_string()),
             Some(("port", v)) if v.parse::<u16>().is_ok() => port = Some(v.to_string()),
-            Some(("key", v)) if nexodesk_transport::parse_fingerprint(v).is_ok() => key = Some(v.to_string()),
+            Some(("key", v)) if nuvira_transport::parse_fingerprint(v).is_ok() => key = Some(v.to_string()),
             _ => {}
         }
     }
@@ -159,7 +159,7 @@ fn apply_file_config(settings: &mut Settings) {
 }
 
 fn settings_path() -> PathBuf {
-    nexodesk_transport::identity::data_dir().join("app.json")
+    nuvira_transport::identity::data_dir().join("app.json")
 }
 
 fn load_settings() -> Settings {
@@ -179,7 +179,7 @@ fn save_settings(settings: &Settings) -> anyhow::Result<()> {
     Ok(())
 }
 
-struct NexoApp {
+struct NuviraApp {
     ui: Mutex<UiState>,
     password: Arc<Mutex<String>>,
     commands: Mutex<Option<mpsc::UnboundedSender<AgentCommand>>>,
@@ -189,7 +189,7 @@ struct NexoApp {
     address_book: address_book::Link,
 }
 
-impl NexoApp {
+impl NuviraApp {
     fn update(&self, app: &AppHandle, change: impl FnOnce(&mut UiState)) {
         let state = {
             let mut ui = self.ui.lock().expect("state");
@@ -223,12 +223,12 @@ fn bring_to_front(app: &AppHandle) {
 /// Starts (or restarts, if the server changes) the agent in Tauri's runtime, or the
 /// link with the service's agent if the service is installed.
 fn start_agent(app: &AppHandle) {
-    let state = app.state::<NexoApp>();
+    let state = app.state::<NuviraApp>();
     if let Some(old) = state.agent.lock().expect("agent").take() {
         old.abort();
     }
     #[cfg(windows)]
-    if nexodesk_agent::ipc::service_installed() {
+    if nuvira_agent::ipc::service_installed() {
         start_service_link(app);
         return;
     }
@@ -247,7 +247,7 @@ fn start_agent(app: &AppHandle) {
 
     let app = app.clone();
     let handle = tauri::async_runtime::spawn(async move {
-        let state = app.state::<NexoApp>();
+        let state = app.state::<NuviraApp>();
         let mut config = AgentConfig {
             display: None,
             synthetic: None,
@@ -263,7 +263,7 @@ fn start_agent(app: &AppHandle) {
             None => {
                 let settings = config.encoder_settings();
                 let plan = tokio::task::spawn_blocking(move || {
-                    nexodesk_codec::plan_encoder(EncoderChoice::Auto, settings)
+                    nuvira_codec::plan_encoder(EncoderChoice::Auto, settings)
                 })
                 .await
                 .unwrap_or(EncoderPlan::Software);
@@ -273,12 +273,10 @@ fn start_agent(app: &AppHandle) {
         };
         let opts = ServerOptions {
             server_name: server,
-            server_key: load_settings()
-                .server_key
-                .and_then(|k| nexodesk_transport::parse_fingerprint(&k).ok()),
-            transport: nexodesk_transport::signal::TransportMode::Auto,
+            server_key: load_settings().server_key.and_then(|k| nuvira_transport::parse_fingerprint(&k).ok()),
+            transport: nuvira_transport::signal::TransportMode::Auto,
             server_ws: None,
-            identity_path: nexodesk_transport::identity::data_dir().join("device.key"),
+            identity_path: nuvira_transport::identity::data_dir().join("device.key"),
             confirm: true,
             permanent_password_hash: None,
             info_file: None,
@@ -291,8 +289,7 @@ fn start_agent(app: &AppHandle) {
             }
         });
         if let Err(e) =
-            nexodesk_agent::serve_via_server(config, opts, state.password.clone(), events_tx, commands_rx)
-                .await
+            nuvira_agent::serve_via_server(config, opts, state.password.clone(), events_tx, commands_rx).await
         {
             warn!("agent ended: {e:#}");
             state.update(&app, |ui| {
@@ -304,13 +301,13 @@ fn start_agent(app: &AppHandle) {
     *state.agent.lock().expect("agent") = Some(handle);
 }
 
-/// The NexoDesk service is installed: no agent in the app, the service's one is
+/// The NuviraHub service is installed: no agent in the app, the service's one is
 /// shown. If its agent does not answer (start-up, user switch) it is retried.
 #[cfg(windows)]
 fn start_service_link(app: &AppHandle) {
-    use nexodesk_agent::ipc::ToApp;
+    use nuvira_agent::ipc::ToApp;
 
-    let state = app.state::<NexoApp>();
+    let state = app.state::<NuviraApp>();
     state.update(app, |ui| {
         ui.service = true;
         ui.status = "connecting".into();
@@ -318,10 +315,10 @@ fn start_service_link(app: &AppHandle) {
     });
     let app = app.clone();
     let handle = tauri::async_runtime::spawn(async move {
-        let state = app.state::<NexoApp>();
+        let state = app.state::<NuviraApp>();
         let mut last_error: Option<String> = None;
         loop {
-            match nexodesk_agent::ipc::connect() {
+            match nuvira_agent::ipc::connect() {
                 Ok((mut messages, commands)) => {
                     info!("connected to the service's agent");
                     last_error = None;
@@ -367,7 +364,7 @@ fn start_service_link(app: &AppHandle) {
 }
 
 fn on_agent_event(app: &AppHandle, event: AgentEvent) {
-    let state = app.state::<NexoApp>();
+    let state = app.state::<NuviraApp>();
     match event {
         AgentEvent::Connecting => state.update(app, |ui| ui.status = "connecting".into()),
         AgentEvent::Online { device_id, websocket } => state.update(app, |ui| {
@@ -387,7 +384,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                     session_id,
                     viewer_id,
                     viewer_name,
-                    deadline_ms: now_ms() + nexodesk_agent::CONFIRM_TIMEOUT.as_millis() as u64,
+                    deadline_ms: now_ms() + nuvira_agent::CONFIRM_TIMEOUT.as_millis() as u64,
                 })
             });
             bring_to_front(app);
@@ -421,15 +418,15 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
 }
 
 #[tauri::command]
-fn get_state(state: State<NexoApp>) -> UiState {
+fn get_state(state: State<NuviraApp>) -> UiState {
     state.ui.lock().expect("state").clone()
 }
 
 #[tauri::command]
-fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(), String> {
+fn set_server(app: AppHandle, state: State<NuviraApp>, server: String) -> Result<(), String> {
     let server = server.trim().to_string();
     if !server.is_empty() {
-        nexodesk_transport::resolve_addr(&server, nexodesk_transport::signal::DEFAULT_PORT)
+        nuvira_transport::resolve_addr(&server, nuvira_transport::signal::DEFAULT_PORT)
             .map_err(|e| tf("err.invalid_address", &[("e", &e.to_string())]))?;
     }
     let mut settings = load_settings();
@@ -458,17 +455,17 @@ fn set_server(app: AppHandle, state: State<NexoApp>, server: String) -> Result<(
 
 /// Generated by the agent (the app's or the service's), which answers with the Password event.
 #[tauri::command]
-fn new_password(state: State<NexoApp>) {
+fn new_password(state: State<NuviraApp>) {
     state.send(AgentCommand::NewPassword);
 }
 
 #[tauri::command]
-fn respond(state: State<NexoApp>, session_id: String, accept: bool) {
+fn respond(state: State<NuviraApp>, session_id: String, accept: bool) {
     state.send(AgentCommand::Respond { session_id, accept });
 }
 
 #[tauri::command]
-fn send_chat(app: AppHandle, state: State<NexoApp>, text: String) {
+fn send_chat(app: AppHandle, state: State<NuviraApp>, text: String) {
     let text = text.trim().to_string();
     if text.is_empty() || state.ui.lock().expect("state").session.is_none() {
         return;
@@ -478,19 +475,24 @@ fn send_chat(app: AppHandle, state: State<NexoApp>, text: String) {
 }
 
 #[tauri::command]
-fn end_session(state: State<NexoApp>) {
+fn end_session(state: State<NuviraApp>) {
     state.send(AgentCommand::EndSession);
 }
 
-/// Opens the session window towards another device (`nexodesk-viewer` process).
+/// Opens the session window towards another device (`nuvira-viewer` process).
 #[tauri::command]
-fn connect(app: AppHandle, state: State<NexoApp>, device_id: String, password: String) -> Result<(), String> {
+fn connect(
+    app: AppHandle,
+    state: State<NuviraApp>,
+    device_id: String,
+    password: String,
+) -> Result<(), String> {
     launch_viewer(&app, &state, device_id, password)
 }
 
 /// Connection from the address book, with the password saved in the entry.
 #[tauri::command]
-fn connect_entry(app: AppHandle, state: State<NexoApp>, id: i64) -> Result<(), String> {
+fn connect_entry(app: AppHandle, state: State<NuviraApp>, id: i64) -> Result<(), String> {
     let entry = state
         .ui
         .lock()
@@ -506,7 +508,7 @@ fn connect_entry(app: AppHandle, state: State<NexoApp>, id: i64) -> Result<(), S
 
 fn launch_viewer(
     app: &AppHandle,
-    state: &NexoApp,
+    state: &NuviraApp,
     device_id: String,
     password: String,
 ) -> Result<(), String> {
@@ -518,7 +520,7 @@ fn launch_viewer(
     if server.is_empty() {
         return Err(t("err.set_server_first"));
     }
-    // The viewer is in this same program (`nexodesk viewer ...`).
+    // The viewer is in this same program (`nuvira viewer ...`).
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // The password goes in the process environment, not on the command line
     // (which other programs on the same PC can read).
@@ -528,9 +530,9 @@ fn launch_viewer(
         command.args(["--server-key", &key]);
     }
     let mut child = command
-        .env("NEXODESK_PASSWORD", &password)
+        .env("NUVIRA_PASSWORD", &password)
         // The session window uses the app's language.
-        .env("NEXODESK_LANG", nexodesk_i18n::lang())
+        .env("NUVIRA_LANG", nuvira_i18n::lang())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -547,10 +549,10 @@ fn launch_viewer(
             use std::io::BufRead;
             for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
                 if line == "@pending" {
-                    app.state::<NexoApp>()
+                    app.state::<NuviraApp>()
                         .update(&app, |ui| ui.viewer_message = Some("@app.waiting_confirmation".into()));
                 } else if let Some(name) = line.strip_prefix("@connected\t") {
-                    app.state::<NexoApp>().update(&app, |ui| ui.viewer_message = None);
+                    app.state::<NuviraApp>().update(&app, |ui| ui.viewer_message = None);
                     address_book::auto_add(&app, device_id.clone(), name.to_string(), password.clone());
                 } else if let Some(reason) = line.strip_prefix("@closed\t") {
                     // Already translated by the viewer.
@@ -581,7 +583,7 @@ fn launch_viewer(
             }
             _ => None,
         };
-        let state = app.state::<NexoApp>();
+        let state = app.state::<NuviraApp>();
         state.update(&app, |ui| ui.viewer_message = message);
     });
     Ok(())
@@ -599,10 +601,10 @@ struct I18nUi {
 
 fn i18n_ui() -> I18nUi {
     I18nUi {
-        lang: nexodesk_i18n::lang(),
+        lang: nuvira_i18n::lang(),
         preference: load_settings().language.unwrap_or_else(|| "auto".into()),
-        languages: nexodesk_i18n::LANGUAGES.to_vec(),
-        strings: serde_json::from_str(&nexodesk_i18n::json()).unwrap_or_default(),
+        languages: nuvira_i18n::LANGUAGES.to_vec(),
+        strings: serde_json::from_str(&nuvira_i18n::json()).unwrap_or_default(),
     }
 }
 
@@ -616,7 +618,7 @@ fn set_language(language: String) -> Result<I18nUi, String> {
     let mut settings = load_settings();
     settings.language = (language != "auto").then_some(language);
     save_settings(&settings).map_err(|e| e.to_string())?;
-    nexodesk_i18n::init(settings.language.as_deref());
+    nuvira_i18n::init(settings.language.as_deref());
     Ok(i18n_ui())
 }
 
@@ -626,9 +628,9 @@ fn open_source(app: AppHandle) -> Result<(), String> {
 }
 
 fn init_logging() {
-    let dir = nexodesk_transport::identity::data_dir();
+    let dir = nuvira_transport::identity::data_dir();
     let _ = std::fs::create_dir_all(&dir);
-    let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("nexodesk-app.log"));
+    let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("nuvira-app.log"));
     let filter =
         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,wgpu=warn".into());
     match file {
@@ -641,7 +643,7 @@ fn init_logging() {
     }
 }
 
-/// The other programs contained in the app, started as `nexodesk.exe <name> ...`:
+/// The other programs contained in the app, started as `nuvira.exe <name> ...`:
 /// one file to download, copy and sign instead of four.
 const SUBCOMMANDS: [&str; 3] = ["agent", "viewer", "service"];
 
@@ -651,12 +653,12 @@ fn main() {
         std::process::exit(run_subcommand(sub, &args[2..]));
     }
     init_logging();
-    nexodesk_input::set_dpi_awareness();
+    nuvira_input::set_dpi_awareness();
     let mut settings = load_settings();
     apply_file_config(&mut settings);
-    nexodesk_i18n::init(settings.language.as_deref());
-    let password = nexodesk_agent::random_password();
-    let state = NexoApp {
+    nuvira_i18n::init(settings.language.as_deref());
+    let password = nuvira_agent::random_password();
+    let state = NuviraApp {
         ui: Mutex::new(UiState {
             server: settings.server,
             status: "setup".into(),
@@ -751,7 +753,7 @@ fn attach_console() {
     }
 }
 
-/// Installs NexoDesk on this PC for unattended access: `nexodesk service install`
+/// Installs NuviraHub on this PC for unattended access: `nuvira service install`
 /// started as administrator (UAC prompt). The password travels in a temporary file,
 /// not on the command line, and the outcome comes back the same way. Returns the
 /// message to show, with the permanent password if it was generated.
@@ -770,9 +772,9 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
         }
         let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
             let temp = std::env::temp_dir();
-            let tag = nexodesk_agent::random_password();
+            let tag = nuvira_agent::random_password();
             let (password_file, report) =
-                (temp.join(format!("nexodesk-{tag}.pw")), temp.join(format!("nexodesk-{tag}.json")));
+                (temp.join(format!("nuvira-{tag}.pw")), temp.join(format!("nuvira-{tag}.json")));
             let quote = |p: &std::path::Path| format!("\"{}\"", p.display());
             let mut params =
                 format!("service install --server \"{}\" --report {}", settings.server, quote(&report));
@@ -784,7 +786,7 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
                 params += &format!(" --password-file {}", quote(&password_file));
             }
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-            let outcome = nexodesk_service::run_elevated(&exe, &params);
+            let outcome = nuvira_service::run_elevated(&exe, &params);
             let _ = std::fs::remove_file(&password_file);
             let text = std::fs::read_to_string(&report);
             let _ = std::fs::remove_file(&report);
@@ -821,7 +823,7 @@ fn previous_copy() -> Option<PathBuf> {
     std::env::current_exe().ok().map(|exe| exe.with_extension("old.exe"))
 }
 
-/// Without the service (which updates an installed NexoDesk by itself) the app asks
+/// Without the service (which updates an installed NuviraHub by itself) the app asks
 /// its server for a newer version at start-up and every 6 hours, and offers it.
 fn start_update_checks(app: &AppHandle) {
     if let Some(old) = previous_copy() {
@@ -831,16 +833,16 @@ fn start_update_checks(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             #[cfg(windows)]
-            let installed = nexodesk_agent::ipc::service_installed();
+            let installed = nuvira_agent::ipc::service_installed();
             #[cfg(not(windows))]
             let installed = false;
             let settings = load_settings();
             if !installed && !settings.server.trim().is_empty() {
-                let base = nexodesk_update::base_url(&settings.server, None, nexodesk_update::DEFAULT_PORT);
-                match nexodesk_update::check(&base, &nexodesk_update::PUBLIC_KEY).await {
+                let base = nuvira_update::base_url(&settings.server, None, nuvira_update::DEFAULT_PORT);
+                match nuvira_update::check(&base, &nuvira_update::PUBLIC_KEY).await {
                     Ok(found) => {
                         let version = found.map(|m| m.version);
-                        app.state::<NexoApp>().update(&app, |ui| ui.update = version);
+                        app.state::<NuviraApp>().update(&app, |ui| ui.update = version);
                     }
                     Err(e) => tracing::debug!("update check: {e:#}"),
                 }
@@ -857,14 +859,14 @@ fn start_update_checks(app: &AppHandle) {
 #[tauri::command]
 async fn apply_update(app: AppHandle) -> Result<(), String> {
     let settings = load_settings();
-    let base = nexodesk_update::base_url(&settings.server, None, nexodesk_update::DEFAULT_PORT);
+    let base = nuvira_update::base_url(&settings.server, None, nuvira_update::DEFAULT_PORT);
     let error = |e: anyhow::Error| tf("update.failed", &[("e", &format!("{e:#}"))]);
-    let manifest = nexodesk_update::check(&base, &nexodesk_update::PUBLIC_KEY)
+    let manifest = nuvira_update::check(&base, &nuvira_update::PUBLIC_KEY)
         .await
         .map_err(error)?
         .ok_or_else(|| t("update.none"))?;
-    let download = std::env::temp_dir().join(format!("nexodesk-{}.exe", manifest.version));
-    nexodesk_update::download(&base, &manifest, &download).await.map_err(error)?;
+    let download = std::env::temp_dir().join(format!("nuvira-{}.exe", manifest.version));
+    nuvira_update::download(&base, &manifest, &download).await.map_err(error)?;
 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let aside = previous_copy().ok_or("program path")?;
@@ -884,11 +886,11 @@ async fn apply_update(app: AppHandle) -> Result<(), String> {
 fn run_subcommand(sub: &str, rest: &[std::ffi::OsString]) -> i32 {
     #[cfg(windows)]
     attach_console();
-    let args = std::iter::once(format!("nexodesk {sub}").into()).chain(rest.iter().cloned());
+    let args = std::iter::once(format!("nuvira {sub}").into()).chain(rest.iter().cloned());
     let result = match sub {
-        "agent" => nexodesk_agent::cli::run(args),
-        "viewer" => nexodesk_viewer::run(args),
-        _ => nexodesk_service::run(args),
+        "agent" => nuvira_agent::cli::run(args),
+        "viewer" => nuvira_viewer::run(args),
+        _ => nuvira_service::run(args),
     };
     match result {
         Ok(()) => 0,
@@ -908,16 +910,16 @@ mod tests {
     #[test]
     fn server_from_the_file_name() {
         let server = |name: &str| file_config(name).server;
-        assert_eq!(server("nexodesk.exe"), None);
-        assert_eq!(server("nexodesk-host=alexbn.ddns.net.exe").as_deref(), Some("alexbn.ddns.net"));
-        assert_eq!(server("NexoDesk-host=10.0.0.5,port=21117.EXE").as_deref(), Some("10.0.0.5:21117"));
+        assert_eq!(server("nuvira.exe"), None);
+        assert_eq!(server("nuvira-host=alexbn.ddns.net.exe").as_deref(), Some("alexbn.ddns.net"));
+        assert_eq!(server("Nuvira-host=10.0.0.5,port=21117.EXE").as_deref(), Some("10.0.0.5:21117"));
         // Repeated download.
-        assert_eq!(server("nexodesk-host=alexbn.ddns.net (2).exe").as_deref(), Some("alexbn.ddns.net"));
+        assert_eq!(server("nuvira-host=alexbn.ddns.net (2).exe").as_deref(), Some("alexbn.ddns.net"));
         // A bad port or key is ignored, the rest is kept.
-        let c = file_config(&format!("nexodesk-host=a.example,port=99999,key={KEY}.exe"));
+        let c = file_config(&format!("nuvira-host=a.example,port=99999,key={KEY}.exe"));
         assert_eq!((c.server.as_deref(), c.server_key.as_deref()), (Some("a.example"), Some(KEY)));
-        assert_eq!(file_config("nexodesk-host=a.example,key=123.exe").server_key, None);
+        assert_eq!(file_config("nuvira-host=a.example,key=123.exe").server_key, None);
         // Without host nothing applies.
-        assert_eq!(file_config(&format!("nexodesk-key={KEY}.exe")), FileConfig::default());
+        assert_eq!(file_config(&format!("nuvira-key={KEY}.exe")), FileConfig::default());
     }
 }

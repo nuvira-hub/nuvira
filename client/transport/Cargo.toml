@@ -1,5 +1,5 @@
 [package]
-name = "nexodesk-transport"
+name = "nuvira-transport"
 description = "Session network transport (QUIC)"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-nexodesk-proto.workspace = true
+nuvira-proto.workspace = true
 prost.workspace = true
 quinn.workspace = true
 rcgen.workspace = true

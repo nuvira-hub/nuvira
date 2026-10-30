@@ -4,7 +4,7 @@
 //! buttons are HTML (`toolbar.html`, reusable in the future web client) and work
 //! with both drawing methods, wgpu and CPU. Clicks reach the event loop as
 //! [`NetEvent::Toolbar`]; the state goes back to the page with
-//! `nexodesk.update({...})`. The mouse over the toolbar does not reach the remote PC.
+//! `nuvira.update({...})`. The mouse over the toolbar does not reach the remote PC.
 //!
 //! The chat panel ([`ChatPanel`], `chat.html`) is a second WebView, on the right
 //! below the toolbar, visible only when needed.
@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use nexodesk_proto::v1::{DisplayInfo, Quality};
+use nuvira_proto::v1::{DisplayInfo, Quality};
 use winit::event_loop::EventLoopProxy;
 use winit::window::Window;
 use wry::dpi::{LogicalPosition, LogicalSize};
@@ -113,7 +113,7 @@ impl Toolbar {
 
     /// Updates the page; `state` is a JavaScript object, e.g. `{viewOnly:true}`.
     pub fn update(&self, state: &str) {
-        let _ = self.webview.evaluate_script(&format!("window.nexodesk && nexodesk.update({state})"));
+        let _ = self.webview.evaluate_script(&format!("window.nuvira && nuvira.update({state})"));
     }
 
     /// After a click on the toolbar the keyboard goes back to the session.
@@ -147,7 +147,7 @@ impl ChatPanel {
         let _ = self.webview.set_visible(visible);
         if visible {
             let _ = self.webview.focus();
-            let _ = self.webview.evaluate_script("window.nexodesk && nexodesk.focus()");
+            let _ = self.webview.evaluate_script("window.nuvira && nuvira.focus()");
         } else {
             let _ = self.webview.focus_parent();
         }
@@ -160,7 +160,7 @@ impl ChatPanel {
     /// Adds a message; `mine`: written by the controlling side.
     pub fn add(&self, mine: bool, text: &str) {
         let _ = self.webview.evaluate_script(&format!(
-            "window.nexodesk && nexodesk.add({{mine:{mine},text:{}}})",
+            "window.nuvira && nuvira.add({{mine:{mine},text:{}}})",
             js_string(text)
         ));
     }
@@ -168,7 +168,7 @@ impl ChatPanel {
     /// Viewer notice (e.g. file sent), not a message.
     pub fn notice(&self, text: &str) {
         let _ = self.webview.evaluate_script(&format!(
-            "window.nexodesk && nexodesk.add({{system:true,text:{}}})",
+            "window.nuvira && nuvira.add({{system:true,text:{}}})",
             js_string(text)
         ));
     }
@@ -189,8 +189,8 @@ fn child_webview(
 ) -> Result<(WebView, WebContext)> {
     // WebView2 data in the user's folder: next to the program (e.g. Program Files)
     // it often cannot write.
-    let data_dir = std::env::var_os("LOCALAPPDATA")
-        .map(|d| std::path::PathBuf::from(d).join("NexoDesk").join("WebView2"));
+    let data_dir =
+        std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("nuvira").join("WebView2"));
     let mut context = WebContext::new(data_dir);
     let html = html.to_string();
     let webview = retry_in_use(|| {
@@ -202,7 +202,7 @@ fn child_webview(
             .with_bounds(bounds)
             .with_visible(visible)
             // Strings in the session's language, available to the page before it runs.
-            .with_initialization_script(format!("window.I18N = {};", nexodesk_i18n::json()))
+            .with_initialization_script(format!("window.I18N = {};", nuvira_i18n::json()))
             .with_ipc_handler(move |request| {
                 if let Some(action) = Action::parse(request.body()) {
                     let _ = proxy.send_event(NetEvent::Toolbar(action));
@@ -261,13 +261,13 @@ pub fn quality_name(quality: Quality) -> &'static str {
     }
 }
 
-/// Screens state for `nexodesk.update`: the buttons appear only if there is more than one.
+/// Screens state for `nuvira.update`: the buttons appear only if there is more than one.
 pub fn displays_state(displays: &[DisplayInfo], current: u32, all_available: bool) -> String {
     let items: Vec<String> = displays
         .iter()
         .map(|d| {
             let key = if d.primary { "tb.display_primary" } else { "tb.display" };
-            let title = nexodesk_i18n::tf(
+            let title = nuvira_i18n::tf(
                 key,
                 &[
                     ("n", &(d.index + 1).to_string()),

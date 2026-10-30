@@ -1,4 +1,4 @@
-# NexoDesk
+# NuviraHub
 
 Self-hosted remote control.
 
@@ -13,6 +13,6 @@ Status: Windows client and server working in a LAN (video with hardware or softw
 
 Copyright (C) 2026 Alessandro Blason.
 
-NexoDesk is free software, released under the **[GNU Affero General Public License v3.0 or later](LICENSE)** (AGPL-3.0-or-later). Anyone who modifies it and makes it available to others, even only over a network, must publish the source of their version under the same licence.
+NuviraHub is free software, released under the **[GNU Affero General Public License v3.0 or later](LICENSE)** (AGPL-3.0-or-later). Anyone who modifies it and makes it available to others, even only over a network, must publish the source of their version under the same licence.
 
-As an additional term under section 7(b) of the licence, the author credits shown in the interfaces ("NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · Source code") must remain visible and unaltered in every copy and modified version: see **[ADDITIONAL-TERMS.md](ADDITIONAL-TERMS.md)**.
+As an additional term under section 7(b) of the licence, the author credits shown in the interfaces ("NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · Source code") must remain visible and unaltered in every copy and modified version: see **[ADDITIONAL-TERMS.md](ADDITIONAL-TERMS.md)**.

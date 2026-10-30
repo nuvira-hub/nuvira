@@ -18,7 +18,7 @@ func TestHandler(t *testing.T) {
 	}
 	must(os.MkdirAll(filepath.Join(dir, "windows-x64"), 0o755))
 	must(os.WriteFile(filepath.Join(dir, "windows-x64.json"), []byte(`{"version":"0.1.0"}`), 0o644))
-	must(os.WriteFile(filepath.Join(dir, "windows-x64", "nexodesk-0.1.0.exe"), []byte("program"), 0o644))
+	must(os.WriteFile(filepath.Join(dir, "windows-x64", "nuvira-0.1.0.exe"), []byte("program"), 0o644))
 	// Next to the updates folder, as in the server's data.
 	must(os.WriteFile(filepath.Join(dir, "address-book.key"), []byte("secret"), 0o600))
 
@@ -30,8 +30,8 @@ func TestHandler(t *testing.T) {
 	}
 	for path, want := range map[string]int{
 		Prefix + "windows-x64.json":                         http.StatusOK,
-		Prefix + "windows-x64/nexodesk-0.1.0.exe":           http.StatusOK,
-		Prefix + "windows-x64/nexodesk-0.2.0.exe":           http.StatusNotFound,
+		Prefix + "windows-x64/nuvira-0.1.0.exe":             http.StatusOK,
+		Prefix + "windows-x64/nuvira-0.2.0.exe":             http.StatusNotFound,
 		Prefix + "macos.json":                               http.StatusNotFound,
 		Prefix + "address-book.key":                         http.StatusNotFound,
 		Prefix + "../address-book.key":                      http.StatusNotFound,
@@ -43,7 +43,7 @@ func TestHandler(t *testing.T) {
 			t.Errorf("GET %s: %d, want %d", path, rec.Code, want)
 		}
 	}
-	rec := get(http.MethodGet, Prefix+"windows-x64/nexodesk-0.1.0.exe")
+	rec := get(http.MethodGet, Prefix+"windows-x64/nuvira-0.1.0.exe")
 	if rec.Body.String() != "program" || rec.Header().Get("Content-Length") != "7" {
 		t.Errorf("program: %q, Content-Length %q", rec.Body.String(), rec.Header().Get("Content-Length"))
 	}

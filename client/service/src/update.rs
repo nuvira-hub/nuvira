@@ -1,10 +1,10 @@
-//! Automatic updates of an installed NexoDesk (see `nexodesk_update`).
+//! Automatic updates of an installed NuviraHub (see `nuvira_update`).
 //!
 //! The service asks its server for a newer version 2 minutes after starting and
-//! then every 6 hours. A version correctly signed with the NexoDesk release key is
+//! then every 6 hours. A version correctly signed with the NuviraHub release key is
 //! downloaded into the data folder (writable only by SYSTEM and administrators,
 //! so nobody can swap it before it runs) and, once no session is in progress,
-//! started as `nexodesk.exe service update`: that process stops this service,
+//! started as `nuvira.exe service update`: that process stops this service,
 //! replaces the installed program and starts the service again, keeping server,
 //! ID and passwords.
 
@@ -49,23 +49,20 @@ pub fn spawn(stop: &'static AtomicBool) -> Option<std::thread::JoinHandle<()>> {
 
 fn check_and_apply(stop: &AtomicBool) -> Result<()> {
     let service = ServiceConfig::load()?;
-    let base = nexodesk_update::base_url(
-        &service.server,
-        service.server_ws.as_deref(),
-        nexodesk_update::DEFAULT_PORT,
-    );
+    let base =
+        nuvira_update::base_url(&service.server, service.server_ws.as_deref(), nuvira_update::DEFAULT_PORT);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    let Some(manifest) = rt.block_on(nexodesk_update::check(&base, &nexodesk_update::PUBLIC_KEY))? else {
+    let Some(manifest) = rt.block_on(nuvira_update::check(&base, &nuvira_update::PUBLIC_KEY))? else {
         return Ok(());
     };
-    info!("version {} available (this is {})", manifest.version, nexodesk_update::CURRENT);
+    info!("version {} available (this is {})", manifest.version, nuvira_update::CURRENT);
 
     let dir = config::update_dir();
     std::fs::create_dir_all(&dir)?;
-    let program = dir.join(format!("nexodesk-{}.exe", manifest.version));
+    let program = dir.join(format!("nuvira-{}.exe", manifest.version));
     clean(&dir, &program);
     if !program.exists() {
-        rt.block_on(nexodesk_update::download(&base, &manifest, &program))?;
+        rt.block_on(nuvira_update::download(&base, &manifest, &program))?;
         info!("version {} downloaded and checked", manifest.version);
     }
 

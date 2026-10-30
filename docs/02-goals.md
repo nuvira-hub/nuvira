@@ -1,4 +1,4 @@
-# NexoDesk — Goals and constraints
+# NuviraHub — Goals and constraints
 
 [← Index](README.md)
 

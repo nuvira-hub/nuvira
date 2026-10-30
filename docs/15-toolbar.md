@@ -1,4 +1,4 @@
-# NexoDesk — Session toolbar
+# NuviraHub — Session toolbar
 
 [← Index](README.md)
 
@@ -7,10 +7,10 @@
 Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs` and `toolbar.html`):
 
 - it is a WebView (WebView2 on Windows, the wry library, the same one Tauri uses) that is a child of the session window. It works with both of the viewer's drawing modes (wgpu and CPU), and the HTML can be reused in the future web client;
-- clicks reach the viewer as messages (`window.ipc.postMessage`), and the state goes back to the page with `nexodesk.update({...})`;
+- clicks reach the viewer as messages (`window.ipc.postMessage`), and the state goes back to the page with `nuvira.update({...})`;
 - after every click the keyboard goes back to the session; the mouse over the bar does not reach the remote PC;
 - the labels come from `client/i18n` in the interface language (D15);
-- WebView2 data is stored in `%LOCALAPPDATA%\NexoDesk\WebView2` (next to the program, for example in Program Files, it often cannot write).
+- WebView2 data is stored in `%LOCALAPPDATA%\nuvira\WebView2` (next to the program, for example in Program Files, it often cannot write).
 
 ## Content
 

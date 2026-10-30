@@ -5,7 +5,7 @@
 
 syntax = "proto3";
 
-package nexodesk.v1;
+package nuvira.v1;
 
 // The negotiated version is the highest one common to both sides.
 enum ProtocolVersion {

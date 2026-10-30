@@ -11,8 +11,8 @@ use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use nexodesk_proto::v1::{FileChunk, FsEntry, FsResponse, FsUploadOffset, fs_request};
-use nexodesk_transport::{Connection, FramedRecv, FramedSend};
+use nuvira_proto::v1::{FileChunk, FsEntry, FsResponse, FsUploadOffset, fs_request};
+use nuvira_transport::{Connection, FramedRecv, FramedSend};
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn lists_folders_first() {
-        let dir = std::env::temp_dir().join(format!("nexodesk-fs-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("nuvira-fs-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("Zeta")).unwrap();
         std::fs::write(dir.join("alpha.txt"), b"12345").unwrap();
         std::fs::create_dir_all(dir.join("beta")).unwrap();

@@ -1,7 +1,7 @@
 //! Session transport over QUIC.
 //!
 //! Every device has an Ed25519 key (see [`identity`]) that signs its TLS
-//! certificate; the other side checks the key it was told about by nexodesk-server
+//! certificate; the other side checks the key it was told about by nuvira-server
 //! ([`p2p`]). The LAN prototype mode ([`connect`] without the server) can check
 //! the agent's SHA-256 certificate fingerprint instead (`--fingerprint`).
 
@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use nexodesk_proto::v1::FileChunk;
+use nuvira_proto::v1::FileChunk;
 use prost::Message;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{ClientConfig, RecvStream, SendStream, ServerConfig, TransportConfig};
@@ -30,9 +30,9 @@ pub mod ws;
 pub use quinn::{Connection, Endpoint};
 
 /// Protocol identifier negotiated in TLS (ALPN).
-pub(crate) const ALPN: &[u8] = b"nexodesk/0";
+pub(crate) const ALPN: &[u8] = b"nuvira/0";
 
-/// How nexodesk-server (and its relay) is reached.
+/// How nuvira-server (and its relay) is reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerTransport {
     /// QUIC over UDP, the normal path.
@@ -128,7 +128,7 @@ pub(crate) fn transport_config() -> Arc<TransportConfig> {
     t.send_window(SEND_WINDOW);
     // BBR estimates bandwidth instead of halving the window at every loss: with random
     // losses (Wi-Fi, mobile networks) NewReno/Cubic drop well below the real capacity.
-    if std::env::var_os("NEXODESK_CC_CUBIC").is_none() {
+    if std::env::var_os("NUVIRA_CC_CUBIC").is_none() {
         t.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
     }
     Arc::new(t)
@@ -136,7 +136,7 @@ pub(crate) fn transport_config() -> Arc<TransportConfig> {
 
 /// Agent endpoint: accepts connections on `bind`. Also returns the certificate fingerprint.
 pub fn server_endpoint(bind: SocketAddr) -> Result<(Endpoint, Fingerprint)> {
-    let cert = rcgen::generate_simple_self_signed(vec!["nexodesk-agent".to_string()])?;
+    let cert = rcgen::generate_simple_self_signed(vec!["nuvira-agent".to_string()])?;
     let cert_der = CertificateDer::from(cert.cert.der().to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()));
     let fingerprint: Fingerprint = Sha256::digest(&cert_der).into();
@@ -172,7 +172,7 @@ pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<
     let mut endpoint = Endpoint::client(bind)?;
     endpoint.set_default_client_config(config);
     let conn =
-        endpoint.connect(addr, "nexodesk-agent")?.await.with_context(|| format!("connecting to {addr}"))?;
+        endpoint.connect(addr, "nuvira-agent")?.await.with_context(|| format!("connecting to {addr}"))?;
     Ok(conn)
 }
 
@@ -245,7 +245,7 @@ impl FramedSend {
     }
 
     pub async fn send<M: Message>(&mut self, msg: &M) -> Result<()> {
-        self.stream.write_all(&nexodesk_proto::framing::encode(msg)).await?;
+        self.stream.write_all(&nuvira_proto::framing::encode(msg)).await?;
         Ok(())
     }
 
@@ -259,7 +259,7 @@ impl FramedSend {
 /// Receiving Protobuf messages from a QUIC stream.
 pub struct FramedRecv {
     stream: RecvStream,
-    decoder: nexodesk_proto::framing::Decoder,
+    decoder: nuvira_proto::framing::Decoder,
     buf: Vec<u8>,
 }
 

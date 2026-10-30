@@ -1,18 +1,18 @@
-; NexoDesk setup for Windows.
+; NuviraHub setup for Windows.
 ;
 ; A wrapper around the installation the program already does by itself
-; ("nexodesk.exe service install", the same as the app's "Install on this
+; ("nuvira.exe service install", the same as the app's "Install on this
 ; computer"): one installation logic to maintain. It copies the program to
 ; Program Files, installs the service for unattended access, adds the Start menu
 ; shortcut and the entry in the installed apps (whose uninstall command is the
 ; program's own).
 ;
 ; Server: from the command line (/SERVER=), else from the setup's file name
-; (nexodesk-setup-host=nexodesk.example.com.exe, ",port=N" optional, as for the
+; (nuvira-setup-host=nuvira.example.com.exe, ",port=N" optional, as for the
 ; app), else typed in the wizard.
 ;
-;   nexodesk-setup.exe                                  wizard
-;   nexodesk-setup.exe /S /SERVER=host[:port] [/PASSWORD=...] [/KEY=fingerprint]
+;   nuvira-setup.exe                                  wizard
+;   nuvira-setup.exe /S /SERVER=host[:port] [/PASSWORD=...] [/KEY=fingerprint]
 ;
 ; Built by tools/build-setup.sh: makensis -DPROGRAM=... -DVERSION=... -DOUTFILE=...
 
@@ -22,23 +22,23 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 
 !ifndef PROGRAM
-  !error "PROGRAM (path of nexodesk.exe) is required"
+  !error "PROGRAM (path of nuvira.exe) is required"
 !endif
 !ifndef VERSION
   !define VERSION "0.0.1"
 !endif
 !ifndef OUTFILE
-  !define OUTFILE "nexodesk-setup.exe"
+  !define OUTFILE "nuvira-setup.exe"
 !endif
 
-Name "NexoDesk"
+Name "NuviraHub"
 OutFile "${OUTFILE}"
-BrandingText "NexoDesk ${VERSION} · AGPL-3.0"
+BrandingText "NuviraHub ${VERSION} · AGPL-3.0"
 Icon "..\..\client\app\icons\icon.ico"
 
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey /LANG=0 "ProductName" "NexoDesk"
-VIAddVersionKey /LANG=0 "FileDescription" "NexoDesk setup"
+VIAddVersionKey /LANG=0 "ProductName" "NuviraHub"
+VIAddVersionKey /LANG=0 "FileDescription" "NuviraHub setup"
 VIAddVersionKey /LANG=0 "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=0 "ProductVersion" "${VERSION}"
 VIAddVersionKey /LANG=0 "LegalCopyright" "© 2026 Alessandro Blason · AGPL-3.0"
@@ -87,11 +87,11 @@ LangString SettingsSubtitle ${LANG_FRENCH} "Cet ordinateur sera accessible même
 LangString SettingsSubtitle ${LANG_GERMAN} "Dieser Computer ist erreichbar, auch wenn niemand davor sitzt."
 LangString SettingsSubtitle ${LANG_SPANISH} "Se podrá acceder a este equipo aunque no haya nadie delante."
 
-LangString ServerLabel ${LANG_ENGLISH} "NexoDesk server (e.g. nexodesk.example.com):"
-LangString ServerLabel ${LANG_ITALIAN} "Server NexoDesk (es. nexodesk.example.com):"
-LangString ServerLabel ${LANG_FRENCH} "Serveur NexoDesk (ex. nexodesk.example.com) :"
-LangString ServerLabel ${LANG_GERMAN} "NexoDesk-Server (z. B. nexodesk.example.com):"
-LangString ServerLabel ${LANG_SPANISH} "Servidor NexoDesk (p. ej. nexodesk.example.com):"
+LangString ServerLabel ${LANG_ENGLISH} "NuviraHub server (e.g. nuvira.example.com):"
+LangString ServerLabel ${LANG_ITALIAN} "Server NuviraHub (es. nuvira.example.com):"
+LangString ServerLabel ${LANG_FRENCH} "Serveur NuviraHub (ex. nuvira.example.com) :"
+LangString ServerLabel ${LANG_GERMAN} "NuviraHub-Server (z. B. nuvira.example.com):"
+LangString ServerLabel ${LANG_SPANISH} "Servidor NuviraHub (p. ej. nuvira.example.com):"
 
 LangString PasswordLabel ${LANG_ENGLISH} "Permanent password (empty: one is generated and shown at the end):"
 LangString PasswordLabel ${LANG_ITALIAN} "Password permanente (vuota: viene generata e mostrata alla fine):"
@@ -105,11 +105,11 @@ LangString Password2Label ${LANG_FRENCH} "Répétez le mot de passe :"
 LangString Password2Label ${LANG_GERMAN} "Passwort wiederholen:"
 LangString Password2Label ${LANG_SPANISH} "Repite la contraseña:"
 
-LangString ServerMissing ${LANG_ENGLISH} "Enter the address of the NexoDesk server."
-LangString ServerMissing ${LANG_ITALIAN} "Scrivi l'indirizzo del server NexoDesk."
-LangString ServerMissing ${LANG_FRENCH} "Saisissez l'adresse du serveur NexoDesk."
-LangString ServerMissing ${LANG_GERMAN} "Geben Sie die Adresse des NexoDesk-Servers ein."
-LangString ServerMissing ${LANG_SPANISH} "Escribe la dirección del servidor NexoDesk."
+LangString ServerMissing ${LANG_ENGLISH} "Enter the address of the NuviraHub server."
+LangString ServerMissing ${LANG_ITALIAN} "Scrivi l'indirizzo del server NuviraHub."
+LangString ServerMissing ${LANG_FRENCH} "Saisissez l'adresse du serveur NuviraHub."
+LangString ServerMissing ${LANG_GERMAN} "Geben Sie die Adresse des NuviraHub-Servers ein."
+LangString ServerMissing ${LANG_SPANISH} "Escribe la dirección del servidor NuviraHub."
 
 LangString PasswordMismatch ${LANG_ENGLISH} "The two passwords do not match."
 LangString PasswordMismatch ${LANG_ITALIAN} "Le due password non coincidono."
@@ -123,11 +123,11 @@ LangString PasswordShort ${LANG_FRENCH} "Le mot de passe permanent doit comporte
 LangString PasswordShort ${LANG_GERMAN} "Das dauerhafte Passwort muss mindestens 8 Zeichen haben."
 LangString PasswordShort ${LANG_SPANISH} "La contraseña permanente debe tener al menos 8 caracteres."
 
-LangString Installing ${LANG_ENGLISH} "Installing NexoDesk and its service (up to a minute)..."
-LangString Installing ${LANG_ITALIAN} "Installazione di NexoDesk e del servizio (fino a un minuto)..."
-LangString Installing ${LANG_FRENCH} "Installation de NexoDesk et de son service (jusqu'à une minute)..."
-LangString Installing ${LANG_GERMAN} "NexoDesk und sein Dienst werden installiert (bis zu einer Minute)..."
-LangString Installing ${LANG_SPANISH} "Instalando NexoDesk y su servicio (hasta un minuto)..."
+LangString Installing ${LANG_ENGLISH} "Installing NuviraHub and its service (up to a minute)..."
+LangString Installing ${LANG_ITALIAN} "Installazione di NuviraHub e del servizio (fino a un minuto)..."
+LangString Installing ${LANG_FRENCH} "Installation de NuviraHub et de son service (jusqu'à une minute)..."
+LangString Installing ${LANG_GERMAN} "NuviraHub und sein Dienst werden installiert (bis zu einer Minute)..."
+LangString Installing ${LANG_SPANISH} "Instalando NuviraHub y su servicio (hasta un minuto)..."
 
 LangString Failed ${LANG_ENGLISH} "The installation failed:"
 LangString Failed ${LANG_ITALIAN} "L'installazione non è riuscita:"
@@ -135,11 +135,11 @@ LangString Failed ${LANG_FRENCH} "L'installation a échoué :"
 LangString Failed ${LANG_GERMAN} "Die Installation ist fehlgeschlagen:"
 LangString Failed ${LANG_SPANISH} "La instalación no se completó:"
 
-LangString Done ${LANG_ENGLISH} "NexoDesk is installed. Device ID:"
-LangString Done ${LANG_ITALIAN} "NexoDesk è installato. ID del dispositivo:"
-LangString Done ${LANG_FRENCH} "NexoDesk est installé. ID de l'appareil :"
-LangString Done ${LANG_GERMAN} "NexoDesk ist installiert. Geräte-ID:"
-LangString Done ${LANG_SPANISH} "NexoDesk está instalado. ID del dispositivo:"
+LangString Done ${LANG_ENGLISH} "NuviraHub is installed. Device ID:"
+LangString Done ${LANG_ITALIAN} "NuviraHub è installato. ID del dispositivo:"
+LangString Done ${LANG_FRENCH} "NuviraHub est installé. ID de l'appareil :"
+LangString Done ${LANG_GERMAN} "NuviraHub ist installiert. Geräte-ID:"
+LangString Done ${LANG_SPANISH} "NuviraHub está instalado. ID del dispositivo:"
 
 LangString GeneratedPassword ${LANG_ENGLISH} "Permanent password (write it down: it is shown only now):"
 LangString GeneratedPassword ${LANG_ITALIAN} "Password permanente (annotala: viene mostrata solo ora):"
@@ -319,10 +319,10 @@ FunctionEnd
   !insertmacro CutAt `"`
 !macroend
 
-Section "NexoDesk"
+Section "NuviraHub"
   InitPluginsDir
   SetOutPath $PLUGINSDIR
-  File "/oname=$PLUGINSDIR\nexodesk.exe" "${PROGRAM}"
+  File "/oname=$PLUGINSDIR\nuvira.exe" "${PROGRAM}"
   DetailPrint "$(Installing)"
 
   StrCpy $0 'service install --server "$Server" --report "$PLUGINSDIR\report.json"'
@@ -336,7 +336,7 @@ Section "NexoDesk"
     FileClose $1
     StrCpy $0 '$0 --password-file "$PLUGINSDIR\password.txt"'
   ${EndIf}
-  nsExec::ExecToLog '"$PLUGINSDIR\nexodesk.exe" $0'
+  nsExec::ExecToLog '"$PLUGINSDIR\nuvira.exe" $0'
   Pop $1
   Delete "$PLUGINSDIR\password.txt"
 
@@ -370,5 +370,5 @@ Section "NexoDesk"
 SectionEnd
 
 Function StartApp
-  Exec '"$WINDIR\explorer.exe" "$PROGRAMFILES64\NexoDesk\nexodesk.exe"'
+  Exec '"$WINDIR\explorer.exe" "$PROGRAMFILES64\nuvira\nuvira.exe"'
 FunctionEnd

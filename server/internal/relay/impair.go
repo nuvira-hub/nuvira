@@ -14,10 +14,10 @@ import (
 // delay, delay variation, loss, limited bandwidth with a finite queue (like a
 // router with a buffer) and occasional stalls (like a mobile network, where
 // delivery pauses for hundreds of milliseconds every few seconds even with little
-// traffic). For tests only: enabled with NEXODESK_RELAY_IMPAIR, e.g.
+// traffic). For tests only: enabled with NUVIRA_RELAY_IMPAIR, e.g.
 //
-//	NEXODESK_RELAY_IMPAIR="delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
-//	NEXODESK_RELAY_IMPAIR="delay=20ms,stall=300ms,every=3s"
+//	NUVIRA_RELAY_IMPAIR="delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
+//	NUVIRA_RELAY_IMPAIR="delay=20ms,stall=300ms,every=3s"
 type Impairment struct {
 	Delay  time.Duration
 	Jitter time.Duration

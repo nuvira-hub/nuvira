@@ -1,5 +1,5 @@
 [package]
-name = "nexodesk-codec"
+name = "nuvira-codec"
 description = "Video encoding and decoding"
 version.workspace = true
 edition.workspace = true

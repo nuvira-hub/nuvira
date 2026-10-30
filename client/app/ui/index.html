@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NexoDesk</title>
+  <title>NuviraHub</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <nav class="rail" aria-label="Sezioni">
-    <img src="logo.svg" alt="NexoDesk" class="rail-logo">
+    <img src="logo.svg" alt="NuviraHub" class="rail-logo">
     <button class="nav active" data-section="connect" data-i18n-title="nav.connect">
       <svg viewBox="0 0 24 24"><rect x="2" y="4" width="14" height="10" rx="2"/><path d="M6 18h6M9 14v4M18 10l4 3-4 3M14 13h8"/></svg>
     </button>
@@ -72,7 +72,7 @@
           <div class="pc-notes">
             <p class="status-line" id="status-text">…</p>
             <p class="hint" data-i18n="connect.share_hint">Give your ID and password to the person helping you: you will be asked to confirm the connection.</p>
-            <p id="service-note" class="hint hidden" data-i18n="connect.service_note">Unattended access is on (NexoDesk service): anyone with the permanent password connects without confirmation.</p>
+            <p id="service-note" class="hint hidden" data-i18n="connect.service_note">Unattended access is on (NuviraHub service): anyone with the permanent password connects without confirmation.</p>
           </div>
         </div>
 
@@ -102,7 +102,7 @@
           </div>
         </header>
         <form id="login-form" class="login hidden">
-          <p data-i18n="address_book.login_hint">Sign in with your account to see the computers saved on the NexoDesk server.</p>
+          <p data-i18n="address_book.login_hint">Sign in with your account to see the computers saved on the NuviraHub server.</p>
           <input id="login-user" autocomplete="username" data-i18n-placeholder="address_book.username" placeholder="Username">
           <input id="login-password" type="password" autocomplete="current-password" data-i18n-placeholder="address_book.password" placeholder="Password">
           <button type="submit" class="primary" data-i18n="address_book.login">Sign in</button>
@@ -162,15 +162,15 @@
         <header class="page-head"><h1 data-i18n="settings.title">Settings</h1></header>
         <h2 data-i18n="settings.server">Server</h2>
         <form id="server-form" class="inline-form">
-          <input id="server" class="mono" autocomplete="off" data-i18n-placeholder="settings.server_placeholder" data-i18n-label="settings.server_label" placeholder="e.g. 192.168.1.10 or nexodesk.example.com">
+          <input id="server" class="mono" autocomplete="off" data-i18n-placeholder="settings.server_placeholder" data-i18n-label="settings.server_label" placeholder="e.g. 192.168.1.10 or nuvira.example.com">
           <button type="submit" class="primary" data-i18n="settings.save">Save</button>
         </form>
-        <p class="hint" data-i18n="settings.server_hint">NexoDesk server this computer registers with, which also holds the address book.</p>
+        <p class="hint" data-i18n="settings.server_hint">NuviraHub server this computer registers with, which also holds the address book.</p>
         <p id="server-message" class="message hidden"></p>
 
         <h2 data-i18n="settings.unattended">Unattended access</h2>
         <div id="install-off">
-          <p class="hint" data-i18n="settings.unattended_hint">Install NexoDesk on this computer to reach it even when nobody is in front of it, also after a restart, with a permanent password. An administrator account is needed.</p>
+          <p class="hint" data-i18n="settings.unattended_hint">Install NuviraHub on this computer to reach it even when nobody is in front of it, also after a restart, with a permanent password. An administrator account is needed.</p>
           <form id="install-form" class="stack">
             <input id="install-pw" type="password" autocomplete="new-password" data-i18n-placeholder="settings.install_pw" placeholder="Permanent password (empty: one is generated)">
             <input id="install-pw2" type="password" autocomplete="new-password" data-i18n-placeholder="settings.pw_confirm" placeholder="Repeat the password">
@@ -180,7 +180,7 @@
             </div>
           </form>
         </div>
-        <p id="install-on" class="hint hidden" data-i18n="settings.installed">Installed: this computer can be reached even when nobody is in front of it. To remove NexoDesk use the installed apps in Windows settings.</p>
+        <p id="install-on" class="hint hidden" data-i18n="settings.installed">Installed: this computer can be reached even when nobody is in front of it. To remove NuviraHub use the installed apps in Windows settings.</p>
         <p id="install-message" class="message hidden"></p>
 
         <h2 data-i18n="settings.language">Language</h2>
@@ -212,17 +212,17 @@
       <section id="sec-info" class="page hidden">
         <div class="about">
           <img src="logo.svg" alt="" class="about-logo">
-          <h1>NexoDesk</h1>
+          <h1>NuviraHub</h1>
           <p class="hint" id="app-version"></p>
           <p data-i18n="about.description">Open-source remote control: your own server, end-to-end encrypted direct connections, unattended access.</p>
-          <p>NexoDesk © 2026 Alessandro Blason<br><span data-i18n="about.license">Licensed under the AGPL-3.0 with additional terms on credits.</span></p>
+          <p>NuviraHub © 2026 Alessandro Blason<br><span data-i18n="about.license">Licensed under the AGPL-3.0 with additional terms on credits.</span></p>
           <button type="button" id="source-button" data-i18n="about.source">Source code</button>
         </div>
       </section>
     </main>
 
     <footer>
-      NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · <a href="#" id="source" data-i18n="about.source">Source code</a>
+      NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · <a href="#" id="source" data-i18n="about.source">Source code</a>
     </footer>
   </div>
 

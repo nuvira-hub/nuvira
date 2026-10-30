@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use nexodesk_proto::v1::{Button, InputEvent, input_event::Event};
+use nuvira_proto::v1::{Button, InputEvent, input_event::Event};
 use tracing::{debug, info, warn};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent};
@@ -132,13 +132,13 @@ fn keyboard(vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     }
 }
 
-/// Event created by nexodesk-service: signalling it asks the service for Ctrl+Alt+Del.
+/// Event created by nuvira-service: signalling it asks the service for Ctrl+Alt+Del.
 /// With the default security of an object created by SYSTEM, only SYSTEM can signal it.
-/// The same name is in nexodesk-service (`scm.rs`).
-const SAS_EVENT: &str = r"Global\NexoDeskSAS";
+/// The same name is in nuvira-service (`scm.rs`).
+const SAS_EVENT: &str = r"Global\nuvira-sas";
 
 /// Ctrl+Alt+Del. Windows accepts it only from a service (`SendSAS`, with the
-/// SoftwareSASGeneration policy set by `nexodesk-service install`): the agent asks
+/// SoftwareSASGeneration policy set by `nuvira-service install`): the agent asks
 /// the service for it. Without the service it is not available.
 fn secure_attention() {
     let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, false, &HSTRING::from(SAS_EVENT)) };
@@ -148,7 +148,7 @@ fn secure_attention() {
             let _ = unsafe { SetEvent(event) };
             let _ = unsafe { CloseHandle(event) };
         }
-        Err(e) => warn!("Ctrl+Alt+Del not available: nexodesk-service is needed ({e})"),
+        Err(e) => warn!("Ctrl+Alt+Del not available: nuvira-service is needed ({e})"),
     }
 }
 

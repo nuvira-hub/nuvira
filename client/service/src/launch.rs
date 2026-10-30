@@ -8,7 +8,7 @@
 //! That session is the console's when someone is signed in there; otherwise a
 //! Remote Desktop session in use. When a user connects to the PC with Remote
 //! Desktop their session leaves the console, which is left on the sign-in screen:
-//! following only the console, NexoDesk showed that screen instead of their desktop.
+//! following only the console, NuviraHub showed that screen instead of their desktop.
 //! The agent is in a job object: if the service ends, even abruptly, Windows
 //! closes the agent instead of leaving an orphan copy behind.
 

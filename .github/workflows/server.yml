@@ -1,4 +1,4 @@
-name: nexodesk-server
+name: nuvira-server
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/nexodesk-server
+  IMAGE: ghcr.io/${{ github.repository_owner }}/nuvira-server
 
 defaults:
   run:
@@ -50,17 +50,17 @@ jobs:
           context: server
           platforms: linux/amd64
           load: true
-          tags: nexodesk-server:ci
+          tags: nuvira-server:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Container smoke test
         working-directory: .
         run: |
-          docker run -d --name smoke -p 21116:21116/udp -p 21116:21116/tcp nexodesk-server:ci
-          for i in $(seq 1 20); do docker exec smoke /nexodesk-server healthcheck && break; sleep 1; done
-          docker exec smoke /nexodesk-server healthcheck
-          docker logs smoke 2>&1 | grep -q 'nexodesk-server started'
+          docker run -d --name smoke -p 21116:21116/udp -p 21116:21116/tcp nuvira-server:ci
+          for i in $(seq 1 20); do docker exec smoke /nuvira-server healthcheck && break; sleep 1; done
+          docker exec smoke /nuvira-server healthcheck
+          docker logs smoke 2>&1 | grep -q 'nuvira-server started'
           docker rm -f smoke
 
       - name: Log in to ghcr.io

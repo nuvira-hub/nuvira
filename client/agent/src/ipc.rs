@@ -1,8 +1,8 @@
 //! Local channel between the service's agent and the app of the person at the PC.
 //!
-//! With nexodesk-service the agent runs as SYSTEM and the app as the user. To show
+//! With nuvira-service the agent runs as SYSTEM and the app as the user. To show
 //! the ID and the temporary password and to confirm requests, the app connects to
-//! the named pipe `\\.\pipe\nexodesk-agent-<session>` created by the agent:
+//! the named pipe `\\.\pipe\nuvira-agent-<session>` created by the agent:
 //! - access allowed to SYSTEM and interactive users; the agent accepts only apps
 //!   of its own Windows session;
 //! - one JSON line per message: [`ToApp`] towards the app, [`AgentCommand`] towards the agent;
@@ -51,16 +51,16 @@ pub fn current_session() -> u32 {
 }
 
 fn pipe_name(session: u32) -> String {
-    format!(r"\\.\pipe\nexodesk-agent-{session}")
+    format!(r"\\.\pipe\nuvira-agent-{session}")
 }
 
-/// The NexoDesk service is installed (a normal user can check this too).
+/// The NuviraHub service is installed (a normal user can check this too).
 pub fn service_installed() -> bool {
     unsafe {
         let Ok(scm) = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) else {
             return false;
         };
-        let service = OpenServiceW(scm, &HSTRING::from("NexoDesk"), SERVICE_QUERY_STATUS);
+        let service = OpenServiceW(scm, &HSTRING::from("nuvira"), SERVICE_QUERY_STATUS);
         if let Ok(service) = service {
             let _ = CloseServiceHandle(service);
         }
@@ -340,9 +340,12 @@ fn check_server(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> Resu
         let expected = std::env::var_os("ProgramFiles")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| r"C:\Program Files".into())
-            .join(r"NexoDesk\nexodesk.exe");
+            .join(r"nuvira\nuvira.exe");
         if !image.to_string_lossy().eq_ignore_ascii_case(&expected.to_string_lossy()) {
-            anyhow::bail!("the local channel is held by {} instead of the NexoDesk service", image.display());
+            anyhow::bail!(
+                "the local channel is held by {} instead of the NuviraHub service",
+                image.display()
+            );
         }
         // An administrator's prompt can open it: the account must still be SYSTEM.
         let mut token = HANDLE::default();

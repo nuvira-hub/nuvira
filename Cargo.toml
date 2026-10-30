@@ -17,20 +17,20 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 authors = ["Alessandro Blason"]
-repository = "https://github.com/alexbn71/NexoDesk"
+repository = "https://github.com/alexbn71/nuvira"
 
 [workspace.dependencies]
-nexodesk-proto = { path = "client/proto" }
-nexodesk-transport = { path = "client/transport" }
-nexodesk-capture = { path = "client/capture" }
-nexodesk-codec = { path = "client/codec" }
-nexodesk-input = { path = "client/input" }
-nexodesk-clipboard = { path = "client/clipboard" }
-nexodesk-i18n = { path = "client/i18n" }
+nuvira-proto = { path = "client/proto" }
+nuvira-transport = { path = "client/transport" }
+nuvira-capture = { path = "client/capture" }
+nuvira-codec = { path = "client/codec" }
+nuvira-input = { path = "client/input" }
+nuvira-clipboard = { path = "client/clipboard" }
+nuvira-i18n = { path = "client/i18n" }
 
 anyhow = "1"
 bytes = "1"

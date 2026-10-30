@@ -1,5 +1,5 @@
 [package]
-name = "nexodesk-clipboard"
+name = "nuvira-clipboard"
 description = "Clipboard shared between viewer and agent (text and images)"
 version.workspace = true
 edition.workspace = true

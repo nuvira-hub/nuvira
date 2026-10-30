@@ -3067,204 +3067,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
-name = "nexodesk-agent"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "clap",
- "nexodesk-capture",
- "nexodesk-clipboard",
- "nexodesk-codec",
- "nexodesk-input",
- "nexodesk-proto",
- "nexodesk-secret",
- "nexodesk-transport",
- "nu-ansi-term",
- "quinn",
- "ring",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "windows",
-]
-
-[[package]]
-name = "nexodesk-app"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "nexodesk-agent",
- "nexodesk-codec",
- "nexodesk-i18n",
- "nexodesk-input",
- "nexodesk-proto",
- "nexodesk-service",
- "nexodesk-transport",
- "nexodesk-update",
- "nexodesk-viewer",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "windows",
-]
-
-[[package]]
-name = "nexodesk-capture"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "nexodesk-proto",
- "tracing",
- "windows",
-]
-
-[[package]]
-name = "nexodesk-clipboard"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "arboard",
- "png",
- "tracing",
- "windows",
-]
-
-[[package]]
-name = "nexodesk-codec"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "openh264",
- "openh264-sys2",
- "tracing",
- "tracing-subscriber",
- "windows",
-]
-
-[[package]]
-name = "nexodesk-i18n"
-version = "0.2.1"
-dependencies = [
- "serde_json",
- "windows",
-]
-
-[[package]]
-name = "nexodesk-input"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "nexodesk-proto",
- "tracing",
- "windows",
-]
-
-[[package]]
-name = "nexodesk-proto"
-version = "0.2.1"
-dependencies = [
- "bytes",
- "prost",
- "prost-build",
- "protoc-bin-vendored",
-]
-
-[[package]]
-name = "nexodesk-secret"
-version = "0.2.1"
-dependencies = [
- "ring",
-]
-
-[[package]]
-name = "nexodesk-service"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "clap",
- "nexodesk-secret",
- "nexodesk-update",
- "ring",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "windows",
-]
-
-[[package]]
-name = "nexodesk-transport"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "futures-util",
- "nexodesk-proto",
- "prost",
- "quinn",
- "rcgen",
- "ring",
- "rustls",
- "rustls-webpki",
- "sha2",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "webpki-roots 1.0.11",
-]
-
-[[package]]
-name = "nexodesk-update"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "clap",
- "ring",
- "rustls",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tokio-rustls",
- "tracing",
- "webpki-roots 1.0.11",
-]
-
-[[package]]
-name = "nexodesk-viewer"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "bytemuck",
- "clap",
- "nexodesk-clipboard",
- "nexodesk-codec",
- "nexodesk-i18n",
- "nexodesk-proto",
- "nexodesk-transport",
- "nu-ansi-term",
- "png",
- "pollster 1.0.1",
- "rfd",
- "serde",
- "serde_json",
- "softbuffer",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "wgpu",
- "winit",
- "wry",
-]
-
-[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3338,6 +3140,204 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "nuvira-agent"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "nu-ansi-term",
+ "nuvira-capture",
+ "nuvira-clipboard",
+ "nuvira-codec",
+ "nuvira-input",
+ "nuvira-proto",
+ "nuvira-secret",
+ "nuvira-transport",
+ "quinn",
+ "ring",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
+name = "nuvira-app"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "nuvira-agent",
+ "nuvira-codec",
+ "nuvira-i18n",
+ "nuvira-input",
+ "nuvira-proto",
+ "nuvira-service",
+ "nuvira-transport",
+ "nuvira-update",
+ "nuvira-viewer",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
+name = "nuvira-capture"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "nuvira-proto",
+ "tracing",
+ "windows",
+]
+
+[[package]]
+name = "nuvira-clipboard"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "png",
+ "tracing",
+ "windows",
+]
+
+[[package]]
+name = "nuvira-codec"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "openh264",
+ "openh264-sys2",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
+name = "nuvira-i18n"
+version = "0.3.0"
+dependencies = [
+ "serde_json",
+ "windows",
+]
+
+[[package]]
+name = "nuvira-input"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "nuvira-proto",
+ "tracing",
+ "windows",
+]
+
+[[package]]
+name = "nuvira-proto"
+version = "0.3.0"
+dependencies = [
+ "bytes",
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
+name = "nuvira-secret"
+version = "0.3.0"
+dependencies = [
+ "ring",
+]
+
+[[package]]
+name = "nuvira-service"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "nuvira-secret",
+ "nuvira-update",
+ "ring",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows",
+]
+
+[[package]]
+name = "nuvira-transport"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "nuvira-proto",
+ "prost",
+ "quinn",
+ "rcgen",
+ "ring",
+ "rustls",
+ "rustls-webpki",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "webpki-roots 1.0.11",
+]
+
+[[package]]
+name = "nuvira-update"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "webpki-roots 1.0.11",
+]
+
+[[package]]
+name = "nuvira-viewer"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "clap",
+ "nu-ansi-term",
+ "nuvira-clipboard",
+ "nuvira-codec",
+ "nuvira-i18n",
+ "nuvira-proto",
+ "nuvira-transport",
+ "png",
+ "pollster 1.0.1",
+ "rfd",
+ "serde",
+ "serde_json",
+ "softbuffer",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wgpu",
+ "winit",
+ "wry",
 ]
 
 [[package]]

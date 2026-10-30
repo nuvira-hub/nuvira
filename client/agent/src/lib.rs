@@ -1,7 +1,7 @@
-//! NexoDesk agent — the controlled device.
+//! NuviraHub agent — the controlled device.
 //!
-//! Library used by the `nexodesk` app and by the `nexodesk-agent` command-line
-//! program: it registers with nexodesk-server (or waits for direct LAN
+//! Library used by the `nuvira` app and by the `nuvira-agent` command-line
+//! program: it registers with nuvira-server (or waits for direct LAN
 //! connections), streams the screen and applies the mouse and keyboard input it
 //! receives. With the server it talks to its user through [`AgentEvent`] and [`AgentCommand`].
 
@@ -21,14 +21,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use nexodesk_capture::{Capturer, SyntheticCapturer};
-use nexodesk_codec::{EncoderPlan, EncoderSettings};
-use nexodesk_proto::v1::{
+use nuvira_capture::{Capturer, SyntheticCapturer};
+use nuvira_codec::{EncoderPlan, EncoderSettings};
+use nuvira_proto::v1::{
     AuthResult, Codec, ControlMessage, DisplayInfo, Displays, Hello, InputEvent, Pong, Quality, VideoFormat,
     VideoFrame, control_message::Msg,
 };
-use nexodesk_transport::signal::TransportMode;
-use nexodesk_transport::{Connection, Fingerprint, FramedRecv, FramedSend};
+use nuvira_transport::signal::TransportMode;
+use nuvira_transport::{Connection, Fingerprint, FramedRecv, FramedSend};
 use tokio::sync::{Notify, mpsc};
 use tracing::{info, warn};
 
@@ -38,7 +38,7 @@ use crate::pipeline::Pipeline;
 const MIN_BITRATE: u32 = 500_000;
 
 /// Rejection reasons sent to the viewer are translation keys (`@key`, see
-/// nexodesk-i18n): the viewer shows them in its own language.
+/// nuvira-i18n): the viewer shows them in its own language.
 const WRONG_PASSWORD: &str = "@agent.wrong_password";
 
 /// Time given to the person at the PC to accept a connection request.
@@ -54,7 +54,7 @@ pub struct AgentConfig {
     /// Maximum bitrate in kbit/s.
     pub bitrate_kbps: u32,
     pub fps: u32,
-    /// Encoder chosen at start-up (see `nexodesk_codec::plan_encoder`).
+    /// Encoder chosen at start-up (see `nuvira_codec::plan_encoder`).
     pub plan: EncoderPlan,
     /// Fixed bitrate instead of adapting it to the network.
     pub fixed_bitrate: bool,
@@ -70,7 +70,7 @@ impl AgentConfig {
     fn open_capturer(&self) -> Result<Box<dyn Capturer>> {
         match self.synthetic {
             Some((w, h, fps)) => Ok(Box::new(SyntheticCapturer::new(w, h, fps))),
-            None => nexodesk_capture::open(self.display),
+            None => nuvira_capture::open(self.display),
         }
     }
 }
@@ -82,7 +82,7 @@ pub fn parse_synthetic(spec: &str) -> Result<(u32, u32, u32)> {
     Ok((w.parse()?, h.parse()?, fps.parse()?))
 }
 
-/// How to reach nexodesk-server and how to handle requests.
+/// How to reach nuvira-server and how to handle requests.
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
     /// host[:port] of the server.
@@ -90,7 +90,7 @@ pub struct ServerOptions {
     /// Expected certificate fingerprint; without it, the remembered one is used (or remembered).
     pub server_key: Option<Fingerprint>,
     pub transport: TransportMode,
-    /// URL of the WebSocket fallback; without it, `ws://<server>:<port>/nexodesk`.
+    /// URL of the WebSocket fallback; without it, `ws://<server>:<port>/nuvira`.
     pub server_ws: Option<String>,
     pub identity_path: PathBuf,
     /// Whoever uses the temporary password must be confirmed by the person at the PC
@@ -189,9 +189,9 @@ pub async fn serve_direct(
     fingerprint_file: Option<PathBuf>,
 ) -> Result<()> {
     let bind: SocketAddr = ([0, 0, 0, 0], port).into();
-    let (endpoint, fingerprint) = nexodesk_transport::server_endpoint(bind)?;
+    let (endpoint, fingerprint) = nuvira_transport::server_endpoint(bind)?;
     info!("waiting for the viewer on UDP {bind}");
-    let fingerprint = nexodesk_transport::fingerprint_hex(&fingerprint);
+    let fingerprint = nuvira_transport::fingerprint_hex(&fingerprint);
     info!("agent fingerprint: {fingerprint}");
     if let Some(path) = &fingerprint_file {
         std::fs::write(path, &fingerprint).with_context(|| format!("writing {}", path.display()))?;
@@ -225,7 +225,7 @@ pub async fn serve_direct(
     Ok(())
 }
 
-/// Registers the device with nexodesk-server and accepts the incoming sessions.
+/// Registers the device with nuvira-server and accepts the incoming sessions.
 /// If the server goes away, it reconnects. It ends only when `commands` is closed.
 pub async fn serve_via_server(
     config: AgentConfig,
@@ -234,9 +234,8 @@ pub async fn serve_via_server(
     events: mpsc::UnboundedSender<AgentEvent>,
     mut commands: mpsc::UnboundedReceiver<AgentCommand>,
 ) -> Result<()> {
-    let server =
-        nexodesk_transport::resolve_addr(&opts.server_name, nexodesk_transport::signal::DEFAULT_PORT)?;
-    let identity = Arc::new(nexodesk_transport::identity::Identity::load_or_create(&opts.identity_path)?);
+    let server = nuvira_transport::resolve_addr(&opts.server_name, nuvira_transport::signal::DEFAULT_PORT)?;
+    let identity = Arc::new(nuvira_transport::identity::Identity::load_or_create(&opts.identity_path)?);
     let ctx = Arc::new(SessionContext {
         config,
         password,
@@ -255,11 +254,11 @@ pub async fn serve_via_server(
     loop {
         let _ = ctx.events.send(AgentEvent::Connecting);
         let expected =
-            opts.server_key.or_else(|| nexodesk_transport::signal::known_server::get(&opts.server_name));
+            opts.server_key.or_else(|| nuvira_transport::signal::known_server::get(&opts.server_name));
         match signal_loop(&ctx, &opts, &identity, server, expected, &mut commands).await {
             Ok(()) => return Ok(()),
             Err(e) => {
-                warn!("connection with nexodesk-server lost: {e:#}; retrying in 5 s");
+                warn!("connection with nuvira-server lost: {e:#}; retrying in 5 s");
                 let _ = ctx.events.send(AgentEvent::Offline { reason: format!("{e:#}") });
             }
         }
@@ -282,10 +281,10 @@ struct SessionContext {
     busy: AtomicBool,
     end_session: Notify,
     /// Rules of the server (confirmation always, no files, no clipboard).
-    policy: Mutex<nexodesk_proto::v1::Policy>,
+    policy: Mutex<nuvira_proto::v1::Policy>,
 }
 
-fn set_policy(ctx: &SessionContext, policy: nexodesk_proto::v1::Policy) {
+fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
     info!(
         confirm_always = policy.confirm_always,
         no_files = policy.no_files,
@@ -304,35 +303,35 @@ struct Request {
 async fn signal_loop(
     ctx: &Arc<SessionContext>,
     opts: &ServerOptions,
-    identity: &Arc<nexodesk_transport::identity::Identity>,
+    identity: &Arc<nuvira_transport::identity::Identity>,
     server: SocketAddr,
     expected: Option<Fingerprint>,
     commands: &mut mpsc::UnboundedReceiver<AgentCommand>,
 ) -> Result<()> {
-    use nexodesk_proto::v1::{Accept, Reject, client_message, server_message};
+    use nuvira_proto::v1::{Accept, Reject, client_message, server_message};
     let device_name = std::env::var("COMPUTERNAME").unwrap_or_default();
     let ws_url = opts
         .server_ws
         .clone()
-        .unwrap_or_else(|| nexodesk_transport::ws::default_url(&opts.server_name, server));
-    let mut signal = nexodesk_transport::signal::connect_auto(
+        .unwrap_or_else(|| nuvira_transport::ws::default_url(&opts.server_name, server));
+    let mut signal = nuvira_transport::signal::connect_auto(
         server,
         &ws_url,
         opts.transport,
         expected,
         identity,
-        &nexodesk_transport::signal::DeviceInfo { name: &device_name, reachable: true },
+        &nuvira_transport::signal::DeviceInfo { name: &device_name, reachable: true },
     )
     .await?;
-    let websocket = matches!(signal.transport, nexodesk_transport::ServerTransport::WebSocket(_));
-    if let nexodesk_transport::ServerTransport::WebSocket(url) = &signal.transport {
-        info!("connected to nexodesk-server through the WebSocket {url}");
+    let websocket = matches!(signal.transport, nuvira_transport::ServerTransport::WebSocket(_));
+    if let nuvira_transport::ServerTransport::WebSocket(url) = &signal.transport {
+        info!("connected to nuvira-server through the WebSocket {url}");
     }
     if expected.is_none() {
-        nexodesk_transport::signal::known_server::remember(&opts.server_name, &signal.server_fingerprint)?;
+        nuvira_transport::signal::known_server::remember(&opts.server_name, &signal.server_fingerprint)?;
         info!(
-            "nexodesk-server fingerprint remembered: {}",
-            nexodesk_transport::fingerprint_hex(&signal.server_fingerprint)
+            "nuvira-server fingerprint remembered: {}",
+            nuvira_transport::fingerprint_hex(&signal.server_fingerprint)
         );
     }
     let id = signal.device_id.clone();
@@ -370,7 +369,7 @@ async fn signal_loop(
                 }
                 Some(server_message::Msg::Route(route)) => {
                     let request = accepted.remove(&route.session_id);
-                    let p2p_route = nexodesk_transport::p2p::Route {
+                    let p2p_route = nuvira_transport::p2p::Route {
                         relay: server,
                         transport: signal.transport.clone(),
                         token: route.relay_token.as_slice().try_into().context("invalid relay token")?,
@@ -379,7 +378,7 @@ async fn signal_loop(
                             .as_slice()
                             .try_into()
                             .context("invalid viewer key")?,
-                        role: nexodesk_transport::p2p::Role::Agent,
+                        role: nuvira_transport::p2p::Role::Agent,
                     };
                     let request = request.unwrap_or(Request { viewer_id: route.peer_id, viewer_name: String::new() });
                     ctx.busy.store(true, Ordering::Relaxed);
@@ -396,11 +395,11 @@ async fn signal_loop(
                     None
                 }
                 Some(server_message::Msg::Error(e)) => {
-                    warn!("nexodesk-server: {}", e.message);
+                    warn!("nuvira-server: {}", e.message);
                     None
                 }
                 Some(_) => None,
-                None => bail!("nexodesk-server closed the connection"),
+                None => bail!("nuvira-server closed the connection"),
             },
             cmd = commands.recv() => match cmd {
                 Some(AgentCommand::Respond { session_id, accept }) => {
@@ -436,12 +435,12 @@ async fn signal_loop(
 
 async fn relayed_session(
     ctx: &SessionContext,
-    identity: &nexodesk_transport::identity::Identity,
-    route: &nexodesk_transport::p2p::Route,
+    identity: &nuvira_transport::identity::Identity,
+    route: &nuvira_transport::p2p::Route,
     request: &Request,
     session_id: &str,
 ) -> Result<()> {
-    let endpoint = nexodesk_transport::p2p::agent_endpoint(identity, route).await?;
+    let endpoint = nuvira_transport::p2p::agent_endpoint(identity, route).await?;
     // The viewer may open several connections (direct and through the relay): the one
     // it opens the control channel on counts; it closes the others itself.
     let (tx, mut rx) = mpsc::channel(2);
@@ -503,7 +502,7 @@ impl Gate<'_> {
     async fn authorize(&self, given: &str, pending: Option<&mut FramedSend>) -> Result<(), String> {
         let ctx = self.ctx;
         let confirm_always = ctx.policy.lock().expect("policy").confirm_always;
-        if ctx.permanent.as_deref().is_some_and(|hash| nexodesk_secret::verify(given, hash)) {
+        if ctx.permanent.as_deref().is_some_and(|hash| nuvira_secret::verify(given, hash)) {
             info!("access with the permanent password");
             if !confirm_always {
                 return self.started();
@@ -520,7 +519,7 @@ impl Gate<'_> {
         }
         if let Some(ctrl_tx) = pending {
             let waiting =
-                nexodesk_proto::v1::ConfirmationPending { timeout_s: CONFIRM_TIMEOUT.as_secs() as u32 };
+                nuvira_proto::v1::ConfirmationPending { timeout_s: CONFIRM_TIMEOUT.as_secs() as u32 };
             let _ = ctrl_tx.send(&control(Msg::ConfirmationPending(waiting))).await;
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -574,7 +573,7 @@ async fn session(
         bail!("the viewer did not introduce itself");
     };
     info!(device = hello.device_name, os = hello.os, version = hello.app_version, "viewer");
-    if hello.protocol_version < nexodesk_proto::MIN_PROTOCOL_VERSION {
+    if hello.protocol_version < nuvira_proto::MIN_PROTOCOL_VERSION {
         bail!("viewer protocol version not supported: {}", hello.protocol_version);
     }
     let viewer_protocol = hello.protocol_version;
@@ -590,7 +589,7 @@ async fn session(
             _ => bail!("the viewer did not send the password"),
         };
         // Viewers that know it are told when the person at the PC is being asked.
-        let pending = (viewer_protocol >= nexodesk_proto::v1::ProtocolVersion::ConfirmationPending as u32)
+        let pending = (viewer_protocol >= nuvira_proto::v1::ProtocolVersion::ConfirmationPending as u32)
             .then_some(&mut ctrl_tx);
         let verdict = gate.authorize(&given, pending).await;
         let (ok, message) = match &verdict {
@@ -644,15 +643,15 @@ async fn session(
         g.ctx.events.clone()
     });
     // Outcome of the received files, to report to the viewer.
-    let (file_tx, mut file_rx) = mpsc::unbounded_channel::<nexodesk_proto::v1::FileReceived>();
+    let (file_tx, mut file_rx) = mpsc::unbounded_channel::<nuvira_proto::v1::FileReceived>();
     // Answers of the file manager, computed off the control loop.
-    let (fs_tx, mut fs_rx) = mpsc::unbounded_channel::<nexodesk_proto::v1::FsResponse>();
+    let (fs_tx, mut fs_rx) = mpsc::unbounded_channel::<nuvira_proto::v1::FsResponse>();
     // Shared clipboard: what is copied here goes to the viewer, what is copied there arrives here.
-    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nexodesk_clipboard::Content>();
+    let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nuvira_clipboard::Content>();
     let clipboard = if config.view_only || config.synthetic.is_some() || policy.no_clipboard {
         None
     } else {
-        match nexodesk_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
+        match nuvira_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
             Ok(tx) => Some(tx),
             Err(e) => {
                 warn!("clipboard not shared: {e:#}");
@@ -692,15 +691,15 @@ async fn session(
                 },
                 Some(content) = clip_rx.recv() => {
                     match content {
-                        nexodesk_clipboard::Content::Text(text) => {
-                            ctrl_tx.send(&control(Msg::Clipboard(nexodesk_proto::v1::Clipboard { text }))).await?;
+                        nuvira_clipboard::Content::Text(text) => {
+                            ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text }))).await?;
                         }
                         // On its own stream, not to hold up the control channel.
-                        nexodesk_clipboard::Content::Image(png) => {
+                        nuvira_clipboard::Content::Image(png) => {
                             let conn = conn.clone();
                             tokio::spawn(async move {
-                                let header = nexodesk_proto::v1::FileChunk { clipboard_image: true, ..Default::default() };
-                                if let Err(e) = nexodesk_transport::send_stream(&conn, header, &png).await {
+                                let header = nuvira_proto::v1::FileChunk { clipboard_image: true, ..Default::default() };
+                                if let Err(e) = nuvira_transport::send_stream(&conn, header, &png).await {
                                     warn!("clipboard image not sent: {e:#}");
                                 }
                             });
@@ -709,7 +708,7 @@ async fn session(
                     continue;
                 }
                 Some(text) = chat_rx.recv() => {
-                    ctrl_tx.send(&control(Msg::Chat(nexodesk_proto::v1::Chat { text }))).await?;
+                    ctrl_tx.send(&control(Msg::Chat(nuvira_proto::v1::Chat { text }))).await?;
                     continue;
                 }
                 Some(answer) = fs_rx.recv() => {
@@ -742,7 +741,7 @@ async fn session(
             };
             match msg.msg {
                 Some(Msg::Ping(ping)) => {
-                    let pong = Pong { ping_sent_us: ping.sent_us, agent_us: nexodesk_proto::now_us() };
+                    let pong = Pong { ping_sent_us: ping.sent_us, agent_us: nuvira_proto::now_us() };
                     ctrl_tx.send(&control(Msg::Pong(pong))).await?;
                 }
                 Some(Msg::RequestKeyframe(_)) => keyframe.store(true, Ordering::Relaxed),
@@ -752,7 +751,7 @@ async fn session(
                         let key =
                             if policy.no_files { "@agent.files_disabled" } else { "@agent.files_view_only" };
                         let error = key.to_string();
-                        let _ = fs_tx.send(nexodesk_proto::v1::FsResponse {
+                        let _ = fs_tx.send(nuvira_proto::v1::FsResponse {
                             id: request.id,
                             error,
                             ..Default::default()
@@ -817,7 +816,7 @@ async fn session(
                 }
                 Some(Msg::Clipboard(clip)) => {
                     if let Some(clipboard) = &clipboard {
-                        let _ = clipboard.send(nexodesk_clipboard::Content::Text(clip.text));
+                        let _ = clipboard.send(nuvira_clipboard::Content::Text(clip.text));
                     }
                 }
                 Some(Msg::Chat(chat)) => match &events {
@@ -849,7 +848,7 @@ async fn session(
             None
         } else {
             let screen = *screen_rx.borrow_and_update();
-            Some(input_thread(nexodesk_input::open(screen)?)?)
+            Some(input_thread(nuvira_input::open(screen)?)?)
         };
         let closed = || anyhow!("input thread ended");
         loop {
@@ -877,14 +876,14 @@ async fn session(
                     let no_files = policy.no_files;
                     tokio::spawn(async move {
                         let mut rx = FramedRecv::new(stream);
-                        let first = match rx.recv::<nexodesk_proto::v1::FileChunk>().await {
+                        let first = match rx.recv::<nuvira_proto::v1::FileChunk>().await {
                             Ok(Some(first)) => first,
                             _ => return,
                         };
                         // Rules of the server: no files (images of the clipboard are refused
                         // by having no clipboard, see above).
                         if no_files && !first.clipboard_image {
-                            let _ = file_tx.send(nexodesk_proto::v1::FileReceived {
+                            let _ = file_tx.send(nuvira_proto::v1::FileReceived {
                                 name: first.name,
                                 transfer_id: first.transfer_id,
                                 message: "@agent.files_disabled".into(),
@@ -896,7 +895,7 @@ async fn session(
                         if first.transfer_id != 0 {
                             let (name, transfer_id) = (first.name.clone(), first.transfer_id);
                             let done = match fsops::receive(first, rx).await {
-                                Ok(path) => nexodesk_proto::v1::FileReceived {
+                                Ok(path) => nuvira_proto::v1::FileReceived {
                                     name,
                                     ok: true,
                                     transfer_id,
@@ -905,16 +904,16 @@ async fn session(
                                 },
                                 Err(e) => {
                                     warn!("file {name} not received: {e:#}");
-                                    nexodesk_proto::v1::FileReceived { name, transfer_id, message: format!("{e:#}"), ..Default::default() }
+                                    nuvira_proto::v1::FileReceived { name, transfer_id, message: format!("{e:#}"), ..Default::default() }
                                 }
                             };
                             let _ = file_tx.send(done);
                             return;
                         }
                         if first.clipboard_image {
-                            match nexodesk_transport::read_stream(&mut rx, &first, nexodesk_clipboard::MAX_IMAGE_PNG as u64).await {
+                            match nuvira_transport::read_stream(&mut rx, &first, nuvira_clipboard::MAX_IMAGE_PNG as u64).await {
                                 Ok(png) => if let Some(clipboard) = clipboard {
-                                    let _ = clipboard.send(nexodesk_clipboard::Content::Image(png));
+                                    let _ = clipboard.send(nuvira_clipboard::Content::Image(png));
                                 },
                                 Err(e) => warn!("clipboard image not received: {e:#}"),
                             }
@@ -926,11 +925,11 @@ async fn session(
                                     let path = path.display().to_string();
                                     let _ = events.send(AgentEvent::FileReceived { name: name.clone(), path });
                                 }
-                                nexodesk_proto::v1::FileReceived { name, ok: true, message: "@agent.downloads".into(), ..Default::default() }
+                                nuvira_proto::v1::FileReceived { name, ok: true, message: "@agent.downloads".into(), ..Default::default() }
                             }
                             Err((name, e)) => {
                                 warn!("file {name} not received: {e:#}");
-                                nexodesk_proto::v1::FileReceived { name, ok: false, message: format!("{e:#}"), ..Default::default() }
+                                nuvira_proto::v1::FileReceived { name, ok: false, message: format!("{e:#}"), ..Default::default() }
                             }
                         };
                         let _ = file_tx.send(done);
@@ -966,7 +965,7 @@ struct VideoSource {
 }
 
 impl VideoSource {
-    async fn start(&self, display: Option<usize>) -> Result<(nexodesk_capture::Display, Pipeline)> {
+    async fn start(&self, display: Option<usize>) -> Result<(nuvira_capture::Display, Pipeline)> {
         let mut cap_config = self.config.clone();
         cap_config.display = display;
         // The encoder starts from the current bitrate of the adaptive control.
@@ -982,7 +981,7 @@ impl VideoSource {
         tokio::task::spawn_blocking(move || {
             Pipeline::start(
                 move || cap_config.open_capturer(),
-                move |gpu| nexodesk_codec::create_encoder(plan, settings, gpu),
+                move |gpu| nuvira_codec::create_encoder(plan, settings, gpu),
                 plan == EncoderPlan::HardwareGpu,
                 fps,
                 frames,
@@ -995,7 +994,7 @@ impl VideoSource {
     }
 }
 
-fn video_format(display: &nexodesk_capture::Display) -> ControlMessage {
+fn video_format(display: &nuvira_capture::Display) -> ControlMessage {
     control(Msg::VideoFormat(VideoFormat {
         codec: Codec::H264 as i32,
         width: display.width,
@@ -1004,11 +1003,11 @@ fn video_format(display: &nexodesk_capture::Display) -> ControlMessage {
 }
 
 /// List of screens for the viewer (none with the tests' synthetic image).
-fn displays_message(config: &AgentConfig, current: &nexodesk_capture::Display) -> Option<ControlMessage> {
+fn displays_message(config: &AgentConfig, current: &nuvira_capture::Display) -> Option<ControlMessage> {
     if config.synthetic.is_some() {
         return None;
     }
-    let list = nexodesk_capture::displays().ok()?;
+    let list = nuvira_capture::displays().ok()?;
     let all_available = list.len() > 1;
     let displays = list
         .into_iter()
@@ -1023,8 +1022,8 @@ fn displays_message(config: &AgentConfig, current: &nexodesk_capture::Display) -
     Some(control(Msg::Displays(Displays { displays, current: current.index as u32, all_available })))
 }
 
-fn screen_rect(display: &nexodesk_capture::Display) -> nexodesk_input::ScreenRect {
-    nexodesk_input::ScreenRect {
+fn screen_rect(display: &nuvira_capture::Display) -> nuvira_input::ScreenRect {
+    nuvira_input::ScreenRect {
         left: display.left,
         top: display.top,
         width: display.width,
@@ -1046,14 +1045,14 @@ fn quality_limits(config: &AgentConfig, quality: Quality) -> (u32, u32) {
 enum InputCmd {
     Event(InputEvent),
     /// Screen change: mouse coordinates refer to this one.
-    Screen(nexodesk_input::ScreenRect),
+    Screen(nuvira_input::ScreenRect),
 }
 
 /// Injects input on a dedicated thread, which can follow the active desktop
 /// (UAC, lock screen) without touching tokio's threads. Closing the channel
 /// ends the thread, which releases the keys still pressed.
 fn input_thread(
-    mut injector: Box<dyn nexodesk_input::InputInjector>,
+    mut injector: Box<dyn nuvira_input::InputInjector>,
 ) -> Result<std::sync::mpsc::Sender<InputCmd>> {
     let (tx, rx) = std::sync::mpsc::channel::<InputCmd>();
     std::thread::Builder::new().name("input".into()).spawn(move || {
@@ -1066,7 +1065,7 @@ fn input_thread(
                 }
             };
             #[cfg(windows)]
-            if let Some(name) = nexodesk_capture::desktop::follow_input_desktop() {
+            if let Some(name) = nuvira_capture::desktop::follow_input_desktop() {
                 info!("input on desktop {name}");
             }
             if let Err(e) = injector.inject(&event) {
@@ -1083,7 +1082,7 @@ fn control(msg: Msg) -> ControlMessage {
 
 fn local_hello() -> Hello {
     Hello {
-        protocol_version: nexodesk_proto::PROTOCOL_VERSION,
+        protocol_version: nuvira_proto::PROTOCOL_VERSION,
         device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
         os: std::env::consts::OS.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),

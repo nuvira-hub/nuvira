@@ -1,4 +1,4 @@
-// Messages between the devices and nexodesk-server (signalling). See docs/13-phase1-network.md.
+// Messages between the devices and nuvira-server (signalling). See docs/13-phase1-network.md.
 //
 // Every device opens a QUIC connection to the server and a bidirectional stream
 // on which it exchanges length-prefixed (varint) ClientMessage/ServerMessage,
@@ -8,9 +8,9 @@
 
 syntax = "proto3";
 
-package nexodesk.v1;
+package nuvira.v1;
 
-option go_package = "github.com/alexbn71/NexoDesk/server/internal/pb;pb";
+option go_package = "github.com/alexbn71/nuvira/server/internal/pb;pb";
 
 message ClientMessage {
   oneof msg {
@@ -49,7 +49,7 @@ message Register {
   bool api_only = 6;
 }
 
-// The device proves it holds the private key by signing "nexodesk-register-v1"
+// The device proves it holds the private key by signing "nuvira-register-v1"
 // followed by the nonce.
 message Challenge {
   bytes nonce = 1;

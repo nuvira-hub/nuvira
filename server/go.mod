@@ -1,4 +1,4 @@
-module github.com/alexbn71/NexoDesk/server
+module github.com/alexbn71/nuvira/server
 
 go 1.27.0
 

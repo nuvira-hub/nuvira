@@ -1,4 +1,4 @@
-# NexoDesk — Security model (summary)
+# NuviraHub — Security model (summary)
 
 [← Index](README.md)
 

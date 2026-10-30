@@ -36,7 +36,7 @@ impl Identity {
         };
         let public_key: PublicKey =
             key.public_key_raw().try_into().map_err(|_| anyhow!("the device key is not Ed25519"))?;
-        let cert = CertificateParams::new(vec!["nexodesk-device".to_string()])?.self_signed(&key)?;
+        let cert = CertificateParams::new(vec!["nuvira-device".to_string()])?.self_signed(&key)?;
         Ok(Self { cert: cert.der().clone(), key, public_key })
     }
 
@@ -54,9 +54,9 @@ impl Identity {
     }
 }
 
-/// NexoDesk data folder of the user (`%APPDATA%\NexoDesk` on Windows).
+/// NuviraHub data folder of the user (`%APPDATA%\nuvira` on Windows).
 pub fn data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("NEXODESK_DATA_DIR") {
+    if let Some(dir) = std::env::var_os("NUVIRA_DATA_DIR") {
         return dir.into();
     }
     #[cfg(windows)]
@@ -67,7 +67,7 @@ pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    base.unwrap_or_else(|| ".".into()).join("NexoDesk")
+    base.unwrap_or_else(|| ".".into()).join("nuvira")
 }
 
 #[cfg(test)]
@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn persists_and_signs() {
-        let dir = std::env::temp_dir().join(format!("nexodesk-id-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("nuvira-id-{}", std::process::id()));
         let path = dir.join("device.key");
         let a = Identity::load_or_create(&path).unwrap();
         let b = Identity::load_or_create(&path).unwrap();

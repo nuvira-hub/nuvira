@@ -1,7 +1,7 @@
 //! The controlled device from the command line (tests and use without an interface):
-//! `nexodesk-agent`, and `nexodesk agent` in the app, which also starts it this way for the service.
+//! `nuvira-agent`, and `nuvira agent` in the app, which also starts it this way for the service.
 //!
-//! With `--server` it registers with nexodesk-server and accepts sessions by ID
+//! With `--server` it registers with nuvira-server and accepts sessions by ID
 //! and password; without it, it waits for direct LAN connections (trusted networks only).
 
 use std::sync::{Arc, Mutex};
@@ -9,17 +9,17 @@ use std::sync::{Arc, Mutex};
 use crate::{AgentConfig, AgentEvent, ServerOptions};
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use nexodesk_codec::EncoderChoice;
+use nuvira_codec::EncoderChoice;
 use tokio::sync::mpsc;
 use tracing::info;
 
-const COPYRIGHT: &str = "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/NexoDesk";
+const COPYRIGHT: &str = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/nuvira";
 
 #[derive(Parser, Debug, Clone)]
-#[command(version, about = "NexoDesk agent: makes this PC controllable", after_help = COPYRIGHT)]
+#[command(version, about = "NuviraHub agent: makes this PC controllable", after_help = COPYRIGHT)]
 struct Args {
     /// UDP port to wait for the viewer on (without --server).
-    #[arg(long, default_value_t = nexodesk_transport::DEFAULT_PORT)]
+    #[arg(long, default_value_t = nuvira_transport::DEFAULT_PORT)]
     port: u16,
 
     /// Screen to stream (see --list-displays), or "all" for all of them at once.
@@ -67,7 +67,7 @@ struct Args {
     #[arg(long)]
     view_only: bool,
 
-    /// nexodesk-server to register with (host[:port]): the viewer connects by ID.
+    /// nuvira-server to register with (host[:port]): the viewer connects by ID.
     #[arg(long, value_name = "HOST[:PORTA]")]
     server: Option<String>,
 
@@ -79,22 +79,22 @@ struct Args {
     #[arg(long, value_enum, default_value_t = TransportArg::Auto)]
     transport: TransportArg,
 
-    /// WebSocket URL of the server for the fallback (default: ws://<server>:<port>/nexodesk),
-    /// e.g. wss://nexodesk.example.com/nexodesk behind a reverse proxy.
+    /// WebSocket URL of the server for the fallback (default: ws://<server>:<port>/nuvira),
+    /// e.g. wss://nuvira.example.com/nuvira behind a reverse proxy.
     #[arg(long, value_name = "URL")]
     server_ws: Option<String>,
 
     /// Permanent password (with --server): whoever uses it connects without confirmation.
     /// A temporary password is also generated at every start.
-    #[arg(long, env = "NEXODESK_PASSWORD", hide_env_values = true, conflicts_with = "password_hash")]
+    #[arg(long, env = "NUVIRA_PASSWORD", hide_env_values = true, conflicts_with = "password_hash")]
     password: Option<String>,
 
     /// The permanent password as stored by the service (hash): the agent never sees it
     /// in clear text.
-    #[arg(long, env = "NEXODESK_PASSWORD_HASH", hide = true, hide_env_values = true)]
+    #[arg(long, env = "NUVIRA_PASSWORD_HASH", hide = true, hide_env_values = true)]
     password_hash: Option<String>,
 
-    /// Local channel with the NexoDesk app (used by nexodesk-service): the app shows the ID
+    /// Local channel with the NuviraHub app (used by nuvira-service): the app shows the ID
     /// and the temporary password, and whoever uses that one must be confirmed at the PC.
     #[arg(long)]
     ipc: bool,
@@ -111,7 +111,7 @@ enum TransportArg {
     Websocket,
 }
 
-impl From<TransportArg> for nexodesk_transport::signal::TransportMode {
+impl From<TransportArg> for nuvira_transport::signal::TransportMode {
     fn from(arg: TransportArg) -> Self {
         match arg {
             TransportArg::Auto => Self::Auto,
@@ -150,7 +150,7 @@ fn ansi_colors() -> bool {
 
 fn parse_display(text: &str) -> Result<usize, String> {
     if text.eq_ignore_ascii_case("all") {
-        return Ok(nexodesk_capture::ALL_DISPLAYS);
+        return Ok(nuvira_capture::ALL_DISPLAYS);
     }
     text.parse().map_err(|_| format!("{text}: a screen number or \"all\""))
 }
@@ -164,10 +164,10 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         )
         .try_init();
     let args = Args::parse_from(args);
-    nexodesk_input::set_dpi_awareness();
+    nuvira_input::set_dpi_awareness();
 
     if args.list_displays {
-        for d in nexodesk_capture::displays()? {
+        for d in nuvira_capture::displays()? {
             println!(
                 "{}: {} {}x{} in ({}, {}){}",
                 d.index,
@@ -189,12 +189,12 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         synthetic,
         bitrate_kbps: args.bitrate,
         fps: args.fps,
-        plan: nexodesk_codec::EncoderPlan::Software,
+        plan: nuvira_codec::EncoderPlan::Software,
         fixed_bitrate: args.fixed_bitrate,
         view_only: args.view_only,
     };
     // With `auto` the encoders are tried here, so they do not delay the first session.
-    config.plan = nexodesk_codec::plan_encoder(args.encoder.into(), config.encoder_settings());
+    config.plan = nuvira_codec::plan_encoder(args.encoder.into(), config.encoder_settings());
 
     let rt = tokio::runtime::Runtime::new()?;
     let Some(server_name) = args.server.clone() else {
@@ -204,19 +204,19 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     let ipc = args.ipc;
     let opts = ServerOptions {
         server_name: server_name.clone(),
-        server_key: args.server_key.as_deref().map(nexodesk_transport::parse_fingerprint).transpose()?,
+        server_key: args.server_key.as_deref().map(nuvira_transport::parse_fingerprint).transpose()?,
         transport: args.transport.into(),
         server_ws: args.server_ws.clone(),
         identity_path: args
             .identity
             .clone()
-            .unwrap_or_else(|| nexodesk_transport::identity::data_dir().join("device.key")),
+            .unwrap_or_else(|| nuvira_transport::identity::data_dir().join("device.key")),
         // Without the app there is nobody to ask: the password is enough.
         confirm: ipc,
         permanent_password_hash: args
             .password_hash
             .clone()
-            .or_else(|| args.password.as_deref().map(nexodesk_secret::hash)),
+            .or_else(|| args.password.as_deref().map(nuvira_secret::hash)),
         info_file: args.fingerprint_file.clone(),
     };
     let password = Arc::new(Mutex::new(crate::random_password()));

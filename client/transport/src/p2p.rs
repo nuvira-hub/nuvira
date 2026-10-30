@@ -1,4 +1,4 @@
-//! Connection between two devices, directly or through nexodesk-server's relay.
+//! Connection between two devices, directly or through nuvira-server's relay.
 //!
 //! Each side opens a UDP socket for the session, binds it to the relay with the
 //! token received from the server (RelayBind) and then runs QUIC on it. TLS is
@@ -22,7 +22,7 @@ use tracing::debug;
 use crate::identity::{Identity, PublicKey};
 use crate::{ALPN, provider, transport_config};
 
-/// Role in the relay (same values as `nexodesk.v1.Role`).
+/// Role in the relay (same values as `nuvira.v1.Role`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Viewer = 1,
@@ -299,14 +299,14 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     let (mut endpoint, peers) = session_endpoint(route, None).await?;
     endpoint.set_default_client_config(config);
 
-    let mut relay = Box::pin(endpoint.connect(route.relay, "nexodesk-device")?);
-    // NEXODESK_FORCE_RELAY=1: relay only, to measure its cost in tests.
-    let force_relay = std::env::var_os("NEXODESK_FORCE_RELAY").is_some();
+    let mut relay = Box::pin(endpoint.connect(route.relay, "nuvira-device")?);
+    // NUVIRA_FORCE_RELAY=1: relay only, to measure its cost in tests.
+    let force_relay = std::env::var_os("NUVIRA_FORCE_RELAY").is_some();
     // Direct attempts towards all the other side's addresses, in parallel.
     let mut direct = tokio::task::JoinSet::new();
     if !force_relay {
         for peer in peers {
-            let connecting = endpoint.connect(peer, "nexodesk-device")?;
+            let connecting = endpoint.connect(peer, "nuvira-device")?;
             direct.spawn(async move { connecting.await.map_err(|e| (peer, e)) });
         }
     }

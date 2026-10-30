@@ -1,8 +1,8 @@
-# NexoDesk — Central address book
+# NuviraHub — Central address book
 
 [← Index](README.md)
 
-Part of phase 2 (decision D16). Like Supremo or RustDesk Pro, the address book is kept **on the server**: a technician signs in from the NexoDesk app with an account and finds their devices on any PC.
+Part of phase 2 (decision D16). Like Supremo or RustDesk Pro, the address book is kept **on the server**: a technician signs in from the NuviraHub app with an account and finds their devices on any PC.
 
 ## Choices made with the user
 
@@ -10,7 +10,7 @@ Part of phase 2 (decision D16). Like Supremo or RustDesk Pro, the address book i
 |---|---|
 | Accounts | Several technicians, each with their own address books |
 | Device passwords | Saved, encrypted on the server (D17) |
-| Account and book management | Only from the NexoDesk app (no web console before phase 5) |
+| Account and book management | Only from the NuviraHub app (no web console before phase 5) |
 | Adding devices | Automatically at the first successful connection, plus by hand |
 
 ## Model (`server/internal/accounts`)
@@ -34,9 +34,9 @@ Visibility: an account sees its personal book and the shared books it is a membe
 - **Device passwords**: AES-256-GCM with the key `address-book.key` in the server's data folder (created at first start, readable only by the owner). The database alone is not enough to read them; the key must be backed up with it.
 - **Transport**: the API runs inside the QUIC/TLS connection to the server, whose certificate the app pins at the first connection (as the agent and viewer do).
 - **Errors** are translation keys (`@server.denied`, `@server.password_too_short`, …) that the app shows in the user's language (D15).
-- **First administrator**: `NEXODESK_ADMIN_USER` and `NEXODESK_ADMIN_PASSWORD` when the server starts with no accounts; without them an `admin` account is created with a random password written once to the server log, to be changed at the first sign-in.
+- **First administrator**: `NUVIRA_ADMIN_USER` and `NUVIRA_ADMIN_PASSWORD` when the server starts with no accounts; without them an `admin` account is created with a random password written once to the server log, to be changed at the first sign-in.
 
-## API (`proto/nexodesk/v1/rendezvous.proto`)
+## API (`proto/nuvira/v1/rendezvous.proto`)
 
 The app opens a signalling connection with `Register.api_only` (it does not appear as a device) and sends `ApiRequest` messages, each answered by an `ApiResponse` with a result or an error.
 

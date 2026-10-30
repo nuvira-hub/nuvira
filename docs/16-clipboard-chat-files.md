@@ -1,4 +1,4 @@
-# NexoDesk — Clipboard, chat and files
+# NuviraHub — Clipboard, chat and files
 
 [← Index](README.md)
 
@@ -8,7 +8,7 @@ Last part of phase 2 (Windows MVP).
 
 During the session text and images copied on one of the two PCs can be pasted on the other, in both directions and with no commands.
 
-- `client/clipboard` (`nexodesk-clipboard`, arboard library): one thread per side checks the clipboard every 400 ms. On Windows it detects a change from the sequence number (`GetClipboardSequenceNumber`) without reading the clipboard; elsewhere it compares the text.
+- `client/clipboard` (`nuvira-clipboard`, arboard library): one thread per side checks the clipboard every 400 ms. On Windows it detects a change from the sequence number (`GetClipboardSequenceNumber`) without reading the clipboard; elsewhere it compares the text.
 - New text travels on the control channel (`ControlMessage.clipboard`, at most 1 MB) and the other side writes it to its clipboard. Received text is not sent back.
 - Only what is copied during the session counts: content already present at start-up is not sent.
 - The agent shares it only if it can control the PC (not with `--view-only`). As SYSTEM, in the user's session, it uses the user's clipboard (it belongs to the `winsta0` window station).
@@ -23,7 +23,7 @@ Text chat between the person in control and the person using the PC.
 
 - Protocol: `ControlMessage.chat` on the control channel, in both directions.
 - Viewer: speech-bubble button in the bar; the panel (`chat.html`) is a second WebView on the right, under the bar. It opens by itself when a message arrives. While it is open the keyboard is used for typing; a click on the image gives it back to the session.
-- On the controlled PC the chat is in the NexoDesk app, in the chat section next to the session strip: an incoming message brings the app to the front with the cursor in the reply field. It works with the app's agent and with the service's (`chat` events and `chat` command on the local channel, see [14-phase3-service.md](14-phase3-service.md)).
+- On the controlled PC the chat is in the NuviraHub app, in the chat section next to the session strip: an incoming message brings the app to the front with the cursor in the reply field. It works with the app's agent and with the service's (`chat` events and `chat` command on the local channel, see [14-phase3-service.md](14-phase3-service.md)).
 - The chat stays visible in the app after the session closes, until the next session. It is not saved.
 - The command-line agent, without the app, writes received messages to the log.
 
@@ -51,7 +51,7 @@ The "File" button of the toolbar (shown when the agent says it supports it, `Hel
 - **Protocol** (`session.proto`): `FsRequest` on the control channel (`list`, `download` from an offset, `upload_offset` = how much of a file an interrupted upload left), answered by `FsResponse`. Data travels as for "Send files", on unidirectional streams of `FileChunk`, now carrying `transfer_id`, destination `dir` and `offset`; downloads use streams from the agent.
 - **Resume**: the receiving side writes `name.part` and renames it only when complete, so an interrupted transfer leaves the part; "Resume" asks how much is there (upload) or measures it (download) and sends only the rest. A part that does not have exactly the expected size is refused.
 - **As the user**: on the agent of the service (SYSTEM) every file operation runs on a thread that impersonates the user signed in on the PC (`ImpersonateLoggedOnUser` with the session token): the person in control sees and writes only what that user could. Without a user signed in it is not available.
-- Automated tests: `nexodesk viewer --download REMOTE_FILE --download-dir DIR` and `--upload FILE --upload-dir REMOTE_DIR`, with `--resume`; the viewer exits when the transfers are over.
+- Automated tests: `nuvira viewer --download REMOTE_FILE --download-dir DIR` and `--upload FILE --upload-dir REMOTE_DIR`, with `--resume`; the viewer exits when the transfers are over.
 
 Tests of 2026-10-27, NUC → PC-LABORATORIO (service) through the NAS server: 30 MB upload (same SHA-256; the file is owned by the user, not SYSTEM), upload resumed after 10 MB already there, 25 MB download, download resumed after 8 MB, the service configuration (readable only by SYSTEM) refused with "access denied"; window with both panes opened from the toolbar.
 

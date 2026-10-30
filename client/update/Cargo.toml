@@ -1,13 +1,13 @@
 [package]
-name = "nexodesk-update"
-description = "NexoDesk automatic updates: signed manifests, download and checks"
+name = "nuvira-update"
+description = "NuviraHub automatic updates: signed manifests, download and checks"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [[bin]]
-name = "nexodesk-release"
+name = "nuvira-release"
 path = "src/bin/release.rs"
 
 [dependencies]

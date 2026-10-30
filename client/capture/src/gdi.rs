@@ -2,7 +2,7 @@
 //! available: some Remote Desktop sessions, virtual machines or drivers without it.
 //! Slower (a full copy of the screen through the CPU at every frame) and without
 //! change notifications: the image is compared with the previous one and reported
-//! only if it changed. `NEXODESK_CAPTURE=gdi` forces it (tests).
+//! only if it changed. `NUVIRA_CAPTURE=gdi` forces it (tests).
 
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
@@ -115,7 +115,7 @@ impl GdiCapturer {
         for alpha in self.frame.data.iter_mut().skip(3).step_by(4) {
             *alpha = 255;
         }
-        self.frame.captured_us = nexodesk_proto::now_us();
+        self.frame.captured_us = nuvira_proto::now_us();
         Ok(true)
     }
 }

@@ -20,7 +20,7 @@ use windows::core::{HSTRING, PCWSTR, PWSTR};
 
 use crate::config::{self, ServiceConfig};
 
-const FIREWALL_RULE: &str = "NexoDesk agent";
+const FIREWALL_RULE: &str = "NuviraHub agent";
 
 /// Service manager handle, closed automatically.
 struct Sc(SC_HANDLE);
@@ -136,11 +136,11 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     // Shown only when generated here: whoever chose it knows it, and the output of an
     // automatic update goes to a log, where passwords never go. Only the hash is stored.
     let (password_hash, generated_password) = match (opts.password, previous) {
-        (Some(password), _) => (nexodesk_secret::hash(&password), None),
+        (Some(password), _) => (nuvira_secret::hash(&password), None),
         (None, Some(previous)) => (previous.password_hash, None),
         (None, None) => {
             let password = config::random_password();
-            (nexodesk_secret::hash(&password), Some(password))
+            (nuvira_secret::hash(&password), Some(password))
         }
     };
     let service_config = ServiceConfig {
@@ -154,7 +154,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
 
     let service = match existing {
         Some(service) => {
-            // Earlier installations ran nexodesk-service.exe.
+            // Earlier installations ran nuvira-service.exe.
             set_command(&service, &program)?;
             service
         }
@@ -197,29 +197,29 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
 }
 
 /// Key of the entry in Windows' installed apps.
-const UNINSTALL_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NexoDesk";
+const UNINSTALL_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\nuvira";
 
 fn start_menu_shortcut() -> std::path::PathBuf {
     std::env::var_os("ProgramData")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| r"C:\ProgramData".into())
-        .join(r"Microsoft\Windows\Start Menu\Programs\NexoDesk.lnk")
+        .join(r"Microsoft\Windows\Start Menu\Programs\NuviraHub.lnk")
 }
 
-/// Start menu shortcut and entry in the installed apps, so that NexoDesk can be
+/// Start menu shortcut and entry in the installed apps, so that NuviraHub can be
 /// found and removed like any other program.
 fn register_app(program: &Path) -> Result<()> {
     let program_s = program.display().to_string();
     let dir = program.parent().map(|d| d.display().to_string()).unwrap_or_default();
     let uninstall = format!("\"{program_s}\" service uninstall --remove-program");
     let values: [(&str, &str, &str); 9] = [
-        ("DisplayName", "REG_SZ", "NexoDesk"),
+        ("DisplayName", "REG_SZ", "NuviraHub"),
         ("DisplayVersion", "REG_SZ", env!("CARGO_PKG_VERSION")),
         ("Publisher", "REG_SZ", "Alessandro Blason"),
         ("DisplayIcon", "REG_SZ", &program_s),
         ("InstallLocation", "REG_SZ", &dir),
         ("UninstallString", "REG_SZ", &uninstall),
-        ("URLInfoAbout", "REG_SZ", "https://github.com/alexbn71/NexoDesk"),
+        ("URLInfoAbout", "REG_SZ", "https://github.com/alexbn71/nuvira"),
         ("NoModify", "REG_DWORD", "1"),
         ("NoRepair", "REG_DWORD", "1"),
     ];
@@ -334,17 +334,17 @@ fn replace_program(src: &Path, program: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The program to install: this one when it is the app (`nexodesk.exe service install`,
-/// whatever the file is called), otherwise the app next to nexodesk-service.exe.
+/// The program to install: this one when it is the app (`nuvira.exe service install`,
+/// whatever the file is called), otherwise the app next to nuvira-service.exe.
 fn source_program() -> Result<std::path::PathBuf> {
     let here = std::env::current_exe()?;
     let name = here.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_ascii_lowercase();
-    if !name.starts_with("nexodesk-service") {
+    if !name.starts_with("nuvira-service") {
         return Ok(here);
     }
     let app = here.with_file_name(config::PROGRAM_EXE);
     if !app.exists() {
-        bail!("{} not found: it must be in the same folder as nexodesk-service.exe", app.display());
+        bail!("{} not found: it must be in the same folder as nuvira-service.exe", app.display());
     }
     Ok(app)
 }
@@ -459,7 +459,7 @@ pub fn uninstall(remove_program: bool) -> Result<()> {
     let _ = std::fs::remove_file(start_menu_shortcut());
     remove_program_dir();
     println!(
-        "NexoDesk removed; the data stays in {} (with the device ID, reused if you reinstall)",
+        "NuviraHub removed; the data stays in {} (with the device ID, reused if you reinstall)",
         config::data_dir().display()
     );
     Ok(())

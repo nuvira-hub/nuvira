@@ -1,11 +1,11 @@
 // Package updates serves the program versions the devices update to, from the
-// `updates` folder of the server's data, as written by `nexodesk-release sign`:
+// `updates` folder of the server's data, as written by `nuvira-release sign`:
 //
-//	updates/windows-x64.json                 signed manifest
-//	updates/windows-x64/nexodesk-0.1.0.exe   the program
+//	updates/windows-x64.json               signed manifest
+//	updates/windows-x64/nuvira-0.1.0.exe   the program
 //
 // The server only hands the files out: the devices check the manifest signature
-// (NexoDesk release key, built into the program) and the program's size and SHA-256.
+// (NuviraHub release key, built into the program) and the program's size and SHA-256.
 // Whoever runs the server decides when its devices update by copying the files.
 package updates
 
@@ -16,11 +16,11 @@ import (
 	"strings"
 )
 
-// Prefix of the update URLs, next to the WebSocket fallback (/nexodesk).
-const Prefix = "/nexodesk/update/"
+// Prefix of the update URLs, next to the WebSocket fallback (/nuvira).
+const Prefix = "/nuvira/update/"
 
 // Only these names are served: nothing else in the data folder can be reached.
-var allowed = regexp.MustCompile(`^(?:[a-z0-9-]+\.json|[a-z0-9-]+/nexodesk-[0-9][0-9.]*\.exe)$`)
+var allowed = regexp.MustCompile(`^(?:[a-z0-9-]+\.json|[a-z0-9-]+/nuvira-[0-9][0-9.]*\.exe)$`)
 
 // Handler serves the files of dir.
 func Handler(dir string) http.Handler {

@@ -1,6 +1,6 @@
-//! NexoDesk viewer — the window of the remote session.
+//! NuviraHub viewer — the window of the remote session.
 //!
-//! Connects to an agent by ID through nexodesk-server (or directly in a LAN),
+//! Connects to an agent by ID through nuvira-server (or directly in a LAN),
 //! shows its screen with wgpu (or the CPU renderer) and sends mouse and keyboard.
 //! The window title shows frames per second, capture→display latency, RTT and
 //! bandwidth; the toolbar is at the top (`toolbar.rs`).
@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use nexodesk_i18n::{t, tf};
-use nexodesk_proto::v1::{
+use nuvira_i18n::{t, tf};
+use nuvira_proto::v1::{
     Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, SecureAttention, input_event::Event,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -35,7 +35,7 @@ use crate::net::{FrameSlot, NetEvent};
 use crate::render::Renderer;
 use crate::report::Report;
 
-const COPYRIGHT: &str = "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/NexoDesk";
+const COPYRIGHT: &str = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/nuvira";
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 enum TransportArg {
@@ -44,7 +44,7 @@ enum TransportArg {
     Websocket,
 }
 
-impl From<TransportArg> for nexodesk_transport::signal::TransportMode {
+impl From<TransportArg> for nuvira_transport::signal::TransportMode {
     fn from(arg: TransportArg) -> Self {
         match arg {
             TransportArg::Auto => Self::Auto,
@@ -55,12 +55,12 @@ impl From<TransportArg> for nexodesk_transport::signal::TransportMode {
 }
 
 #[derive(Parser, Debug)]
-#[command(version, about = "NexoDesk viewer: controls a PC running NexoDesk", after_help = COPYRIGHT)]
+#[command(version, about = "NuviraHub viewer: controls a PC running NuviraHub", after_help = COPYRIGHT)]
 struct Args {
     /// Agent ID (with --server) or LAN address, e.g. 192.168.1.20[:21500].
     agent: String,
 
-    /// nexodesk-server used to connect by ID (host[:port]).
+    /// nuvira-server used to connect by ID (host[:port]).
     #[arg(long, value_name = "HOST[:PORT]")]
     server: Option<String>,
 
@@ -72,14 +72,14 @@ struct Args {
     #[arg(long, value_enum, default_value_t = TransportArg::Auto)]
     transport: TransportArg,
 
-    /// WebSocket URL of the server for the fallback (default: ws://<server>:<port>/nexodesk),
-    /// e.g. wss://nexodesk.example.com/nexodesk behind a reverse proxy.
+    /// WebSocket URL of the server for the fallback (default: ws://<server>:<port>/nuvira),
+    /// e.g. wss://nuvira.example.com/nuvira behind a reverse proxy.
     #[arg(long, value_name = "URL")]
     server_ws: Option<String>,
 
-    /// Session password shown by the agent (also from the NEXODESK_PASSWORD variable,
+    /// Session password shown by the agent (also from the NUVIRA_PASSWORD variable,
     /// which, unlike the command line, other programs cannot see).
-    #[arg(long, env = "NEXODESK_PASSWORD", hide_env_values = true)]
+    #[arg(long, env = "NUVIRA_PASSWORD", hide_env_values = true)]
     password: Option<String>,
 
     /// File with the device key (default: viewer.key in the data folder; different
@@ -154,28 +154,24 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         )
         .try_init();
     let args = Args::parse_from(args);
-    // Language passed by the app (NEXODESK_LANG), else the system one.
-    nexodesk_i18n::init(None);
+    // Language passed by the app (NUVIRA_LANG), else the system one.
+    nuvira_i18n::init(None);
     let target = match &args.server {
         Some(server_name) => net::Target::Server {
-            server: nexodesk_transport::resolve_addr(server_name, nexodesk_transport::signal::DEFAULT_PORT)?,
+            server: nuvira_transport::resolve_addr(server_name, nuvira_transport::signal::DEFAULT_PORT)?,
             server_name: server_name.clone(),
-            server_key: args.server_key.as_deref().map(nexodesk_transport::parse_fingerprint).transpose()?,
+            server_key: args.server_key.as_deref().map(nuvira_transport::parse_fingerprint).transpose()?,
             transport: args.transport.into(),
             server_ws: args.server_ws.clone(),
             device_id: args.agent.chars().filter(|c| c.is_ascii_digit()).collect(),
             identity: args
                 .identity
                 .clone()
-                .unwrap_or_else(|| nexodesk_transport::identity::data_dir().join("viewer.key")),
+                .unwrap_or_else(|| nuvira_transport::identity::data_dir().join("viewer.key")),
         },
         None => net::Target::Direct {
-            addr: nexodesk_transport::resolve_addr(&args.agent, nexodesk_transport::DEFAULT_PORT)?,
-            fingerprint: args
-                .fingerprint
-                .as_deref()
-                .map(nexodesk_transport::parse_fingerprint)
-                .transpose()?,
+            addr: nuvira_transport::resolve_addr(&args.agent, nuvira_transport::DEFAULT_PORT)?,
+            fingerprint: args.fingerprint.as_deref().map(nuvira_transport::parse_fingerprint).transpose()?,
         },
     };
     println!("{COPYRIGHT}");
@@ -218,7 +214,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         renderer: None,
         toolbar: None,
         chat: None,
-        quality: nexodesk_proto::v1::Quality::Balanced,
+        quality: nuvira_proto::v1::Quality::Balanced,
         agent: args.agent.clone(),
         stats: Stats::new(),
         clock_offset_us: None,
@@ -241,7 +237,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     if let Some(reason) = &app.exit_reason {
         println!("{reason}");
     }
-    // For the NexoDesk app, which shows it to the user (already translated).
+    // For the NuviraHub app, which shows it to the user (already translated).
     if let Some(message) = &app.closed_message {
         println!("@closed\t{message}");
     }
@@ -267,7 +263,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
 struct App {
     /// Keeps a copy of the last frame for `--snapshot`.
     keep_last_frame: bool,
-    last_frame: Option<nexodesk_codec::YuvFrame>,
+    last_frame: Option<nuvira_codec::YuvFrame>,
     slot: Arc<FrameSlot>,
     started: Instant,
     report: Report,
@@ -277,7 +273,7 @@ struct App {
     input: Option<UnboundedSender<InputEvent>>,
     net_thread: Option<std::thread::JoinHandle<()>>,
     /// Control messages towards the agent (feedback, screen, quality, chat).
-    control: Option<UnboundedSender<nexodesk_proto::v1::control_message::Msg>>,
+    control: Option<UnboundedSender<nuvira_proto::v1::control_message::Msg>>,
     /// Files to send to the agent.
     files: Option<UnboundedSender<net::Outgoing>>,
     /// File manager window and transfers.
@@ -297,7 +293,7 @@ struct App {
     renderer: Option<Renderer>,
     toolbar: Option<toolbar::Toolbar>,
     chat: Option<toolbar::ChatPanel>,
-    quality: nexodesk_proto::v1::Quality,
+    quality: nuvira_proto::v1::Quality,
     agent: String,
     stats: Stats,
     /// Agent clock minus ours (from the measurement with the lowest RTT).
@@ -328,7 +324,7 @@ impl App {
         }
         latencies.sort_unstable();
         transits.sort_unstable();
-        let feedback = nexodesk_proto::v1::Feedback {
+        let feedback = nuvira_proto::v1::Feedback {
             latency_ms_p50: latencies[latencies.len() / 2],
             latency_ms_min: latencies[0],
             frames: latencies.len() as u32,
@@ -339,10 +335,10 @@ impl App {
         latencies.clear();
         transits.clear();
         *since = Instant::now();
-        self.send_control(nexodesk_proto::v1::control_message::Msg::Feedback(feedback));
+        self.send_control(nuvira_proto::v1::control_message::Msg::Feedback(feedback));
     }
 
-    fn send_control(&self, msg: nexodesk_proto::v1::control_message::Msg) {
+    fn send_control(&self, msg: nuvira_proto::v1::control_message::Msg) {
         if let Some(tx) = &self.control {
             let _ = tx.send(msg);
         }
@@ -388,7 +384,7 @@ impl App {
     }
 
     fn handle_toolbar(&mut self, event_loop: &ActiveEventLoop, action: toolbar::Action) {
-        use nexodesk_proto::v1::control_message::Msg;
+        use nuvira_proto::v1::control_message::Msg;
         use toolbar::Action;
         match action {
             Action::SecureAttention => self.send(Event::SecureAttention(SecureAttention {})),
@@ -416,14 +412,12 @@ impl App {
                 }
             }
             Action::Display(index) => {
-                self.send_control(Msg::SelectDisplay(nexodesk_proto::v1::SelectDisplay { index }));
+                self.send_control(Msg::SelectDisplay(nuvira_proto::v1::SelectDisplay { index }));
             }
             Action::Quality(quality) => {
                 self.quality = quality;
                 info!("quality {quality:?}");
-                self.send_control(Msg::SetQuality(nexodesk_proto::v1::SetQuality {
-                    quality: quality as i32,
-                }));
+                self.send_control(Msg::SetQuality(nuvira_proto::v1::SetQuality { quality: quality as i32 }));
             }
             Action::Chat => {
                 let open = !self.chat.as_ref().is_some_and(|c| c.visible());
@@ -437,7 +431,7 @@ impl App {
                 if let Some(chat) = &self.chat {
                     chat.add(true, &text);
                 }
-                self.send_control(Msg::Chat(nexodesk_proto::v1::Chat { text }));
+                self.send_control(Msg::Chat(nuvira_proto::v1::Chat { text }));
                 return;
             }
             Action::FileManager => {
@@ -573,7 +567,7 @@ impl ApplicationHandler<NetEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
         match event {
             NetEvent::ConfirmationPending => {
-                // For the NexoDesk app, which shows it too.
+                // For the NuviraHub app, which shows it too.
                 println!("@pending");
                 if let Some(window) = &self.window {
                     window.set_title(&tf("viewer.title_pending", &[("agent", &self.agent)]));
@@ -597,7 +591,7 @@ impl ApplicationHandler<NetEvent> for App {
                 for local in uploads {
                     self.fm.upload(local, upload_dir.clone(), resume);
                 }
-                // For the NexoDesk app, which reads the output: the session started (address book).
+                // For the NuviraHub app, which reads the output: the session started (address book).
                 println!("@connected\t{agent}");
                 for path in std::mem::take(&mut self.pending_files) {
                     self.send_file(path);
@@ -634,7 +628,7 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Some(offset) = self.clock_offset_us {
                     // Capture time translated to our clock.
                     let captured_here = frame.capture_us as i64 - offset;
-                    let latency = nexodesk_proto::now_us() as i64 - captured_here;
+                    let latency = nuvira_proto::now_us() as i64 - captured_here;
                     self.stats.latency_us += latency.max(0) as u64;
                     self.report.latencies_us.push(latency.clamp(0, u32::MAX as i64) as u32);
                     self.feedback_window.1.push((latency.max(0) / 1000) as u32);
@@ -708,15 +702,9 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::FileDone { name, ok, message } => {
                 let text = if ok {
-                    tf(
-                        "viewer.file_arrived",
-                        &[("name", &name), ("folder", &nexodesk_i18n::message(&message))],
-                    )
+                    tf("viewer.file_arrived", &[("name", &name), ("folder", &nuvira_i18n::message(&message))])
                 } else {
-                    tf(
-                        "viewer.file_failed",
-                        &[("name", &name), ("reason", &nexodesk_i18n::message(&message))],
-                    )
+                    tf("viewer.file_failed", &[("name", &name), ("reason", &nuvira_i18n::message(&message))])
                 };
                 info!("{text}");
                 self.notice(&text, false);

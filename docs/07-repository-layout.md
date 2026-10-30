@@ -1,12 +1,12 @@
-# NexoDesk — Repository layout (monorepo)
+# NuviraHub — Repository layout (monorepo)
 
 [← Index](README.md)
 
 ```
-NexoDesk/
-├─ proto/nexodesk/v1/      # shared Protobuf (session.proto, rendezvous.proto)
-├─ server/                 # Go: nexodesk-server
-│  ├─ cmd/nexodesk-server/ # entry point, configuration from environment variables
+NuviraHub/
+├─ proto/nuvira/v1/      # shared Protobuf (session.proto, rendezvous.proto)
+├─ server/                 # Go: nuvira-server
+│  ├─ cmd/nuvira-server/ # entry point, configuration from environment variables
 │  └─ internal/
 │     ├─ signal/           # registration, presence, connection requests, address book API
 │     ├─ relay/            # UDP relay, WebSocket fallback, network simulation for tests
@@ -22,10 +22,10 @@ NexoDesk/
 │  ├─ input/               # mouse and keyboard injection per platform
 │  ├─ clipboard/           # shared clipboard
 │  ├─ i18n/                # interface strings in five languages
-│  ├─ agent/               # controlled device: library + nexodesk-agent command line
+│  ├─ agent/               # controlled device: library + nuvira-agent command line
 │  ├─ viewer/              # session window (wgpu or CPU) with toolbar and chat
-│  ├─ app/                 # Tauri v2 app (nexodesk)
-│  └─ service/             # Windows system service (nexodesk-service)
+│  ├─ app/                 # Tauri v2 app (nuvira)
+│  └─ service/             # Windows system service (nuvira-service)
 ├─ deploy/                 # docker-compose
 ├─ tools/                  # LAN test script, protobuf generation
 └─ docs/

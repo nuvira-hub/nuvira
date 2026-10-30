@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Windows setup: dist/nexodesk-setup.exe.
+# Builds the Windows setup: dist/nuvira-setup.exe.
 #
 #   tools/build-setup.sh            release build of the app, then the setup
 #
@@ -22,16 +22,16 @@ if [ ! -x "$MAKENSIS" ]; then
     unzip -q -o "$TOOLS/nsis-3.zip" -d "$TOOLS/nsis"
 fi
 
-echo "== building nexodesk.exe"
-(cd "$ROOT/client" && cargo build --release -p nexodesk-app)
+echo "== building nuvira.exe"
+(cd "$ROOT/client" && cargo build --release -p nuvira-app)
 
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 mkdir -p "$ROOT/dist"
 echo "== building the setup ($VERSION)"
 # The script is UTF-8 (accented strings): without this NSIS reads it in the Windows codepage.
 (cd "$ROOT/deploy/windows" && "$MAKENSIS" -V2 -INPUTCHARSET UTF8 \
-    -DPROGRAM="$(cygpath -w "$ROOT/target/release/nexodesk.exe")" \
+    -DPROGRAM="$(cygpath -w "$ROOT/target/release/nuvira.exe")" \
     -DVERSION="$VERSION" \
-    -DOUTFILE="$(cygpath -w "$ROOT/dist/nexodesk-setup.exe")" \
-    nexodesk-setup.nsi)
-ls -la "$ROOT/dist/nexodesk-setup.exe"
+    -DOUTFILE="$(cygpath -w "$ROOT/dist/nuvira-setup.exe")" \
+    nuvira-setup.nsi)
+ls -la "$ROOT/dist/nuvira-setup.exe"

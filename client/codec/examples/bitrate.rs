@@ -1,10 +1,10 @@
 //! Checks that the encoder follows a bitrate change during the session:
-//! `cargo run --release -p nexodesk-codec --example bitrate -- [hardware|software]`.
+//! `cargo run --release -p nuvira-codec --example bitrate -- [hardware|software]`.
 //!
 //! Encodes 90 moving desktop-like frames at 6 Mbit/s, then asks for 1 Mbit/s for
 //! another 90 frames and compares the bandwidth produced in the two halves.
 
-use nexodesk_codec::{BgraImage, EncoderPlan, EncoderSettings};
+use nuvira_codec::{BgraImage, EncoderPlan, EncoderSettings};
 
 fn frame(w: usize, h: usize, t: usize) -> Vec<u8> {
     // Shaded background and a window with rows of "text" moving around: like a desktop.
@@ -40,7 +40,7 @@ fn main() {
     let (w, h) = (1280usize, 720usize);
     let frames: Vec<Vec<u8>> = (0..30).map(|t| frame(w, h, t)).collect();
     let settings = EncoderSettings { bitrate_bps: 6_000_000, max_fps: 30 };
-    let mut enc = nexodesk_codec::create_encoder(plan, settings, None).expect("encoder");
+    let mut enc = nuvira_codec::create_encoder(plan, settings, None).expect("encoder");
     for (half, target) in [(0, 6_000_000u32), (1, 1_000_000)] {
         if half == 1 {
             enc.set_bitrate(target);

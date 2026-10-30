@@ -1,4 +1,4 @@
-# NexoDesk — Phase 0: Windows prototype in a LAN
+# NuviraHub — Phase 0: Windows prototype in a LAN
 
 [← Index](README.md)
 
@@ -35,16 +35,16 @@ cargo build --release
 On the PC to control:
 
 ```powershell
-target\release\nexodesk-agent.exe                # primary screen, automatic encoder
-target\release\nexodesk-agent.exe --list-displays
-target\release\nexodesk-agent.exe --display 1 --encoder software
-target\release\nexodesk-agent.exe --synthetic 1920x1080@60   # generated image, no screen
+target\release\nuvira-agent.exe                # primary screen, automatic encoder
+target\release\nuvira-agent.exe --list-displays
+target\release\nuvira-agent.exe --display 1 --encoder software
+target\release\nuvira-agent.exe --synthetic 1920x1080@60   # generated image, no screen
 ```
 
 The agent prints its certificate fingerprint. On the controlling PC:
 
 ```powershell
-target\release\nexodesk-viewer.exe 192.168.1.20 --fingerprint <fingerprint>
+target\release\nuvira-viewer.exe 192.168.1.20 --fingerprint <fingerprint>
 ```
 
 The window title shows fps, capture→display latency, RTT, bandwidth and encoding and decoding times. The default port is **UDP 21500** (it must be opened in the agent's Windows firewall).
@@ -57,14 +57,14 @@ The window title shows fps, capture→display latency, RTT, bandwidth and encodi
 
 ```bash
 tools/lan-test.sh 15 --synthetic 1920x1080@60 --encoder software
-NEXODESK_VIEWER_LOG="info,nexodesk_viewer::render=trace" tools/lan-test.sh 10
+NUVIRA_VIEWER_LOG="info,nuvira_viewer::render=trace" tools/lan-test.sh 10
 ```
 
-Options used by the script: viewer `--duration`, `--stats-file`; agent `--once`, `--fingerprint-file`. Prerequisites: OpenSSH server on the remote PC with the key `~/.ssh/nexo_test`, a firewall rule for `dist/nexodesk-agent.exe` (UDP 21500, LAN only).
+Options used by the script: viewer `--duration`, `--stats-file`; agent `--once`, `--fingerprint-file`. Prerequisites: OpenSSH server on the remote PC with the key `~/.ssh/nuvira_test`, a firewall rule for `dist/nuvira-agent.exe` (UDP 21500, LAN only).
 
 ## LAN measurements with the real screen (2026-10-26, evening)
 
-Agent on PC A (Intel Core i7-10710U, Intel UHD), viewer on PC B (drawing on the CPU), PC A's 1920x1080 screen with a full-screen animation (`NEXODESK_ANIMATE=1`), other remote control software closed.
+Agent on PC A (Intel Core i7-10710U, Intel UHD), viewer on PC B (drawing on the CPU), PC A's 1920x1080 screen with a full-screen animation (`NUVIRA_ANIMATE=1`), other remote control software closed.
 
 | Encoder | fps | Latency p50 | p95 | Encoding | Bandwidth |
 |---|---|---|---|---|---|
@@ -114,7 +114,7 @@ Primary 1920x1080 screen with the viewer window visible (so always changing), Op
 | Hardware (Quick Sync through Media Foundation) | 20–23 | **36–54 ms** | ~20 ms (4 conversion + 7–20 encoder) | 14–25 ms | ~2.9 Mbit/s |
 | Software (OpenH264) | 16–19 | 46–157 ms | 25–39 ms | 4–5 ms | ~0.2 Mbit/s |
 
-Encoder benchmark (`cargo run --release -p nexodesk-codec --example bench`), desktop-like 1080p image:
+Encoder benchmark (`cargo run --release -p nuvira-codec --example bench`), desktop-like 1080p image:
 
 | Encoder | ms/frame |
 |---|---|

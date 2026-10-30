@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use nexodesk_proto::v1::FileChunk;
-use nexodesk_transport::FramedRecv;
+use nuvira_proto::v1::FileChunk;
+use nuvira_transport::FramedRecv;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn unique_names() {
-        let dir = std::env::temp_dir().join(format!("nexodesk-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("nuvira-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.txt"), b"x").unwrap();
         std::fs::write(dir.join("a (1).txt"), b"x").unwrap();

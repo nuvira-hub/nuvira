@@ -1,8 +1,8 @@
-# NexoDesk — Connection protocol
+# NuviraHub — Connection protocol
 
 [← Index](README.md)
 
-> **Status.** This page is the original draft of the flows. The implemented messages are in [`proto/nexodesk/v1/rendezvous.proto`](../proto/nexodesk/v1/rendezvous.proto) (device ↔ server, address book included) and [`proto/nexodesk/v1/session.proto`](../proto/nexodesk/v1/session.proto) (viewer ↔ agent); the implementation is described in [13-phase1-network.md](13-phase1-network.md). Main differences: TLS 1.3 between the devices' keys instead of Noise (D10), the session password checked by the agent (D13), no capability negotiation yet.
+> **Status.** This page is the original draft of the flows. The implemented messages are in [`proto/nuvira/v1/rendezvous.proto`](../proto/nuvira/v1/rendezvous.proto) (device ↔ server, address book included) and [`proto/nuvira/v1/session.proto`](../proto/nuvira/v1/session.proto) (viewer ↔ agent); the implementation is described in [13-phase1-network.md](13-phase1-network.md). Main differences: TLS 1.3 between the devices' keys instead of Noise (D10), the session password checked by the agent (D13), no capability negotiation yet.
 
 ## 1. Identity
 

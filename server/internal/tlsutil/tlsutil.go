@@ -37,8 +37,8 @@ func LoadOrCreate(dir string) (tls.Certificate, error) {
 	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "nexodesk-server"},
-		DNSNames:     []string{"nexodesk-server"},
+		Subject:      pkix.Name{CommonName: "nuvira-server"},
+		DNSNames:     []string{"nuvira-server"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().AddDate(20, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

@@ -1,6 +1,6 @@
 [package]
-name = "nexodesk-proto"
-description = "NexoDesk protocol messages and framing, without operating system dependencies"
+name = "nuvira-proto"
+description = "NuviraHub protocol messages and framing, without operating system dependencies"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -3,7 +3,7 @@
 //!
 //! - Strings live in `locales/<lang>.json` as flat `key -> text` maps; English is
 //!   the reference and the fallback for missing keys.
-//! - The language is chosen with [`init`]: an explicit choice, else `NEXODESK_LANG`,
+//! - The language is chosen with [`init`]: an explicit choice, else `NUVIRA_LANG`,
 //!   else the Windows display language if supported, else English. Calling it
 //!   again changes the language (choice made in the app's settings).
 //! - Placeholders are written `{name}` and filled by [`tf`].
@@ -44,12 +44,12 @@ fn supported(code: &str) -> Option<&'static str> {
 }
 
 /// Chooses (or changes) the language. `preference` is a language code or
-/// `None`/"auto" (then `NEXODESK_LANG`, then the system language).
+/// `None`/"auto" (then `NUVIRA_LANG`, then the system language).
 pub fn init(preference: Option<&str>) -> &'static str {
     let chosen = preference
         .filter(|p| *p != "auto")
         .and_then(supported)
-        .or_else(|| std::env::var("NEXODESK_LANG").ok().as_deref().and_then(supported))
+        .or_else(|| std::env::var("NUVIRA_LANG").ok().as_deref().and_then(supported))
         .unwrap_or_else(system_language);
     *LANG.write().expect("language") = Some(chosen);
     chosen

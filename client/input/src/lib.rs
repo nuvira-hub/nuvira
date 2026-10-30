@@ -1,10 +1,10 @@
 //! Injection of the input received from the viewer.
 //!
 //! - Windows: SendInput (`windows.rs`). The secure desktop (UAC, sign-in) needs
-//!   the system service (nexodesk-service).
+//!   the system service (nuvira-service).
 //! - macOS: CGEvent; Linux: RemoteDesktop portal / XTest (phase 4).
 
-use nexodesk_proto::v1::InputEvent;
+use nuvira_proto::v1::InputEvent;
 
 pub mod keys;
 #[cfg(windows)]

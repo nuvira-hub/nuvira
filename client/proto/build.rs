@@ -1,5 +1,5 @@
 fn main() -> std::io::Result<()> {
-    let files = ["../../proto/nexodesk/v1/session.proto", "../../proto/nexodesk/v1/rendezvous.proto"];
+    let files = ["../../proto/nuvira/v1/session.proto", "../../proto/nuvira/v1/rendezvous.proto"];
 
     // SAFETY: build scripts are single-threaded, nobody reads the environment concurrently.
     unsafe {

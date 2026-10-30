@@ -1,12 +1,12 @@
-//! Lists the screens and measures capture: `cargo run -p nexodesk-capture --example probe`.
+//! Lists the screens and measures capture: `cargo run -p nuvira-capture --example probe`.
 
 use std::time::{Duration, Instant};
 
 fn main() -> anyhow::Result<()> {
-    for d in nexodesk_capture::displays()? {
+    for d in nuvira_capture::displays()? {
         println!("{d:?}");
     }
-    let mut capturer = nexodesk_capture::open(None)?;
+    let mut capturer = nuvira_capture::open(None)?;
     println!("capturing {:?}", capturer.display());
 
     let start = Instant::now();

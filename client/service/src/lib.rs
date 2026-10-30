@@ -1,14 +1,14 @@
-//! nexodesk-service — unattended access on Windows.
+//! nuvira-service — unattended access on Windows.
 //!
-//! System service (LocalSystem) that keeps nexodesk-agent running in the session
+//! System service (LocalSystem) that keeps nuvira-agent running in the session
 //! of the person using the PC, with a fixed ID and a permanent password. As SYSTEM
 //! the agent also sees and controls administrator prompts (UAC) and the lock
 //! screen, which a program started by the user cannot capture.
 //!
 //! ```text
-//! nexodesk-service install --server nexodesk.example.com   (administrator prompt)
-//! nexodesk-service status
-//! nexodesk-service uninstall
+//! nuvira-service install --server nuvira.example.com   (administrator prompt)
+//! nuvira-service status
+//! nuvira-service uninstall
 //! ```
 
 #[cfg(windows)]
@@ -24,11 +24,11 @@ mod scm;
 #[cfg(windows)]
 mod update;
 
-const COPYRIGHT: &str = "NexoDesk © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/NexoDesk";
+const COPYRIGHT: &str = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/nuvira";
 
 #[cfg(windows)]
 #[derive(clap::Parser, Debug)]
-#[command(version, about = "NexoDesk: service for unattended access", after_help = COPYRIGHT)]
+#[command(version, about = "NuviraHub: service for unattended access", after_help = COPYRIGHT)]
 struct Args {
     #[command(subcommand)]
     command: Cmd,
@@ -39,7 +39,7 @@ struct Args {
 enum Cmd {
     /// Installs (or updates) and starts the service. Needs an administrator prompt.
     Install {
-        /// nexodesk-server to register with (host[:port]).
+        /// nuvira-server to register with (host[:port]).
         #[arg(long, value_name = "HOST[:PORT]")]
         server: String,
         /// Permanent password. Without it, the one already set is kept or a new one is generated.
@@ -144,8 +144,8 @@ fn run_service() -> anyhow::Result<()> {
     // data (remembered server fingerprint) stays in the protected folder.
     // SAFETY: the process still has a single thread.
     unsafe {
-        std::env::set_var("NEXODESK_PASSWORD_HASH", &service_config.password_hash);
-        std::env::set_var("NEXODESK_DATA_DIR", &data_dir);
+        std::env::set_var("NUVIRA_PASSWORD_HASH", &service_config.password_hash);
+        std::env::set_var("NUVIRA_DATA_DIR", &data_dir);
     }
     let result = scm::dispatch();
     if let Err(e) = &result {
@@ -156,6 +156,6 @@ fn run_service() -> anyhow::Result<()> {
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("{COPYRIGHT}\nnexodesk-service exists only for Windows for now");
+    eprintln!("{COPYRIGHT}\nnuvira-service exists only for Windows for now");
     std::process::exit(1);
 }

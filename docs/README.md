@@ -1,9 +1,9 @@
-# NexoDesk — Project documentation
+# NuviraHub — Project documentation
 
 | # | Document | Content |
 |---|---|---|
 | 01 | [Competitor analysis](01-competitors.md) | RustDesk and Supremo: architecture, features, limits, what we take |
-| 02 | [Goals and constraints](02-goals.md) | What NexoDesk must guarantee |
+| 02 | [Goals and constraints](02-goals.md) | What NuviraHub must guarantee |
 | 03 | [Architecture](03-architecture.md) | Docker server, desktop client, transport, video |
 | 04 | [Features](04-features.md) | Complete list with priorities (MVP / 1.0 / later) |
 | 05 | [Innovative features](05-innovations.md) | What RustDesk and Supremo do not have |

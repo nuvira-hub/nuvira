@@ -1,5 +1,5 @@
 //! Fallback for networks that block UDP: QUIC datagrams travel inside a
-//! WebSocket connection to nexodesk-server (ws://, or wss:// behind a reverse proxy).
+//! WebSocket connection to nuvira-server (ws://, or wss:// behind a reverse proxy).
 //!
 //! [`WsSocket`] implements quinn's abstract socket: QUIC, end-to-end encryption
 //! and the relay stay the same, only the way datagrams leave changes.
@@ -23,8 +23,8 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::debug;
 
-/// Path of the WebSocket fallback on nexodesk-server.
-pub const PATH: &str = "/nexodesk";
+/// Path of the WebSocket fallback on nuvira-server.
+pub const PATH: &str = "/nuvira";
 
 /// Default WebSocket URL for a server reached over UDP at `server`
 /// (same port, over TCP).
@@ -182,10 +182,10 @@ mod tests {
     #[test]
     fn default_urls() {
         let a: SocketAddr = "192.168.1.10:21116".parse().unwrap();
-        assert_eq!(default_url("192.168.1.10", a), "ws://192.168.1.10:21116/nexodesk");
-        assert_eq!(default_url("nexodesk.example.it:21116", a), "ws://nexodesk.example.it:21116/nexodesk");
+        assert_eq!(default_url("192.168.1.10", a), "ws://192.168.1.10:21116/nuvira");
+        assert_eq!(default_url("nuvira.example.it:21116", a), "ws://nuvira.example.it:21116/nuvira");
         let b: SocketAddr = "[::1]:9000".parse().unwrap();
-        assert_eq!(default_url("[::1]:9000", b), "ws://[::1]:9000/nexodesk");
-        assert_eq!(default_url("::1", b), "ws://[::1]:9000/nexodesk");
+        assert_eq!(default_url("[::1]:9000", b), "ws://[::1]:9000/nuvira");
+        assert_eq!(default_url("::1", b), "ws://[::1]:9000/nuvira");
     }
 }
