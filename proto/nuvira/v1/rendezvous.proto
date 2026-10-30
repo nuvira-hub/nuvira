@@ -281,6 +281,9 @@ message Account {
   bool admin = 3;
   // Two-factor authentication active (read only).
   bool two_factor = 4;
+  // "admin", "technician" (connects and works on the books it is a member of)
+  // or "readonly" (connects only); admin is true for "admin".
+  string role = 5;
 }
 
 message ChangePassword {
@@ -300,9 +303,20 @@ message Book {
   string name = 2;
   // Personal address book of the account (only one, not shareable).
   bool personal = 3;
-  // Shared address books: accounts that see it (for administrators only).
+  // Shared address books: accounts that see it (for whoever manages the book).
   repeated int64 member_ids = 4;
   repeated Entry entries = 5;
+  // What the signed-in account may do here: "view" (connect only), "edit"
+  // (entries), "manage" (also name and members), "owner" (personal book),
+  // "admin" (administrators). Empty from servers before roles.
+  string access = 6;
+  // Members with their level ("view", "edit", "manage"), like member_ids.
+  repeated BookMember members = 7;
+}
+
+message BookMember {
+  int64 account_id = 1;
+  string level = 2;
 }
 
 // Entry of a device. With id 0 PutEntry creates a new one.
@@ -345,6 +359,8 @@ message PutAccount {
   string username = 2;
   string password = 3;
   bool admin = 4;
+  // "admin", "technician" or "readonly"; empty: from admin (admin or technician).
+  string role = 5;
 }
 
 message DeleteAccount {
@@ -355,7 +371,9 @@ message DeleteAccount {
 message PutBook {
   int64 id = 1;
   string name = 2;
+  // Without members: these accounts with level "edit".
   repeated int64 member_ids = 3;
+  repeated BookMember members = 4;
 }
 
 message DeleteBook {
