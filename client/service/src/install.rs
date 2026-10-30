@@ -219,7 +219,7 @@ fn register_app(program: &Path) -> Result<()> {
         ("DisplayIcon", "REG_SZ", &program_s),
         ("InstallLocation", "REG_SZ", &dir),
         ("UninstallString", "REG_SZ", &uninstall),
-        ("URLInfoAbout", "REG_SZ", "https://github.com/alexbn71/nuvira"),
+        ("URLInfoAbout", "REG_SZ", "https://github.com/nuvira-hub/nuvira"),
         ("NoModify", "REG_DWORD", "1"),
         ("NoRepair", "REG_DWORD", "1"),
     ];

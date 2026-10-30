@@ -10,7 +10,7 @@ syntax = "proto3";
 
 package nuvira.v1;
 
-option go_package = "github.com/alexbn71/nuvira/server/internal/pb;pb";
+option go_package = "github.com/nuvira-hub/nuvira/server/internal/pb;pb";
 
 message ClientMessage {
   oneof msg {

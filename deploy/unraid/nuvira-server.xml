@@ -1,18 +1,18 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>nuvira-server</Name>
-  <Repository>ghcr.io/alexbn71/nuvira-server:latest</Repository>
-  <Registry>https://github.com/alexbn71/nuvira/pkgs/container/nuvira-server</Registry>
+  <Repository>ghcr.io/nuvira-hub/nuvira-server:latest</Repository>
+  <Registry>https://github.com/nuvira-hub/nuvira/pkgs/container/nuvira-server</Registry>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/alexbn71/nuvira</Support>
-  <Project>https://github.com/alexbn71/nuvira</Project>
+  <Support>https://github.com/nuvira-hub/nuvira</Support>
+  <Project>https://github.com/nuvira-hub/nuvira</Project>
   <Overview>NuviraHub signalling and relay server. Forward UDP 21116 (and TCP 21116 for the WebSocket fallback) from the router to this container.</Overview>
   <Category>Network:Other Tools:</Category>
   <WebUI/>
   <TemplateURL/>
-  <Icon>https://raw.githubusercontent.com/alexbn71/nuvira/main/deploy/unraid/nuvira-server.png</Icon>
+  <Icon>https://raw.githubusercontent.com/nuvira-hub/nuvira/main/deploy/unraid/nuvira-server.png</Icon>
   <!-- Unraid appdata belongs to nobody:users; the image's default user (65532) could not write there. -->
   <ExtraParams>--user 99:100</ExtraParams>
   <PostArgs/>

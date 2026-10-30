@@ -3,7 +3,7 @@
 The server is published as a Docker image by GitHub Actions on every push to `main`:
 
 ```
-ghcr.io/alexbn71/nuvira-server:latest     # also :sha-<commit> and :<version> for tags
+ghcr.io/nuvira-hub/nuvira-server:latest     # also :sha-<commit> and :<version> for tags
 ```
 
 Images for `linux/amd64` and `linux/arm64`, built `FROM scratch` (only the static binary).

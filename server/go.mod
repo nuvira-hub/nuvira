@@ -1,4 +1,4 @@
-module github.com/alexbn71/nuvira/server
+module github.com/nuvira-hub/nuvira/server
 
 go 1.27.0
 

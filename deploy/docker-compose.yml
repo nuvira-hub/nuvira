@@ -2,7 +2,7 @@
 # for the WebSocket fallback (networks that block UDP).
 services:
   nuvira-server:
-    image: ghcr.io/alexbn71/nuvira-server:latest
+    image: ghcr.io/nuvira-hub/nuvira-server:latest
     container_name: nuvira-server
     restart: unless-stopped
     ports:

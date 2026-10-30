@@ -34,17 +34,17 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/alexbn71/nuvira/server/internal/accounts"
-	"github.com/alexbn71/nuvira/server/internal/relay"
-	nuvirasignal "github.com/alexbn71/nuvira/server/internal/signal"
-	"github.com/alexbn71/nuvira/server/internal/store"
-	"github.com/alexbn71/nuvira/server/internal/tlsutil"
-	"github.com/alexbn71/nuvira/server/internal/updates"
+	"github.com/nuvira-hub/nuvira/server/internal/accounts"
+	"github.com/nuvira-hub/nuvira/server/internal/relay"
+	nuvirasignal "github.com/nuvira-hub/nuvira/server/internal/signal"
+	"github.com/nuvira-hub/nuvira/server/internal/store"
+	"github.com/nuvira-hub/nuvira/server/internal/tlsutil"
+	"github.com/nuvira-hub/nuvira/server/internal/updates"
 )
 
 var version = "dev"
 
-const copyright = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/nuvira"
+const copyright = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/nuvira-hub/nuvira"
 
 // Signalling ALPN (different from the one of sessions between devices).
 const alpn = "nuvira-signal/1"

@@ -80,7 +80,7 @@ Test: `NUVIRA_RELAY_FAKE_REFLEXIVE=1` on the server replaces the address seen by
 | 1 | Go server: QUIC signalling, registration with signature, SQLite, 9-digit IDs. Agent: `--server`, prints ID and password | ✅ |
 | 2 | Connection request, UDP relay, viewer connecting by ID with verified keys, session password | ✅ |
 | 3 | Automated tests through the server in a LAN (`NUVIRA_VIA_SERVER=1`, `NUVIRA_FORCE_RELAY=1`) | ✅ |
-| 4 | Docker image (`ghcr.io/alexbn71/nuvira-server`, GitHub Actions) | ✅ image; publishing on the Internet postponed |
+| 4 | Docker image (`ghcr.io/nuvira-hub/nuvira-server`, GitHub Actions) | ✅ image; publishing on the Internet postponed |
 | 5 | Hole punching and path choice (direct preferred, relay as fallback) | ✅ |
 | 5b | Local addresses as candidates (devices behind the same router, hairpin) | ✅ |
 | 6 | WebSocket fallback for networks that block UDP | ✅ |

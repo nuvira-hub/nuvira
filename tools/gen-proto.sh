@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROTOC="${PROTOC:-$(ls -d "$HOME"/.cargo/registry/src/*/protoc-bin-vendored-win32-*/bin/protoc.exe 2>/dev/null | tail -1)}"
 "$PROTOC" -I "$ROOT/proto" \
     --go_out="$ROOT/server/internal/pb" --go_opt=paths=source_relative \
-    --go_opt=Mnuvira/v1/rendezvous.proto=github.com/alexbn71/nuvira/server/internal/pb \
+    --go_opt=Mnuvira/v1/rendezvous.proto=github.com/nuvira-hub/nuvira/server/internal/pb \
     nuvira/v1/rendezvous.proto
 # paths=source_relative creates nuvira/v1/: the pb package stays flat.
 mv "$ROOT/server/internal/pb/nuvira/v1/"*.pb.go "$ROOT/server/internal/pb/"

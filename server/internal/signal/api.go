@@ -3,8 +3,8 @@ package signal
 import (
 	"errors"
 
-	"github.com/alexbn71/nuvira/server/internal/accounts"
-	"github.com/alexbn71/nuvira/server/internal/pb"
+	"github.com/nuvira-hub/nuvira/server/internal/accounts"
+	"github.com/nuvira-hub/nuvira/server/internal/pb"
 )
 
 // api answers a request about accounts and address book. First of all a sign-in

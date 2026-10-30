@@ -19,10 +19,10 @@ import (
 	"github.com/quic-go/quic-go"
 	"google.golang.org/protobuf/encoding/protodelim"
 
-	"github.com/alexbn71/nuvira/server/internal/accounts"
-	"github.com/alexbn71/nuvira/server/internal/pb"
-	"github.com/alexbn71/nuvira/server/internal/relay"
-	"github.com/alexbn71/nuvira/server/internal/store"
+	"github.com/nuvira-hub/nuvira/server/internal/accounts"
+	"github.com/nuvira-hub/nuvira/server/internal/pb"
+	"github.com/nuvira-hub/nuvira/server/internal/relay"
+	"github.com/nuvira-hub/nuvira/server/internal/store"
 )
 
 // ProtocolVersion is the version of the signalling protocol spoken by the server.

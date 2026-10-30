@@ -24,7 +24,7 @@ mod scm;
 #[cfg(windows)]
 mod update;
 
-const COPYRIGHT: &str = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/alexbn71/nuvira";
+const COPYRIGHT: &str = "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/nuvira-hub/nuvira";
 
 #[cfg(windows)]
 #[derive(clap::Parser, Debug)]

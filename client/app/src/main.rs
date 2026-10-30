@@ -25,7 +25,7 @@ use tauri_plugin_opener::OpenerExt;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-const SOURCE_URL: &str = "https://github.com/alexbn71/nuvira";
+const SOURCE_URL: &str = "https://github.com/nuvira-hub/nuvira";
 
 /// State shown by the interface (sent with the "state" event).
 #[derive(Debug, Default, Clone, Serialize)]

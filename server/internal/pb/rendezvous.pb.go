@@ -2695,7 +2695,7 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vROLE_VIEWER\x10\x01\x12\x0e\n" +
 	"\n" +
-	"ROLE_AGENT\x10\x02B2Z0github.com/alexbn71/nuvira/server/internal/pb;pbb\x06proto3"
+	"ROLE_AGENT\x10\x02B4Z2github.com/nuvira-hub/nuvira/server/internal/pb;pbb\x06proto3"
 
 var (
 	file_nuvira_v1_rendezvous_proto_rawDescOnce sync.Once
