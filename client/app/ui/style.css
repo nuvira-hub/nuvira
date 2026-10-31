@@ -2,6 +2,7 @@
    Light or dark like Windows; accent is the petrol blue of the logo. */
 
 :root {
+  --footer-h: 36px;
   --bg: #f4f6f8;
   --surface: #ffffff;
   --rail: #e7ecf0;
@@ -72,7 +73,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .rail {
   background: var(--rail);
   display: flex; flex-direction: column; align-items: center;
-  gap: 6px; padding: 14px 0 12px;
+  gap: 6px; padding: 14px 0 0;
   border-right: 1px solid var(--border);
 }
 .rail-logo { width: 32px; height: 32px; margin-bottom: 14px; }
@@ -81,7 +82,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   position: relative;
   width: 44px; height: 44px; border-radius: 12px;
   display: grid; place-items: center;
-  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  border: 0; padding: 0; background: transparent; color: var(--muted); cursor: pointer;
 }
 .nav svg { width: 22px; height: 22px; }
 .nav:hover { background: var(--hover); color: var(--text); }
@@ -91,7 +92,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   width: 3px; border-radius: 0 3px 3px 0; background: var(--accent);
 }
 .badge-dot { position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
-.rail-status { width: 44px; height: 30px; display: grid; place-items: center; }
+/* Same height as the footer, so the dot sits on the footer's middle line. */
+.rail-status { width: 44px; height: calc(var(--footer-h) - 1px); flex: none; display: grid; place-items: center; }
 
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
 .dot.online { background: var(--ok); }
@@ -102,7 +104,12 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 
 .content { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
 main { flex: 1; overflow-y: auto; padding: 26px 32px 18px; }
-footer { padding: 8px 32px 10px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
+footer {
+  height: var(--footer-h); box-sizing: border-box; flex: none;
+  line-height: calc(var(--footer-h) - 1px); padding: 0 32px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 12px; color: var(--muted); border-top: 1px solid var(--border);
+}
 footer a { color: inherit; }
 
 .page { max-width: 900px; margin: 0 auto; }
