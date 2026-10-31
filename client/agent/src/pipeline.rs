@@ -336,6 +336,7 @@ fn encode_loop(
         last_encoded = t;
         if encoded.keyframe {
             keyframe.store(false, Ordering::Relaxed);
+            tracing::debug!("keyframe {} kB (requested: {force_key})", encoded.data.len() / 1024);
         }
         let encode_us = t.elapsed().as_micros() as u32;
         stats.add(encode_us, encoded.data.len());

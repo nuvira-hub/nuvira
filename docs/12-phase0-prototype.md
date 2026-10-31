@@ -126,7 +126,8 @@ Notes:
 - On Windows wgpu uses **Direct3D 12**: the Intel Vulkan driver of this PC crashes at start-up, so Vulkan is excluded by default (`WGPU_BACKEND` still allows forcing it).
 - With the screen locked capture is refused (`E_ACCESSDENIED`): it is the secure desktop, which only the system service can capture (phase 3, done: see [14-phase3-service.md](14-phase3-service.md)).
 - OpenH264 without NASM: 19 ms per frame in the benchmark; with NASM: 9 ms.
-- **QUIC and GSO on Windows**: sending several datagrams with a single call (segmentation offload) lost packets on loopback and the connection stopped receiving (about 4 sessions out of 10 without video). GSO is disabled in `client/transport`; to be tried again between two PCs in a LAN.
+- **QUIC and GSO on Windows**: sending several datagrams with a single call (segmentation offload) lost packets on loopback and the connection stopped receiving (about 4 sessions out of 10 without video). Tried again between two PCs (2026-11-01): 20 sessions out of 20 fine over Wi-Fi and cable, but no gain at our bitrates (8 sessions each to the laptop, median 42.9 fps and 34.9 ms without GSO, 40.6 fps and 36.8 ms with it). GSO stays disabled in `client/transport`.
+- **Keyframes**: with Quick Sync in constant bitrate and low-latency mode a keyframe is about twice a normal frame (1080p synthetic source: 16–32 kB against ~14 kB), so there is no spike worth gradual intra refresh, which Media Foundation does not expose for Quick Sync anyway. Most unrequested keyframes come from encoder restarts when the adaptive bitrate changes (`RUST_LOG=nuvira_agent::pipeline=debug` logs each one).
 
 ## Next steps
 

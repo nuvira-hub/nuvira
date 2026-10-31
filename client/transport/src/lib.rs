@@ -120,8 +120,10 @@ pub(crate) fn transport_config() -> Arc<TransportConfig> {
     t.keep_alive_interval(Some(Duration::from_secs(2)));
     t.max_idle_timeout(Some(Duration::from_secs(10).try_into().expect("valid duration")));
     // GSO (several datagrams in a single send call) loses packets on loopback on
-    // Windows, and after the loss the connection receives nothing more: disabled.
-    // TODO: try again on a real LAN and enable it where it works.
+    // Windows, and after the loss the connection receives nothing more. Between two
+    // PCs it works (2026-11-01: 20 sessions over Wi-Fi and cable) but gains nothing at
+    // a few Mbit/s, a few hundred packets a second (8 sessions each: median 42.9 fps
+    // and 34.9 ms without, 40.6 fps and 36.8 ms with): it stays off.
     t.enable_segmentation_offload(false);
     // Limited send buffer: if the network does not keep up, sending blocks early and
     // the agent skips frames instead of queueing seconds of them (adaptive bitrate does the rest).
