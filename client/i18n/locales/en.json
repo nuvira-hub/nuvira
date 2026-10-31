@@ -6,12 +6,13 @@
   "nav.settings": "Settings",
   "nav.info": "About",
 
-  "status.setup": "Set the NuviraHub server in Settings",
   "status.connecting": "Connecting to the server…",
   "status.online": "Ready: reachable with this ID",
   "status.online_ws": "Ready: reachable with this ID (via WebSocket)",
   "status.offline": "Not connected to the server",
   "status.offline_reason": "Not connected to the server: {reason}",
+  "status.server_public": "Server: NuviraHub public server",
+  "status.server_own": "Server: {server}",
   "status.service_waiting": "Waiting for the NuviraHub service…",
   "status.service_lost": "Connection with the NuviraHub service lost, retrying…",
 
@@ -120,10 +121,10 @@
 
   "settings.title": "Settings",
   "settings.server": "Server",
-  "settings.server_placeholder": "e.g. 192.168.1.10 or nuvira.example.com",
+  "settings.server_placeholder": "NuviraHub public server",
   "settings.server_label": "NuviraHub server",
   "settings.save": "Save",
-  "settings.server_hint": "NuviraHub server this computer registers with, which also holds the address book.",
+  "settings.server_hint": "Leave it empty to use the NuviraHub public server, or enter your own server (needed for shared address books and the Pro modules).",
   "settings.account": "Account",
   "settings.signed_out": "You are not signed in to the address book.",
   "settings.goto_login": "Sign in from the Address book",

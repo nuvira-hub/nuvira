@@ -6,12 +6,13 @@
   "nav.settings": "Paramètres",
   "nav.info": "À propos",
 
-  "status.setup": "Indiquez le serveur NuviraHub dans les Paramètres",
   "status.connecting": "Connexion au serveur…",
   "status.online": "Prêt : joignable avec cet ID",
   "status.online_ws": "Prêt : joignable avec cet ID (via WebSocket)",
   "status.offline": "Non connecté au serveur",
   "status.offline_reason": "Non connecté au serveur : {reason}",
+  "status.server_public": "Serveur : serveur public NuviraHub",
+  "status.server_own": "Serveur : {server}",
   "status.service_waiting": "En attente du service NuviraHub…",
   "status.service_lost": "Connexion avec le service NuviraHub perdue, nouvelle tentative…",
 
@@ -120,10 +121,10 @@
 
   "settings.title": "Paramètres",
   "settings.server": "Serveur",
-  "settings.server_placeholder": "p. ex. 192.168.1.10 ou nuvira.exemple.fr",
+  "settings.server_placeholder": "Serveur public NuviraHub",
   "settings.server_label": "Serveur NuviraHub",
   "settings.save": "Enregistrer",
-  "settings.server_hint": "Serveur NuviraHub auprès duquel cet ordinateur s'enregistre et qui contient le carnet d'adresses.",
+  "settings.server_hint": "Laissez vide pour utiliser le serveur public NuviraHub, ou indiquez votre propre serveur (nécessaire pour les carnets d'adresses partagés et les modules Pro).",
   "settings.account": "Compte",
   "settings.signed_out": "Vous n'êtes pas connecté au carnet d'adresses.",
   "settings.goto_login": "Se connecter depuis le Carnet d'adresses",

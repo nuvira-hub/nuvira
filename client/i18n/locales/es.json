@@ -6,12 +6,13 @@
   "nav.settings": "Ajustes",
   "nav.info": "Acerca de",
 
-  "status.setup": "Indique el servidor NuviraHub en Ajustes",
   "status.connecting": "Conectando con el servidor…",
   "status.online": "Listo: accesible con este ID",
   "status.online_ws": "Listo: accesible con este ID (vía WebSocket)",
   "status.offline": "Sin conexión con el servidor",
   "status.offline_reason": "Sin conexión con el servidor: {reason}",
+  "status.server_public": "Servidor: servidor público de NuviraHub",
+  "status.server_own": "Servidor: {server}",
   "status.service_waiting": "Esperando el servicio NuviraHub…",
   "status.service_lost": "Se perdió la conexión con el servicio NuviraHub, reintentando…",
 
@@ -120,10 +121,10 @@
 
   "settings.title": "Ajustes",
   "settings.server": "Servidor",
-  "settings.server_placeholder": "p. ej. 192.168.1.10 o nuvira.ejemplo.es",
+  "settings.server_placeholder": "Servidor público de NuviraHub",
   "settings.server_label": "Servidor NuviraHub",
   "settings.save": "Guardar",
-  "settings.server_hint": "Servidor NuviraHub en el que se registra este equipo y que contiene la libreta de direcciones.",
+  "settings.server_hint": "Déjelo vacío para usar el servidor público de NuviraHub, o indique su propio servidor (necesario para las libretas compartidas y los módulos Pro).",
   "settings.account": "Cuenta",
   "settings.signed_out": "No ha iniciado sesión en la libreta de direcciones.",
   "settings.goto_login": "Iniciar sesión desde la Libreta",

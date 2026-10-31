@@ -69,6 +69,7 @@ struct Args {
     view_only: bool,
 
     /// nuvira-server to register with (host[:port]): the viewer connects by ID.
+    /// Empty: NuviraHub's public server.
     #[arg(long, value_name = "HOST[:PORT]")]
     server: Option<String>,
 
@@ -204,7 +205,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
 
     let ipc = args.ipc;
     let opts = ServerOptions {
-        server_name: server_name.clone(),
+        server_name: nuvira_transport::signal::server_or_public(&server_name).to_string(),
         server_key: args.server_key.as_deref().map(nuvira_transport::parse_fingerprint).transpose()?,
         transport: args.transport.into(),
         server_ws: args.server_ws.clone(),

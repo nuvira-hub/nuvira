@@ -33,7 +33,7 @@ const SOURCE_URL: &str = "https://github.com/nuvira-hub/nuvira";
 #[derive(Debug, Default, Clone, Serialize)]
 struct UiState {
     server: String,
-    /// "setup" (server to set), "connecting", "online", "offline".
+    /// "connecting", "online", "offline".
     status: String,
     device_id: Option<String>,
     websocket: bool,
@@ -278,11 +278,7 @@ fn start_agent(app: &AppHandle) {
         start_service_link(app);
         return;
     }
-    let server = state.ui.lock().expect("state").server.clone();
-    if server.trim().is_empty() {
-        state.update(app, |ui| ui.status = "setup".into());
-        return;
-    }
+    let server = nuvira_transport::signal::server_or_public(&state.ui.lock().expect("state").server).to_string();
     let (commands_tx, commands_rx) = mpsc::unbounded_channel();
     *state.commands.lock().expect("commands") = Some(commands_tx);
     state.update(app, |ui| {
@@ -570,10 +566,7 @@ fn launch_viewer(
     if device_id.len() != 9 {
         return Err(t("err.id_digits"));
     }
-    let server = state.ui.lock().expect("state").server.clone();
-    if server.is_empty() {
-        return Err(t("err.set_server_first"));
-    }
+    let server = nuvira_transport::signal::server_or_public(&state.ui.lock().expect("state").server).to_string();
     // The viewer is in this same program (`nuvira viewer ...`).
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // The password goes in the process environment, not on the command line
@@ -719,7 +712,7 @@ fn main() {
     let state = NuviraApp {
         ui: Mutex::new(UiState {
             server: settings.server,
-            status: "setup".into(),
+            status: "connecting".into(),
             password: password.clone(),
             ..Default::default()
         }),
@@ -842,9 +835,6 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
     #[cfg(windows)]
     {
         let settings = load_settings();
-        if settings.server.trim().is_empty() {
-            return Err(t("err.set_server_first"));
-        }
         let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
             let temp = std::env::temp_dir();
             let tag = nuvira_agent::random_password();
@@ -912,8 +902,9 @@ fn start_update_checks(app: &AppHandle) {
             #[cfg(not(windows))]
             let installed = false;
             let settings = load_settings();
-            if !installed && !settings.server.trim().is_empty() {
-                let base = nuvira_update::base_url(&settings.server, None, nuvira_update::DEFAULT_PORT);
+            if !installed {
+                let server = nuvira_transport::signal::server_or_public(&settings.server);
+                let base = nuvira_update::base_url(server, None, nuvira_update::DEFAULT_PORT);
                 match nuvira_update::check(&base, &nuvira_update::PUBLIC_KEY).await {
                     Ok(found) => {
                         let version = found.map(|m| m.version);
@@ -934,7 +925,8 @@ fn start_update_checks(app: &AppHandle) {
 #[tauri::command]
 async fn apply_update(app: AppHandle) -> Result<(), String> {
     let settings = load_settings();
-    let base = nuvira_update::base_url(&settings.server, None, nuvira_update::DEFAULT_PORT);
+    let server = nuvira_transport::signal::server_or_public(&settings.server);
+    let base = nuvira_update::base_url(server, None, nuvira_update::DEFAULT_PORT);
     let error = |e: anyhow::Error| tf("update.failed", &[("e", &format!("{e:#}"))]);
     let manifest = nuvira_update::check(&base, &nuvira_update::PUBLIC_KEY)
         .await

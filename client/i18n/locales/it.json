@@ -6,12 +6,13 @@
   "nav.settings": "Impostazioni",
   "nav.info": "Informazioni",
 
-  "status.setup": "Imposta il server NuviraHub nelle Impostazioni",
   "status.connecting": "Collegamento al server…",
   "status.online": "Pronto: raggiungibile con questo ID",
   "status.online_ws": "Pronto: raggiungibile con questo ID (via WebSocket)",
   "status.offline": "Non collegato al server",
   "status.offline_reason": "Non collegato al server: {reason}",
+  "status.server_public": "Server: server pubblico NuviraHub",
+  "status.server_own": "Server: {server}",
   "status.service_waiting": "In attesa del servizio NuviraHub…",
   "status.service_lost": "Collegamento con il servizio NuviraHub perso, riprovo…",
 
@@ -120,10 +121,10 @@
 
   "settings.title": "Impostazioni",
   "settings.server": "Server",
-  "settings.server_placeholder": "es. 192.168.1.10 o nuvira.esempio.it",
+  "settings.server_placeholder": "Server pubblico NuviraHub",
   "settings.server_label": "Server NuviraHub",
   "settings.save": "Salva",
-  "settings.server_hint": "Server NuviraHub a cui si registra questo computer e su cui si trova la rubrica.",
+  "settings.server_hint": "Lascia vuoto per usare il server pubblico NuviraHub, oppure indica il tuo server (serve per le rubriche condivise e i moduli Pro).",
   "settings.account": "Account",
   "settings.signed_out": "Non hai effettuato l'accesso alla rubrica.",
   "settings.goto_login": "Entra dalla Rubrica",

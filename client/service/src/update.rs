@@ -49,8 +49,8 @@ pub fn spawn(stop: &'static AtomicBool) -> Option<std::thread::JoinHandle<()>> {
 
 fn check_and_apply(stop: &AtomicBool) -> Result<()> {
     let service = ServiceConfig::load()?;
-    let base =
-        nuvira_update::base_url(&service.server, service.server_ws.as_deref(), nuvira_update::DEFAULT_PORT);
+    let server = nuvira_transport::signal::server_or_public(&service.server);
+    let base = nuvira_update::base_url(server, service.server_ws.as_deref(), nuvira_update::DEFAULT_PORT);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let Some(manifest) = rt.block_on(nuvira_update::check(&base, &nuvira_update::PUBLIC_KEY))? else {
         return Ok(());

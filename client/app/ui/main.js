@@ -12,7 +12,6 @@ let strings = {};
 let current = null;
 let section = "connect";
 let countdownTimer = null;
-let firstRender = true;
 let chatSeen = 0;
 
 function t(key, vars = {}) {
@@ -122,6 +121,10 @@ function render(state) {
   $("status-dot").className = `dot ${state.status}`;
   $("rail-status").title = text;
   $("status-text").textContent = text;
+  // Which server: the public one (address not shown) or the one set.
+  $("server-line").textContent = state.server.trim()
+    ? t("status.server_own", { server: state.server.trim() })
+    : t("status.server_public");
   $("service-note").classList.toggle("hidden", !state.service);
   $("install-off").classList.toggle("hidden", state.service);
   $("update-bar").classList.toggle("hidden", !state.update && !state.installed);
@@ -139,8 +142,6 @@ function render(state) {
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password || "—";
   if (document.activeElement !== $("server")) $("server").value = state.server;
-  if (firstRender && state.status === "setup") showSection("settings");
-  firstRender = false;
 
   const session = state.session;
   $("session-strip").classList.toggle("hidden", !session);

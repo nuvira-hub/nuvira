@@ -47,8 +47,8 @@ struct Args {
 enum Cmd {
     /// Installs (or updates) and starts the service. Needs an administrator prompt.
     Install {
-        /// nuvira-server to register with (host[:port]).
-        #[arg(long, value_name = "HOST[:PORT]")]
+        /// nuvira-server to register with (host[:port]); empty: NuviraHub's public server.
+        #[arg(long, value_name = "HOST[:PORT]", default_value = "")]
         server: String,
         /// Permanent password. Without it, the one already set is kept or a new one is generated.
         #[arg(long)]

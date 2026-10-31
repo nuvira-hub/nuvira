@@ -21,6 +21,19 @@ const REGISTER_CONTEXT: &[u8] = b"nuvira-register-v1";
 /// Default UDP port of nuvira-server.
 pub const DEFAULT_PORT: u16 = 21116;
 
+/// NuviraHub's public server, used when no server is set.
+pub const PUBLIC_SERVER: &str = "connect.nuvirahub.dev";
+/// Its certificate fingerprint, built in: even the first connection is checked.
+const PUBLIC_SERVER_KEY: &str = "9e6828e460bf9fa4745babf35878ae68ee728f0d8ac266e0ad097874e0e64052";
+
+/// The server to use: `server`, or the public one when it is empty.
+pub fn server_or_public(server: &str) -> &str {
+    match server.trim() {
+        "" => PUBLIC_SERVER,
+        s => s,
+    }
+}
+
 pub struct Signal {
     pub device_id: String,
     /// Rules of the server for its devices (all off from servers without them).
@@ -198,6 +211,10 @@ pub mod known_server {
     }
 
     pub fn get(server: &str) -> Option<Fingerprint> {
+        let host = server.strip_suffix(&format!(":{DEFAULT_PORT}")).unwrap_or(server);
+        if host.eq_ignore_ascii_case(PUBLIC_SERVER) {
+            return crate::parse_fingerprint(PUBLIC_SERVER_KEY).ok();
+        }
         let text = std::fs::read_to_string(path()).ok()?;
         text.lines()
             .filter_map(|l| l.split_once(' '))
@@ -214,5 +231,20 @@ pub mod known_server {
         }
         std::fs::write(&path, text)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_server() {
+        assert_eq!(server_or_public(""), PUBLIC_SERVER);
+        assert_eq!(server_or_public("  "), PUBLIC_SERVER);
+        assert_eq!(server_or_public("nas.example:21117"), "nas.example:21117");
+        let key = known_server::get(PUBLIC_SERVER).expect("built-in fingerprint");
+        assert_eq!(known_server::get("CONNECT.nuvirahub.dev:21116"), Some(key));
+        assert_eq!(crate::fingerprint_hex(&key), PUBLIC_SERVER_KEY);
     }
 }

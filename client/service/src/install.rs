@@ -194,7 +194,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
         },
         None => println!(
             "the agent has not registered on {} yet: check {}",
-            service_config.server,
+            nuvira_transport::signal::server_or_public(&service_config.server),
             config::agent_log().display()
         ),
     }
