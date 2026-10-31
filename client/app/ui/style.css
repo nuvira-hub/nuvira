@@ -164,7 +164,10 @@ button.danger { color: var(--danger); border-color: var(--danger); background: t
 .inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .inline-form input { flex: 1 1 180px; }
 .stack { display: flex; flex-direction: column; gap: 8px; max-width: 420px; }
-label.check { display: inline-flex; align-items: center; gap: 6px; }
+label.check { display: inline-flex; align-items: flex-start; gap: 6px; }
+/* Never squeezed by a long text, and on its first line when the text wraps
+   (13px: the checkbox of Chromium). */
+label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 
 /* --- Connection --- */
 
