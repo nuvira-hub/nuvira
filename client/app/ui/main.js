@@ -128,6 +128,7 @@ function render(state) {
   // The public server's terms of use, while it is the one in use.
   for (const node of document.querySelectorAll(".public-only")) node.classList.toggle("hidden", Boolean(state.server.trim()));
   $("service-note").classList.toggle("hidden", !state.service);
+  $("server-service").classList.toggle("hidden", !state.service);
   $("install-off").classList.toggle("hidden", state.service);
   $("update-bar").classList.toggle("hidden", !state.update && !state.installed);
   if (!$("update-button").disabled) {

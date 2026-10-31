@@ -235,6 +235,8 @@ struct NuviraApp {
     /// Encoder chosen at the first session (the test takes a couple of seconds).
     plan: Mutex<Option<EncoderPlan>>,
     address_book: address_book::Link,
+    /// Server the service's agent is registered on (from its Info), if linked.
+    service_server: Mutex<Option<String>>,
 }
 
 impl NuviraApp {
@@ -280,7 +282,8 @@ fn start_agent(app: &AppHandle) {
         start_service_link(app);
         return;
     }
-    let server = nuvira_transport::signal::server_or_public(&state.ui.lock().expect("state").server).to_string();
+    let server =
+        nuvira_transport::signal::server_or_public(&state.ui.lock().expect("state").server).to_string();
     let (commands_tx, commands_rx) = mpsc::unbounded_channel();
     *state.commands.lock().expect("commands") = Some(commands_tx);
     state.update(app, |ui| {
@@ -370,13 +373,16 @@ fn start_service_link(app: &AppHandle) {
                     state.update(&app, |ui| ui.error = None);
                     while let Some(msg) = messages.recv().await {
                         match msg {
-                            // The service's server also applies to outgoing connections, unless another one is set.
-                            ToApp::Info { server, version } => state.update(&app, |ui| {
-                                if ui.server.is_empty() {
-                                    ui.server = server;
-                                }
-                                ui.installed = nuvira_update::newer(&version, nuvira_update::CURRENT).then_some(version);
-                            }),
+                            // With the service the server in the settings is the service's
+                            // (empty = public), also for outgoing connections.
+                            ToApp::Info { server, version } => {
+                                *state.service_server.lock().expect("service server") = Some(server.clone());
+                                state.update(&app, |ui| {
+                                    ui.server = shown_server(&server);
+                                    ui.installed = nuvira_update::newer(&version, nuvira_update::CURRENT)
+                                        .then_some(version);
+                                })
+                            }
                             ToApp::Event { event } => on_agent_event(&app, event),
                         }
                     }
@@ -467,8 +473,20 @@ fn get_state(state: State<NuviraApp>) -> UiState {
     state.ui.lock().expect("state").clone()
 }
 
+/// Server as shown in the settings: empty for the public one.
+fn shown_server(server: &str) -> String {
+    if server.trim().eq_ignore_ascii_case(nuvira_transport::signal::PUBLIC_SERVER) {
+        String::new()
+    } else {
+        server.trim().to_string()
+    }
+}
+
+/// Saves the server. With the service installed it is the service's server: the
+/// service is installed again with it (administrator prompt), keeping device key and
+/// permanent password; nothing changes if the prompt is cancelled.
 #[tauri::command]
-fn set_server(app: AppHandle, state: State<NuviraApp>, server: String) -> Result<(), String> {
+async fn set_server(app: AppHandle, server: String) -> Result<(), String> {
     if branding::get().is_some_and(|b| b.lock_server) {
         return Err(t("err.locked"));
     }
@@ -477,6 +495,19 @@ fn set_server(app: AppHandle, state: State<NuviraApp>, server: String) -> Result
         nuvira_transport::resolve_addr(&server, nuvira_transport::signal::DEFAULT_PORT)
             .map_err(|e| tf("err.invalid_address", &[("e", &e.to_string())]))?;
     }
+    #[cfg(windows)]
+    if nuvira_agent::ipc::service_installed() {
+        let current = app.state::<NuviraApp>().service_server.lock().expect("service server").clone();
+        let wanted = nuvira_transport::signal::server_or_public(&server);
+        if current.as_deref().is_none_or(|s| !s.eq_ignore_ascii_case(wanted)) {
+            let params = format!("service install --server \"{server}\"");
+            tauri::async_runtime::spawn_blocking(move || run_service_install(params))
+                .await
+                .map_err(|e| e.to_string())??;
+            info!("service moved to {wanted}");
+        }
+    }
+    let state = app.state::<NuviraApp>();
     let mut settings = load_settings();
     let changed = settings.server != server;
     settings.server = server.clone();
@@ -568,7 +599,8 @@ fn launch_viewer(
     if device_id.len() != 9 {
         return Err(t("err.id_digits"));
     }
-    let server = nuvira_transport::signal::server_or_public(&state.ui.lock().expect("state").server).to_string();
+    let server =
+        nuvira_transport::signal::server_or_public(&state.ui.lock().expect("state").server).to_string();
     // The viewer is in this same program (`nuvira viewer ...`).
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // The password goes in the process environment, not on the command line
@@ -729,6 +761,7 @@ fn main() {
         agent: Mutex::new(None),
         plan: Mutex::new(None),
         address_book: Default::default(),
+        service_server: Mutex::new(None),
     };
 
     tauri::Builder::default()
@@ -845,37 +878,19 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
     {
         let settings = load_settings();
         let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-            let temp = std::env::temp_dir();
             let tag = nuvira_agent::random_password();
-            let (password_file, report) =
-                (temp.join(format!("nuvira-{tag}.pw")), temp.join(format!("nuvira-{tag}.json")));
-            let quote = |p: &std::path::Path| format!("\"{}\"", p.display());
-            let mut params =
-                format!("service install --server \"{}\" --report {}", settings.server, quote(&report));
+            let password_file = std::env::temp_dir().join(format!("nuvira-{tag}.pw"));
+            let mut params = format!("service install --server \"{}\"", settings.server);
             if let Some(key) = &settings.server_key {
                 params += &format!(" --server-key {key}");
             }
             if !password.is_empty() {
                 std::fs::write(&password_file, &password).map_err(|e| e.to_string())?;
-                params += &format!(" --password-file {}", quote(&password_file));
+                params += &format!(" --password-file \"{}\"", password_file.display());
             }
-            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-            let outcome = nuvira_service::run_elevated(&exe, &params);
+            let report = run_service_install(params);
             let _ = std::fs::remove_file(&password_file);
-            let text = std::fs::read_to_string(&report);
-            let _ = std::fs::remove_file(&report);
-            match outcome {
-                Ok(None) => return Err(t("install.cancelled")),
-                Err(e) => return Err(format!("{e:#}")),
-                Ok(Some(_)) => {}
-            }
-            let report: serde_json::Value = text
-                .ok()
-                .and_then(|t| serde_json::from_str(&t).ok())
-                .ok_or_else(|| t("install.no_report"))?;
-            if report["ok"] != true {
-                return Err(report["error"].as_str().unwrap_or_default().to_string());
-            }
+            let report = report?;
             // Present only if the installation generated it.
             Ok(match report["password"].as_str() {
                 Some(generated) => tf("install.done_password", &[("password", generated)]),
@@ -890,6 +905,30 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
         }
         result
     }
+}
+
+/// Runs `nuvira service install` with `params` as administrator (UAC prompt) and
+/// returns its report; the outcome comes back in a temporary file.
+#[cfg(windows)]
+fn run_service_install(mut params: String) -> Result<serde_json::Value, String> {
+    let tag = nuvira_agent::random_password();
+    let report = std::env::temp_dir().join(format!("nuvira-{tag}.json"));
+    params += &format!(" --report \"{}\"", report.display());
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let outcome = nuvira_service::run_elevated(&exe, &params);
+    let text = std::fs::read_to_string(&report);
+    let _ = std::fs::remove_file(&report);
+    match outcome {
+        Ok(None) => return Err(t("install.cancelled")),
+        Err(e) => return Err(format!("{e:#}")),
+        Ok(Some(_)) => {}
+    }
+    let report: serde_json::Value =
+        text.ok().and_then(|t| serde_json::from_str(&t).ok()).ok_or_else(|| t("install.no_report"))?;
+    if report["ok"] != true {
+        return Err(report["error"].as_str().unwrap_or_default().to_string());
+    }
+    Ok(report)
 }
 
 /// The app's own copy before the last update (see `apply_update`).
@@ -968,7 +1007,9 @@ fn restart_app(app: AppHandle) -> Result<(), String> {
     #[cfg(not(windows))]
     let program = std::env::current_exe().map_err(|e| e.to_string())?;
     info!("restarting with the installed program {}", program.display());
-    std::process::Command::new(&program).spawn().map_err(|e| tf("update.failed", &[("e", &e.to_string())]))?;
+    std::process::Command::new(&program)
+        .spawn()
+        .map_err(|e| tf("update.failed", &[("e", &e.to_string())]))?;
     app.exit(0);
     Ok(())
 }

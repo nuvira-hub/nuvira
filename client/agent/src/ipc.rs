@@ -215,7 +215,11 @@ async fn serve_app(
 ) -> Result<()> {
     let (read, mut write) = tokio::io::split(pipe);
     let mut lines = BufReader::new(read).lines();
-    send_line(&mut write, &ToApp::Info { server: server.to_string(), version: env!("CARGO_PKG_VERSION").into() }).await?;
+    send_line(
+        &mut write,
+        &ToApp::Info { server: server.to_string(), version: env!("CARGO_PKG_VERSION").into() },
+    )
+    .await?;
     for event in snapshot.events() {
         send_line(&mut write, &ToApp::Event { event: event.clone() }).await?;
     }
@@ -279,7 +283,15 @@ pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSende
     let (commands_tx, mut commands_rx) = mpsc::unbounded_channel::<AgentCommand>();
     tokio::spawn(async move {
         let mut lines = BufReader::new(read).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        loop {
+            // Also ends as soon as the app stops listening: otherwise the pipe stayed
+            // open until the agent's next message, and the agent, still serving this
+            // connection, never answered the app's new one.
+            let line = tokio::select! {
+                line = lines.next_line() => line,
+                _ = to_app_tx.closed() => break,
+            };
+            let Ok(Some(line)) = line else { break };
             match serde_json::from_str::<ToApp>(&line) {
                 Ok(msg) => {
                     if to_app_tx.send(msg).is_err() {

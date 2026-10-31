@@ -126,6 +126,7 @@
   "settings.server_label": "NuviraHub-Server",
   "settings.save": "Speichern",
   "settings.server_hint": "Leer lassen, um den öffentlichen NuviraHub-Server zu verwenden, oder einen eigenen Server angeben (nötig für geteilte Adressbücher und die Pro-Module).",
+  "settings.server_service": "Mit installiertem unbeaufsichtigtem Zugriff ist dies auch der Server des Dienstes: Das Speichern eines neuen erfordert die Bestätigung eines Administrators, und die ID kann sich ändern.",
   "settings.public_terms": "Nutzungsbedingungen des öffentlichen Servers",
   "settings.account": "Konto",
   "settings.signed_out": "Sie sind nicht beim Adressbuch angemeldet.",

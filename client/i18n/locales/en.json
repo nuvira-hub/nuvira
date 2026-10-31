@@ -126,6 +126,7 @@
   "settings.server_label": "NuviraHub server",
   "settings.save": "Save",
   "settings.server_hint": "Leave it empty to use the NuviraHub public server, or enter your own server (needed for shared address books and the Pro modules).",
+  "settings.server_service": "With unattended access installed this is also the server of the service: saving a new one asks for an administrator's confirmation, and the ID may change.",
   "settings.public_terms": "Terms of use of the public server",
   "settings.account": "Account",
   "settings.signed_out": "You are not signed in to the address book.",

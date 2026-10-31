@@ -126,6 +126,7 @@
   "settings.server_label": "Server NuviraHub",
   "settings.save": "Salva",
   "settings.server_hint": "Lascia vuoto per usare il server pubblico NuviraHub, oppure indica il tuo server (serve per le rubriche condivise e i moduli Pro).",
+  "settings.server_service": "Con l'accesso non presidiato installato è anche il server del servizio: salvandone uno nuovo Windows chiede la conferma di un amministratore, e l'ID può cambiare.",
   "settings.public_terms": "Condizioni d'uso del server pubblico",
   "settings.account": "Account",
   "settings.signed_out": "Non hai effettuato l'accesso alla rubrica.",

@@ -126,6 +126,7 @@
   "settings.server_label": "Servidor NuviraHub",
   "settings.save": "Guardar",
   "settings.server_hint": "Déjelo vacío para usar el servidor público de NuviraHub, o indique su propio servidor (necesario para las libretas compartidas y los módulos Pro).",
+  "settings.server_service": "Con el acceso desatendido instalado, también es el servidor del servicio: guardar uno nuevo pide la confirmación de un administrador, y el ID puede cambiar.",
   "settings.public_terms": "Condiciones de uso del servidor público",
   "settings.account": "Cuenta",
   "settings.signed_out": "No ha iniciado sesión en la libreta de direcciones.",

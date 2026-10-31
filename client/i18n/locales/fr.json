@@ -126,6 +126,7 @@
   "settings.server_label": "Serveur NuviraHub",
   "settings.save": "Enregistrer",
   "settings.server_hint": "Laissez vide pour utiliser le serveur public NuviraHub, ou indiquez votre propre serveur (nécessaire pour les carnets d'adresses partagés et les modules Pro).",
+  "settings.server_service": "Avec l'accès sans surveillance installé, c'est aussi le serveur du service : en enregistrer un nouveau demande la confirmation d'un administrateur, et l'ID peut changer.",
   "settings.public_terms": "Conditions d'utilisation du serveur public",
   "settings.account": "Compte",
   "settings.signed_out": "Vous n'êtes pas connecté au carnet d'adresses.",
