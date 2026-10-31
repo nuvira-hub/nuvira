@@ -63,6 +63,10 @@ type Relay struct {
 	sessions map[[tokenLen]byte]*session
 	links    map[string]*link
 	log      *slog.Logger
+	// Traffic of the current hour, logged by expireLoop (bandwidth of a public server).
+	hourBytes    uint64
+	hourSessions int
+	hourStart    time.Time
 }
 
 type link struct {
@@ -71,7 +75,7 @@ type link struct {
 }
 
 func New(log *slog.Logger) *Relay {
-	r := &Relay{sessions: map[[tokenLen]byte]*session{}, links: map[string]*link{}, log: log}
+	r := &Relay{sessions: map[[tokenLen]byte]*session{}, links: map[string]*link{}, log: log, hourStart: time.Now()}
 	go r.expireLoop()
 	return r
 }
@@ -210,6 +214,7 @@ func (r *Relay) Destination(from net.Addr, n int) net.Addr {
 	}
 	l.session.last = time.Now()
 	l.session.bytes += uint64(n)
+	r.hourBytes += uint64(n)
 	return l.to
 }
 
@@ -229,7 +234,16 @@ func (r *Relay) expireLoop() {
 				}
 			}
 			delete(r.sessions, token)
+			if s.ready() {
+				r.hourSessions++
+			}
 			r.log.Info("relay session closed", "bytes", s.bytes, "duration", now.Sub(s.created).Round(time.Second))
+		}
+		if now.Sub(r.hourStart) >= time.Hour {
+			r.log.Info("relay traffic in the last hour", "bytes", r.hourBytes,
+				"mbit_avg", float64(r.hourBytes)*8/now.Sub(r.hourStart).Seconds()/1e6,
+				"sessions_closed", r.hourSessions, "sessions_open", len(r.sessions))
+			r.hourBytes, r.hourSessions, r.hourStart = 0, 0, now
 		}
 		r.mu.Unlock()
 	}

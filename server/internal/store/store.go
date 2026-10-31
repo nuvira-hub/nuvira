@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS devices (
 	os          TEXT NOT NULL DEFAULT '',
 	created_at  INTEGER NOT NULL,
 	last_seen   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS blocked (
+	value       TEXT PRIMARY KEY,
+	note        TEXT NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL
 );`
 
 // Open opens (or creates) the database in the given file.
@@ -51,6 +56,9 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// Wrap uses a database already open with Open (maintenance commands get its *sql.DB).
+func Wrap(db *sql.DB) *Store { return &Store{db: db} }
 
 // DB exposes the database to the other stores of the same file (accounts and address book).
 func (s *Store) DB() *sql.DB { return s.db }
@@ -108,6 +116,50 @@ func (s *Store) ByID(id string) (*Device, error) {
 func (s *Store) Touch(id string) error {
 	_, err := s.db.Exec(`UPDATE devices SET last_seen = ? WHERE id = ?`, time.Now().Unix(), id)
 	return err
+}
+
+// Block is a blocked device ID, address or network (see the signal package).
+type Block struct {
+	Value     string
+	Note      string
+	CreatedAt time.Time
+}
+
+// SetBlock adds (or updates the note of) a block.
+func (s *Store) SetBlock(value, note string) error {
+	_, err := s.db.Exec(`INSERT INTO blocked (value, note, created_at) VALUES (?, ?, ?)
+		ON CONFLICT(value) DO UPDATE SET note = excluded.note`, value, note, time.Now().Unix())
+	return err
+}
+
+// RemoveBlock deletes a block; false if there was none.
+func (s *Store) RemoveBlock(value string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM blocked WHERE value = ?`, value)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// Blocks lists the blocks, oldest first.
+func (s *Store) Blocks() ([]Block, error) {
+	rows, err := s.db.Query(`SELECT value, note, created_at FROM blocked ORDER BY created_at, value`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Block
+	for rows.Next() {
+		var b Block
+		var created int64
+		if err := rows.Scan(&b.Value, &b.Note, &created); err != nil {
+			return nil, err
+		}
+		b.CreatedAt = time.Unix(created, 0)
+		list = append(list, b)
+	}
+	return list, rows.Err()
 }
 
 // newID generates a 9-digit ID not starting with 0 (easier to dictate).

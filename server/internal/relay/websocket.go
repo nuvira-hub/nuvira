@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -101,14 +103,24 @@ func (w *WebSockets) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// remoteHost is the client's address (behind a reverse proxy, the one the proxy reports).
+// remoteHost is the client's address. Behind a reverse proxy (a connection from
+// this machine or the local network) it is the one the proxy adds last to
+// X-Forwarded-For; from the Internet the header is ignored, since anybody can
+// write it (it would dodge blocks and limits).
 func remoteHost(req *http.Request) string {
-	if fwd := req.Header.Get("X-Forwarded-For"); fwd != "" {
-		return fwd
-	}
 	host, _, err := net.SplitHostPort(req.RemoteAddr)
 	if err != nil {
-		return req.RemoteAddr
+		host = req.RemoteAddr
+	}
+	peer, err := netip.ParseAddr(host)
+	if err != nil || !(peer.IsLoopback() || peer.IsPrivate()) {
+		return host
+	}
+	if fwd := req.Header.Values("X-Forwarded-For"); len(fwd) > 0 {
+		list := strings.Split(fwd[len(fwd)-1], ",")
+		if last, err := netip.ParseAddr(strings.TrimSpace(list[len(list)-1])); err == nil {
+			return last.String()
+		}
 	}
 	return host
 }

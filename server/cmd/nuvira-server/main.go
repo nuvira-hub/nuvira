@@ -8,6 +8,8 @@
 //	               as wss:// on 443 behind a reverse proxy.
 //	NUVIRA_DATA_DIR  folder for database and certificate (default "./data")
 //	NUVIRA_LOG       debug | info (default) | warn
+//	NUVIRA_RATE_LIMITS  "off" disables the limits per address on registrations
+//	               and connection requests (local addresses never have them)
 //	NUVIRA_RELAY_FAKE_REFLEXIVE  tests only: announces unreachable public addresses
 //	                   (simulates two devices behind the same router)
 //	NUVIRA_RELAY_IMPAIR  tests only: simulates a worse network on the relay, e.g.
@@ -17,19 +19,24 @@
 // their own variables.
 //
 // `nuvira-server healthcheck` checks that the server answers (used by Docker);
-// modules can add maintenance commands (`nuvira-server help` lists them).
+// `block`, `unblock` and `blocked` manage the blocked devices and addresses
+// (read by the running server within 30 seconds); modules can add maintenance
+// commands (`nuvira-server help` lists them).
 package main
 
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -128,6 +135,10 @@ func run() error {
 	tr := &quic.Transport{Conn: conn}
 
 	srv := nuvirasignal.New(st, rl, log)
+	if os.Getenv("NUVIRA_RATE_LIMITS") == "off" {
+		srv.SetRateLimits(false)
+		log.Info("limits per address off")
+	}
 	modules, err := ext.Open(ext.Env{DB: st.DB(), DataDir: dataDir, Log: log, Host: srv})
 	if err != nil {
 		return fmt.Errorf("modules: %w", err)
@@ -175,9 +186,62 @@ func run() error {
 	return nil
 }
 
-// command runs a maintenance command of a module, on the same data as the server.
+// Commands of the open server: blocks against abuse (see package signal).
+var baseCommands = []ext.Command{
+	{Name: "block", Usage: "ID|IP|NETWORK [note]   blocks a device, an address or a network (CIDR)", Run: blockCommand},
+	{Name: "unblock", Usage: "ID|IP|NETWORK          removes a block", Run: unblockCommand},
+	{Name: "blocked", Usage: "                       lists the blocks", Run: listBlocksCommand},
+}
+
+func blockCommand(env ext.Env, args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("usage: block ID|IP|NETWORK [note]")
+	}
+	kind, value := nuvirasignal.ParseBlock(args[0])
+	if kind == nuvirasignal.BlockInvalid {
+		return fmt.Errorf("%q is not a 9-digit ID, an IP address or a network", args[0])
+	}
+	if err := store.Wrap(env.DB).SetBlock(value, strings.Join(args[1:], " ")); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "blocked:", value)
+	return nil
+}
+
+func unblockCommand(env ext.Env, args []string, out io.Writer) error {
+	if len(args) != 1 {
+		return errors.New("usage: unblock ID|IP|NETWORK")
+	}
+	_, value := nuvirasignal.ParseBlock(args[0])
+	found, err := store.Wrap(env.DB).RemoveBlock(value)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("%q is not blocked", args[0])
+	}
+	fmt.Fprintln(out, "unblocked:", value)
+	return nil
+}
+
+func listBlocksCommand(env ext.Env, _ []string, out io.Writer) error {
+	blocks, err := store.Wrap(env.DB).Blocks()
+	if err != nil {
+		return err
+	}
+	for _, b := range blocks {
+		fmt.Fprintf(out, "%-20s %s  %s\n", b.Value, b.CreatedAt.UTC().Format("2006-01-02 15:04"), b.Note)
+	}
+	if len(blocks) == 0 {
+		fmt.Fprintln(out, "no blocks")
+	}
+	return nil
+}
+
+// command runs a maintenance command (of the open server or of a module), on the
+// same data as the server.
 func command(name string, args []string) int {
-	for _, c := range ext.Commands() {
+	for _, c := range append(baseCommands, ext.Commands()...) {
 		if c.Name != name {
 			continue
 		}
@@ -197,7 +261,7 @@ func command(name string, args []string) int {
 	}
 	fmt.Fprintln(os.Stderr, "nuvira-server", version, "("+edition+")")
 	fmt.Fprintln(os.Stderr, "\nCommands:\n  healthcheck")
-	for _, c := range ext.Commands() {
+	for _, c := range append(baseCommands, ext.Commands()...) {
 		fmt.Fprintln(os.Stderr, " ", c.Name, c.Usage)
 	}
 	if name == "help" || name == "-h" || name == "--help" {

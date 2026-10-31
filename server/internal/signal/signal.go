@@ -74,12 +74,26 @@ type Server struct {
 	online   map[string]*client // by device ID
 	sessions map[string]*pending
 	routed   map[string]*routed // accepted sessions, until the agent's report
+
+	// Protection of a public server (abuse.go).
+	blocked       blocklist
+	registerLimit *limiter
+	connectLimit  *limiter
 }
 
 func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
 	return &Server{
 		store: st, relay: r, log: log,
 		online: map[string]*client{}, sessions: map[string]*pending{}, routed: map[string]*routed{},
+		registerLimit: newLimiter(registerLimit), connectLimit: newLimiter(connectLimit),
+	}
+}
+
+// SetRateLimits turns the limits per address on (the default) or off, before Serve.
+func (s *Server) SetRateLimits(on bool) {
+	s.registerLimit, s.connectLimit = nil, nil
+	if on {
+		s.registerLimit, s.connectLimit = newLimiter(registerLimit), newLimiter(connectLimit)
 	}
 }
 
@@ -88,7 +102,9 @@ func (s *Server) SetModules(modules []ext.Module) { s.modules = modules }
 
 // Serve accepts connections until the listener is closed.
 func (s *Server) Serve(ctx context.Context, ln *quic.Listener) error {
+	s.reloadBlocks()
 	go s.expireLoop(ctx)
+	go s.blocksLoop(ctx)
 	for {
 		conn, err := ln.Accept(ctx)
 		if err != nil {
@@ -168,6 +184,16 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 		return nil, errors.New("missing Register or invalid key")
 	}
 	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly}
+	if ip, ok := relay.HostOf(conn.RemoteAddr()); ok {
+		if s.blocked.address(ip) {
+			_ = c.send(errorMsg("@server.blocked", ""))
+			return nil, errors.New("blocked address")
+		}
+		if !s.registerLimit.allow(ip, time.Now()) {
+			_ = c.send(errorMsg("@server.rate_limited", ""))
+			return nil, errors.New("too many registrations from this address")
+		}
+	}
 	if reg.ProtocolVersion < ProtocolVersion {
 		_ = c.send(errorMsg("@server.old_version", ""))
 		return nil, fmt.Errorf("protocol %d", reg.ProtocolVersion)
@@ -196,6 +222,10 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 		return nil, err
 	}
 	c.device = device
+	if s.blocked.device(device.ID) {
+		_ = c.send(errorMsg("@server.blocked", ""))
+		return nil, fmt.Errorf("blocked device %s", device.ID)
+	}
 	registered := &pb.Registered{DeviceId: device.ID}
 	for _, m := range s.modules {
 		registered.Features = append(registered.Features, m.Features()...)
@@ -245,6 +275,11 @@ func randomHex(n int) string {
 }
 
 func (s *Server) connect(viewer *client, target string) {
+	if ip, ok := relay.HostOf(viewer.conn.RemoteAddr()); ok && !s.connectLimit.allow(ip, time.Now()) {
+		s.log.Info("connection request refused: too many", "from", viewer.device.ID, "to", target, "address", ip)
+		_ = viewer.send(errorMsg("@server.rate_limited", ""))
+		return
+	}
 	s.mu.Lock()
 	agent := s.online[target]
 	var p *pending
@@ -341,6 +376,21 @@ func (s *Server) reject(agent *client, id, reason string) {
 	_ = p.viewer.send(errorMsg(reason, id))
 	s.log.Info("session rejected", "session", id, "reason", reason)
 	s.event(ext.SessionEvent{ID: id, Kind: ext.SessionRejected, AgentID: agent.device.ID, Reason: reason})
+}
+
+func (s *Server) blocksLoop(ctx context.Context) {
+	t := time.NewTicker(reloadEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			s.reloadBlocks()
+			s.registerLimit.prune(now)
+			s.connectLimit.prune(now)
+		}
+	}
 }
 
 func (s *Server) expireLoop(ctx context.Context) {

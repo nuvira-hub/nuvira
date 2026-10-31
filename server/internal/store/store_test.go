@@ -44,3 +44,27 @@ func TestRegisterKeepsID(t *testing.T) {
 		t.Fatalf("missing ID: %+v, %v", missing, err)
 	}
 }
+
+func TestBlocks(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "nuvira.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.SetBlock("123456789", "scam"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetBlock("123456789", "scam, reported twice"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.Blocks()
+	if err != nil || len(list) != 1 || list[0].Note != "scam, reported twice" {
+		t.Fatalf("%v %+v", err, list)
+	}
+	if found, _ := Wrap(s.DB()).RemoveBlock("123456789"); !found {
+		t.Fatal("block not removed")
+	}
+	if found, _ := s.RemoveBlock("123456789"); found {
+		t.Fatal("removed twice")
+	}
+}
