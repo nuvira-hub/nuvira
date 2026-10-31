@@ -41,6 +41,7 @@ message ControlMessage {
     ConfirmationPending confirmation_pending = 15;
     FsRequest fs_request = 16;
     FsResponse fs_response = 17;
+    ViewSize view_size = 18;
   }
 }
 
@@ -173,6 +174,15 @@ enum Quality {
 
 message SetQuality {
   Quality quality = 1;
+}
+
+// From the viewer: pixels of the area the image is drawn in (sent again when it
+// changes). A smaller area than the screen makes the agent encode a reduced image
+// (fewer pixels: faster, less bandwidth, more bits for each pixel). 0x0 = the
+// screen's own resolution (real-size view).
+message ViewSize {
+  uint32 width = 1;
+  uint32 height = 2;
 }
 
 // From the viewer, every ~250 ms: what it sees of the session. The agent uses it to

@@ -168,6 +168,8 @@ struct Session {
     codec_api: Option<ICodecAPI>,
     events: Receiver<TransformEvent>,
     event_thread: Option<std::thread::JoinHandle<()>>,
+    /// Size of the images given (GPU textures may be larger: they are scaled down).
+    input: (u32, u32),
     width: u32,
     height: u32,
     provides_samples: bool,
@@ -182,8 +184,8 @@ struct Session {
 impl Session {
     fn new(
         activate: &IMFActivate,
-        width: u32,
-        height: u32,
+        input: (u32, u32),
+        (width, height): (u32, u32),
         settings: EncoderSettings,
         device: Option<&ID3D11Device>,
     ) -> Result<Self> {
@@ -256,7 +258,9 @@ impl Session {
         }
 
         let gpu = match (device, manager) {
-            (Some(device), Some(manager)) => Some((Nv12Converter::new(device, width, height)?, manager)),
+            (Some(device), Some(manager)) => {
+                Some((Nv12Converter::new(device, input, (width, height))?, manager))
+            }
             _ => None,
         };
 
@@ -304,6 +308,7 @@ impl Session {
             codec_api,
             events,
             event_thread: Some(event_thread),
+            input,
             width,
             height,
             provides_samples,
@@ -521,12 +526,12 @@ impl MfEncoder {
     /// Encodes a frame prepared by `make_sample` (image in RAM or GPU texture).
     fn encode_sample(
         &mut self,
-        width: u32,
-        height: u32,
+        input: (u32, u32),
+        output: (u32, u32),
         force_keyframe: bool,
         make_sample: impl FnOnce(&mut Session, i64) -> Result<IMFSample>,
     ) -> Result<Option<EncodedFrame>> {
-        let (w, h) = (width & !1, height & !1);
+        let (w, h) = (output.0 & !1, output.1 & !1);
         if self.session.is_some() && self.bitrate_restart_due() {
             info!(
                 "restarting the hardware encoder: bitrate from {} to {} kbit/s",
@@ -535,15 +540,15 @@ impl MfEncoder {
             );
             self.session = None;
         }
-        if self.session.as_ref().is_none_or(|s| s.width != w || s.height != h) {
+        if self.session.as_ref().is_none_or(|s| s.width != w || s.height != h || s.input != input) {
             self.session = None;
             self.outputs.clear();
-            let session = Session::new(&self.activate, w, h, self.settings, self.device.as_ref())
+            let session = Session::new(&self.activate, input, (w, h), self.settings, self.device.as_ref())
                 .with_context(|| format!("starting {}", self.name))?;
             self.session_bitrate = self.settings.bitrate_bps;
             self.session_started = Instant::now();
-            let input = if self.device.is_some() { "GPU texture" } else { "RAM" };
-            info!("hardware encoder {} started at {w}x{h}, input from {input}", self.name);
+            let source = if self.device.is_some() { "GPU texture" } else { "RAM" };
+            info!("hardware encoder {} started at {w}x{h}, input from {source}", self.name);
             self.session = Some(session);
         }
         let session = self.session.as_mut().expect("session started");
@@ -601,19 +606,18 @@ impl VideoEncoder for MfEncoder {
         if self.device.is_some() {
             bail!("encoder configured for GPU textures");
         }
-        self.encode_sample(image.width, image.height, force_keyframe, |session, time| {
-            session.input_sample(image, time)
-        })
+        let size = (image.width, image.height);
+        self.encode_sample(size, size, force_keyframe, |session, time| session.input_sample(image, time))
     }
 
     fn encode_texture(
         &mut self,
         texture: &GpuTexture,
-        width: u32,
-        height: u32,
+        input: (u32, u32),
+        output: (u32, u32),
         force_keyframe: bool,
     ) -> Result<Option<EncodedFrame>> {
-        self.encode_sample(width, height, force_keyframe, |session, time| {
+        self.encode_sample(input, output, force_keyframe, |session, time| {
             session.texture_sample(&texture.0, time)
         })
     }

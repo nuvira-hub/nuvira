@@ -4,6 +4,10 @@
 //! takes the most recent one. If encoding is slower than capture the intermediate
 //! images are skipped: fps depend on the slower stage and not on the sum of the
 //! two, and no delay builds up.
+//!
+//! When the viewer draws the image in a smaller area than the screen, the image is
+//! encoded already reduced to that area (see [`encoded_size`]): on the GPU by the
+//! colour conversion itself, on the CPU by averaging pixels.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -49,6 +53,17 @@ impl Shared {
     }
 }
 
+/// Values the session changes while the pipeline runs.
+#[derive(Clone)]
+pub struct Controls {
+    pub max_fps: Arc<AtomicU32>,
+    /// Next frame must be a keyframe (set by the session, cleared when one is sent).
+    pub keyframe: Arc<AtomicBool>,
+    pub bitrate: Arc<AtomicU32>,
+    /// Viewer's drawing area, see [`pack_view`].
+    pub view: Arc<AtomicU64>,
+}
+
 pub struct Pipeline {
     shared: Arc<Shared>,
     threads: Vec<JoinHandle<()>>,
@@ -62,10 +77,8 @@ impl Pipeline {
         open_capturer: impl FnOnce() -> Result<Box<dyn Capturer>>,
         open_encoder: impl FnOnce(Option<GpuDevice>) -> Result<Box<dyn VideoEncoder>> + Send + 'static,
         gpu: bool,
-        max_fps: Arc<AtomicU32>,
         frames: mpsc::Sender<VideoFrame>,
-        keyframe: Arc<AtomicBool>,
-        bitrate: Arc<AtomicU32>,
+        controls: Controls,
     ) -> Result<(Display, Self)> {
         let shared = Arc::new(Shared::default());
         let mut pipeline = Self { shared: shared.clone(), threads: Vec::new() };
@@ -94,7 +107,7 @@ impl Pipeline {
                     return;
                 }
             };
-            encode_loop(&s, encoder, max_fps, &frames, &keyframe, &bitrate);
+            encode_loop(&s, encoder, &frames, &controls);
         })?);
 
         let s = shared.clone();
@@ -169,15 +182,41 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
 /// (first Internet test: unreadable text on a still screen).
 const REFINE_FRAMES: u32 = 15;
 
+/// A new viewer area is applied once it has stayed the same this long: while a window
+/// is being resized the encoder is not restarted at every step.
+const VIEW_SETTLE: Duration = Duration::from_millis(300);
+
+/// Viewer area packed in an `AtomicU64` (width in the high half, 0 = full size).
+pub fn pack_view(width: u32, height: u32) -> u64 {
+    ((width as u64) << 32) | height as u64
+}
+
+/// Size at which a `width`x`height` screen is encoded for a viewer area `view`
+/// (packed, 0 = full size): reduced to fit the area, aspect kept, even sizes;
+/// never larger than the screen.
+pub fn encoded_size(width: u32, height: u32, view: u64) -> (u32, u32) {
+    let (vw, vh) = ((view >> 32) as u32, view as u32);
+    if vw == 0 || vh == 0 || (vw >= width && vh >= height) {
+        return (width, height);
+    }
+    let scale = (vw as f64 / width as f64).min(vh as f64 / height as f64);
+    let fit = |n: u32| (((n as f64 * scale).round() as u32) & !1).max(64).min(n);
+    (fit(width), fit(height))
+}
+
 fn encode_loop(
     shared: &Shared,
     mut encoder: Box<dyn VideoEncoder>,
-    max_fps: Arc<AtomicU32>,
     frames: &mpsc::Sender<VideoFrame>,
-    keyframe: &AtomicBool,
-    bitrate: &AtomicU32,
+    controls: &Controls,
 ) {
+    let Controls { max_fps, keyframe, bitrate, view } = controls;
     let mut applied_bitrate = bitrate.load(Ordering::Relaxed);
+    let mut applied_view = view.load(Ordering::Relaxed);
+    let mut pending_view: Option<(u64, Instant)> = None;
+    let mut encoded_at = (0, 0);
+    // Reduced image for the encoders that take it from RAM.
+    let mut scaled = Vec::new();
     let mut last_encoded = Instant::now() - Duration::from_secs(1);
     // Last encoded image: used to make a keyframe again on a still screen.
     let mut last: Option<Captured> = None;
@@ -219,12 +258,27 @@ fn encode_loop(
             slot.take()
         };
         let waited_slot = t_slot.elapsed();
-        let force_key = keyframe.load(Ordering::Relaxed);
         let target = bitrate.load(Ordering::Relaxed);
         if target != applied_bitrate {
             encoder.set_bitrate(target);
             applied_bitrate = target;
         }
+        let requested = view.load(Ordering::Relaxed);
+        if requested == applied_view {
+            pending_view = None;
+        } else {
+            match pending_view {
+                Some((v, since)) if v == requested && since.elapsed() >= VIEW_SETTLE => {
+                    applied_view = requested;
+                    pending_view = None;
+                    // Re-encoded at the new size even if the screen is still.
+                    keyframe.store(true, Ordering::Relaxed);
+                }
+                Some((v, _)) if v == requested => {}
+                _ => pending_view = Some((requested, Instant::now())),
+            }
+        }
+        let force_key = keyframe.load(Ordering::Relaxed);
         let repeat = fresh.is_none();
         if let Some(fresh) = fresh {
             if let Some(old) = last.replace(fresh) {
@@ -239,21 +293,35 @@ fn encode_loop(
             continue;
         }
         let Some(image) = &last else { continue };
+        let size = encoded_size(image.width, image.height, applied_view);
+        if size != encoded_at {
+            info!("encoding {}x{} at {}x{}", image.width, image.height, size.0, size.1);
+            encoded_at = size;
+        }
 
         let t = Instant::now();
         let result = match image_texture(image) {
             #[cfg(windows)]
             Some(texture) if encoder.accepts_textures() => {
-                encoder.encode_texture(texture, image.width, image.height, force_key)
+                encoder.encode_texture(texture, (image.width, image.height), size, force_key)
             }
             _ => {
-                let bgra = BgraImage {
+                let full = BgraImage {
                     width: image.width,
                     height: image.height,
                     stride: image.stride,
                     data: &image.data,
                 };
-                encoder.encode(&bgra, force_key)
+                if size == (image.width, image.height) {
+                    encoder.encode(&full, force_key)
+                } else {
+                    nuvira_codec::convert::scale_bgra(&full, size.0 as usize, size.1 as usize, &mut scaled);
+                    let (w, h) = size;
+                    encoder.encode(
+                        &BgraImage { width: w, height: h, stride: w as usize * 4, data: &scaled },
+                        force_key,
+                    )
+                }
             }
         };
         let encoded = match result {
@@ -347,17 +415,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sizes() {
+        assert_eq!(encoded_size(1920, 1080, 0), (1920, 1080));
+        assert_eq!(encoded_size(1920, 1080, pack_view(2560, 1440)), (1920, 1080));
+        assert_eq!(encoded_size(1920, 1080, pack_view(1280, 720)), (1280, 720));
+        // Narrow window: the width decides, the aspect stays.
+        assert_eq!(encoded_size(1920, 1080, pack_view(960, 1000)), (960, 540));
+        assert_eq!(encoded_size(3840, 2160, pack_view(1500, 900)), (1500, 844));
+        // Odd sizes become even, and never below 64.
+        assert_eq!(encoded_size(1920, 1080, pack_view(1001, 2000)), (1000, 562));
+        assert_eq!(encoded_size(1920, 1080, pack_view(10, 10)), (64, 64));
+    }
+
+    #[test]
     fn produces_frames_and_stops() {
         let (tx, mut rx) = mpsc::channel(1);
         let keyframe = Arc::new(AtomicBool::new(true));
+        let view = Arc::new(AtomicU64::new(0));
         let (display, pipeline) = Pipeline::start(
             || Ok(Box::new(nuvira_capture::SyntheticCapturer::new(320, 180, 60)) as Box<dyn Capturer>),
             |gpu| nuvira_codec::create_encoder(nuvira_codec::EncoderPlan::Software, Default::default(), gpu),
             false,
-            Arc::new(AtomicU32::new(60)),
             tx,
-            keyframe,
-            Arc::new(AtomicU32::new(1_000_000)),
+            Controls {
+                max_fps: Arc::new(AtomicU32::new(60)),
+                keyframe,
+                bitrate: Arc::new(AtomicU32::new(1_000_000)),
+                view: view.clone(),
+            },
         )
         .context("start")
         .unwrap();
@@ -365,6 +450,25 @@ mod tests {
         let first = rx.blocking_recv().expect("first frame");
         assert!(first.keyframe);
         assert!(rx.blocking_recv().is_some());
+
+        // A smaller viewer area: after it settles a keyframe comes at the new size.
+        view.store(pack_view(160, 90), Ordering::Relaxed);
+        let mut decoder = nuvira_codec::OpenH264Decoder::new().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let size = loop {
+            assert!(Instant::now() < deadline, "no frame at the new size");
+            let frame = rx.blocking_recv().expect("frame");
+            // Only keyframes: the stream is followed from the middle.
+            if !frame.keyframe {
+                continue;
+            }
+            if let Some(yuv) = nuvira_codec::VideoDecoder::decode(&mut decoder, &frame.data).unwrap()
+                && (yuv.width, yuv.height) != (320, 180)
+            {
+                break (yuv.width, yuv.height);
+            }
+        };
+        assert_eq!(size, (160, 90));
         drop(pipeline);
     }
 }

@@ -130,9 +130,69 @@ pub fn bgra_to_nv12(image: &BgraImage, out: &mut [u8], pitch: usize, height_alig
     });
 }
 
+/// Scales `image` down to `width`x`height` (clamped to the image size), each output
+/// pixel being the average of the source pixels it covers: text stays readable
+/// instead of losing strokes as with point sampling. `out` gets packed rows.
+pub fn scale_bgra(image: &BgraImage, width: usize, height: usize, out: &mut Vec<u8>) {
+    let (sw, sh) = (image.width as usize, image.height as usize);
+    let (width, height) = (width.min(sw), height.min(sh));
+    out.resize(width * height * 4, 0);
+    if width == 0 || height == 0 {
+        return;
+    }
+    // Output column x averages source columns cols[x]..cols[x + 1] (never empty: width <= sw).
+    let cols: Vec<usize> = (0..=width).map(|x| x * sw / width).collect();
+    let rows_per_job = height.div_ceil(threads());
+    std::thread::scope(|s| {
+        for (job, chunk) in out.chunks_mut(width * 4 * rows_per_job).enumerate() {
+            let cols = &cols;
+            s.spawn(move || {
+                let mut sums = vec![[0u32; 4]; width];
+                for (i, row) in chunk.chunks_mut(width * 4).enumerate() {
+                    let y = job * rows_per_job + i;
+                    let (y0, y1) = (y * sh / height, (y + 1) * sh / height);
+                    sums.fill([0; 4]);
+                    for sy in y0..y1 {
+                        let src = &image.data[sy * image.stride..][..sw * 4];
+                        for (x, sum) in sums.iter_mut().enumerate() {
+                            for px in src[cols[x] * 4..cols[x + 1] * 4].as_chunks::<4>().0 {
+                                for c in 0..4 {
+                                    sum[c] += px[c] as u32;
+                                }
+                            }
+                        }
+                    }
+                    for (x, (sum, dst)) in sums.iter().zip(row.as_chunks_mut::<4>().0).enumerate() {
+                        let n = ((cols[x + 1] - cols[x]) * (y1 - y0)) as u32;
+                        for c in 0..4 {
+                            dst[c] = ((sum[c] + n / 2) / n) as u8;
+                        }
+                    }
+                }
+            });
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scale_averages() {
+        // 4x2 → 2x1: each output pixel averages a 2x2 block.
+        let mut data = Vec::new();
+        for v in [0u8, 100, 200, 40, 20, 120, 220, 60] {
+            data.extend_from_slice(&[v, v, v, 255]);
+        }
+        let img = BgraImage { width: 4, height: 2, stride: 16, data: &data };
+        let mut out = Vec::new();
+        scale_bgra(&img, 2, 1, &mut out);
+        assert_eq!(out, [60, 60, 60, 255, 130, 130, 130, 255]);
+        // Never enlarged.
+        scale_bgra(&img, 8, 4, &mut out);
+        assert_eq!(out.len(), 4 * 2 * 4);
+    }
 
     fn solid(w: u32, h: u32, bgra: [u8; 4]) -> Vec<u8> {
         bgra.repeat((w * h) as usize)

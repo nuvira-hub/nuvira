@@ -67,13 +67,14 @@ pub trait VideoEncoder: Send {
     /// Encodes an image. `None` if the encoder decides to skip the frame.
     fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> anyhow::Result<Option<EncodedFrame>>;
 
-    /// Encodes a frame already on the GPU (only encoders with [`accepts_textures`](Self::accepts_textures)).
+    /// Encodes a frame already on the GPU (only encoders with [`accepts_textures`](Self::accepts_textures)):
+    /// `input` is the size of the texture, `output` the size to encode (smaller = scaled down).
     #[cfg(windows)]
     fn encode_texture(
         &mut self,
         _texture: &gpu::GpuTexture,
-        _width: u32,
-        _height: u32,
+        _input: (u32, u32),
+        _output: (u32, u32),
         _force_keyframe: bool,
     ) -> anyhow::Result<Option<EncodedFrame>> {
         anyhow::bail!("this encoder does not accept GPU textures")

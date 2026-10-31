@@ -32,7 +32,7 @@ use nuvira_transport::{Connection, Fingerprint, FramedRecv, FramedSend};
 use tokio::sync::{Notify, mpsc};
 use tracing::{info, warn};
 
-use crate::pipeline::Pipeline;
+use crate::pipeline::{Controls, Pipeline};
 
 /// Minimum bitrate of the adaptive control.
 const MIN_BITRATE: u32 = 500_000;
@@ -735,6 +735,8 @@ async fn session(
     let mut abr = (!config.fixed_bitrate).then(|| abr::Abr::new(max_bps / 2, MIN_BITRATE, max_bps));
     let bitrate = Arc::new(AtomicU32::new(abr.as_ref().map_or(max_bps, |a| a.bitrate())));
     let fps = Arc::new(AtomicU32::new(config.fps));
+    // Area the viewer draws the image in (0 = full size until it says otherwise).
+    let view = Arc::new(AtomicU64::new(0));
     let session_start = Instant::now();
     // First frame sent after the last feedback (ms from the start, 0 = none): tells
     // whether feedback is missing. Measuring from the last frame instead would make a
@@ -749,6 +751,7 @@ async fn session(
         keyframe: keyframe.clone(),
         bitrate: bitrate.clone(),
         fps: fps.clone(),
+        view: view.clone(),
     };
     let (mut display, first) = source.start(config.display).await?;
     ctrl_tx.send(&video_format(&display)).await?;
@@ -948,6 +951,12 @@ async fn session(
                     }
                     None => info!("chat from the viewer: {}", chat.text),
                 },
+                Some(Msg::ViewSize(size)) => {
+                    let packed = crate::pipeline::pack_view(size.width, size.height);
+                    if view.swap(packed, Ordering::Relaxed) != packed {
+                        tracing::debug!("viewer area {}x{}", size.width, size.height);
+                    }
+                }
                 Some(Msg::SetQuality(q)) => {
                     let (limit_bps, limit_fps) = quality_limits(config, q.quality());
                     fps.store(limit_fps, Ordering::Relaxed);
@@ -1085,6 +1094,7 @@ struct VideoSource {
     keyframe: Arc<AtomicBool>,
     bitrate: Arc<AtomicU32>,
     fps: Arc<AtomicU32>,
+    view: Arc<AtomicU64>,
 }
 
 impl VideoSource {
@@ -1099,17 +1109,20 @@ impl VideoSource {
         let plan = self.config.plan;
         // A new stream must start with a keyframe.
         self.keyframe.store(true, Ordering::Relaxed);
-        let (frames, keyframe, bitrate, fps) =
-            (self.frames.clone(), self.keyframe.clone(), self.bitrate.clone(), self.fps.clone());
+        let (frames, keyframe, bitrate, fps, view) = (
+            self.frames.clone(),
+            self.keyframe.clone(),
+            self.bitrate.clone(),
+            self.fps.clone(),
+            self.view.clone(),
+        );
         tokio::task::spawn_blocking(move || {
             Pipeline::start(
                 move || cap_config.open_capturer(),
                 move |gpu| nuvira_codec::create_encoder(plan, settings, gpu),
                 plan == EncoderPlan::HardwareGpu,
-                fps,
                 frames,
-                keyframe,
-                bitrate,
+                Controls { max_fps: fps, keyframe, bitrate, view },
             )
         })
         .await?

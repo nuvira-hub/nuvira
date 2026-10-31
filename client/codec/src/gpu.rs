@@ -5,7 +5,7 @@
 //! them directly, without going through RAM.
 
 use anyhow::{Context, Result, anyhow};
-use windows::Win32::Foundation::HMODULE;
+use windows::Win32::Foundation::{HMODULE, RECT};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::{
@@ -36,7 +36,7 @@ const NV12_POOL: usize = 4;
 const COLOR_RGB_FULL: u32 = 0;
 const COLOR_YUV_BT601_LIMITED: u32 = 1 << 4;
 
-/// BGRA → NV12 conversion on the GPU.
+/// BGRA → NV12 conversion on the GPU, scaling to the output size when it is smaller.
 pub struct Nv12Converter {
     video_device: ID3D11VideoDevice,
     video_context: ID3D11VideoContext,
@@ -49,7 +49,9 @@ pub struct Nv12Converter {
 }
 
 impl Nv12Converter {
-    pub fn new(device: &ID3D11Device, width: u32, height: u32) -> Result<Self> {
+    /// Converter from `input` (BGRA) to `output` (NV12) sizes.
+    pub fn new(device: &ID3D11Device, input: (u32, u32), output: (u32, u32)) -> Result<Self> {
+        let ((in_w, in_h), (width, height)) = (input, output);
         let video_device: ID3D11VideoDevice =
             device.cast().context("the card does not offer the D3D11 video processor")?;
         let context = unsafe { device.GetImmediateContext() }?;
@@ -58,8 +60,8 @@ impl Nv12Converter {
         let desc = D3D11_VIDEO_PROCESSOR_CONTENT_DESC {
             InputFrameFormat: D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
             InputFrameRate: rate,
-            InputWidth: width,
-            InputHeight: height,
+            InputWidth: in_w,
+            InputHeight: in_h,
             OutputFrameRate: rate,
             OutputWidth: width,
             OutputHeight: height,
@@ -84,6 +86,11 @@ impl Nv12Converter {
             );
             // No automatic driver "enhancements": a faithful conversion is wanted.
             video_context.VideoProcessorSetStreamAutoProcessingMode(&processor, 0, false);
+            // The whole screen into the whole output (scaled when the sizes differ).
+            let rect = |w: u32, h: u32| RECT { left: 0, top: 0, right: w as i32, bottom: h as i32 };
+            video_context.VideoProcessorSetStreamSourceRect(&processor, 0, true, Some(&rect(in_w, in_h)));
+            video_context.VideoProcessorSetStreamDestRect(&processor, 0, true, Some(&rect(width, height)));
+            video_context.VideoProcessorSetOutputTargetRect(&processor, true, Some(&rect(width, height)));
         }
 
         let mut outputs = Vec::with_capacity(NV12_POOL);

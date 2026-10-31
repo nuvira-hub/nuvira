@@ -20,6 +20,11 @@ fn main() {
     let frames: usize = std::env::args().nth(2).map(|n| n.parse().expect("frames")).unwrap_or(300);
     let (w, h) = size.split_once('x').expect("WxH format");
     let (w, h): (u32, u32) = (w.parse().unwrap(), h.parse().unwrap());
+    // Optional encoded size, smaller than the image (scaled on the GPU): OUT=1280x720.
+    let encoded_size: (u32, u32) = std::env::var("OUT")
+        .ok()
+        .and_then(|s| s.split_once('x').map(|(a, b)| (a.parse().unwrap(), b.parse().unwrap())))
+        .unwrap_or((w, h));
 
     let device = gpu::create_device().expect("D3D11 device");
     // A few different images, so that every frame really changes.
@@ -37,7 +42,12 @@ fn main() {
 
     let settings = EncoderSettings { bitrate_bps: 8_000_000, max_fps: 60 };
     let mut enc = MfEncoder::with_device(settings, GpuDevice(device)).expect("hardware encoder");
-    println!("encoder: {}, {w}x{h}, {frames} frames", enc.device_name());
+    println!(
+        "encoder: {}, {w}x{h} encoded at {}x{}, {frames} frames",
+        enc.device_name(),
+        encoded_size.0,
+        encoded_size.1
+    );
 
     let (mut waited, mut encoded, mut out) = (Duration::ZERO, Duration::ZERO, 0usize);
     let mut start = Instant::now();
@@ -51,7 +61,11 @@ fn main() {
         enc.wait_ready(Duration::from_secs(2)).expect("wait");
         waited += t.elapsed();
         let t = Instant::now();
-        if enc.encode_texture(&textures[i % textures.len()], w, h, i == 0).expect("encode").is_some() {
+        if enc
+            .encode_texture(&textures[i % textures.len()], (w, h), encoded_size, i == 0)
+            .expect("encode")
+            .is_some()
+        {
             out += 1;
         }
         encoded += t.elapsed();

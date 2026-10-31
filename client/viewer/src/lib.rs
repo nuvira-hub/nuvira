@@ -197,6 +197,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         input: None,
         net_thread: None,
         control: None,
+        sent_view_size: None,
         files: None,
         pending_files: args.send_file.clone(),
         fm: Default::default(),
@@ -275,6 +276,8 @@ struct App {
     net_thread: Option<std::thread::JoinHandle<()>>,
     /// Control messages towards the agent (feedback, screen, quality, chat).
     control: Option<UnboundedSender<nuvira_proto::v1::control_message::Msg>>,
+    /// Drawing area last told to the agent (it encodes the image at that size).
+    sent_view_size: Option<(u32, u32)>,
     /// Files to send to the agent.
     files: Option<UnboundedSender<net::Outgoing>>,
     /// File manager window and transfers.
@@ -345,6 +348,26 @@ impl App {
         }
     }
 
+    /// Tells the agent the pixels of the window, so that it encodes no more than are
+    /// drawn; real size wants the screen's own resolution (0x0).
+    fn send_view_size(&mut self) {
+        let Some(window) = &self.window else { return };
+        let size = if self.view.actual {
+            (0, 0)
+        } else {
+            let s = window.inner_size();
+            (s.width, s.height)
+        };
+        if size.0 > 0 && size.1 == 0 || self.sent_view_size == Some(size) {
+            return;
+        }
+        self.sent_view_size = Some(size);
+        self.send_control(nuvira_proto::v1::control_message::Msg::ViewSize(nuvira_proto::v1::ViewSize {
+            width: size.0,
+            height: size.1,
+        }));
+    }
+
     fn ctrl_alt_held(&self) -> bool {
         let held = |a: &str, b: &str| self.pressed_keys.contains(a) || self.pressed_keys.contains(b);
         held("ControlLeft", "ControlRight") && held("AltLeft", "AltRight")
@@ -400,6 +423,7 @@ impl App {
             Action::ActualSize => {
                 self.view.actual = !self.view.actual;
                 info!("real size: {}", self.view.actual);
+                self.send_view_size();
                 if let Some(r) = self.renderer.as_mut() {
                     r.set_view(self.view);
                     r.render();
@@ -579,6 +603,8 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::Connected { agent, direct, width, height, file_manager } => {
                 info!("remote screen {width}x{height}");
+                self.sent_view_size = None;
+                self.send_view_size();
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.update(&format!("{{fileManager:{file_manager}}}"));
                 }
@@ -754,6 +780,7 @@ impl ApplicationHandler<NetEvent> for App {
                     chat.layout();
                 }
                 self.update_toolbar_state();
+                self.send_view_size();
             }
             WindowEvent::RedrawRequested => {
                 if let Some(r) = self.renderer.as_mut() {

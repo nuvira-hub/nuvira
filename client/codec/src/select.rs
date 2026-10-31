@@ -64,7 +64,7 @@ fn measure_gpu(settings: EncoderSettings, frames: &[Vec<u8>; 2], w: u32, h: u32)
     ];
     let mut encoder =
         crate::create_encoder(EncoderPlan::HardwareGpu, settings, Some(crate::GpuDevice(device)))?;
-    measure_with(|i| encoder.encode_texture(&textures[i % 2], w, h, i == 0).map(drop))
+    measure_with(|i| encoder.encode_texture(&textures[i % 2], (w, h), (w, h), i == 0).map(drop))
 }
 
 fn measure_with(mut encode: impl FnMut(usize) -> anyhow::Result<()>) -> anyhow::Result<f64> {
