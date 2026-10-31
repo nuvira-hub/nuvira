@@ -212,8 +212,11 @@ impl GpuRenderer {
     pub fn new(window: Arc<Window>) -> Result<Self> {
         let size = window.inner_size();
         let from_env = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
-        let attempts =
-            if std::env::var_os("WGPU_BACKEND").is_some() { &[from_env.backends][..] } else { native_backends() };
+        let attempts = if std::env::var_os("WGPU_BACKEND").is_some() {
+            &[from_env.backends][..]
+        } else {
+            native_backends()
+        };
         let mut found = None;
         for &backends in attempts {
             let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
@@ -232,6 +235,15 @@ impl GpuRenderer {
                 force_fallback_adapter: false,
                 apply_limit_buckets: false,
             })) {
+                // Windows' software rasterizer (WARP) answers for DX12 on cards whose driver
+                // lacks it: ~670 ms per 1080p frame on an Intel HD Graphics, against ~6 ms for
+                // the CPU renderer reached through the OpenGL attempt.
+                Ok(adapter)
+                    if adapter.get_info().device_type == wgpu::DeviceType::Cpu
+                        && std::env::var_os("WGPU_BACKEND").is_none() =>
+                {
+                    tracing::debug!(?backends, "only a software adapter: {}", adapter.get_info().name);
+                }
                 Ok(adapter) => {
                     found = Some((instance, surface, adapter));
                     break;

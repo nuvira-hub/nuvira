@@ -76,7 +76,7 @@ Problems found and fixed in this series:
 - **Fps limiter**: the 16.7 ms pause started from the end of encoding instead of its start.
 - **Image ageing while waiting for the encoder**: now the agent waits for Quick Sync to be ready and only then takes the most recent image (latency from 53 to 38 ms).
 
-Current hardware limit: Quick Sync encodes a frame in ~13 ms but asks for a new one only ~30 ms after the previous one, hence ~32 fps. With a browser open on PC A (30% of the 3D engine) times get worse.
+Former hardware limit: Quick Sync took a new frame only ~31 ms after the previous one, hence ~32 fps. Cause (2026-10-31, example `hwpace`): the driver waits for ticks of the Windows timer, 15.6 ms by default, once before accepting a frame and once before returning it, whatever the resolution (same times from 640x360 to 2560x1440). With the timer at 1 ms (`timeBeginPeriod`, only while an encoder session is open, and the process exempt from Windows 11's timer throttling) the encoder alone goes from 32.8 to 93 fps and from 15.6 to 8.9 ms per frame, still with no frame held back. Without low-latency mode it also reached 65 fps, but returning every frame one call late: rejected. Between the two PCs (synthetic 1080p source): 24.5 → 47 fps shown, latency p50 48 → 45 ms, p95 83 → 69 ms. With a browser open on PC A (30% of the 3D engine) times get worse.
 
 ## LAN measurements, synthetic source (2026-10-26)
 
@@ -132,6 +132,6 @@ Notes:
 
 Done: separate threads, zero-copy path, measurements between two PCs with the real screen, adaptive bitrate (phase 1).
 
-1. **Quick Sync pacing** (~30 ms between frames): try more frames in flight in the MFT, or Intel's direct API (oneVPL), or a D3D12 Video encoder.
-2. **Hardware decoding in the viewer** (Media Foundation / D3D11), useful on PCs with Direct3D 12.
+1. ~~Quick Sync pacing~~: done (1 ms timer, above).
+2. **Hardware decoding in the viewer**: Windows' H.264 decoder with DXVA works (`mfdec`, identical images, no frame late) but reading the image back costs more than OpenH264 (1080p: 9.7 against 4.5 ms on Intel UHD, 7.3 against 4.2 ms on HD 2500, 6 ms of it copy and map). Opt-in with `NUVIRA_DECODER=hardware`; useful only when the renderer draws the decoder's texture (D3D11 → shared texture → wgpu on D3D12).
 3. Encoding of changed areas only.

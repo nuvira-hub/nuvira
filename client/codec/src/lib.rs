@@ -2,8 +2,9 @@
 //!
 //! The rest of the client sees only the [`VideoEncoder`] and [`VideoDecoder`] traits:
 //! - `mf`: H.264 with the graphics card's encoder through Media Foundation (Windows);
+//! - `mfdec`: H.264 decoding on the graphics card through Media Foundation (Windows, opt-in);
 //! - `openh264`: software H.264, available everywhere (fallback);
-//! - VideoToolbox (macOS), VAAPI (Linux) and hardware decoding: next steps.
+//! - VideoToolbox (macOS), VAAPI (Linux): next steps.
 //!
 //! Intermediate format: YUV 4:2:0 BT.601 limited range (I420 for OpenH264,
 //! NV12 for hardware encoders), see [`convert`].
@@ -13,11 +14,15 @@ pub mod convert;
 pub mod gpu;
 #[cfg(windows)]
 mod mf;
+#[cfg(windows)]
+mod mfdec;
 mod openh264;
 mod select;
 
 #[cfg(windows)]
 pub use crate::mf::{MfEncoder, hardware_encoders};
+#[cfg(windows)]
+pub use crate::mfdec::MfDecoder;
 pub use crate::openh264::{OpenH264Decoder, OpenH264Encoder};
 
 /// BGRA image to encode (as it comes from capture).
@@ -162,7 +167,20 @@ pub fn create_encoder(
     }
 }
 
-/// Best H.264 decoder available on this system.
+/// H.264 decoder for this system: OpenH264, or the graphics card's with
+/// `NUVIRA_DECODER=hardware` (slower for now, see the `mfdec` module).
 pub fn best_decoder() -> anyhow::Result<Box<dyn VideoDecoder>> {
+    #[cfg(windows)]
+    if std::env::var("NUVIRA_DECODER").as_deref() == Ok("hardware") {
+        match MfDecoder::new() {
+            Ok(d) => return Ok(Box::new(d)),
+            Err(e) => tracing::info!("hardware decoder not available ({e:#}): OpenH264"),
+        }
+    }
+    software_decoder()
+}
+
+/// OpenH264, also the fallback when the hardware decoder fails during a session.
+pub fn software_decoder() -> anyhow::Result<Box<dyn VideoDecoder>> {
     Ok(Box::new(OpenH264Decoder::new()?))
 }

@@ -775,6 +775,16 @@ fn decode_loop(
             Ok(None) => {}
             Err(e) => {
                 warn!("frame {} not decodable: {e:#}; requesting a keyframe", frame.seq);
+                // A failing hardware decoder is not trusted again: OpenH264 from the keyframe on.
+                if decoder.name() != "openh264" {
+                    match nuvira_codec::software_decoder() {
+                        Ok(d) => {
+                            warn!("hardware decoder dropped: {}", d.name());
+                            decoder = d;
+                        }
+                        Err(e) => warn!("OpenH264 not available: {e:#}"),
+                    }
+                }
                 waiting_key = true;
                 let _ = request_keyframe.send(());
             }

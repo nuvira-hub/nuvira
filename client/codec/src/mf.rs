@@ -8,6 +8,11 @@
 //!
 //! The image comes either from RAM (converted to NV12 on the CPU) or as a D3D11
 //! texture already on the GPU (see [`crate::gpu`]), without copies.
+//!
+//! While a session is open the system timer runs at 1 ms ([`FineTimer`]): Quick Sync
+//! waits for timer ticks, and with the default 15.6 ms tick it took a frame only
+//! every ~31 ms (32 fps at most, whatever the resolution; 93 fps with 1 ms, and
+//! 8.9 instead of 15.6 ms per frame).
 
 use std::collections::VecDeque;
 use std::sync::OnceLock;
@@ -22,6 +27,12 @@ use windows::Win32::System::Variant::VARIANT;
 use windows::core::{Interface, PWSTR};
 
 use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
+use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+    PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, PROCESS_POWER_THROTTLING_STATE, ProcessPowerThrottling,
+    SetProcessInformation,
+};
 
 use crate::gpu::{GpuDevice, GpuTexture, Nv12Converter};
 use crate::{BgraImage, EncodedFrame, EncoderSettings, VideoEncoder, convert};
@@ -32,12 +43,52 @@ const OUTPUT_TIMEOUT: Duration = Duration::from_millis(100);
 /// Maximum wait for the encoder to accept a new frame.
 const INPUT_TIMEOUT: Duration = Duration::from_secs(2);
 
-fn startup() -> Result<()> {
+pub(crate) fn startup() -> Result<()> {
     static STARTED: OnceLock<std::result::Result<(), String>> = OnceLock::new();
     STARTED
         .get_or_init(|| unsafe { MFStartup(MF_VERSION, MFSTARTUP_LITE) }.map_err(|e| e.to_string()))
         .clone()
         .map_err(|e| anyhow!("MFStartup: {e}"))
+}
+
+/// System timer at 1 ms while it lives (one per encoder session, so not outside sessions:
+/// a finer timer costs some power).
+struct FineTimer;
+
+impl FineTimer {
+    fn new() -> Self {
+        static OPT_OUT: OnceLock<()> = OnceLock::new();
+        OPT_OUT.get_or_init(|| {
+            // Windows 11 may ignore the request for processes without visible windows
+            // (the agent as a service): the process asks to be exempt.
+            let state = PROCESS_POWER_THROTTLING_STATE {
+                Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                ControlMask: PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+                StateMask: 0,
+            };
+            if let Err(e) = unsafe {
+                SetProcessInformation(
+                    GetCurrentProcess(),
+                    ProcessPowerThrottling,
+                    (&state as *const PROCESS_POWER_THROTTLING_STATE).cast(),
+                    size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+                )
+            } {
+                debug!("timer resolution exemption not available: {e}");
+            }
+        });
+        let result = unsafe { timeBeginPeriod(1) };
+        if result != 0 {
+            warn!("1 ms timer not available ({result}): the hardware encoder will be slower");
+        }
+        Self
+    }
+}
+
+impl Drop for FineTimer {
+    fn drop(&mut self) {
+        unsafe { timeEndPeriod(1) };
+    }
 }
 
 /// Media Foundation objects can be used from any thread (MTA).
@@ -125,6 +176,7 @@ struct Session {
     sequence_header: Vec<u8>,
     /// Input from GPU textures: NV12 conversion on the card + device manager for the MFT.
     gpu: Option<(Nv12Converter, IMFDXGIDeviceManager)>,
+    _timer: FineTimer,
 }
 
 impl Session {
@@ -135,6 +187,7 @@ impl Session {
         settings: EncoderSettings,
         device: Option<&ID3D11Device>,
     ) -> Result<Self> {
+        let timer = FineTimer::new();
         let transform: IMFTransform = unsafe { activate.ActivateObject() }.context("ActivateObject")?;
         unsafe {
             let attrs = transform.GetAttributes()?;
@@ -258,6 +311,7 @@ impl Session {
             need_input: 0,
             sequence_header: Vec::new(),
             gpu,
+            _timer: timer,
         })
     }
 
