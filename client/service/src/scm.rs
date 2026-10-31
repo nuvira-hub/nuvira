@@ -57,6 +57,8 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
     set_status(SERVICE_START_PENDING, 0);
     set_status(SERVICE_RUNNING, 0);
     info!("service started");
+    // Running: a rescue task left by an update is no longer needed.
+    crate::install::remove_rescue();
     let code = match run() {
         Ok(()) => 0,
         Err(e) => {

@@ -3,7 +3,7 @@
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::ERROR_SERVICE_DOES_NOT_EXIST;
@@ -21,6 +21,64 @@ use windows::core::{HSTRING, PCWSTR, PWSTR};
 use crate::config::{self, ServiceConfig};
 
 const FIREWALL_RULE: &str = "NuviraHub agent";
+
+/// Scheduled task that starts the service if an automatic update dies after stopping
+/// it (see [`update`]): the PC must never stay unreachable because of an update.
+const RESCUE_TASK: &str = "NuviraHub update rescue";
+
+/// Line of the installation output, with the time (the automatic update writes it to
+/// update.log: if it stops halfway, the last line says where).
+fn step(text: &str) {
+    println!("{} {text}", utc_iso(SystemTime::now()));
+}
+
+/// `2026-11-01T00:30:00Z`.
+fn utc_iso(time: SystemTime) -> String {
+    let secs = time.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let (days, rest) = ((secs / 86_400) as i64, secs % 86_400);
+    // Civil date from the days since 1970 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rest / 3600, rest % 3600 / 60, rest % 60)
+}
+
+/// Registers [`RESCUE_TASK`]: from `delay` on, every 5 minutes for an hour, the system
+/// starts the service (harmless if it is already running). Independent of this process.
+fn schedule_rescue(delay: Duration) -> Result<()> {
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Starts the NuviraHub service if an update stopped halfway.</Description></RegistrationInfo>
+  <Triggers><TimeTrigger><StartBoundary>{}</StartBoundary><Repetition><Interval>PT5M</Interval><Duration>PT1H</Duration></Repetition><Enabled>true</Enabled></TimeTrigger></Triggers>
+  <Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Enabled>true</Enabled></Settings>
+  <Actions Context="System"><Exec><Command>sc.exe</Command><Arguments>start {}</Arguments></Exec></Actions>
+</Task>"#,
+        utc_iso(SystemTime::now() + delay),
+        config::SERVICE_NAME
+    );
+    // schtasks wants the file in UTF-16.
+    let path = config::data_dir().join("rescue-task.xml");
+    let mut bytes = vec![0xFF, 0xFE];
+    bytes.extend(xml.encode_utf16().flat_map(u16::to_le_bytes));
+    std::fs::write(&path, bytes)?;
+    let result =
+        run(Command::new("schtasks").args(["/create", "/tn", RESCUE_TASK, "/xml"]).arg(&path).arg("/f"));
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+/// Removes [`RESCUE_TASK`], if there is one (also at every start of the service).
+pub fn remove_rescue() {
+    let _ = Command::new("schtasks").args(["/delete", "/tn", RESCUE_TASK, "/f"]).output();
+}
 
 /// Service manager handle, closed automatically.
 struct Sc(SC_HANDLE);
@@ -97,8 +155,9 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     let scm = manager(SC_MANAGER_ALL_ACCESS)?;
     let existing = open_service(&scm, SERVICE_ALL_ACCESS)?;
     if let Some(service) = &existing {
-        println!("service already installed: stopping it to update it");
+        step("service already installed: stopping it to update it");
         stop(service)?;
+        step("service stopped");
     }
 
     // The program in Program Files: the service (SYSTEM) must not run files a user can replace.
@@ -108,6 +167,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     let program = program_dir.join(config::PROGRAM_EXE);
     if !same_file(&src, &program) {
         replace_program(&src, &program)?;
+        step(&format!("program copied to {}", program.display()));
     }
     for old in config::OLD_EXES {
         let _ = std::fs::remove_file(program_dir.join(old));
@@ -156,6 +216,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
         server_ws: opts.server_ws,
     };
     service_config.save()?;
+    step("configuration saved");
 
     let service = match existing {
         Some(service) => {
@@ -179,13 +240,11 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
 
     allow_software_sas()?;
     register_app(&program)?;
+    step("service configured, starting it");
 
     let _ = std::fs::remove_file(config::online_path());
-    unsafe { StartServiceW(service.0, None) }.context("starting the service")?;
-    if !wait_state(&service, SERVICE_RUNNING, Duration::from_secs(20))? {
-        bail!("the service did not start: see {}", config::service_log().display());
-    }
-    println!("service installed and started");
+    start_service(&service)?;
+    step("service installed and started");
     let id = wait_online(Duration::from_secs(30));
     match &id {
         Some(id) => match &generated_password {
@@ -421,20 +480,54 @@ fn create(scm: &Sc, exe: &Path) -> Result<Sc> {
     Ok(service)
 }
 
+/// Starts the service, trying again a few times: right after the program was replaced
+/// Windows once refused it with "access denied" (2026-10-30, the file probably still
+/// held by a scan), and the PC stayed unreachable.
+fn start_service(service: &Sc) -> Result<()> {
+    let mut last = None;
+    for attempt in 1..=5 {
+        if attempt > 1 {
+            std::thread::sleep(Duration::from_secs(5));
+        }
+        if let Err(e) = unsafe { StartServiceW(service.0, None) } {
+            step(&format!("starting the service, attempt {attempt}: {e}"));
+            last = Some(anyhow::Error::from(e));
+            continue;
+        }
+        if wait_state(service, SERVICE_RUNNING, Duration::from_secs(20))? {
+            return Ok(());
+        }
+        step(&format!("the service did not start, attempt {attempt}"));
+        last = Some(anyhow::anyhow!("the service did not start: see {}", config::service_log().display()));
+    }
+    Err(last.expect("at least one attempt")).context("starting the service")
+}
+
 /// Automatic update: installs this program with the settings already in place.
+/// Before the service is stopped a system task is registered that starts it again if
+/// this process dies halfway; it is removed once the service runs.
 pub fn update() -> Result<()> {
     let current = ServiceConfig::load()?;
-    println!("updating to {}", env!("CARGO_PKG_VERSION"));
-    install(InstallOptions {
+    step(&format!("updating to {}", env!("CARGO_PKG_VERSION")));
+    if let Err(e) = schedule_rescue(Duration::from_secs(180)) {
+        step(&format!("rescue task not registered: {e:#}"));
+    }
+    let result = install(InstallOptions {
         server: current.server,
         server_key: current.server_key,
         // Kept by install().
         password: None,
         transport: current.transport,
         server_ws: current.server_ws,
-    })
-    .map(|_| ())
+    });
+    match &result {
+        Ok(_) => remove_rescue(),
+        // The task stays: it keeps trying to start the service.
+        Err(e) => step(&format!("update failed: {e:#}")),
+    }
+    result.map(|_| ())
 }
+
 
 pub fn uninstall(remove_program: bool) -> Result<()> {
     if elevate_if_needed()? {
@@ -547,4 +640,17 @@ fn run(command: &mut Command) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iso_time() {
+        let at = |s| SystemTime::UNIX_EPOCH + Duration::from_secs(s);
+        assert_eq!(utc_iso(at(0)), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_iso(at(1_793_488_200)), "2026-10-31T23:10:00Z");
+        assert_eq!(utc_iso(at(951_782_400)), "2000-02-29T00:00:00Z");
+    }
 }
