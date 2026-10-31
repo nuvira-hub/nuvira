@@ -75,6 +75,6 @@ uviraranding.json`), readable by every user.
 
 ## To do
 
-- Code signing (SmartScreen warns about the unsigned program and setup): see [09-risks.md](09-risks.md).
+- Code signing: SmartScreen warns about the unsigned program and setup until it is signed.
 - Automatic updates.
 - Builds of the setup in GitHub Actions.

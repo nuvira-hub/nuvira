@@ -22,7 +22,7 @@ The image runs as user 65532. With a bind mount owned by another user, run the c
 
 **Back up the whole `/data` folder.** Losing `cert.pem`/`key.pem` makes every client refuse the server (they pin its certificate at the first connection).
 
-This is the open server: signalling, relay and updates; each app keeps its own address book. Server address books, accounts and central rules are NuviraHub Pro modules, with their own image (see [docs/20-open-core.md](../docs/20-open-core.md)).
+This is the open server: signalling, relay and updates; each app keeps its own address book. Server address books, accounts and central rules are NuviraHub Pro modules, with their own image.
 
 No public address has to be configured: clients reach the relay at the same address and port they use for the server.
 

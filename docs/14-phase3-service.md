@@ -4,7 +4,7 @@
 
 ## Why
 
-An agent started by the user cannot see Windows' **secure desktop**: administrator prompts (UAC), the lock screen, Ctrl+Alt+Del. During the test of 2026-10-27 the FileZilla update froze the image until someone answered at the PC (see [08-roadmap.md](08-roadmap.md)). The service solves this and allows access to a PC with nobody in front of it.
+An agent started by the user cannot see Windows' **secure desktop**: administrator prompts (UAC), the lock screen, Ctrl+Alt+Del. During the test of 2026-10-27 the FileZilla update froze the image until someone answered at the PC. The service solves this and allows access to a PC with nobody in front of it.
 
 ## How it works (Windows)
 

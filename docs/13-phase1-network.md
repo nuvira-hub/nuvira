@@ -2,7 +2,7 @@
 
 [← Index](README.md)
 
-Goal ([08-roadmap.md](08-roadmap.md)): two devices on different networks connect through `nuvira-server`, directly (P2P) when possible, otherwise through the relay, with real authentication instead of a hand-copied fingerprint.
+Goal: two devices on different networks connect through `nuvira-server`, directly (P2P) when possible, otherwise through the relay, with real authentication instead of a hand-copied fingerprint.
 
 ## Choices
 

@@ -2,7 +2,7 @@
 
 [← Index](README.md)
 
-Goal of the phase ([08-roadmap.md](08-roadmap.md)): capture, encoding with the graphics card and display in a LAN, with latency measured.
+Goal of the phase: capture, encoding with the graphics card and display in a LAN, with latency measured.
 
 ## Status
 

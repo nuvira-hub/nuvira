@@ -2,7 +2,7 @@
 
 [← Index](README.md)
 
-> **Implementation status.** This is the original design. Where the implementation took another route, the decision log ([10-decisions.md](10-decisions.md)) and the phase documents describe what was built: sessions use **TLS 1.3 end-to-end with the devices' Ed25519 keys** instead of Noise (D10), the relay works on UDP datagrams (D11), the server listens on **UDP 21116 plus TCP 21116** for the WebSocket fallback instead of 443 (D12), the session toolbar is a small WebView instead of egui (D5), and the address book is managed from the app (D16; no web console yet).
+> **Implementation status.** This is the original design. Where the implementation took another route, the phase documents describe what was built: sessions use **TLS 1.3 end-to-end with the devices' Ed25519 keys** instead of Noise (D10), the relay works on UDP datagrams (D11), the server listens on **UDP 21116 plus TCP 21116** for the WebSocket fallback instead of 443 (D12), the session toolbar is a small WebView instead of egui (D5), and the address book is managed from the app (D16; no web console yet).
 
 ```
                     ┌──────────────────── "nuvira-server" container ─────────────────────┐

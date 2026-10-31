@@ -56,4 +56,4 @@ One version for the whole workspace (`Cargo.toml`), raised when a release is pub
 ## To do
 
 - The server could fetch new versions from GitHub Releases by itself once the repository is public.
-- Code signing of the program (planned, [08-roadmap.md](08-roadmap.md)): independent of the update signature.
+- Code signing of the program (planned): independent of the update signature.

@@ -24,9 +24,9 @@ set -euo pipefail
 
 DURATION="${1:-15}"
 shift || true
-REMOTE="${NUVIRA_REMOTE:-mrbla@PC-LABORATORIO}"
-REMOTE_DIR="${NUVIRA_REMOTE_DIR:-C:\\Users\\mrbla\\nuvira-test}"
-AGENT_IP="${NUVIRA_AGENT_IP:-192.168.178.185}"
+REMOTE="${NUVIRA_REMOTE:?set NUVIRA_REMOTE=user@pc (the remote PC)}"
+REMOTE_DIR="${NUVIRA_REMOTE_DIR:?set NUVIRA_REMOTE_DIR (folder on the remote PC, e.g. C:\Users\me\nuvira-test)}"
+AGENT_IP="${NUVIRA_AGENT_IP:?set NUVIRA_AGENT_IP (LAN address of this PC, where the agent runs)}"
 KEY="${NUVIRA_SSH_KEY:-$HOME/.ssh/nuvira_test}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/target/lan-test"
