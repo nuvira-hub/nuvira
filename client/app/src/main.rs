@@ -28,6 +28,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 const SOURCE_URL: &str = "https://github.com/nuvira-hub/nuvira";
+/// Terms of use of the public server, in the interface language: `{lang}` is replaced.
+const TERMS_URL: &str = "https://nuvirahub.dev/{lang}/terms/";
 
 /// State shown by the interface (sent with the "state" event).
 #[derive(Debug, Default, Clone, Serialize)]
@@ -677,6 +679,12 @@ fn open_source(app: AppHandle) -> Result<(), String> {
     app.opener().open_url(SOURCE_URL, None::<&str>).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_terms(app: AppHandle) -> Result<(), String> {
+    let url = TERMS_URL.replace("{lang}", nuvira_i18n::lang());
+    app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
+}
+
 fn init_logging() {
     let dir = nuvira_transport::identity::data_dir();
     let _ = std::fs::create_dir_all(&dir);
@@ -757,6 +765,7 @@ fn main() {
             end_session,
             connect,
             open_source,
+            open_terms,
             get_branding,
             open_support,
             i18n,

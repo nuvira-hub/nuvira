@@ -71,7 +71,7 @@
           </div>
           <div class="pc-notes">
             <p class="status-line" id="status-text">…</p>
-            <p class="hint" id="server-line"></p>
+            <p class="hint"><span id="server-line"></span><span class="public-only hidden"> · <a href="#" class="terms" data-i18n="status.terms">Terms of use</a></span></p>
             <p class="hint" data-i18n="connect.share_hint">Give your ID and password to the person helping you: you will be asked to confirm the connection.</p>
             <p id="service-note" class="hint hidden" data-i18n="connect.service_note">Unattended access is on (NuviraHub service): anyone with the permanent password connects without confirmation.</p>
           </div>
@@ -186,6 +186,7 @@
           <button type="submit" class="primary" data-i18n="settings.save">Save</button>
         </form>
         <p class="hint" data-i18n="settings.server_hint">Leave it empty to use the NuviraHub public server, or enter your own server (needed for shared address books and the Pro modules).</p>
+        <p class="hint public-only hidden"><a href="#" class="terms" data-i18n="settings.public_terms">Terms of use of the public server</a></p>
         <p id="server-message" class="message hidden"></p>
 
         <h2 data-i18n="settings.unattended">Unattended access</h2>

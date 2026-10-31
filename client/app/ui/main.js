@@ -125,6 +125,8 @@ function render(state) {
   $("server-line").textContent = state.server.trim()
     ? t("status.server_own", { server: state.server.trim() })
     : t("status.server_public");
+  // The public server's terms of use, while it is the one in use.
+  for (const node of document.querySelectorAll(".public-only")) node.classList.toggle("hidden", Boolean(state.server.trim()));
   $("service-note").classList.toggle("hidden", !state.service);
   $("install-off").classList.toggle("hidden", state.service);
   $("update-bar").classList.toggle("hidden", !state.update && !state.installed);
@@ -237,6 +239,12 @@ $("strip-chat").addEventListener("click", () => showSection("chat"));
 $("new-password").addEventListener("click", () => invoke("new_password"));
 $("copy-id").addEventListener("click", (e) => current?.device_id && copy(current.device_id, e.currentTarget));
 $("copy-password").addEventListener("click", (e) => current?.password && copy(current.password, e.currentTarget));
+for (const link of document.querySelectorAll("a.terms")) {
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    invoke("open_terms");
+  });
+}
 for (const id of ["source", "source-button"]) {
   $(id).addEventListener("click", (e) => {
     e.preventDefault();
