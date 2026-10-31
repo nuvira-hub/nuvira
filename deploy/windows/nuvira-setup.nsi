@@ -9,10 +9,10 @@
 ;
 ; Server: from the command line (/SERVER=), else from the setup's file name
 ; (nuvira-setup-host=nuvira.example.com.exe, ",port=N" optional, as for the
-; app), else typed in the wizard.
+; app), else typed in the wizard; empty: the NuviraHub public server.
 ;
 ;   nuvira-setup.exe                                  wizard
-;   nuvira-setup.exe /S /SERVER=host[:port] [/PASSWORD=...] [/KEY=fingerprint]
+;   nuvira-setup.exe /S [/SERVER=host[:port]] [/PASSWORD=...] [/KEY=fingerprint]
 ;
 ; Built by tools/build-setup.sh: makensis -DPROGRAM=... -DVERSION=... -DOUTFILE=...
 
@@ -87,11 +87,11 @@ LangString SettingsSubtitle ${LANG_FRENCH} "Cet ordinateur sera accessible même
 LangString SettingsSubtitle ${LANG_GERMAN} "Dieser Computer ist erreichbar, auch wenn niemand davor sitzt."
 LangString SettingsSubtitle ${LANG_SPANISH} "Se podrá acceder a este equipo aunque no haya nadie delante."
 
-LangString ServerLabel ${LANG_ENGLISH} "NuviraHub server (e.g. nuvira.example.com):"
-LangString ServerLabel ${LANG_ITALIAN} "Server NuviraHub (es. nuvira.example.com):"
-LangString ServerLabel ${LANG_FRENCH} "Serveur NuviraHub (ex. nuvira.example.com) :"
-LangString ServerLabel ${LANG_GERMAN} "NuviraHub-Server (z. B. nuvira.example.com):"
-LangString ServerLabel ${LANG_SPANISH} "Servidor NuviraHub (p. ej. nuvira.example.com):"
+LangString ServerLabel ${LANG_ENGLISH} "NuviraHub server (leave it empty for the NuviraHub public server):"
+LangString ServerLabel ${LANG_ITALIAN} "Server NuviraHub (lascialo vuoto per il server pubblico NuviraHub):"
+LangString ServerLabel ${LANG_FRENCH} "Serveur NuviraHub (laissez vide pour le serveur public NuviraHub) :"
+LangString ServerLabel ${LANG_GERMAN} "NuviraHub-Server (leer lassen für den öffentlichen NuviraHub-Server):"
+LangString ServerLabel ${LANG_SPANISH} "Servidor NuviraHub (déjelo vacío para el servidor público de NuviraHub):"
 
 LangString PasswordLabel ${LANG_ENGLISH} "Permanent password (empty: one is generated and shown at the end):"
 LangString PasswordLabel ${LANG_ITALIAN} "Password permanente (vuota: viene generata e mostrata alla fine):"
@@ -104,12 +104,6 @@ LangString Password2Label ${LANG_ITALIAN} "Ripeti la password:"
 LangString Password2Label ${LANG_FRENCH} "Répétez le mot de passe :"
 LangString Password2Label ${LANG_GERMAN} "Passwort wiederholen:"
 LangString Password2Label ${LANG_SPANISH} "Repite la contraseña:"
-
-LangString ServerMissing ${LANG_ENGLISH} "Enter the address of the NuviraHub server."
-LangString ServerMissing ${LANG_ITALIAN} "Scrivi l'indirizzo del server NuviraHub."
-LangString ServerMissing ${LANG_FRENCH} "Saisissez l'adresse du serveur NuviraHub."
-LangString ServerMissing ${LANG_GERMAN} "Geben Sie die Adresse des NuviraHub-Servers ein."
-LangString ServerMissing ${LANG_SPANISH} "Escribe la dirección del servidor NuviraHub."
 
 LangString PasswordMismatch ${LANG_ENGLISH} "The two passwords do not match."
 LangString PasswordMismatch ${LANG_ITALIAN} "Le due password non coincidono."
@@ -265,11 +259,6 @@ Function .onInit
     StrCpy $Password ""
   ${EndIf}
   StrCpy $Password2 $Password
-  ${If} ${Silent}
-  ${AndIf} $Server == ""
-    SetErrorLevel 2
-    Quit
-  ${EndIf}
 FunctionEnd
 
 ; --- settings page --------------------------------------------------------------
@@ -294,10 +283,6 @@ Function SettingsLeave
   ${NSD_GetText} $ServerField $Server
   ${NSD_GetText} $PasswordField $Password
   ${NSD_GetText} $Password2Field $Password2
-  ${If} $Server == ""
-    MessageBox MB_ICONEXCLAMATION "$(ServerMissing)"
-    Abort
-  ${EndIf}
   ${If} $Password != $Password2
     MessageBox MB_ICONEXCLAMATION "$(PasswordMismatch)"
     Abort

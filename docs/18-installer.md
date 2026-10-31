@@ -51,10 +51,10 @@ The setup is a wrapper around the same installation: it unpacks `nuvira.exe` int
 
 ```
 nuvira-setup.exe                                    wizard
-nuvira-setup.exe /S /SERVER=host[:port] [/PASSWORD=...] [/KEY=fingerprint]
+nuvira-setup.exe /S [/SERVER=host[:port]] [/PASSWORD=...] [/KEY=fingerprint]
 ```
 
-Silent without a server (neither `/SERVER=` nor in the file name): exit code 2.
+Without a server (neither `/SERVER=` nor in the file name, field left empty) the NuviraHub public server is used, also in a silent installation.
 
 ## Tests of 2026-10-27
 
