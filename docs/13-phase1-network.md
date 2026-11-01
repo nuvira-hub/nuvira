@@ -224,6 +224,19 @@ Opening a session (debug timings): `ActivateObject` 440–880 ms, handing over t
 
 The freezes left are on the 2 Mbit/s link and come from the start: 4 Mbit/s on a 2 Mbit/s link makes a queue of over a second before the bitrate comes down.
 
+**Start on a slow link.** The first decrease was held at half the bitrate (4 → 2 Mbit/s, still the link's rate) and the queue then took 6–10 s to empty. Now a decrease goes below half when at least 40% of the bitrate is sent (the rate sent then measures the link), and it also takes off the queue in seconds (up to half) so that the queue empties: 4 → 0.87 Mbit/s with a 0.8 s queue, back to 51 ms of network latency 3 s later, then up by 15% a second. The freezes of the start now end within about 6.5 s of the session start (3–4 short ones while the first second of overshoot drains) instead of about 10 s; single 45 s runs vary a lot on this link (stream: 5 and 12 freezes in two runs, the second with a burst at 38–42 s).
+
+**Keyframes asked by the viewer: at most one a second** at the agent, and the viewer asks again every second (was 500 ms). With datagrams on the 2 Mbit/s link every lost frame asked for one, each large and with double parity, and they caused more losses: 2 Mbit/s went out while the bitrate had come down to 0.5.
+
+| Relay, 45 s, datagrams | fps | p50 | p95 | Freezes |
+|---|---|---|---|---|
+| 40 ms, 2 Mbit/s | 56–57 | 132–181 ms | 261–262 ms | 2–4, 0.6–1.4 s |
+| 40 ms, 2% loss, 2 Mbit/s | 55–56 | 90–91 ms | 222–249 ms | 2–4, 1.2–2.2 s |
+| 40 ms, 2% loss | 57 | 66 ms | 77 ms | 0 |
+| 25 ms, 1% loss, 5 Mbit/s | 56 | 58 ms | 135 ms | 1, 1.0 s |
+
+Where things stand: the datagrams are clearly better with random losses (Wi-Fi, mobile) and not yet on a saturated link, where the median stays high (a standing queue, probably in the datagram send buffer, 1 MB by default) and a lost frame still costs a keyframe. Further work there: a smaller datagram send buffer, and recovery without keyframes (intra refresh, or the viewer telling which frame it has last).
+
 Still open for the datagrams: a start that does not overshoot an unknown link.
 
 ## What changes over the Internet

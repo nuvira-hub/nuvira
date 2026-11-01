@@ -787,7 +787,7 @@ impl VideoLoss {
 
 /// Video as QUIC datagrams with error correction (`nuvira_transport::fec`, prototype):
 /// frames go to decoding as they are rebuilt. After a lost frame the next ones cannot
-/// be decoded: they are dropped until a keyframe, asked for at most every 500 ms.
+/// be decoded: they are dropped until a keyframe, asked for at most once a second.
 async fn receive_datagram_video(
     conn: &nuvira_transport::Connection,
     frames: &std::sync::mpsc::SyncSender<(VideoFrame, u64)>,
@@ -835,7 +835,7 @@ async fn receive_datagram_video(
                 waiting_key = false;
                 asked = None;
             } else {
-                if asked.is_none_or(|t| t.elapsed() > Duration::from_millis(500)) {
+                if asked.is_none_or(|t| t.elapsed() > Duration::from_secs(1)) {
                     asked = Some(Instant::now());
                     let _ = request_keyframe.send(());
                 }

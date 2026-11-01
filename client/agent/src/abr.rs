@@ -7,9 +7,11 @@
 //! of the last 10 seconds (the "empty network" latency):
 //! - queue above 60 ms for at least a second → bitrate × 0.8, or 85% of the rate
 //!   actually sent if lower (the encoder often stays well below the bitrate: lowering
-//!   only the cap would change nothing), but never below half the bitrate in one
-//!   step (third Internet test: a light screen sending 0.2 Mbit/s went from 8 to
-//!   0.5 Mbit/s at once and stayed there);
+//!   only the cap would change nothing), but below half the bitrate in one step only
+//!   while at least 40% of it is sent (third Internet test: a light screen sending
+//!   0.2 Mbit/s went from 8 to 0.5 Mbit/s at once and stayed there; but at the start
+//!   on a 2 Mbit/s link, 4 Mbit/s asked and 2.1 sent, the half step left the link full
+//!   and the queue over a second for 3 s more);
 //! - queue below 25 ms → bitrate × 1.15 (once a second, 3 s after a decrease), but
 //!   only while at least half the bitrate is actually sent, and for 30 s after a
 //!   congestion at most to 90% of the rate that was being sent when it happened.
@@ -51,8 +53,13 @@ const BUSY_BPS: f64 = 150_000.0;
 const DECREASE: f64 = 0.8;
 /// On congestion the bitrate goes at most to this share of the rate actually sent...
 const DECREASE_SENT: f64 = 0.85;
-/// ...but never below this share of the current bitrate in one step.
+/// ...but not below this share of the current bitrate in one step...
 const DECREASE_MAX: f64 = 0.5;
+/// ...unless at least this share of the bitrate is sent: then the rate sent is a
+/// measure of the link.
+const SENT_MEASURES_LINK: f64 = 0.4;
+/// Largest share taken off the rate sent to empty a queue.
+const MAX_DRAIN: f64 = 0.5;
 const INCREASE: f64 = 1.15;
 /// Increases only while at least this share of the bitrate is actually sent: a
 /// bitrate that is not used says nothing about what the network can take.
@@ -148,8 +155,7 @@ impl Abr {
         if queue > QUEUE_HIGH_MS {
             let since = *self.high_since.get_or_insert(now);
             return if now.duration_since(since) >= HIGH_FOR {
-                let to = (self.bitrate * DECREASE).min(sent_bps * DECREASE_SENT);
-                let changed = self.decrease(now, to.max(self.bitrate * DECREASE_MAX));
+                let changed = self.decrease(now, self.congested(sent_bps));
                 if changed.is_some() {
                     self.ceiling = Some((now, sent_bps));
                 }
@@ -188,12 +194,24 @@ impl Abr {
             return None;
         }
         let sent = if sent_bps.is_finite() { sent_bps } else { self.bitrate };
-        let to = (self.bitrate * DECREASE).min(sent * DECREASE_SENT);
-        let changed = self.decrease(now, to.max(self.bitrate * DECREASE_MAX));
+        let changed = self.decrease(now, self.congested(sent));
         if changed.is_some() {
             self.ceiling = Some((now, sent));
         }
         changed
+    }
+
+    /// Where a congestion takes the bitrate (see the module notes). Under the link by
+    /// as much as it takes to empty the queue too: at the start on a 2 Mbit/s link a
+    /// queue of 0.8 s (1.4 Mbit) took 6 s to empty at 85% of the link, with the image
+    /// late and jerky meanwhile. The queue in seconds is the share taken off, up to half.
+    fn congested(&self, sent_bps: f64) -> f64 {
+        let drain = (self.last_queue / 1000.0).clamp(0.0, MAX_DRAIN);
+        let to = (self.bitrate * DECREASE).min(sent_bps * DECREASE_SENT * (1.0 - drain));
+        match sent_bps >= self.bitrate * SENT_MEASURES_LINK {
+            true => to,
+            false => to.max(self.bitrate * DECREASE_MAX),
+        }
     }
 
     /// No feedback while frames are being sent: treated as a high queue.
@@ -303,8 +321,9 @@ mod tests {
     fn decrease_follows_the_rate_sent() {
         let t0 = Instant::now();
         let mut abr = Abr::new(2_000_000, 500_000, 8_000_000);
-        // 1.2 Mbit/s actually sent into a lasting queue: 85% of it, below the 80% cap.
-        assert_eq!(abr.feed(t0, 0..1300, 200.0, 20.0, 1_200_000.0), Some(1_020_000));
+        // 1.2 Mbit/s actually sent into a lasting queue of 180 ms: 85% of it, below the
+        // 80% cap, and 18% less to empty the queue.
+        assert_eq!(abr.feed(t0, 0..1300, 200.0, 20.0, 1_200_000.0), Some(836_400));
     }
 
     #[test]
@@ -322,8 +341,9 @@ mod tests {
         let t0 = Instant::now();
         let t = |ms| t0 + Duration::from_millis(ms);
         let mut abr = Abr::new(2_400_000, 500_000, 8_000_000);
-        // A 2 Mbit/s link: 2 Mbit/s go out and the queue grows. Down to 85% of it.
-        assert_eq!(abr.feed(t0, 0..1300, 200.0, 40.0, 2_000_000.0), Some(1_700_000));
+        // A 2 Mbit/s link: 2 Mbit/s go out and the queue grows to 160 ms. Down to 85% of
+        // it, 16% less while the queue empties.
+        assert_eq!(abr.feed(t0, 0..1300, 200.0, 40.0, 2_000_000.0), Some(1_428_000));
         // Calm again, the whole bitrate used: up only to 90% of 2 Mbit/s, then no more.
         assert_eq!(abr.feed(t0, 3000..6000, 45.0, 40.0, 1_700_000.0), Some(1_800_000));
         assert_eq!(abr.feed(t0, 6000..30_000, 45.0, 40.0, 1_800_000.0), None);
@@ -341,14 +361,25 @@ mod tests {
         assert_eq!(abr.on_feedback(t(0), 45.0, 40.0, 3_000_000.0), None);
         assert_eq!(abr.on_loss(t(0), 3, 3_000_000.0), None);
         // A queue building up (100 ms) and frames lost while 2.4 Mbit/s go out: 85% of
-        // that at once, without waiting for the queue to last a second.
+        // that, 10% less to empty the queue, at once, without waiting for the queue to
+        // last a second.
         assert_eq!(abr.on_feedback(t(0), 140.0, 40.0, 2_400_000.0), None);
         assert_eq!(abr.on_loss(t(0), 0, 3_000_000.0), None);
-        assert_eq!(abr.on_loss(t(0), 3, 2_400_000.0), Some(2_040_000));
+        assert_eq!(abr.on_loss(t(0), 3, 2_400_000.0), Some(1_836_000));
         // While settling, the losses of the old rate do not count again.
         assert_eq!(abr.on_loss(t(1000), 2, 2_000_000.0), None);
         // No rise past 90% of the rate that was losing frames.
         assert_eq!(abr.feed(t0, 4000..9000, 45.0, 40.0, 2_000_000.0), Some(2_160_000));
+    }
+
+    #[test]
+    fn at_the_start_goes_under_the_link_in_one_step() {
+        let t0 = Instant::now();
+        let mut abr = Abr::new(4_000_000, 500_000, 8_000_000);
+        // 4 Mbit/s asked on a 2 Mbit/s link: 2.1 go out and the queue reaches 360 ms.
+        // Under the link in one step, not just half the bitrate, and low enough to empty
+        // the queue: 85% of what goes out, 36% less.
+        assert_eq!(abr.feed(t0, 0..1300, 400.0, 40.0, 2_100_000.0), Some(1_142_400));
     }
 
     #[test]

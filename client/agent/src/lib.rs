@@ -869,6 +869,11 @@ async fn session(
         let mut tick = tokio::time::interval(Duration::from_millis(250));
         // Samples (time, bytes sent) of the last 2 s, for the rate actually used.
         let mut sent_samples = std::collections::VecDeque::<(Instant, u64)>::new();
+        // Keyframes asked by the viewer: at most one a second. With the video as
+        // datagrams on a 2 Mbit/s link every lost frame asked for one, each large and
+        // with double parity, and they caused more losses: 2 Mbit/s went out while the
+        // bitrate had come down to 0.5 (2026-11-01).
+        let mut last_requested_key: Option<Instant> = None;
         loop {
             let msg = tokio::select! {
                 msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
@@ -934,7 +939,12 @@ async fn session(
                     let pong = Pong { ping_sent_us: ping.sent_us, agent_us: nuvira_proto::now_us() };
                     ctrl_tx.send(&control(Msg::Pong(pong))).await?;
                 }
-                Some(Msg::RequestKeyframe(_)) => keyframe.store(true, Ordering::Relaxed),
+                Some(Msg::RequestKeyframe(_)) => {
+                    if last_requested_key.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
+                        last_requested_key = Some(Instant::now());
+                        keyframe.store(true, Ordering::Relaxed);
+                    }
+                }
                 Some(Msg::FsRequest(request)) => {
                     let fs_tx = fs_tx.clone();
                     if config.view_only || config.synthetic.is_some() || policy.no_files {
