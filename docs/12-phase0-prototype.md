@@ -78,6 +78,19 @@ Problems found and fixed in this series:
 
 Former hardware limit: Quick Sync took a new frame only ~31 ms after the previous one, hence ~32 fps. Cause (2026-10-31, example `hwpace`): the driver waits for ticks of the Windows timer, 15.6 ms by default, once before accepting a frame and once before returning it, whatever the resolution (same times from 640x360 to 2560x1440). With the timer at 1 ms (`timeBeginPeriod`, only while an encoder session is open, and the process exempt from Windows 11's timer throttling) the encoder alone goes from 32.8 to 93 fps and from 15.6 to 8.9 ms per frame, still with no frame held back. Without low-latency mode it also reached 65 fps, but returning every frame one call late: rejected. Between the two PCs (synthetic 1080p source): 24.5 → 47 fps shown, latency p50 48 → 45 ms, p95 83 → 69 ms. With a browser open on PC A (30% of the 3D engine) times get worse.
 
+## NVIDIA (NVENC) measurements (2026-11-01)
+
+PC C: AMD Ryzen 7 5700X, NVIDIA RTX 4060 Ti (driver 32.0.16.1088), 1920x1080 screen. Encoder alone (`hwpace 1920x1080 300`): 521 fps, 1.9 ms per frame, no frame held back, no wait for the encoder: NVENC does not show Quick Sync's timer wait. The agent's start-up test picks HardwareGpu (software 22.1 ms, hardware from RAM 5.8 ms, from GPU 2.3 ms).
+
+Real screen with the full-screen animation on PC C, viewer on PC A (NUC, Intel UHD, OpenH264), registered through the NAS server, direct path, 30 s:
+
+| Viewer window | fps shown | Latency p50 | p95 | Encoding | Decoding |
+|---|---|---|---|---|---|
+| Real size, encoded 1920x1080 | 57.6 | **16 ms** | 25 ms | 2.3 ms | 5.4 ms |
+| Fitted, encoded 1280x720 | 55.1 | 14 ms | 24 ms | 1.6 ms | 4.9 ms |
+
+The agent captures ~75 fps and sends 59: the 60 fps cap is the limit, not the encoder. The animation compresses very well (0.15-0.5 Mbit/s), so these numbers say little about bandwidth. Note for tests: in server mode `--once` does not end the agent after the session (only direct mode honours it): stop it by PID.
+
 ## LAN measurements, synthetic source (2026-10-26)
 
 Agent on PC A (i7-10710U, Intel UHD), viewer on PC B (Intel HD Graphics 2500, OpenGL because it has no Direct3D 12), wired network, synthetic source 1920x1080@60, 15 s.
