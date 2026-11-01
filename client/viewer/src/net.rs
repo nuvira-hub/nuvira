@@ -378,6 +378,9 @@ async fn session(
     // Decoding happens on a separate thread so as not to block the network.
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<()>();
     let key_tx_for_datagrams = key_tx.clone();
+    // Losses of the video as datagrams, reported to the agent with the feedback.
+    let datagrams = video_rx.is_none();
+    let loss = Arc::new(VideoLoss::default());
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<(VideoFrame, u64)>(4);
     let decoder_proxy = proxy.clone();
     let decoder = std::thread::Builder::new()
@@ -386,7 +389,7 @@ async fn session(
 
     let video = async {
         let Some(mut video_rx) = video_rx else {
-            return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams).await;
+            return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams, &loss).await;
         };
         while let Some(frame) = video_rx.recv::<VideoFrame>().await? {
             if frame_tx.send((frame, nuvira_proto::now_us())).is_err() {
@@ -464,12 +467,35 @@ async fn session(
 
     let control_loop = async {
         let mut ping = tokio::time::interval(Duration::from_secs(1));
+        // While frames are lost none is shown and the usual feedback stops: the losses
+        // are then reported on their own, which is when the agent needs them most.
+        let mut loss_tick = tokio::time::interval(Duration::from_millis(250));
+        let mut last_feedback = Instant::now();
         loop {
             tokio::select! {
                 _ = ping.tick() => {
                     ctrl_tx.send(&control(Msg::Ping(Ping { sent_us: nuvira_proto::now_us() }))).await?;
                 }
-                Some(msg) = control_rx.recv() => {
+                _ = loss_tick.tick(), if datagrams => {
+                    if last_feedback.elapsed() >= Duration::from_millis(250)
+                        && loss.frames_lost.load(Ordering::Relaxed) > 0
+                    {
+                        let mut f = nuvira_proto::v1::Feedback {
+                            window_ms: last_feedback.elapsed().as_millis() as u32,
+                            ..Default::default()
+                        };
+                        loss.fill(&mut f);
+                        last_feedback = Instant::now();
+                        ctrl_tx.send(&control(Msg::Feedback(f))).await?;
+                    }
+                }
+                Some(mut msg) = control_rx.recv() => {
+                    if let Msg::Feedback(f) = &mut msg
+                        && datagrams
+                    {
+                        loss.fill(f);
+                        last_feedback = Instant::now();
+                    }
                     ctrl_tx.send(&control(msg)).await?;
                 }
                 Some(content) = clip_rx.recv() => match content {
@@ -742,6 +768,23 @@ async fn send_file(
     Ok(())
 }
 
+/// Losses of the video as datagrams since the last feedback.
+#[derive(Default)]
+struct VideoLoss {
+    shards: AtomicU64,
+    shards_lost: AtomicU64,
+    frames_lost: AtomicU64,
+}
+
+impl VideoLoss {
+    fn fill(&self, feedback: &mut nuvira_proto::v1::Feedback) {
+        let take = |n: &AtomicU64| Some(n.swap(0, Ordering::Relaxed).min(u32::MAX as u64) as u32);
+        feedback.shards = take(&self.shards);
+        feedback.shards_lost = take(&self.shards_lost);
+        feedback.frames_lost = take(&self.frames_lost);
+    }
+}
+
 /// Video as QUIC datagrams with error correction (`nuvira_transport::fec`, prototype):
 /// frames go to decoding as they are rebuilt. After a lost frame the next ones cannot
 /// be decoded: they are dropped until a keyframe, asked for at most every 500 ms.
@@ -749,6 +792,7 @@ async fn receive_datagram_video(
     conn: &nuvira_transport::Connection,
     frames: &std::sync::mpsc::SyncSender<(VideoFrame, u64)>,
     request_keyframe: &mpsc::UnboundedSender<()>,
+    loss: &VideoLoss,
 ) -> Result<()> {
     use prost::Message;
     let mut rx = nuvira_transport::fec::Receiver::default();
@@ -767,7 +811,11 @@ async fn receive_datagram_video(
             }
             Err(e) => return Err(e.into()),
         };
-        let (seq, bytes) = match rx.push(&packet) {
+        let pushed = rx.push(&packet);
+        let (shards, lost) = rx.take_loss();
+        loss.shards.fetch_add(shards, Ordering::Relaxed);
+        loss.shards_lost.fetch_add(lost, Ordering::Relaxed);
+        let (seq, bytes) = match pushed {
             Ok(Some(done)) => done,
             Ok(None) => continue,
             Err(e) => {
@@ -778,6 +826,7 @@ async fn receive_datagram_video(
         let frame = VideoFrame::decode(bytes.as_slice()).context("video frame")?;
         if seq != last + 1 {
             tracing::debug!(lost = seq - last - 1, "video frames lost");
+            loss.frames_lost.fetch_add(seq - last - 1, Ordering::Relaxed);
             waiting_key = true;
         }
         last = seq;

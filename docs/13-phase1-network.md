@@ -195,11 +195,22 @@ Same setup as above (relay, 45 s):
 
 With random losses alone it does what it is for. On a saturated link it does not yet: the losses there come from the full queue, not at random. The session starts at 4 Mbit/s on a 2 Mbit/s link and the controller needs about 2 s to come down; BBR by design does not slow down on losses; so the queue overflows, whole runs of shards are lost, and each lost frame freezes the image until a keyframe (more parity, 40%, made it worse there: 39 frames lost; with random losses only it lost none). The latency percentiles do not show freezes: the number of frames not rebuilt does.
 
-Before it can be the default:
-- the viewer reports shards lost, and the adaptive bitrate treats losses that parity cannot cover as congestion, not only the latency;
-- a start that does not overshoot an unknown link (or the reliable stream for the first seconds);
-- parity that follows the measured loss;
-- a freeze measure in the viewer's statistics (time without a new frame), so that losses are not hidden by the latency.
+Then (same evening):
+- **Freezes in the statistics**: the viewer counts pauses over 200 ms between frames shown (`freezes`, `freeze_ms` in `--stats-file`, each logged at debug level). With the tests' animation each is a visible freeze.
+- **Losses in the feedback**: the viewer reports shards expected and lost and frames not rebuilt (`Feedback.shards`, `shards_lost`, `frames_lost`), on their own every 250 ms while no frame is shown. Frames lost lower the bitrate at once, but only with a queue building up (≥ 30 ms): lowering it for random losses took a link with 2% random loss from 3.4 to 0.8 Mbit/s.
+- **Parity**: 0.1 + 3 × the share of shards lost (0.1–0.5), at least 2 shards per block (with 1, small frames of 2–4 shards were lost about once in 400 frames at 2% loss), keyframes twice as much. The encoder's share follows the overhead actually measured.
+
+| Relay, 45 s | fps | p50 | p95 | Freezes | Frames not rebuilt |
+|---|---|---|---|---|---|
+| 40 ms, 2% loss, datagrams | 52 | 67 ms | 140 ms | 5, 3.5 s | 3 |
+| 40 ms, 2% loss, 2 Mbit/s, datagrams | 50 | 101 ms | 186 ms | 7, 4.7 s | 0 |
+| 40 ms, 2 Mbit/s, datagrams | 52 | 78 ms | 140 ms | 5, 3.4 s | 5 |
+| Clean, datagrams | 52 | 25 ms | 36 ms | 5, 3.6 s | 0 |
+| Clean, reliable stream | 53 | 26 ms | 40 ms | 3, 2.8 s | – |
+
+**Most freezes are not losses: they are encoder restarts, in both modes.** Restarting Quick Sync takes 0.8–1.3 s, not the ~0.3 s assumed, and the image stops meanwhile: in a clean session, the switch to the viewer's window size (1.3 s → a 1005 ms freeze) and the first two bitrate rises (0.77 s → 792 ms, 0.91 s → 934 ms). Every bitrate change on an unstable link is a freeze of about a second. Next: open the new encoder session in the background while the old one keeps encoding, and switch at its first keyframe.
+
+Still open for the datagrams: a start that does not overshoot an unknown link.
 
 ## What changes over the Internet
 

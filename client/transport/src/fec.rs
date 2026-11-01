@@ -24,10 +24,14 @@ const MAX_DATA: usize = 32;
 /// Frames still incomplete this far behind the newest one are dropped.
 const KEEP_BEHIND: u64 = 64;
 
-/// Parity shards for `data` data shards: at least one.
+/// Parity shards for `data` data shards: at least two. With one, a small frame (2–4
+/// shards) was lost whenever two of its shards were: with 2% random loss, about one
+/// frame in 400, a freeze every 8 s at 50 fps.
 fn parity_for(data: usize, ratio: f64) -> usize {
-    ((data as f64 * ratio).ceil() as usize).clamp(1, 255 - data)
+    ((data as f64 * ratio).ceil() as usize).clamp(MIN_PARITY, 255 - data)
 }
+
+const MIN_PARITY: usize = 2;
 
 /// The datagrams carrying frame `seq`, each at most `max_datagram` bytes, with
 /// `ratio` parity shards per data shard (0.2 = 20% more).
@@ -87,12 +91,23 @@ struct Partial {
     blocks: Vec<Option<Block>>,
 }
 
-/// Rebuilds frames from their datagrams.
+/// Shards seen of a recent frame, to count the lost ones.
+struct Count {
+    /// Shards of each block (data + parity), 0 while none of the block has arrived.
+    blocks: Vec<usize>,
+    got: usize,
+}
+
+/// Rebuilds frames from their datagrams, and counts the shards lost.
 #[derive(Default)]
 pub struct Receiver {
     frames: BTreeMap<u64, Partial>,
     /// Last frame returned: older shards are late and ignored.
     last: u64,
+    counts: BTreeMap<u64, Count>,
+    newest: u64,
+    shards: u64,
+    shards_lost: u64,
 }
 
 impl Receiver {
@@ -116,6 +131,7 @@ impl Receiver {
             block < blocks && index < data + parity && data > 0 && shard.len() == shard_len,
             "malformed video shard"
         );
+        self.count(seq, block, blocks, data + parity);
         if seq <= self.last {
             return Ok(None);
         }
@@ -168,9 +184,38 @@ impl Receiver {
         Ok(Some((seq, frame)))
     }
 
-    /// Drops incomplete frames far behind `newest` (memory bound when many are lost).
-    pub fn prune(&mut self, newest: u64) {
-        self.frames.retain(|&s, _| s + KEEP_BEHIND > newest);
+    /// Shards expected and lost since the previous call, for the frames that can get no
+    /// more of them.
+    pub fn take_loss(&mut self) -> (u64, u64) {
+        (std::mem::take(&mut self.shards), std::mem::take(&mut self.shards_lost))
+    }
+
+    fn count(&mut self, seq: u64, block: usize, blocks: usize, total: usize) {
+        if seq + KEEP_BEHIND <= self.newest {
+            return;
+        }
+        let count = self.counts.entry(seq).or_insert_with(|| Count { blocks: vec![0; blocks], got: 0 });
+        if let Some(n) = count.blocks.get_mut(block) {
+            *n = total;
+        }
+        count.got += 1;
+        if seq <= self.newest {
+            return;
+        }
+        self.newest = seq;
+        // Shards arrive in order: a frame two behind the newest has all it will get.
+        let closed: Vec<u64> = self.counts.range(..seq.saturating_sub(1)).map(|(s, _)| *s).collect();
+        for s in closed {
+            let count = self.counts.remove(&s).expect("present");
+            // Blocks of which nothing arrived: as large as the others.
+            let known: Vec<usize> = count.blocks.iter().copied().filter(|&n| n > 0).collect();
+            let typical = known.iter().sum::<usize>() / known.len().max(1);
+            let expected: usize = count.blocks.iter().map(|&n| if n > 0 { n } else { typical }).sum();
+            self.shards += expected as u64;
+            self.shards_lost += expected.saturating_sub(count.got) as u64;
+        }
+        // Memory bound when many frames are lost.
+        self.frames.retain(|&s, _| s + KEEP_BEHIND > seq);
     }
 }
 
@@ -202,7 +247,7 @@ mod tests {
     fn rebuilds_with_lost_shards_up_to_the_parity() {
         let f = frame(5000);
         let packets = encode(7, &f, 1200, 0.25).unwrap();
-        // 5 data shards, 2 parity: lose two data shards.
+        // 5 data shards, 2 parity (25%, and the minimum): lose two data shards.
         assert_eq!(packets.len(), 7);
         let mut rx = Receiver::default();
         let mut got = None;
@@ -218,11 +263,30 @@ mod tests {
     }
 
     #[test]
+    fn counts_the_lost_shards() {
+        let mut rx = Receiver::default();
+        // 5 data + 2 parity, two lost: the frame is rebuilt, the loss is counted.
+        for (i, p) in encode(1, &frame(5000), 1200, 0.25).unwrap().iter().enumerate() {
+            if i != 1 && i != 4 {
+                rx.push(p).unwrap();
+            }
+        }
+        assert_eq!(rx.take_loss(), (0, 0), "frame 1 may still get shards");
+        for seq in [2, 3] {
+            for p in encode(seq, &frame(100), 1200, 0.25).unwrap() {
+                rx.push(&p).unwrap();
+            }
+        }
+        assert_eq!(rx.take_loss(), (7, 2));
+        assert_eq!(rx.take_loss(), (0, 0));
+    }
+
+    #[test]
     fn a_frame_that_cannot_be_rebuilt_is_skipped() {
         let mut rx = Receiver::default();
         let lost = encode(1, &frame(3000), 1200, 0.2).unwrap();
-        // Three shards, one parity: two lost.
-        for p in &lost[2..] {
+        // Three shards, two parity: three lost.
+        for p in &lost[3..] {
             assert_eq!(rx.push(p).unwrap(), None);
         }
         let next = frame(800);

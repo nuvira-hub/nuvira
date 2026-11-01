@@ -22,10 +22,19 @@ pub struct Report {
     pub latencies_us: Vec<u32>,
     pub rtt_us: Vec<u32>,
     pub first_frame_ms: Option<u64>,
+    /// Pauses between two frames shown longer than [`FREEZE`], and their total time:
+    /// with a screen that keeps moving (the tests' animation) each is a visible freeze,
+    /// which the latency of the frames that do arrive does not show.
+    pub freezes: u64,
+    pub freeze_ms: u64,
+    last_shown: Option<Instant>,
     pub exit_reason: Option<String>,
     /// Session ended by the test duration and not by an error.
     pub completed: bool,
 }
+
+/// A longer pause between two frames shown counts as a freeze.
+pub const FREEZE: std::time::Duration = std::time::Duration::from_millis(200);
 
 fn percentile(sorted: &[u32], p: f64) -> Option<f64> {
     if sorted.is_empty() {
@@ -55,6 +64,17 @@ fn json_opt<T: std::fmt::Display>(v: Option<T>) -> String {
 }
 
 impl Report {
+    /// A frame was shown now. Returns the pause before it if it was a freeze.
+    pub fn shown(&mut self, now: Instant) -> Option<std::time::Duration> {
+        let gap = now.duration_since(self.last_shown.replace(now)?);
+        if gap <= FREEZE {
+            return None;
+        }
+        self.freezes += 1;
+        self.freeze_ms += gap.as_millis() as u64;
+        Some(gap)
+    }
+
     pub fn to_json(&self, started: Instant) -> String {
         let secs = started.elapsed().as_secs_f64();
         let streaming_secs = secs - self.first_frame_ms.map_or(secs, |ms| ms as f64 / 1000.0);
@@ -84,6 +104,8 @@ impl Report {
             ("decode_ms_avg", json_opt(per_frame(self.decode_us).map(|v| format!("{v:.2}")))),
             ("render_ms_avg", json_opt(per_frame(self.render_us).map(|v| format!("{v:.2}")))),
             ("dropped", self.dropped.to_string()),
+            ("freezes", self.freezes.to_string()),
+            ("freeze_ms", self.freeze_ms.to_string()),
         ];
         let body: Vec<String> = fields.iter().map(|(k, v)| format!("  \"{k}\": {v}")).collect();
         format!("{{\n{}\n}}\n", body.join(",\n"))
@@ -107,5 +129,16 @@ mod tests {
         assert!(json.contains("\"latency_ms_p50\": 20"));
         assert!(json.contains("\"exit_reason\": \"end \\\"test\\\"\""));
         assert!(json.contains("\"renderer\": null"));
+    }
+
+    #[test]
+    fn long_pauses_are_freezes() {
+        let mut r = Report::default();
+        let t0 = Instant::now();
+        let ms = std::time::Duration::from_millis;
+        for at in [0, 20, 40, 60, 400, 420, 1000] {
+            r.shown(t0 + ms(at));
+        }
+        assert_eq!((r.freezes, r.freeze_ms), (2, 340 + 580));
     }
 }

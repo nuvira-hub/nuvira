@@ -36,6 +36,11 @@ use crate::pipeline::{Controls, Pipeline};
 
 /// Minimum bitrate of the adaptive control.
 const MIN_BITRATE: u32 = 500_000;
+/// Parity of the video as datagrams (shards per data shard): at the start, and the
+/// range it moves in with the losses reported (3 × the share lost, plus the minimum).
+const FEC_START: f64 = 0.2;
+const FEC_MIN: f64 = 0.1;
+const FEC_MAX: f64 = 0.5;
 
 /// Rejection reasons sent to the viewer are translation keys (`@key`, see
 /// nuvira-i18n): the viewer shows them in its own language.
@@ -737,11 +742,22 @@ async fn session(
     // With error correction the parity shards travel too: the adaptive bitrate is what
     // goes on the network (parity included) and the encoder gets its share of it,
     // otherwise parity pushes a saturated link past its rate.
-    let fec_ratio: f64 = match video_datagrams {
-        true => std::env::var("NUVIRA_FEC_RATIO").ok().and_then(|r| r.parse().ok()).unwrap_or(0.2),
-        false => 0.0,
+    // Parity per data shard, in thousandths: it follows the shards the viewer reports
+    // lost (NUVIRA_FEC_RATIO fixes it, for tests).
+    let fixed_ratio: Option<f64> = std::env::var("NUVIRA_FEC_RATIO").ok().and_then(|r| r.parse().ok());
+    let fec_permille = Arc::new(AtomicU32::new(match video_datagrams {
+        true => (fixed_ratio.unwrap_or(FEC_START) * 1000.0) as u32,
+        false => 0,
+    }));
+    // What goes on the network for each byte of video, in thousandths: measured, since
+    // small frames get at least two parity shards and weigh more than the ratio says.
+    let overhead_permille = Arc::new(AtomicU32::new(1000 + fec_permille.load(Ordering::Relaxed)));
+    let encoder_bps = {
+        let overhead_permille = overhead_permille.clone();
+        move |bps: u32| (bps as f64 * 1000.0 / overhead_permille.load(Ordering::Relaxed) as f64) as u32
     };
-    let encoder_bps = move |bps: u32| (bps as f64 / (1.0 + fec_ratio)) as u32;
+    // Share of shards lost, smoothed over the last reports.
+    let mut shard_loss = 0.0f64;
     // Start from half the maximum: the unknown network might not take more.
     let mut abr = (!config.fixed_bitrate).then(|| abr::Abr::new(max_bps / 2, MIN_BITRATE, max_bps));
     let bitrate = Arc::new(AtomicU32::new(encoder_bps(abr.as_ref().map_or(max_bps, |a| a.bitrate()))));
@@ -810,7 +826,11 @@ async fn session(
         let unanswered_since_ms = unanswered_since_ms.clone();
         let sent_bytes = sent_bytes.clone();
         let conn = conn.clone();
+        let fec_permille = fec_permille.clone();
+        let overhead_permille = overhead_permille.clone();
         async move {
+            // Bytes on the network and bytes of video, decaying (the last few seconds).
+            let (mut wire, mut video) = (0.0f64, 0.0f64);
             while let Some(frame) = frame_rx.recv().await {
                 tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "sending frame");
                 let sent = match &mut video_tx {
@@ -822,10 +842,18 @@ async fn session(
                         let max = conn.max_datagram_size().context("datagrams no longer available")?;
                         let bytes = prost::Message::encode_to_vec(&frame);
                         let mut sent = 0;
-                        for packet in nuvira_transport::fec::encode(frame.seq, &bytes, max, fec_ratio)? {
+                        let mut ratio = fec_permille.load(Ordering::Relaxed) as f64 / 1000.0;
+                        // A keyframe lost freezes the image again: twice the parity.
+                        if frame.keyframe {
+                            ratio = (ratio * 2.0).max(FEC_MAX);
+                        }
+                        for packet in nuvira_transport::fec::encode(frame.seq, &bytes, max, ratio)? {
                             sent += packet.len();
                             conn.send_datagram_wait(packet.into()).await?;
                         }
+                        wire = wire * 0.98 + sent as f64;
+                        video = video * 0.98 + frame.data.len() as f64;
+                        overhead_permille.store((wire / video.max(1.0) * 1000.0) as u32, Ordering::Relaxed);
                         sent
                     }
                 };
@@ -883,6 +911,10 @@ async fn session(
                     while sent_samples.front().is_some_and(|(t, _)| now.duration_since(*t) > Duration::from_secs(2)) {
                         sent_samples.pop_front();
                     }
+                    // The encoder's share follows the overhead measured.
+                    if video_datagrams && let Some(abr) = abr.as_ref() {
+                        bitrate.store(encoder_bps(abr.bitrate()), Ordering::Relaxed);
+                    }
                     // A frame left long ago and no feedback since: the network is probably stuck.
                     let now_ms = session_start.elapsed().as_millis() as u64;
                     let since = unanswered_since_ms.load(Ordering::Relaxed);
@@ -936,6 +968,38 @@ async fn session(
                         // Start of the session: no measurement yet, latency counts.
                         _ => f64::INFINITY,
                     };
+                    if video_datagrams {
+                        if let (Some(shards), Some(lost)) = (fb.shards, fb.shards_lost)
+                            && shards > 0
+                        {
+                            shard_loss = 0.7 * shard_loss + 0.3 * (lost as f64 / shards as f64);
+                            if fixed_ratio.is_none() {
+                                let ratio = (FEC_MIN + 3.0 * shard_loss).clamp(FEC_MIN, FEC_MAX);
+                                let new = (ratio * 1000.0) as u32;
+                                if fec_permille.swap(new, Ordering::Relaxed).abs_diff(new) >= 20 {
+                                    tracing::debug!(
+                                        "parity {ratio:.2} (shards lost {:.1}%)",
+                                        shard_loss * 100.0
+                                    );
+                                    if let Some(abr) = abr.as_ref() {
+                                        bitrate.store(encoder_bps(abr.bitrate()), Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(abr) = abr.as_mut()
+                            && let Some(bps) =
+                                abr.on_loss(Instant::now(), fb.frames_lost.unwrap_or(0), sent_bps)
+                        {
+                            bitrate.store(encoder_bps(bps), Ordering::Relaxed);
+                            info!(
+                                "bitrate {} kbit/s ({} frames lost; sending {} kbit/s)",
+                                bps / 1000,
+                                fb.frames_lost.unwrap_or(0),
+                                (sent_bps.min(1e12) / 1000.0) as u64
+                            );
+                        }
+                    }
                     if let Some(abr) = abr.as_mut()
                         && fb.frames > 0
                         && let Some(bps) = abr.on_feedback(Instant::now(), p50 as f64, min as f64, sent_bps)

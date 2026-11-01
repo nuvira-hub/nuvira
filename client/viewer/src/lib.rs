@@ -335,6 +335,8 @@ impl App {
             window_ms: window.as_millis() as u32,
             transit_ms_p50: transits.get(transits.len() / 2).copied(),
             transit_ms_min: transits.first().copied(),
+            // Losses of the video as datagrams: added by the network side.
+            ..Default::default()
         };
         latencies.clear();
         transits.clear();
@@ -666,6 +668,13 @@ impl ApplicationHandler<NetEvent> for App {
                 self.send_feedback();
                 let r = &mut self.report;
                 r.first_frame_ms.get_or_insert(self.started.elapsed().as_millis() as u64);
+                if let Some(gap) = r.shown(Instant::now()) {
+                    tracing::debug!(
+                        gap_ms = gap.as_millis() as u64,
+                        at_ms = self.started.elapsed().as_millis() as u64,
+                        "freeze"
+                    );
+                }
                 r.frames += 1;
                 r.bytes += frame.bytes as u64;
                 r.encode_us += frame.encode_us as u64;

@@ -42,6 +42,8 @@ const HIGH_FOR: Duration = Duration::from_secs(1);
 /// Window of the recent latency (median of the reports in it).
 const RECENT_WINDOW: Duration = Duration::from_secs(1);
 const QUEUE_LOW_MS: f64 = 25.0;
+/// Frames lost count as congestion only with at least this queue.
+const QUEUE_LOSS_MS: f64 = 30.0;
 /// Latency counts when at least this share of the bitrate is actually sent...
 const BUSY_SHARE: f64 = 0.25;
 /// ...or at least this much (a still screen sends 1–90 kbit/s).
@@ -87,6 +89,8 @@ pub struct Abr {
     settle_until: Option<Instant>,
     /// Rate sent at the last congestion, and when.
     ceiling: Option<(Instant, f64)>,
+    /// Queue at the last latency report (ms above the minimum).
+    last_queue: f64,
 }
 
 impl Abr {
@@ -102,6 +106,7 @@ impl Abr {
             last_increase: Instant::now(),
             settle_until: None,
             ceiling: None,
+            last_queue: 0.0,
         }
     }
 
@@ -139,6 +144,7 @@ impl Abr {
         let mut recent: Vec<f64> = self.recent.iter().map(|(_, l)| *l).collect();
         recent.sort_unstable_by(f64::total_cmp);
         let queue = recent[recent.len() / 2] - base;
+        self.last_queue = queue;
         if queue > QUEUE_HIGH_MS {
             let since = *self.high_since.get_or_insert(now);
             return if now.duration_since(since) >= HIGH_FOR {
@@ -169,6 +175,25 @@ impl Abr {
             return if to > self.bitrate { self.set_at(now, to) } else { None };
         }
         None
+    }
+
+    /// Video as datagrams: frames the parity could not rebuild. On a link that drops
+    /// what does not fit (a full queue) they come before the latency rises for long,
+    /// and each one freezes the image until a keyframe: down at once, as for a lasting
+    /// queue, and the rate sent becomes the ceiling. Only with a queue building up:
+    /// random losses (Wi-Fi, mobile) are not cured by sending less, and lowering the
+    /// bitrate for them only made the image worse (2% random loss: 3.4 → 0.8 Mbit/s).
+    pub fn on_loss(&mut self, now: Instant, frames_lost: u32, sent_bps: f64) -> Option<u32> {
+        if frames_lost == 0 || self.last_queue < QUEUE_LOSS_MS || self.settle_until.is_some_and(|t| now < t) {
+            return None;
+        }
+        let sent = if sent_bps.is_finite() { sent_bps } else { self.bitrate };
+        let to = (self.bitrate * DECREASE).min(sent * DECREASE_SENT);
+        let changed = self.decrease(now, to.max(self.bitrate * DECREASE_MAX));
+        if changed.is_some() {
+            self.ceiling = Some((now, sent));
+        }
+        changed
     }
 
     /// No feedback while frames are being sent: treated as a high queue.
@@ -305,6 +330,25 @@ mod tests {
         // After 30 s it probes again.
         let probed = abr.on_feedback(t(31_500), 45.0, 40.0, 1_800_000.0);
         assert!(probed.is_some_and(|b| b.abs_diff(2_070_000) <= 1), "{probed:?}");
+    }
+
+    #[test]
+    fn lost_frames_lower_the_bitrate_at_once() {
+        let t0 = Instant::now();
+        let t = |ms| t0 + Duration::from_millis(ms);
+        let mut abr = Abr::new(4_000_000, 500_000, 8_000_000);
+        // Random losses, no queue: nothing changes.
+        assert_eq!(abr.on_feedback(t(0), 45.0, 40.0, 3_000_000.0), None);
+        assert_eq!(abr.on_loss(t(0), 3, 3_000_000.0), None);
+        // A queue building up (100 ms) and frames lost while 2.4 Mbit/s go out: 85% of
+        // that at once, without waiting for the queue to last a second.
+        assert_eq!(abr.on_feedback(t(0), 140.0, 40.0, 2_400_000.0), None);
+        assert_eq!(abr.on_loss(t(0), 0, 3_000_000.0), None);
+        assert_eq!(abr.on_loss(t(0), 3, 2_400_000.0), Some(2_040_000));
+        // While settling, the losses of the old rate do not count again.
+        assert_eq!(abr.on_loss(t(1000), 2, 2_000_000.0), None);
+        // No rise past 90% of the rate that was losing frames.
+        assert_eq!(abr.feed(t0, 4000..9000, 45.0, 40.0, 2_000_000.0), Some(2_160_000));
     }
 
     #[test]
