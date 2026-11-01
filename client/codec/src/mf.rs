@@ -359,18 +359,19 @@ impl Session {
     ) -> Result<()> {
         let t = Instant::now();
         unsafe {
-            self.transform.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0)?;
-            self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0)?;
+            self.transform.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0).context("flush")?;
+            // The HD 2500 refuses a new start of stream without the end of the old one.
+            self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0).context("end of stream")?;
+            self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0).context("end of streaming")?;
         }
         // Requests and outputs of the stream just stopped.
         while self.events.try_recv().is_ok() {}
-        if (width, height) != (self.width, self.height) {
-            // Quick Sync refuses an output type of another size over the current one
-            // (E_FAIL): the types are cleared first.
-            unsafe {
-                self.transform.SetInputType(0, None, 0).context("clearing the input type")?;
-                self.transform.SetOutputType(0, None, 0).context("clearing the output type")?;
-            }
+        // Quick Sync refuses new types over the current ones (E_FAIL): another size on the
+        // NUC's Iris, and on PC-LABORATORIO's HD 2500 even the same size with another
+        // bitrate. The types are cleared first.
+        unsafe {
+            self.transform.SetInputType(0, None, 0).context("clearing the input type")?;
+            self.transform.SetOutputType(0, None, 0).context("clearing the output type")?;
         }
         set_types(&self.transform, self.codec_api.as_ref(), (width, height), settings)?;
         if ((width, height) != (self.width, self.height) || input != self.input)
@@ -382,8 +383,12 @@ impl Session {
         self.provides_samples = info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0;
         self.output_size = info.cbSize.max(1024 * 1024);
         unsafe {
-            self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
-            self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
+            self.transform
+                .ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)
+                .context("start of streaming")?;
+            self.transform
+                .ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)
+                .context("start of stream")?;
         }
         (self.input, self.width, self.height) = (input, width, height);
         self.need_input = 0;
