@@ -50,8 +50,20 @@ fn utc_iso(time: SystemTime) -> String {
 }
 
 /// Registers [`RESCUE_TASK`]: from `delay` on, every 5 minutes for an hour, the system
-/// starts the service (harmless if it is already running). Independent of this process.
+/// puts the previous program back if the new one is missing (see [`replace_program`])
+/// and starts the service (harmless if it is already running). Independent of this process.
 fn schedule_rescue(delay: Duration) -> Result<()> {
+    let program = config::program_dir().join(config::PROGRAM_EXE);
+    // The program moved aside if it is still there, otherwise the service's backup: an
+    // antivirus that stopped the update deleted both files the update had touched
+    // (Kaspersky, 2026-11-01). In parentheses: otherwise the start too is part of the if.
+    let command = format!(
+        r#"/c (if not exist "{0}" (if exist "{1}" (move /y "{1}" "{0}") else (copy /y "{2}" "{0}"))) &amp; sc.exe start {3}"#,
+        program.display(),
+        aside_path(&program).display(),
+        config::backup_program().display(),
+        config::SERVICE_NAME
+    );
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -59,10 +71,10 @@ fn schedule_rescue(delay: Duration) -> Result<()> {
   <Triggers><TimeTrigger><StartBoundary>{}</StartBoundary><Repetition><Interval>PT5M</Interval><Duration>PT1H</Duration></Repetition><Enabled>true</Enabled></TimeTrigger></Triggers>
   <Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Enabled>true</Enabled></Settings>
-  <Actions Context="System"><Exec><Command>sc.exe</Command><Arguments>start {}</Arguments></Exec></Actions>
+  <Actions Context="System"><Exec><Command>cmd.exe</Command><Arguments>{}</Arguments></Exec></Actions>
 </Task>"#,
         utc_iso(SystemTime::now() + delay),
-        config::SERVICE_NAME
+        command
     );
     // schtasks wants the file in UTF-16.
     let path = config::data_dir().join("rescue-task.xml");
@@ -239,12 +251,13 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     .context("firewall rule")?;
 
     allow_software_sas()?;
-    register_app(&program)?;
     step("service configured, starting it");
 
     let _ = std::fs::remove_file(config::online_path());
     start_service(&service)?;
     step("service installed and started");
+    // After the start: if an antivirus stops this process here, the PC is reachable anyway.
+    register_app(&program)?;
     let id = wait_online(Duration::from_secs(30));
     match &id {
         Some(id) => match &generated_password {
@@ -291,15 +304,32 @@ fn register_app(program: &Path) -> Result<()> {
         run(Command::new("reg").args(["add", UNINSTALL_KEY, "/v", name, "/t", kind, "/d", data, "/f"]))
             .with_context(|| format!("installed apps entry ({name})"))?;
     }
-    // The shortcut is made by Windows' own scripting object: no extra dependency.
-    let script = format!(
-        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{}'); $s.TargetPath = '{}'; $s.WorkingDirectory = '{}'; $s.Save()",
-        start_menu_shortcut().display().to_string().replace('\'', "''"),
-        program_s.replace('\'', "''"),
-        dir.replace('\'', "''"),
-    );
-    run(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]))
-        .context("Start menu shortcut")?;
+    // Made once (the program path never changes), in this process: a shortcut made by
+    // PowerShell started from here was taken for malware by Kaspersky (PDM:Trojan.Win32.Generic,
+    // 2026-11-01), which stopped the update and removed the shortcut.
+    let shortcut = start_menu_shortcut();
+    if !shortcut.exists() {
+        create_shortcut(&shortcut, program).context("Start menu shortcut")?;
+    }
+    Ok(())
+}
+
+fn create_shortcut(shortcut: &Path, target: &Path) -> Result<()> {
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, IPersistFile,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    use windows::core::Interface;
+
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        link.SetPath(&HSTRING::from(target.as_os_str()))?;
+        if let Some(dir) = target.parent() {
+            link.SetWorkingDirectory(&HSTRING::from(dir.as_os_str()))?;
+        }
+        link.cast::<IPersistFile>()?.Save(&HSTRING::from(shortcut.as_os_str()), true)?;
+    }
     Ok(())
 }
 
@@ -382,20 +412,45 @@ fn allow_software_sas() -> Result<()> {
     Ok(())
 }
 
-/// Copies the new program over the installed one. The installed one may still be
-/// running (the app opened from the Start menu, or the agent of the service just
-/// stopped, which takes a moment to exit): a running program cannot be overwritten
-/// but can be renamed, so it is moved aside and deleted at the next update.
+/// Copies the new program in place of the installed one, which is first moved aside
+/// (deleted at the next update). A running program (the app opened from the Start
+/// menu, the agent of the service just stopped) cannot be overwritten but can be
+/// renamed; and the previous program stays on disk: if this process is stopped
+/// halfway, [`RESCUE_TASK`] puts it back. Overwritten, it was lost: an antivirus that
+/// stopped the update deleted the new program and the PC stayed unreachable (2026-11-01).
 fn replace_program(src: &Path, program: &Path) -> Result<()> {
-    let aside = program.with_extension("old.exe");
+    let aside = aside_path(program);
     let _ = std::fs::remove_file(&aside);
-    if std::fs::copy(src, program).is_ok() {
+    if program.exists() {
+        std::fs::rename(program, &aside).with_context(|| format!("moving aside {}", program.display()))?;
+    }
+    if let Err(e) = std::fs::copy(src, program) {
+        let _ = std::fs::rename(&aside, program);
+        return Err(e).with_context(|| format!("copying {} to {}", src.display(), program.display()));
+    }
+    Ok(())
+}
+
+fn aside_path(program: &Path) -> std::path::PathBuf {
+    program.with_extension("old.exe")
+}
+
+/// Brings [`config::backup_program`] up to date with the running program (called by
+/// the service once it has run well for a while). Written aside and renamed, so a
+/// copy cut halfway never replaces a good backup.
+pub fn refresh_backup() -> Result<()> {
+    let program = std::env::current_exe()?;
+    let backup = config::backup_program();
+    let current = std::fs::read(&program).with_context(|| format!("reading {}", program.display()))?;
+    if std::fs::read(&backup).is_ok_and(|saved| saved == current) {
         return Ok(());
     }
-    std::fs::rename(program, &aside).with_context(|| format!("moving aside {}", program.display()))?;
-    std::fs::copy(src, program)
-        .with_context(|| format!("copying {} to {}", src.display(), program.display()))?;
-    Ok(())
+    if let Some(dir) = backup.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let partial = backup.with_extension("partial");
+    std::fs::write(&partial, &current).with_context(|| format!("writing {}", partial.display()))?;
+    std::fs::rename(&partial, &backup).with_context(|| format!("renaming to {}", backup.display()))
 }
 
 /// The program to install: this one when it is the app (`nuvira.exe service install`,
@@ -509,7 +564,9 @@ fn start_service(service: &Sc) -> Result<()> {
 pub fn update() -> Result<()> {
     let current = ServiceConfig::load()?;
     step(&format!("updating to {}", env!("CARGO_PKG_VERSION")));
-    if let Err(e) = schedule_rescue(Duration::from_secs(180)) {
+    // Short (past the 20 s the stop may take): when an antivirus stops this process the
+    // task is what starts the service.
+    if let Err(e) = schedule_rescue(Duration::from_secs(60)) {
         step(&format!("rescue task not registered: {e:#}"));
     }
     let result = install(InstallOptions {
@@ -553,6 +610,9 @@ pub fn uninstall(remove_program: bool) -> Result<()> {
         return Ok(());
     }
     let _ = run(Command::new("reg").args(["delete", UNINSTALL_KEY, "/f"]));
+    if let Some(dir) = config::backup_program().parent() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
     let _ = std::fs::remove_file(start_menu_shortcut());
     remove_program_dir();
     println!(

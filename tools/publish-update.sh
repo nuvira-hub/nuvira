@@ -16,5 +16,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 echo "== building"
 (cd "$ROOT/client" && cargo build --release -p nuvira-app -p nuvira-update)
 rm -rf "$ROOT/dist/update"
-echo "== signing"
+# Authenticode first: the update signature covers the final bytes.
+"$ROOT/tools/sign-code.sh" "$ROOT/target/release/nuvira.exe"
+echo "== signing the update"
 "$ROOT/target/release/nuvira-release.exe" sign "$ROOT/target/release/nuvira.exe" --out "$ROOT/dist/update"

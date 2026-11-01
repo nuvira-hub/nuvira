@@ -22,6 +22,16 @@ nuvira-release sign  ──copy──►  data/updates/windows-x64.json   ◄─
 
 The service checks 2 minutes after starting and then every 6 hours (1 hour after an error). A newer, correctly signed version is downloaded into `%ProgramData%\nuvira\update` (writable only by SYSTEM and administrators, so nobody can swap it before it runs). If a session is in progress (the agent keeps the file `busy` in the data folder while it lasts) the update waits for it to end. Then the service starts `nuvira-<version>.exe service update`, which stops the service, replaces the program in Program Files and starts the service again with the settings in place: server, ID and passwords do not change. Its output goes to `update.log`; passwords are never written there.
 
+### When an update stops halfway
+
+Before stopping the service the update registers the system task "NuviraHub update rescue": from 60 s later, every 5 minutes for an hour, it puts a program back if `nuvira.exe` is missing and starts the service; the service removes the task as soon as it runs. The program put back is the one the update moved aside (`nuvira.old.exe`), or else the service's own backup: 2 minutes after starting, once its agent is online, the service copies its program to `%ProgramData%\nuvira\backup\nuvira.exe` (only when it changed). The update process never touches that copy.
+
+Why (2026-11-01): Kaspersky Anti-Ransomware Tool took the unsigned program installing the service for malware (`PDM:Trojan.Win32.Generic`), stopped it and rolled back what it had done: it deleted every file the update had written or renamed, the new program and the old one moved aside, so the service had nothing to start. With the backup the NUC was back on the previous version within a minute, with no one at the PC. The real fix is signing the program (see `tools/sign-code.sh`); this keeps a PC reachable whatever stops an update.
+
+The Start menu shortcut is made by the program itself (no PowerShell: a script started by the update was the first thing Kaspersky flagged), only when missing, and after the service has started.
+
+### The open app
+
 The app open at the PC keeps running the old program (moved aside as `nuvira.old.exe`). When its link with the service's agent comes back after the update, the agent tells it its version: if newer, a bar shows "NuviraHub X has been installed" with "Restart", which starts the installed program in place of the app. It works from the update after 0.11.0 on: the open app must already have this check.
 
 ## Portable copies (app without the service)
@@ -56,4 +66,4 @@ One version for the whole workspace (`Cargo.toml`), raised when a release is pub
 ## To do
 
 - The server could fetch new versions from GitHub Releases by itself once the repository is public.
-- Code signing of the program (planned): independent of the update signature.
+- Code signing of the program: Certum Open Source certificate ordered 2026-11-01; `tools/sign-code.sh` is called by `build-setup.sh` and `publish-update.sh` (before the update signature, which covers the final bytes). `NUVIRA_UNSIGNED=1` skips it. To check: whether the trailer of customised installers (appended after the signature) keeps the signature valid.

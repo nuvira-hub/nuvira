@@ -24,6 +24,7 @@ fi
 
 echo "== building nuvira.exe"
 (cd "$ROOT/client" && cargo build --release -p nuvira-app)
+"$ROOT/tools/sign-code.sh" "$ROOT/target/release/nuvira.exe"
 
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 mkdir -p "$ROOT/dist"
@@ -34,4 +35,5 @@ echo "== building the setup ($VERSION)"
     -DVERSION="$VERSION" \
     -DOUTFILE="$(cygpath -w "$ROOT/dist/nuvira-setup.exe")" \
     nuvira-setup.nsi)
+"$ROOT/tools/sign-code.sh" "$ROOT/dist/nuvira-setup.exe"
 ls -la "$ROOT/dist/nuvira-setup.exe"

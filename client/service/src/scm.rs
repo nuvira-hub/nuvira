@@ -59,6 +59,24 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
     info!("service started");
     // Running: a rescue task left by an update is no longer needed.
     crate::install::remove_rescue();
+    // After a while online the program is known to work: it becomes the backup.
+    std::thread::spawn(|| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while std::time::Instant::now() < deadline {
+            if STOP.load(Ordering::Relaxed) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if !config::online_path().exists() {
+            warn!("not online after 2 minutes: the program is not backed up");
+            return;
+        }
+        match crate::install::refresh_backup() {
+            Ok(()) => info!("program backup up to date"),
+            Err(e) => warn!("program backup: {e:#}"),
+        }
+    });
     let code = match run() {
         Ok(()) => 0,
         Err(e) => {

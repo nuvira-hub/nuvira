@@ -106,6 +106,12 @@ pub fn update_dir() -> PathBuf {
     data_dir().join("update")
 }
 
+/// Copy of the program that ran well, kept by the service: an update stopped halfway
+/// may lose the program in Program Files, and the rescue task puts this one back.
+pub fn backup_program() -> PathBuf {
+    data_dir().join("backup").join(PROGRAM_EXE)
+}
+
 pub fn update_log() -> PathBuf {
     data_dir().join("update.log")
 }
