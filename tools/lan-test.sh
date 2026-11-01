@@ -16,6 +16,7 @@
 # NUVIRA_FORCE_RELAY=1 (with NUVIRA_VIA_SERVER: no direct path, relay only),
 # NUVIRA_VIEWER_ARGS (extra viewer options, e.g. "--transport websocket"),
 # NUVIRA_VIEWER_SERVER (server address for the viewer, e.g. a wrong UDP port),
+# NUVIRA_VIDEO_FEC=1 (viewer asks for the video as datagrams with error correction),
 # NUVIRA_AGENT_LOG (agent RUST_LOG), NUVIRA_ANIMATE=1 (full-screen animation
 # on this PC during the test, to measure capture of the real screen;
 # needs cargo build --release --examples), NUVIRA_SNAPSHOT=1 (the viewer saves
@@ -93,8 +94,8 @@ else
 fi
 
 echo "== starting the viewer for $DURATION s"
-printf '@echo off\r\nset NUVIRA_FORCE_RELAY=%s\r\nset RUST_LOG=%s\r\ncd /d "%s"\r\nnuvira-viewer.exe %s --view-only --duration %s --stats-file stats.json %s > viewer.log 2>&1\r\n' \
-    "${NUVIRA_FORCE_RELAY:-}" "${NUVIRA_VIEWER_LOG:-info}" "$REMOTE_DIR" "$VIEWER_TARGET" "$DURATION" \
+printf '@echo off\r\nset NUVIRA_FORCE_RELAY=%s\r\nset NUVIRA_VIDEO_FEC=%s\r\nset RUST_LOG=%s\r\ncd /d "%s"\r\nnuvira-viewer.exe %s --view-only --duration %s --stats-file stats.json %s > viewer.log 2>&1\r\n' \
+    "${NUVIRA_FORCE_RELAY:-}" "${NUVIRA_VIDEO_FEC:-}" "${NUVIRA_VIEWER_LOG:-info}" "$REMOTE_DIR" "$VIEWER_TARGET" "$DURATION" \
     "${NUVIRA_SNAPSHOT:+--snapshot snapshot.png}" >"$OUT/run-viewer.cmd"
 "${SCP[@]}" "$OUT/run-viewer.cmd" "$REMOTE:$REMOTE_DIR_SCP/run-viewer.cmd"
 "${SSH[@]}" "schtasks /create /tn NuviraViewerTest /tr \"$REMOTE_DIR\\run-viewer.cmd\" /sc once /st 23:59 /it /f >nul && schtasks /run /tn NuviraViewerTest >nul"

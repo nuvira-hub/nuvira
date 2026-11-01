@@ -221,6 +221,10 @@ message Hello {
   bool password_required = 5;
   // From the agent: it answers FsRequest (file manager).
   bool file_manager = 6;
+  // From the viewer: it can receive the video as QUIC datagrams with forward error
+  // correction (nuvira_transport::fec). From the agent: the video comes that way.
+  // Otherwise (older devices) it goes on the video stream.
+  bool video_datagrams = 7;
 }
 
 // Sent by the agent when the video stream starts (or changes).

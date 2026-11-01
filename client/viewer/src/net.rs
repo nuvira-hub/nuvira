@@ -271,7 +271,7 @@ async fn handshake(
     direct: bool,
     password: Option<String>,
     proxy: &EventLoopProxy<NetEvent>,
-) -> Result<(FramedSend, FramedRecv, FramedSend, FramedRecv)> {
+) -> Result<(FramedSend, FramedRecv, FramedSend, Option<FramedRecv>)> {
     let (send, recv) = conn.open_bi().await?;
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -282,6 +282,9 @@ async fn handshake(
             device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
             os: std::env::consts::OS.into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
+            // Prototype: video as datagrams with error correction (nuvira_transport::fec).
+            video_datagrams: std::env::var_os("NUVIRA_VIDEO_FEC").is_some()
+                && conn.max_datagram_size().is_some(),
             ..Default::default()
         })))
         .await?;
@@ -311,7 +314,14 @@ async fn handshake(
     let Some(ControlMessage { msg: Some(Msg::VideoFormat(format)) }) = ctrl_rx.recv().await? else {
         bail!("missing video format");
     };
-    info!(agent = agent.device_name, w = format.width, h = format.height, "connected");
+    info!(
+        agent = agent.device_name,
+        w = format.width,
+        h = format.height,
+        video_datagrams = agent.video_datagrams,
+        "connected"
+    );
+    let video_datagrams = agent.video_datagrams;
     let _ = proxy.send_event(NetEvent::Connected {
         agent: agent.device_name,
         direct,
@@ -322,7 +332,11 @@ async fn handshake(
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
     tracing::debug!("input channel open");
-    let video_rx = FramedRecv::new(conn.accept_uni().await?);
+    // With datagrams there is no video stream.
+    let video_rx = match video_datagrams {
+        true => None,
+        false => Some(FramedRecv::new(conn.accept_uni().await?)),
+    };
     tracing::debug!("video channel accepted");
     Ok((ctrl_tx, ctrl_rx, input_tx, video_rx))
 }
@@ -346,7 +360,7 @@ async fn session(
         r = open_connection(target) => r?,
         () = viewer_gone(&mut input_rx) => return Ok(()),
     };
-    let (mut ctrl_tx, mut ctrl_rx, mut input_tx, mut video_rx) = tokio::select! {
+    let (mut ctrl_tx, mut ctrl_rx, mut input_tx, video_rx) = tokio::select! {
         r = handshake(&conn, direct, password, &proxy) => match r {
             Ok(channels) => channels,
             Err(e) => {
@@ -363,6 +377,7 @@ async fn session(
 
     // Decoding happens on a separate thread so as not to block the network.
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<()>();
+    let key_tx_for_datagrams = key_tx.clone();
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<(VideoFrame, u64)>(4);
     let decoder_proxy = proxy.clone();
     let decoder = std::thread::Builder::new()
@@ -370,6 +385,9 @@ async fn session(
         .spawn(move || decode_loop(frame_rx, decoder_proxy, slot, key_tx))?;
 
     let video = async {
+        let Some(mut video_rx) = video_rx else {
+            return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams).await;
+        };
         while let Some(frame) = video_rx.recv::<VideoFrame>().await? {
             if frame_tx.send((frame, nuvira_proto::now_us())).is_err() {
                 break;
@@ -722,6 +740,63 @@ async fn send_file(
     tx.finish()?;
     let _ = proxy.send_event(NetEvent::FileProgress { name, sent, total });
     Ok(())
+}
+
+/// Video as QUIC datagrams with error correction (`nuvira_transport::fec`, prototype):
+/// frames go to decoding as they are rebuilt. After a lost frame the next ones cannot
+/// be decoded: they are dropped until a keyframe, asked for at most every 500 ms.
+async fn receive_datagram_video(
+    conn: &nuvira_transport::Connection,
+    frames: &std::sync::mpsc::SyncSender<(VideoFrame, u64)>,
+    request_keyframe: &mpsc::UnboundedSender<()>,
+) -> Result<()> {
+    use prost::Message;
+    let mut rx = nuvira_transport::fec::Receiver::default();
+    let mut last = 0u64;
+    let mut waiting_key = false;
+    let mut asked: Option<Instant> = None;
+    info!("receiving the video as datagrams");
+    loop {
+        let packet = match conn.read_datagram().await {
+            Ok(p) => {
+                tracing::trace!(bytes = p.len(), "video datagram");
+                p
+            }
+            Err(quinn::ConnectionError::ApplicationClosed(_) | quinn::ConnectionError::LocallyClosed) => {
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let (seq, bytes) = match rx.push(&packet) {
+            Ok(Some(done)) => done,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::debug!("video datagram dropped: {e:#}");
+                continue;
+            }
+        };
+        let frame = VideoFrame::decode(bytes.as_slice()).context("video frame")?;
+        if seq != last + 1 {
+            tracing::debug!(lost = seq - last - 1, "video frames lost");
+            waiting_key = true;
+        }
+        last = seq;
+        if waiting_key {
+            if frame.keyframe {
+                waiting_key = false;
+                asked = None;
+            } else {
+                if asked.is_none_or(|t| t.elapsed() > Duration::from_millis(500)) {
+                    asked = Some(Instant::now());
+                    let _ = request_keyframe.send(());
+                }
+                continue;
+            }
+        }
+        if frames.send((frame, nuvira_proto::now_us())).is_err() {
+            return Ok(());
+        }
+    }
 }
 
 fn decode_loop(

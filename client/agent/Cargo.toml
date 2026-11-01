@@ -24,6 +24,7 @@ nuvira-codec.workspace = true
 nuvira-input.workspace = true
 nuvira-proto.workspace = true
 nuvira-transport.workspace = true
+prost.workspace = true
 quinn.workspace = true
 ring = "0.17"
 serde = { version = "1", features = ["derive"] }

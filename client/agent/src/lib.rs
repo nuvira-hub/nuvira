@@ -700,9 +700,12 @@ async fn session(
         bail!("viewer protocol version not supported: {}", hello.protocol_version);
     }
     let viewer_protocol = hello.protocol_version;
+    // Video as datagrams with error correction, when the viewer asks for it.
+    let video_datagrams = hello.video_datagrams && conn.max_datagram_size().is_some();
     let hello = Hello {
         password_required: gate.is_some(),
         file_manager: !config.view_only && config.synthetic.is_none() && !policy.no_files,
+        video_datagrams,
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -731,9 +734,17 @@ async fn session(
 
     let keyframe = Arc::new(AtomicBool::new(true));
     let max_bps = config.bitrate_kbps * 1000;
+    // With error correction the parity shards travel too: the adaptive bitrate is what
+    // goes on the network (parity included) and the encoder gets its share of it,
+    // otherwise parity pushes a saturated link past its rate.
+    let fec_ratio: f64 = match video_datagrams {
+        true => std::env::var("NUVIRA_FEC_RATIO").ok().and_then(|r| r.parse().ok()).unwrap_or(0.2),
+        false => 0.0,
+    };
+    let encoder_bps = move |bps: u32| (bps as f64 / (1.0 + fec_ratio)) as u32;
     // Start from half the maximum: the unknown network might not take more.
     let mut abr = (!config.fixed_bitrate).then(|| abr::Abr::new(max_bps / 2, MIN_BITRATE, max_bps));
-    let bitrate = Arc::new(AtomicU32::new(abr.as_ref().map_or(max_bps, |a| a.bitrate())));
+    let bitrate = Arc::new(AtomicU32::new(encoder_bps(abr.as_ref().map_or(max_bps, |a| a.bitrate()))));
     let fps = Arc::new(AtomicU32::new(config.fps));
     // Area the viewer draws the image in (0 = full size until it says otherwise).
     let view = Arc::new(AtomicU64::new(0));
@@ -788,16 +799,37 @@ async fn session(
     // Images arrive on their own streams, received with the files.
     let clipboard_in = clipboard.clone();
 
-    let mut video_tx = FramedSend::new(conn.open_uni().await?);
-    tracing::debug!("video channel open");
+    // With datagrams there is no video stream (QUIC shows a stream to the other side
+    // only once something is written on it: the viewer would wait for it forever).
+    let mut video_tx = match video_datagrams {
+        true => None,
+        false => Some(FramedSend::new(conn.open_uni().await?)),
+    };
+    tracing::debug!(video_datagrams, "video channel open");
     let video = {
         let unanswered_since_ms = unanswered_since_ms.clone();
         let sent_bytes = sent_bytes.clone();
+        let conn = conn.clone();
         async move {
             while let Some(frame) = frame_rx.recv().await {
                 tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "sending frame");
-                video_tx.send(&frame).await?;
-                sent_bytes.fetch_add(frame.data.len() as u64, Ordering::Relaxed);
+                let sent = match &mut video_tx {
+                    Some(tx) => {
+                        tx.send(&frame).await?;
+                        frame.data.len()
+                    }
+                    None => {
+                        let max = conn.max_datagram_size().context("datagrams no longer available")?;
+                        let bytes = prost::Message::encode_to_vec(&frame);
+                        let mut sent = 0;
+                        for packet in nuvira_transport::fec::encode(frame.seq, &bytes, max, fec_ratio)? {
+                            sent += packet.len();
+                            conn.send_datagram_wait(packet.into()).await?;
+                        }
+                        sent
+                    }
+                };
+                sent_bytes.fetch_add(sent as u64, Ordering::Relaxed);
                 let now_ms = session_start.elapsed().as_millis().max(1) as u64;
                 let _ = unanswered_since_ms.compare_exchange(0, now_ms, Ordering::Relaxed, Ordering::Relaxed);
             }
@@ -859,7 +891,7 @@ async fn session(
                         && now_ms.saturating_sub(since) > abr::FEEDBACK_TIMEOUT.as_millis() as u64
                         && let Some(bps) = abr.on_silence(Instant::now())
                     {
-                        bitrate.store(bps, Ordering::Relaxed);
+                        bitrate.store(encoder_bps(bps), Ordering::Relaxed);
                         info!("bitrate {} kbit/s (no feedback from the viewer)", bps / 1000);
                     }
                     continue;
@@ -908,7 +940,7 @@ async fn session(
                         && fb.frames > 0
                         && let Some(bps) = abr.on_feedback(Instant::now(), p50 as f64, min as f64, sent_bps)
                     {
-                        bitrate.store(bps, Ordering::Relaxed);
+                        bitrate.store(encoder_bps(bps), Ordering::Relaxed);
                         info!(
                             "bitrate {} kbit/s (network {p50} ms, minimum {min} ms; total latency {} ms; sending {} kbit/s)",
                             bps / 1000,
@@ -965,7 +997,7 @@ async fn session(
                         None => Some(limit_bps),
                     };
                     if let Some(bps) = bps {
-                        bitrate.store(bps, Ordering::Relaxed);
+                        bitrate.store(encoder_bps(bps), Ordering::Relaxed);
                     }
                     info!("quality {:?}: up to {} kbit/s and {limit_fps} fps", q.quality(), limit_bps / 1000);
                 }
@@ -1224,6 +1256,7 @@ fn local_hello() -> Hello {
         app_version: env!("CARGO_PKG_VERSION").into(),
         password_required: false,
         file_manager: false,
+        video_datagrams: false,
     }
 }
 

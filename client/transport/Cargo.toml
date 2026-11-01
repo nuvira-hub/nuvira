@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+reed-solomon-erasure = "6"
 nuvira-proto.workspace = true
 prost.workspace = true
 quinn.workspace = true

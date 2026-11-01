@@ -179,6 +179,28 @@ The long delays came from the controller, not from the link: it raised the bitra
 
 What is left on lossy links comes mostly from losses: the video goes on one reliable QUIC stream, so a lost packet holds the frames after it until it is retransmitted (at least one round trip).
 
+### Prototype: video as datagrams with error correction (2026-11-01)
+
+Opt-in, off by default: `NUVIRA_VIDEO_FEC=1` on the viewer (it asks in `Hello.video_datagrams`, the agent agrees if the connection has QUIC datagrams), `NUVIRA_FEC_RATIO` on the agent (parity shards per data shard, default 0.2). Each frame is cut into datagram-sized shards and every block of up to 32 gets Reed-Solomon parity (`client/transport/src/fec.rs`): any `k` of the `k + m` shards rebuild it with no retransmission. A frame that cannot be rebuilt is dropped and so are the next ones, up to a keyframe the viewer asks for. The adaptive bitrate counts the parity: it is what goes on the network, and the encoder gets `bitrate / (1 + ratio)`.
+
+Same setup as above (relay, 45 s):
+
+| Simulated network | Reliable stream | Datagrams + 20% parity | Frames not rebuilt |
+|---|---|---|---|
+| 40 ms, 2% loss, no rate limit | 33–47 fps, p95 168–239 ms | 53 fps, p50 68 ms, p95 79 ms | 1 |
+| 25 ms, 1% loss, 5 Mbit/s | 53 fps, p50 67–71 ms, p95 140–161 ms | 46–53 fps, p50 60–64 ms, p95 105–145 ms | 5–35 |
+| 40 ms, 2% loss, 2 Mbit/s | 51 fps, p50 91–98 ms, p95 235–306 ms | 47–48 fps, p50 74–85 ms, p95 130–155 ms | 23–32 |
+| 40 ms, 2 Mbit/s, no random loss | 52–53 fps, p95 148–193 ms | 45.5 fps, p95 234 ms | 35 |
+| Clean | 54 fps, 26 / 38 ms | 53 fps, 27 / 40 ms | 0 |
+
+With random losses alone it does what it is for. On a saturated link it does not yet: the losses there come from the full queue, not at random. The session starts at 4 Mbit/s on a 2 Mbit/s link and the controller needs about 2 s to come down; BBR by design does not slow down on losses; so the queue overflows, whole runs of shards are lost, and each lost frame freezes the image until a keyframe (more parity, 40%, made it worse there: 39 frames lost; with random losses only it lost none). The latency percentiles do not show freezes: the number of frames not rebuilt does.
+
+Before it can be the default:
+- the viewer reports shards lost, and the adaptive bitrate treats losses that parity cannot cover as congestion, not only the latency;
+- a start that does not overshoot an unknown link (or the reliable stream for the first seconds);
+- parity that follows the measured loss;
+- a freeze measure in the viewer's statistics (time without a new frame), so that losses are not hidden by the latency.
+
 ## What changes over the Internet
 
 The OPNsense configuration (forwarding the server's UDP port) only makes the server reachable; the software still has to be checked under conditions a LAN does not present:
