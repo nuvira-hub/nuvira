@@ -17,7 +17,7 @@ mod config;
 #[cfg(windows)]
 mod install;
 #[cfg(windows)]
-pub use install::run_elevated;
+pub use install::{ServiceState, installed_version, run_elevated, service_state};
 #[cfg(windows)]
 mod launch;
 
@@ -81,6 +81,14 @@ enum Cmd {
     },
     /// Shows the service state and the device ID.
     Status,
+    /// Starts the stopped service, first installing this program over the installed
+    /// one if that is older (used by the app, as administrator).
+    #[command(hide = true)]
+    Repair {
+        /// Writes the outcome to this file as JSON.
+        #[arg(long, value_name = "FILE")]
+        report: Option<std::path::PathBuf>,
+    },
     /// Used by the Windows service manager.
     #[command(hide = true)]
     Run,
@@ -114,23 +122,45 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
                 transport,
                 server_ws,
             });
-            if let Some(report) = report {
-                let json = match &result {
-                    // The password only when generated: shown once, then only its hash exists.
-                    Ok(done) => {
-                        serde_json::json!({ "ok": true, "id": done.id, "password": done.generated_password })
-                    }
-                    Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
-                };
-                std::fs::write(report, json.to_string())?;
-            }
+            // The password only when generated: shown once, then only its hash exists.
+            write_report(
+                report,
+                &result,
+                |done| serde_json::json!({ "id": done.id, "password": done.generated_password }),
+            )?;
             result.map(|_| ())
+        }
+        Cmd::Repair { report } => {
+            let result = install::repair();
+            write_report(report, &result, |_| serde_json::json!({}))?;
+            result
         }
         Cmd::Uninstall { remove_program } => install::uninstall(remove_program),
         Cmd::Status => install::status(),
         Cmd::Run => run_service(),
         Cmd::Update => install::update(),
     }
+}
+
+/// Outcome for the app, which cannot see the output of a process started as
+/// administrator: `{"ok": true, ...fields}` or `{"ok": false, "error": ...}`.
+#[cfg(windows)]
+fn write_report<T>(
+    report: Option<std::path::PathBuf>,
+    result: &anyhow::Result<T>,
+    fields: impl FnOnce(&T) -> serde_json::Value,
+) -> anyhow::Result<()> {
+    let Some(report) = report else { return Ok(()) };
+    let json = match result {
+        Ok(done) => {
+            let mut json = fields(done);
+            json["ok"] = true.into();
+            json
+        }
+        Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+    };
+    std::fs::write(report, json.to_string())?;
+    Ok(())
 }
 
 #[cfg(windows)]

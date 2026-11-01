@@ -16,6 +16,7 @@
   "status.server_own": "Servidor: {server}",
   "status.service_waiting": "Esperando el servicio NuviraHub…",
   "status.service_lost": "Se perdió la conexión con el servicio NuviraHub, reintentando…",
+  "status.service_stopped": "El servicio NuviraHub está detenido: este PC no es accesible",
 
   "session.strip": "{who} está controlando este equipo · {path}",
   "session.direct": "conexión directa",
@@ -270,6 +271,13 @@
   "update.none": "No hay una versión más reciente en el servidor.",
   "update.installed": "Se ha instalado NuviraHub {version}: reinicia la aplicación para usarlo.",
   "update.restart": "Reiniciar",
+  "service.stopped": "El servicio NuviraHub está detenido: hasta que vuelva a arrancar, este PC no es accesible en remoto.",
+  "service.stopped_old": "El servicio NuviraHub {version} está detenido: hasta que vuelva a arrancar, este PC no es accesible en remoto. Al arrancar se actualizará a esta versión.",
+  "service.start": "Reiniciar el servicio",
+  "service.update_start": "Actualizar y reiniciar",
+  "service.starting": "Iniciando el servicio: confirma la solicitud de Windows…",
+  "service.failed": "El servicio no ha arrancado: {e}",
+  "service.cancelled": "El servicio sigue detenido: se rechazó la solicitud de administrador.",
 
   "fm.title": "NuviraHub — Archivos",
   "fm.this_pc": "Este equipo",

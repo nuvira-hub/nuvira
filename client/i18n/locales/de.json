@@ -16,6 +16,7 @@
   "status.server_own": "Server: {server}",
   "status.service_waiting": "Warten auf den NuviraHub-Dienst…",
   "status.service_lost": "Verbindung zum NuviraHub-Dienst verloren, neuer Versuch…",
+  "status.service_stopped": "Der NuviraHub-Dienst ist beendet: Dieser PC ist nicht erreichbar",
 
   "session.strip": "{who} steuert diesen Computer · {path}",
   "session.direct": "direkte Verbindung",
@@ -270,6 +271,13 @@
   "update.none": "Keine neuere Version auf dem Server.",
   "update.installed": "NuviraHub {version} wurde installiert: Starten Sie die App neu, um die neue Version zu verwenden.",
   "update.restart": "Neu starten",
+  "service.stopped": "Der NuviraHub-Dienst ist beendet: Bis er wieder startet, ist dieser PC aus der Ferne nicht erreichbar.",
+  "service.stopped_old": "Der NuviraHub-Dienst {version} ist beendet: Bis er wieder startet, ist dieser PC aus der Ferne nicht erreichbar. Beim Start wird er auf diese Version aktualisiert.",
+  "service.start": "Dienst starten",
+  "service.update_start": "Aktualisieren und starten",
+  "service.starting": "Der Dienst wird gestartet: Bestätigen Sie die Windows-Abfrage…",
+  "service.failed": "Der Dienst ist nicht gestartet: {e}",
+  "service.cancelled": "Der Dienst ist weiterhin beendet: Die Administratorabfrage wurde abgelehnt.",
 
   "fm.title": "NuviraHub — Dateien",
   "fm.this_pc": "Dieser Computer",

@@ -16,6 +16,7 @@
   "status.server_own": "Server: {server}",
   "status.service_waiting": "Waiting for the NuviraHub service…",
   "status.service_lost": "Connection with the NuviraHub service lost, retrying…",
+  "status.service_stopped": "The NuviraHub service is stopped: this PC cannot be reached",
 
   "session.strip": "{who} is controlling this computer · {path}",
   "session.direct": "direct connection",
@@ -270,6 +271,13 @@
   "update.none": "No newer version on the server.",
   "update.installed": "NuviraHub {version} has been installed: restart the app to use it.",
   "update.restart": "Restart",
+  "service.stopped": "The NuviraHub service is stopped: until it starts again this PC cannot be reached remotely.",
+  "service.stopped_old": "The NuviraHub {version} service is stopped: until it starts again this PC cannot be reached remotely. Starting it will also update it to this version.",
+  "service.start": "Start the service",
+  "service.update_start": "Update and start",
+  "service.starting": "Starting the service: confirm the Windows prompt…",
+  "service.failed": "The service did not start: {e}",
+  "service.cancelled": "The service is still stopped: the administrator prompt was declined.",
 
   "fm.title": "NuviraHub — Files",
   "fm.this_pc": "This computer",

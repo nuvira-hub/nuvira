@@ -102,9 +102,13 @@ for (const nav of document.querySelectorAll(".nav")) {
   nav.addEventListener("click", () => showSection(nav.dataset.section));
 }
 
+// Why the last attempt to start the stopped service failed: kept while the service
+// stays stopped, or the next state would hide it.
+let repairError = null;
+
 function statusText(state) {
   // With the service, the reason is shown until its agent answers.
-  if (state.service && state.status === "connecting" && state.error) return msg(state.error);
+  if (state.service && state.status !== "online" && state.error) return msg(state.error);
   switch (state.status) {
     case "online":
       return t(state.websocket ? "status.online_ws" : "status.online");
@@ -130,9 +134,14 @@ function render(state) {
   $("service-note").classList.toggle("hidden", !state.service);
   $("server-service").classList.toggle("hidden", !state.service);
   $("install-off").classList.toggle("hidden", state.service);
-  $("update-bar").classList.toggle("hidden", !state.update && !state.installed);
+  $("update-bar").classList.toggle("hidden", !state.update && !state.installed && !state.service_stopped);
   if (!$("update-button").disabled) {
-    if (state.installed) {
+    if (!state.service_stopped) repairError = null;
+    if (state.service_stopped) {
+      $("update-text").textContent = repairError
+        ?? (state.service_old ? t("service.stopped_old", { version: state.service_old }) : t("service.stopped"));
+      $("update-button").textContent = t(state.service_old ? "service.update_start" : "service.start");
+    } else if (state.installed) {
       $("update-text").textContent = t("update.installed", { version: state.installed });
       $("update-button").textContent = t("update.restart");
     } else if (state.update) {
@@ -266,6 +275,19 @@ $("server-form").addEventListener("submit", async (e) => {
 
 $("update-button").addEventListener("click", async () => {
   $("update-button").disabled = true;
+  if (current.service_stopped) {
+    $("update-text").textContent = t("service.starting");
+    try {
+      await invoke("repair_service");
+      repairError = null;
+    } catch (err) {
+      repairError = msg(String(err));
+      $("update-text").textContent = repairError;
+    }
+    $("update-button").disabled = false;
+    // The link with the service notices it running within 2 s and hides the bar.
+    return;
+  }
   try {
     if (current.installed) {
       await invoke("restart_app");

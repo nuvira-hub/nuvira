@@ -16,6 +16,7 @@
   "status.server_own": "Server: {server}",
   "status.service_waiting": "In attesa del servizio NuviraHub…",
   "status.service_lost": "Collegamento con il servizio NuviraHub perso, riprovo…",
+  "status.service_stopped": "Il servizio NuviraHub è fermo: questo PC non è raggiungibile",
 
   "session.strip": "{who} sta controllando questo computer · {path}",
   "session.direct": "connessione diretta",
@@ -270,6 +271,13 @@
   "update.none": "Sul server non c'è una versione più recente.",
   "update.installed": "NuviraHub {version} è stato installato: riavvia l'app per usarlo.",
   "update.restart": "Riavvia",
+  "service.stopped": "Il servizio NuviraHub è fermo: finché non riparte questo PC non è raggiungibile da remoto.",
+  "service.stopped_old": "Il servizio NuviraHub {version} è fermo: finché non riparte questo PC non è raggiungibile da remoto. Ripartendo verrà aggiornato a questa versione.",
+  "service.start": "Riavvia il servizio",
+  "service.update_start": "Aggiorna e riavvia",
+  "service.starting": "Avvio del servizio: conferma la richiesta di Windows…",
+  "service.failed": "Il servizio non è ripartito: {e}",
+  "service.cancelled": "Il servizio è ancora fermo: la richiesta di amministratore è stata rifiutata.",
 
   "fm.title": "NuviraHub — File",
   "fm.this_pc": "Questo computer",

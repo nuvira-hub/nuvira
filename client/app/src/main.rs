@@ -61,6 +61,11 @@ struct UiState {
     update: Option<String>,
     /// Newer version installed by the service while this app was open: restart it.
     installed: Option<String>,
+    /// The service is installed but stopped: this PC is not reachable.
+    service_stopped: bool,
+    /// Version of the stopped service's program, when older than this app (starting
+    /// it again also updates it).
+    service_old: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -370,7 +375,11 @@ fn start_service_link(app: &AppHandle) {
                     info!("connected to the service's agent");
                     last_error = None;
                     *state.commands.lock().expect("commands") = Some(commands);
-                    state.update(&app, |ui| ui.error = None);
+                    state.update(&app, |ui| {
+                        ui.error = None;
+                        ui.service_stopped = false;
+                        ui.service_old = None;
+                    });
                     while let Some(msg) = messages.recv().await {
                         match msg {
                             // With the service the server in the settings is the service's
@@ -402,9 +411,24 @@ fn start_service_link(app: &AppHandle) {
                         warn!("service agent not reachable: {reason}");
                         last_error = Some(reason);
                     }
+                    // Stopped (not starting): it will not answer by itself, the
+                    // interface offers to start it again.
+                    let stopped = nuvira_service::service_state()
+                        .is_ok_and(|s| s == nuvira_service::ServiceState::Stopped);
+                    let old = if stopped {
+                        nuvira_service::installed_version()
+                            .filter(|v| nuvira_update::newer(nuvira_update::CURRENT, v))
+                    } else {
+                        None
+                    };
                     state.update(&app, |ui| {
-                        ui.status = "connecting".into();
-                        ui.error = Some("@status.service_waiting".into());
+                        ui.status = if stopped { "offline" } else { "connecting" }.into();
+                        ui.error = Some(
+                            if stopped { "@status.service_stopped" } else { "@status.service_waiting" }
+                                .into(),
+                        );
+                        ui.service_stopped = stopped;
+                        ui.service_old = old;
                     });
                 }
             }
@@ -501,7 +525,7 @@ async fn set_server(app: AppHandle, server: String) -> Result<(), String> {
         let wanted = nuvira_transport::signal::server_or_public(&server);
         if current.as_deref().is_none_or(|s| !s.eq_ignore_ascii_case(wanted)) {
             let params = format!("service install --server \"{server}\"");
-            tauri::async_runtime::spawn_blocking(move || run_service_install(params))
+            tauri::async_runtime::spawn_blocking(move || run_service_command(params))
                 .await
                 .map_err(|e| e.to_string())??;
             info!("service moved to {wanted}");
@@ -775,6 +799,7 @@ fn main() {
             send_chat,
             connect_entry,
             install_service,
+            repair_service,
             apply_update,
             restart_app,
             address_book::address_book_login,
@@ -888,7 +913,7 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
                 std::fs::write(&password_file, &password).map_err(|e| e.to_string())?;
                 params += &format!(" --password-file \"{}\"", password_file.display());
             }
-            let report = run_service_install(params);
+            let report = run_service_command(params);
             let _ = std::fs::remove_file(&password_file);
             let report = report?;
             // Present only if the installation generated it.
@@ -907,10 +932,36 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
     }
 }
 
-/// Runs `nuvira service install` with `params` as administrator (UAC prompt) and
-/// returns its report; the outcome comes back in a temporary file.
+/// Starts the stopped service again (UAC prompt), first installing this program if the
+/// installed one is older: see `nuvira service repair`. The link with the service picks
+/// it up by itself.
+#[tauri::command]
+async fn repair_service() -> Result<(), String> {
+    #[cfg(not(windows))]
+    {
+        Err(t("install.windows_only"))
+    }
+    #[cfg(windows)]
+    {
+        info!("starting the stopped service again");
+        tauri::async_runtime::spawn_blocking(|| run_service_command("service repair".into()))
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|_| ())
+            .map_err(|e| {
+                if e == t("install.cancelled") {
+                    t("service.cancelled")
+                } else {
+                    tf("service.failed", &[("e", &e)])
+                }
+            })
+    }
+}
+
+/// Runs `nuvira service ...` with `params` as administrator (UAC prompt) and returns
+/// its report; the outcome comes back in a temporary file.
 #[cfg(windows)]
-fn run_service_install(mut params: String) -> Result<serde_json::Value, String> {
+fn run_service_command(mut params: String) -> Result<serde_json::Value, String> {
     let tag = nuvira_agent::random_password();
     let report = std::env::temp_dir().join(format!("nuvira-{tag}.json"));
     params += &format!(" --report \"{}\"", report.display());

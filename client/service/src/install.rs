@@ -528,7 +528,6 @@ pub fn update() -> Result<()> {
     result.map(|_| ())
 }
 
-
 pub fn uninstall(remove_program: bool) -> Result<()> {
     if elevate_if_needed()? {
         return Ok(());
@@ -602,6 +601,77 @@ pub fn status() -> Result<()> {
         Err(_) => println!("ID: not registered yet"),
     }
     println!("logs: {} and {}", config::service_log().display(), config::agent_log().display());
+    Ok(())
+}
+
+/// State of the service as the app sees it (no administrator rights needed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceState {
+    NotInstalled,
+    Stopped,
+    Running,
+    /// Starting or stopping.
+    Changing,
+}
+
+pub fn service_state() -> Result<ServiceState> {
+    let scm = manager(SC_MANAGER_CONNECT)?;
+    let Some(service) = open_service(&scm, SERVICE_QUERY_STATUS)? else {
+        return Ok(ServiceState::NotInstalled);
+    };
+    Ok(match state(&service)? {
+        SERVICE_RUNNING => ServiceState::Running,
+        SERVICE_STOPPED => ServiceState::Stopped,
+        _ => ServiceState::Changing,
+    })
+}
+
+/// Version of the installed program (from its version resource), `None` if unreadable.
+pub fn installed_version() -> Option<String> {
+    use windows::Win32::Storage::FileSystem::{
+        GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW,
+    };
+
+    let name = HSTRING::from(crate::installed_program().as_os_str());
+    let size = unsafe { GetFileVersionInfoSizeW(&name, None) };
+    if size == 0 {
+        return None;
+    }
+    let mut data = vec![0u8; size as usize];
+    unsafe { GetFileVersionInfoW(&name, None, size, data.as_mut_ptr().cast()) }.ok()?;
+    let mut fixed = std::ptr::null_mut();
+    let mut len = 0u32;
+    let found =
+        unsafe { VerQueryValueW(data.as_ptr().cast(), windows::core::w!("\\"), &mut fixed, &mut len) };
+    if !found.as_bool() || fixed.is_null() || (len as usize) < size_of::<VS_FIXEDFILEINFO>() {
+        return None;
+    }
+    // Inside `data`, which is still alive.
+    let fixed = unsafe { &*(fixed as *const VS_FIXEDFILEINFO) };
+    Some(format!(
+        "{}.{}.{}",
+        fixed.dwProductVersionMS >> 16,
+        fixed.dwProductVersionMS & 0xFFFF,
+        fixed.dwProductVersionLS >> 16
+    ))
+}
+
+/// The service is stopped and its program may be older than this one (an automatic
+/// update that died halfway before 0.12.3 left PCs like that): installs this program
+/// with the settings in place if it is newer, otherwise just starts the service.
+/// Started by the app as administrator.
+pub fn repair() -> Result<()> {
+    let installed = installed_version();
+    step(&format!("repair: installed program {}", installed.as_deref().unwrap_or("of unknown version")));
+    if installed.as_deref().is_none_or(|v| nuvira_update::newer(env!("CARGO_PKG_VERSION"), v)) {
+        return update();
+    }
+    let scm = manager(SC_MANAGER_ALL_ACCESS)?;
+    let service = open_service(&scm, SERVICE_ALL_ACCESS)?.context("the service is not installed")?;
+    if state(&service)? != SERVICE_RUNNING {
+        start_service(&service)?;
+    }
+    step("service started");
     Ok(())
 }
 
