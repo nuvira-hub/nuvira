@@ -10,7 +10,14 @@
 //!   only the cap would change nothing), but never below half the bitrate in one
 //!   step (third Internet test: a light screen sending 0.2 Mbit/s went from 8 to
 //!   0.5 Mbit/s at once and stayed there);
-//! - queue below 25 ms → bitrate × 1.15 (once a second, 3 s after a decrease).
+//! - queue below 25 ms → bitrate × 1.15 (once a second, 3 s after a decrease), but
+//!   only while at least half the bitrate is actually sent, and for 30 s after a
+//!   congestion at most to 90% of the rate that was being sent when it happened.
+//!   Measured on a simulated 2 Mbit/s link (2026-11-01): the bitrate rose from 4 to
+//!   5.3 Mbit/s while a nearly still screen sent 0.3 Mbit/s, and after each decrease it
+//!   climbed back past the link's rate; every round trip filled the queue and
+//!   restarted the encoder, and the 95th percentile of the latency was about 1 s
+//!   (93 ms with a fixed bitrate under the link's rate).
 //!
 //! Single peaks do not count: on mobile networks latency jumps by 150–600 ms every
 //! few seconds even with 0.3 Mbit/s sent on a 143 Mbit/s link (second Internet
@@ -45,6 +52,14 @@ const DECREASE_SENT: f64 = 0.85;
 /// ...but never below this share of the current bitrate in one step.
 const DECREASE_MAX: f64 = 0.5;
 const INCREASE: f64 = 1.15;
+/// Increases only while at least this share of the bitrate is actually sent: a
+/// bitrate that is not used says nothing about what the network can take.
+const INCREASE_SENT: f64 = 0.5;
+/// After a congestion the bitrate rises at most to this share of the rate that was
+/// being sent when it happened...
+const CEILING_SHARE: f64 = 0.9;
+/// ...for this long; then it probes again (the network may have improved).
+const CEILING_HOLD: Duration = Duration::from_secs(30);
 const DECREASE_INTERVAL: Duration = Duration::from_secs(1);
 const INCREASE_AFTER_DECREASE: Duration = Duration::from_secs(3);
 const INCREASE_INTERVAL: Duration = Duration::from_secs(1);
@@ -70,6 +85,8 @@ pub struct Abr {
     last_decrease: Option<Instant>,
     last_increase: Instant,
     settle_until: Option<Instant>,
+    /// Rate sent at the last congestion, and when.
+    ceiling: Option<(Instant, f64)>,
 }
 
 impl Abr {
@@ -84,6 +101,7 @@ impl Abr {
             last_decrease: None,
             last_increase: Instant::now(),
             settle_until: None,
+            ceiling: None,
         }
     }
 
@@ -125,16 +143,30 @@ impl Abr {
             let since = *self.high_since.get_or_insert(now);
             return if now.duration_since(since) >= HIGH_FOR {
                 let to = (self.bitrate * DECREASE).min(sent_bps * DECREASE_SENT);
-                self.decrease(now, to.max(self.bitrate * DECREASE_MAX))
+                let changed = self.decrease(now, to.max(self.bitrate * DECREASE_MAX));
+                if changed.is_some() {
+                    self.ceiling = Some((now, sent_bps));
+                }
+                changed
             } else {
                 None
             };
         }
         self.high_since = None;
         let calm = self.last_decrease.is_none_or(|t| now.duration_since(t) > INCREASE_AFTER_DECREASE);
-        if queue < QUEUE_LOW_MS && calm && now.duration_since(self.last_increase) > INCREASE_INTERVAL {
+        if queue < QUEUE_LOW_MS
+            && calm
+            && sent_bps >= self.bitrate * INCREASE_SENT
+            && now.duration_since(self.last_increase) > INCREASE_INTERVAL
+        {
             self.last_increase = now;
-            return self.set_at(now, self.bitrate * INCREASE);
+            let mut to = self.bitrate * INCREASE;
+            if let Some((at, rate)) = self.ceiling
+                && now.duration_since(at) < CEILING_HOLD
+            {
+                to = to.min(rate * CEILING_SHARE);
+            }
+            return if to > self.bitrate { self.set_at(now, to) } else { None };
         }
         None
     }
@@ -248,6 +280,31 @@ mod tests {
         let mut abr = Abr::new(2_000_000, 500_000, 8_000_000);
         // 1.2 Mbit/s actually sent into a lasting queue: 85% of it, below the 80% cap.
         assert_eq!(abr.feed(t0, 0..1300, 200.0, 20.0, 1_200_000.0), Some(1_020_000));
+    }
+
+    #[test]
+    fn no_increase_while_the_bitrate_is_not_used() {
+        let t0 = Instant::now();
+        let mut abr = Abr::new(4_000_000, 500_000, 8_000_000);
+        // A nearly still screen sends 0.3 Mbit/s on a calm network: the cap stays.
+        assert_eq!(abr.feed(t0, 0..5000, 20.0, 15.0, 300_000.0), None);
+        // Using it (more than half) lets it rise.
+        assert_eq!(abr.feed(t0, 5000..6300, 20.0, 15.0, 3_000_000.0), Some(4_600_000));
+    }
+
+    #[test]
+    fn after_a_congestion_stays_under_the_rate_that_filled_the_queue() {
+        let t0 = Instant::now();
+        let t = |ms| t0 + Duration::from_millis(ms);
+        let mut abr = Abr::new(2_400_000, 500_000, 8_000_000);
+        // A 2 Mbit/s link: 2 Mbit/s go out and the queue grows. Down to 85% of it.
+        assert_eq!(abr.feed(t0, 0..1300, 200.0, 40.0, 2_000_000.0), Some(1_700_000));
+        // Calm again, the whole bitrate used: up only to 90% of 2 Mbit/s, then no more.
+        assert_eq!(abr.feed(t0, 3000..6000, 45.0, 40.0, 1_700_000.0), Some(1_800_000));
+        assert_eq!(abr.feed(t0, 6000..30_000, 45.0, 40.0, 1_800_000.0), None);
+        // After 30 s it probes again.
+        let probed = abr.on_feedback(t(31_500), 45.0, 40.0, 1_800_000.0);
+        assert!(probed.is_some_and(|b| b.abs_diff(2_070_000) <= 1), "{probed:?}");
     }
 
     #[test]

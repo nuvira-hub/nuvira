@@ -156,6 +156,29 @@ What was done:
 - **QUIC send buffer limited to 256 KB**: beyond that, the agent skips frames instead of queueing them.
 - Simulator: delay, jitter without reordering, loss, limited bandwidth with a finite queue.
 
+### Measured again with 0.12.8 (2026-11-01)
+
+NUC (agent, Quick Sync, full-screen animation) → laptop (viewer), local `nuvira-server` with `NUVIRA_RELAY_IMPAIR`, relay forced. With the Windows timer fix the encoder gives about 50 fps instead of 32, and the numbers of 2026-10-26 above could not be reproduced any more, not even with the 0.12.1 agent (built from its tag and run in the same conditions): on `delay=40ms,loss=2%,rate=2mbit` both gave a 95th percentile of about 1 s.
+
+Isolating one cause at a time (30 s each, two runs):
+
+| Simulated network | fps | p50 | p95 | Encoder restarts |
+|---|---|---|---|---|
+| 40 ms, 2 Mbit/s, adaptive bitrate | 36–43 | 91–101 ms | 990–1030 ms | 4–5 |
+| 40 ms, 2% loss, no rate limit | 33–47 | 74–122 ms | 168–239 ms | 4 |
+| 40 ms, 2 Mbit/s, fixed 1.5 Mbit/s | 56–57 | 76 ms | 93 ms | 0 |
+
+The long delays came from the controller, not from the link: it raised the bitrate from 4 to 5.3 Mbit/s while a nearly still screen sent 0.3 Mbit/s (the animation then filled the 2 Mbit/s link: 1.7 s of queue), and after every decrease it climbed back past the link's rate (1.76 → 2.03 → 2.33 → 2.68 Mbit/s), restarting the encoder each time. Now it rises only while at least half of the bitrate is sent, and for 30 s after a congestion at most to 90% of the rate that was being sent then.
+
+| Simulated network (45 s) | Before | After |
+|---|---|---|
+| 40 ms, 2 Mbit/s | 36–43 fps, p50 91–101 ms, p95 990–1030 ms | 52–53 fps, p50 81–84 ms, p95 148–193 ms |
+| 40 ms, 2% loss, 2 Mbit/s | 44–49 fps, p50 124–146 ms, p95 790–1000 ms | 51 fps, p50 91–98 ms, p95 235–306 ms |
+| 25 ms, 1% loss, 5 Mbit/s | 49 fps, p50 67 ms, p95 224–319 ms | 53 fps, p50 67–71 ms, p95 140–161 ms |
+| Clean | 54 fps, 28 / 38 ms | 54 fps, 26 / 38 ms |
+
+What is left on lossy links comes mostly from losses: the video goes on one reliable QUIC stream, so a lost packet holds the frames after it until it is retransmitted (at least one round trip).
+
 ## What changes over the Internet
 
 The OPNsense configuration (forwarding the server's UDP port) only makes the server reachable; the software still has to be checked under conditions a LAN does not present:
