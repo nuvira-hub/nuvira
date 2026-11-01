@@ -208,7 +208,21 @@ Then (same evening):
 | Clean, datagrams | 52 | 25 ms | 36 ms | 5, 3.6 s | 0 |
 | Clean, reliable stream | 53 | 26 ms | 40 ms | 3, 2.8 s | – |
 
-**Most freezes are not losses: they are encoder restarts, in both modes.** Restarting Quick Sync takes 0.8–1.3 s, not the ~0.3 s assumed, and the image stops meanwhile: in a clean session, the switch to the viewer's window size (1.3 s → a 1005 ms freeze) and the first two bitrate rises (0.77 s → 792 ms, 0.91 s → 934 ms). Every bitrate change on an unstable link is a freeze of about a second. Next: open the new encoder session in the background while the old one keeps encoding, and switch at its first keyframe.
+**Most freezes are not losses: they are encoder restarts, in both modes.** Restarting Quick Sync takes 0.8–1.3 s, not the ~0.3 s assumed, and the image stops meanwhile: in a clean session, the switch to the viewer's window size (1.3 s → a 1005 ms freeze) and the first two bitrate rises (0.77 s → 792 ms, 0.91 s → 934 ms). Every bitrate change on an unstable link is a freeze of about a second.
+
+Opening a session (debug timings): `ActivateObject` 440–880 ms, handing over the GPU's DXGI manager 150–250 ms, the types ~50 ms. Now a bitrate or size change keeps the encoder and its GPU link: flush, end of streaming, types set again (cleared first for another size, which Quick Sync otherwise refuses with E_FAIL), converter remade if the size changed, streaming again with a forced keyframe (`Session::reconfigure`, falling back to a new session on error). It takes 1–4 ms for a bitrate, ~19 ms for a size, and the bitrate is applied (1.6 Mbit/s asked, 1.5–1.6 sent; changing it while streaming is still ignored).
+
+| Relay, 45 s | Before | With reconfiguration |
+|---|---|---|
+| Clean, reliable stream | 53 fps, 3 freezes, 2.8 s | 57 fps, 0 freezes |
+| Clean, datagrams | 52 fps, 5 freezes, 3.6 s | 57 fps, 0 freezes |
+| 25 ms, 1% loss, 5 Mbit/s, stream | 53 fps, p95 140–161 ms | 53 fps, p95 164 ms, 0 freezes |
+| 25 ms, 1% loss, 5 Mbit/s, datagrams | 46–53 fps, p95 105–145 ms | 57 fps, p95 118 ms, 0 freezes |
+| 40 ms, 2% loss, datagrams | 52 fps, p95 140 ms, 5 freezes | 57 fps, p95 82 ms, 0 freezes |
+| 40 ms, 2% loss, 2 Mbit/s, stream | – | 54 fps, p95 330 ms, 6 freezes, 2.3 s |
+| 40 ms, 2% loss, 2 Mbit/s, datagrams | 50 fps, 7 freezes, 4.7 s | 55 fps, p95 246 ms, 3 freezes, 1.05 s |
+
+The freezes left are on the 2 Mbit/s link and come from the start: 4 Mbit/s on a 2 Mbit/s link makes a queue of over a second before the bitrate comes down.
 
 Still open for the datagrams: a start that does not overshoot an unknown link.
 

@@ -67,7 +67,7 @@ const INCREASE_AFTER_DECREASE: Duration = Duration::from_secs(3);
 const INCREASE_INTERVAL: Duration = Duration::from_secs(1);
 const BASE_WINDOW: Duration = Duration::from_secs(10);
 /// After a bitrate change measurements are ignored for a while: the encoder (which
-/// must be restarted for Quick Sync) and the network queue need to settle, and the
+/// Quick Sync reconfigures, with a keyframe) and the network queue need to settle, and the
 /// latency peak of the change must not be mistaken for congestion.
 const SETTLE: Duration = Duration::from_millis(1500);
 /// The viewer reports at least once a second (with its clock measurement): beyond

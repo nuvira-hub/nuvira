@@ -162,6 +162,58 @@ fn has_sps(data: &[u8]) -> bool {
     data.windows(4).any(|w| w[0] == 0 && w[1] == 0 && w[2] == 1 && w[3] & 0x1f == 7)
 }
 
+/// Encoder parameters and the H.264 output / NV12 input types (the output first, as
+/// encoders want).
+fn set_types(
+    transform: &IMFTransform,
+    codec_api: Option<&ICodecAPI>,
+    (width, height): (u32, u32),
+    settings: EncoderSettings,
+) -> Result<()> {
+    let fps = settings.max_fps.max(1) as u64;
+    let frame_size = ((width as u64) << 32) | height as u64;
+    if let Some(api) = codec_api {
+        set_codec_value(api, &CODECAPI_AVLowLatencyMode, VARIANT::from(true), "low latency");
+        set_codec_value(
+            api,
+            &CODECAPI_AVEncCommonRateControlMode,
+            VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32),
+            "constant bitrate",
+        );
+        set_codec_value(
+            api,
+            &CODECAPI_AVEncCommonMeanBitRate,
+            VARIANT::from(settings.bitrate_bps),
+            "bitrate",
+        );
+        set_codec_value(api, &CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0u32), "no B-frames");
+        // Periodic keyframe every 10 s as a safety net; the others on request.
+        set_codec_value(api, &CODECAPI_AVEncMPVGOPSize, VARIANT::from((fps * 10) as u32), "GOP");
+    }
+    unsafe {
+        let out = MFCreateMediaType()?;
+        out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+        out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
+        out.SetUINT32(&MF_MT_AVG_BITRATE, settings.bitrate_bps)?;
+        out.SetUINT64(&MF_MT_FRAME_SIZE, frame_size)?;
+        out.SetUINT64(&MF_MT_FRAME_RATE, (fps << 32) | 1)?;
+        out.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1 << 32) | 1)?;
+        out.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+        out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32)?;
+        transform.SetOutputType(0, &out, 0).context("H.264 output type")?;
+
+        let inp = MFCreateMediaType()?;
+        inp.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+        inp.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
+        inp.SetUINT64(&MF_MT_FRAME_SIZE, frame_size)?;
+        inp.SetUINT64(&MF_MT_FRAME_RATE, (fps << 32) | 1)?;
+        inp.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1 << 32) | 1)?;
+        inp.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+        transform.SetInputType(0, &inp, 0).context("NV12 input type")?;
+    }
+    Ok(())
+}
+
 struct Session {
     activate: IMFActivate,
     transform: IMFTransform,
@@ -178,6 +230,8 @@ struct Session {
     sequence_header: Vec<u8>,
     /// Input from GPU textures: NV12 conversion on the card + device manager for the MFT.
     gpu: Option<(Nv12Converter, IMFDXGIDeviceManager)>,
+    /// The next frame must be a keyframe (stream started again by `reconfigure`).
+    force_key: bool,
     _timer: FineTimer,
 }
 
@@ -190,7 +244,9 @@ impl Session {
         device: Option<&ID3D11Device>,
     ) -> Result<Self> {
         let timer = FineTimer::new();
+        let t0 = Instant::now();
         let transform: IMFTransform = unsafe { activate.ActivateObject() }.context("ActivateObject")?;
+        let t_activate = t0.elapsed();
         unsafe {
             let attrs = transform.GetAttributes()?;
             attrs.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1).context("asynchronous MFT unlock")?;
@@ -212,51 +268,10 @@ impl Session {
             },
             None => None,
         };
-        let fps = settings.max_fps.max(1) as u64;
-        let frame_size = ((width as u64) << 32) | height as u64;
-
+        let t_manager = t0.elapsed();
         let codec_api = transform.cast::<ICodecAPI>().ok();
-        if let Some(api) = &codec_api {
-            set_codec_value(api, &CODECAPI_AVLowLatencyMode, VARIANT::from(true), "low latency");
-            set_codec_value(
-                api,
-                &CODECAPI_AVEncCommonRateControlMode,
-                VARIANT::from(eAVEncCommonRateControlMode_CBR.0 as u32),
-                "constant bitrate",
-            );
-            set_codec_value(
-                api,
-                &CODECAPI_AVEncCommonMeanBitRate,
-                VARIANT::from(settings.bitrate_bps),
-                "bitrate",
-            );
-            set_codec_value(api, &CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0u32), "no B-frames");
-            // Periodic keyframe every 10 s as a safety net; the others on request.
-            set_codec_value(api, &CODECAPI_AVEncMPVGOPSize, VARIANT::from((fps * 10) as u32), "GOP");
-        }
-
-        unsafe {
-            let out = MFCreateMediaType()?;
-            out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
-            out.SetUINT32(&MF_MT_AVG_BITRATE, settings.bitrate_bps)?;
-            out.SetUINT64(&MF_MT_FRAME_SIZE, frame_size)?;
-            out.SetUINT64(&MF_MT_FRAME_RATE, (fps << 32) | 1)?;
-            out.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1 << 32) | 1)?;
-            out.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-            out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32)?;
-            transform.SetOutputType(0, &out, 0).context("H.264 output type")?;
-
-            let inp = MFCreateMediaType()?;
-            inp.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            inp.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
-            inp.SetUINT64(&MF_MT_FRAME_SIZE, frame_size)?;
-            inp.SetUINT64(&MF_MT_FRAME_RATE, (fps << 32) | 1)?;
-            inp.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1 << 32) | 1)?;
-            inp.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-            transform.SetInputType(0, &inp, 0).context("NV12 input type")?;
-        }
-
+        set_types(&transform, codec_api.as_ref(), (width, height), settings)?;
+        let t_types = t0.elapsed();
         let gpu = match (device, manager) {
             (Some(device), Some(manager)) => {
                 Some((Nv12Converter::new(device, input, (width, height))?, manager))
@@ -264,6 +279,7 @@ impl Session {
             _ => None,
         };
 
+        let t_converter = t0.elapsed();
         let info = unsafe { transform.GetOutputStreamInfo(0) }?;
         let provides_samples = info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0;
 
@@ -301,6 +317,14 @@ impl Session {
             transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
             transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
         }
+        debug!(
+            ?t_activate,
+            ?t_manager,
+            ?t_types,
+            ?t_converter,
+            total = ?t0.elapsed(),
+            "hardware encoder session opened"
+        );
 
         Ok(Self {
             activate: activate.clone(),
@@ -316,8 +340,57 @@ impl Session {
             need_input: 0,
             sequence_header: Vec::new(),
             gpu,
+            force_key: false,
             _timer: timer,
         })
+    }
+
+    /// Applies a new bitrate or size to the open session. Opening one takes 0.8-1 s
+    /// with Quick Sync (2026-11-01: ActivateObject 440-880 ms, handing over the GPU
+    /// 150-250 ms, the types ~50 ms), and the image stopped meanwhile at every bitrate
+    /// change: here the encoder and its link to the GPU are kept, the stream is stopped,
+    /// the types set again and the converter remade if the size changed.
+    fn reconfigure(
+        &mut self,
+        input: (u32, u32),
+        (width, height): (u32, u32),
+        settings: EncoderSettings,
+        device: Option<&ID3D11Device>,
+    ) -> Result<()> {
+        let t = Instant::now();
+        unsafe {
+            self.transform.ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0)?;
+            self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0)?;
+        }
+        // Requests and outputs of the stream just stopped.
+        while self.events.try_recv().is_ok() {}
+        if (width, height) != (self.width, self.height) {
+            // Quick Sync refuses an output type of another size over the current one
+            // (E_FAIL): the types are cleared first.
+            unsafe {
+                self.transform.SetInputType(0, None, 0).context("clearing the input type")?;
+                self.transform.SetOutputType(0, None, 0).context("clearing the output type")?;
+            }
+        }
+        set_types(&self.transform, self.codec_api.as_ref(), (width, height), settings)?;
+        if ((width, height) != (self.width, self.height) || input != self.input)
+            && let (Some(device), Some((converter, _))) = (device, self.gpu.as_mut())
+        {
+            *converter = Nv12Converter::new(device, input, (width, height))?;
+        }
+        let info = unsafe { self.transform.GetOutputStreamInfo(0) }?;
+        self.provides_samples = info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0;
+        self.output_size = info.cbSize.max(1024 * 1024);
+        unsafe {
+            self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
+            self.transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
+        }
+        (self.input, self.width, self.height) = (input, width, height);
+        self.need_input = 0;
+        self.sequence_header.clear();
+        self.force_key = true;
+        debug!(elapsed = ?t.elapsed(), "hardware encoder reconfigured");
+        Ok(())
     }
 
     fn handle(&mut self, event: TransformEvent, outputs: &mut VecDeque<EncodedFrame>) -> Result<()> {
@@ -515,8 +588,8 @@ impl MfEncoder {
     }
 
     /// Is the requested bitrate far enough from the session's to be worth a
-    /// restart (~0.3 s and a keyframe)? Decreases (congested network) are more
-    /// urgent than increases.
+    /// reconfiguration (a few ms, but a keyframe)? Decreases (congested network) are
+    /// more urgent than increases.
     fn bitrate_restart_due(&self) -> bool {
         let ratio = self.settings.bitrate_bps as f64 / self.session_bitrate.max(1) as f64;
         let age = self.session_started.elapsed();
@@ -532,16 +605,28 @@ impl MfEncoder {
         make_sample: impl FnOnce(&mut Session, i64) -> Result<IMFSample>,
     ) -> Result<Option<EncodedFrame>> {
         let (w, h) = (output.0 & !1, output.1 & !1);
-        if self.session.is_some() && self.bitrate_restart_due() {
+        let bitrate_due = self.session.is_some() && self.bitrate_restart_due();
+        if let Some(session) = self.session.as_mut()
+            && (bitrate_due || session.width != w || session.height != h || session.input != input)
+        {
             info!(
-                "restarting the hardware encoder: bitrate from {} to {} kbit/s",
+                "reconfiguring the hardware encoder: {w}x{h}, bitrate from {} to {} kbit/s",
                 self.session_bitrate / 1000,
                 self.settings.bitrate_bps / 1000
             );
-            self.session = None;
+            match session.reconfigure(input, (w, h), self.settings, self.device.as_ref()) {
+                Ok(()) => {
+                    self.outputs.clear();
+                    self.session_bitrate = self.settings.bitrate_bps;
+                    self.session_started = Instant::now();
+                }
+                Err(e) => {
+                    warn!("reconfiguring the hardware encoder failed: {e:#}; opening it again");
+                    self.session = None;
+                }
+            }
         }
-        if self.session.as_ref().is_none_or(|s| s.width != w || s.height != h || s.input != input) {
-            self.session = None;
+        if self.session.is_none() {
             self.outputs.clear();
             let session = Session::new(&self.activate, input, (w, h), self.settings, self.device.as_ref())
                 .with_context(|| format!("starting {}", self.name))?;
@@ -563,6 +648,7 @@ impl MfEncoder {
             }
         }
 
+        let force_keyframe = force_keyframe || std::mem::take(&mut session.force_key);
         if force_keyframe && let Some(api) = &session.codec_api {
             set_codec_value(api, &CODECAPI_AVEncVideoForceKeyFrame, VARIANT::from(1u32), "keyframe");
         }
@@ -628,8 +714,9 @@ impl VideoEncoder for MfEncoder {
 
     fn set_bitrate(&mut self, bps: u32) {
         // Quick Sync through Media Foundation ignores CODECAPI_AVEncCommonMeanBitRate
-        // changes once the session started (measured: 1 Mbit/s asked, 6 produced): the new
-        // value is applied by restarting the encoder in `encode_sample`, with hysteresis.
+        // changes while streaming (measured: 1 Mbit/s asked, 6 produced): the new value is
+        // applied by stopping the stream and setting the types again (`reconfigure`), with
+        // hysteresis. Measured after that: 1.6 Mbit/s asked, 1.5-1.6 sent.
         self.settings.bitrate_bps = bps;
     }
 
