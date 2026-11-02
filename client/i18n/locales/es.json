@@ -33,7 +33,7 @@
   "connect.new_password": "Generar una nueva contraseña",
   "connect.copied": "Copiado",
   "connect.share_hint": "Comunique su ID y contraseña a la persona que le ayuda: se le pedirá que confirme la conexión.",
-  "connect.viewer_only": "En Linux, por ahora, NuviraHub solo sirve para controlar otros equipos: este equipo todavía no se puede controlar de forma remota.",
+  "connect.viewer_only": "Con una sesión X11, por ahora, NuviraHub solo sirve para controlar otros equipos: este equipo se puede controlar de forma remota con una sesión Wayland (la predeterminada en Ubuntu y Fedora).",
   "connect.service_note": "Acceso desatendido activado (servicio NuviraHub): quien tenga la contraseña permanente se conecta sin confirmación.",
   "connect.title": "Controlar un equipo",
   "connect.hint": "Escriba el ID del equipo que quiere controlar.",

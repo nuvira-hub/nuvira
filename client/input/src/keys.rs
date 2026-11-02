@@ -131,6 +131,46 @@ pub fn scan_code(code: &str) -> Option<ScanCode> {
     }
 }
 
+/// Linux input code (`KEY_*` of `linux/input-event-codes.h`) of the W3C key.
+/// Up to 0x58 they equal the PC scan codes without prefix.
+pub fn evdev_code(code: &str) -> Option<u16> {
+    match code {
+        "Pause" => return Some(119),
+        "NumLock" => return Some(69),
+        _ => {}
+    }
+    let ScanCode { code, extended } = scan_code(code)?;
+    if !extended {
+        return match code {
+            0x01..=0x58 => Some(code),
+            0x73 => Some(89),  // KEY_RO
+            0x7D => Some(124), // KEY_YEN
+            _ => None,
+        };
+    }
+    Some(match code {
+        0x1C => 96,  // KEY_KPENTER
+        0x1D => 97,  // KEY_RIGHTCTRL
+        0x35 => 98,  // KEY_KPSLASH
+        0x37 => 99,  // KEY_SYSRQ
+        0x38 => 100, // KEY_RIGHTALT
+        0x47 => 102, // KEY_HOME
+        0x48 => 103, // KEY_UP
+        0x49 => 104, // KEY_PAGEUP
+        0x4B => 105, // KEY_LEFT
+        0x4D => 106, // KEY_RIGHT
+        0x4F => 107, // KEY_END
+        0x50 => 108, // KEY_DOWN
+        0x51 => 109, // KEY_PAGEDOWN
+        0x52 => 110, // KEY_INSERT
+        0x53 => 111, // KEY_DELETE
+        0x5B => 125, // KEY_LEFTMETA
+        0x5C => 126, // KEY_RIGHTMETA
+        0x5D => 127, // KEY_COMPOSE
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +181,17 @@ mod tests {
         assert_eq!(scan_code("ArrowLeft"), ext(0x4B));
         assert_eq!(scan_code("MetaLeft"), ext(0x5B));
         assert_eq!(scan_code("Sconosciuto"), None);
+    }
+
+    #[test]
+    fn linux_codes() {
+        assert_eq!(evdev_code("Escape"), Some(1));
+        assert_eq!(evdev_code("KeyA"), Some(30));
+        assert_eq!(evdev_code("F12"), Some(88));
+        assert_eq!(evdev_code("ArrowLeft"), Some(105));
+        assert_eq!(evdev_code("AltRight"), Some(100));
+        assert_eq!(evdev_code("MetaLeft"), Some(125));
+        assert_eq!(evdev_code("Pause"), Some(119));
+        assert_eq!(evdev_code("Sconosciuto"), None);
     }
 }

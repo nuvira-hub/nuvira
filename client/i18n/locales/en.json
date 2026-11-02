@@ -33,7 +33,7 @@
   "connect.new_password": "Generate a new password",
   "connect.copied": "Copied",
   "connect.share_hint": "Give your ID and password to the person helping you: you will be asked to confirm the connection.",
-  "connect.viewer_only": "On Linux, for now, NuviraHub can only control other computers: this computer cannot be controlled remotely yet.",
+  "connect.viewer_only": "With an X11 session, for now, NuviraHub can only control other computers: this computer can be controlled remotely with a Wayland session (the default on Ubuntu and Fedora).",
   "connect.service_note": "Unattended access is on (NuviraHub service): anyone with the permanent password connects without confirmation.",
   "connect.title": "Control a computer",
   "connect.hint": "Type the ID of the computer to control.",

@@ -33,7 +33,7 @@
   "connect.new_password": "Genera una nuova password",
   "connect.copied": "Copiato",
   "connect.share_hint": "Comunica ID e password a chi deve assisterti: ti verrà chiesto di confermare il collegamento.",
-  "connect.viewer_only": "Su Linux, per ora, NuviraHub serve solo a controllare altri computer: questo computer non può ancora essere controllato da remoto.",
+  "connect.viewer_only": "Con una sessione X11, per ora, NuviraHub serve solo a controllare altri computer: questo computer si può controllare da remoto con una sessione Wayland (quella predefinita su Ubuntu e Fedora).",
   "connect.service_note": "Accesso non presidiato attivo (servizio NuviraHub): chi ha la password permanente entra senza conferma.",
   "connect.title": "Controlla un computer",
   "connect.hint": "Scrivi l'ID del computer da controllare.",

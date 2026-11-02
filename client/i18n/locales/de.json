@@ -33,7 +33,7 @@
   "connect.new_password": "Neues Passwort erzeugen",
   "connect.copied": "Kopiert",
   "connect.share_hint": "Geben Sie ID und Passwort der Person, die Ihnen hilft: Sie werden gebeten, die Verbindung zu bestätigen.",
-  "connect.viewer_only": "Unter Linux kann NuviraHub vorerst nur andere Computer steuern: Dieser Computer kann noch nicht ferngesteuert werden.",
+  "connect.viewer_only": "Mit einer X11-Sitzung kann NuviraHub vorerst nur andere Computer steuern: Dieser Computer lässt sich mit einer Wayland-Sitzung fernsteuern (Standard unter Ubuntu und Fedora).",
   "connect.service_note": "Unbeaufsichtigter Zugriff ist aktiv (NuviraHub-Dienst): Wer das dauerhafte Passwort hat, verbindet sich ohne Bestätigung.",
   "connect.title": "Einen Computer steuern",
   "connect.hint": "Geben Sie die ID des zu steuernden Computers ein.",

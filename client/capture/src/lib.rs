@@ -3,7 +3,7 @@
 //! Each system has its own implementation behind the [`Capturer`] trait:
 //! - Windows: DXGI Desktop Duplication (`windows.rs`);
 //! - macOS: ScreenCaptureKit (phase 4);
-//! - Linux: PipeWire / X11 (phase 4).
+//! - Linux on Wayland: the remote desktop portal and PipeWire (`linux.rs`).
 
 use std::time::Duration;
 
@@ -12,6 +12,8 @@ mod all;
 pub mod desktop;
 #[cfg(windows)]
 mod gdi;
+#[cfg(target_os = "linux")]
+mod linux;
 mod synthetic;
 #[cfg(windows)]
 mod windows;
@@ -71,7 +73,9 @@ pub fn displays() -> anyhow::Result<Vec<Display>> {
         // Without DXGI (some Remote Desktop sessions), as GDI sees them.
         _ => Ok(gdi::displays()),
     };
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return Ok(linux::displays());
+    #[cfg(not(any(windows, target_os = "linux")))]
     anyhow::bail!("screen capture is not available on this system yet");
 }
 
@@ -86,7 +90,12 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
         }
         open_one(index)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = index;
+        linux::open()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = index;
         anyhow::bail!("screen capture is not available on this system yet");

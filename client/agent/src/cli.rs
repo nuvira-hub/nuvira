@@ -162,7 +162,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     let _ = tracing_subscriber::fmt()
         .with_ansi(ansi_colors())
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,zbus=error".into()),
         )
         .try_init();
     let args = Args::parse_from(args);

@@ -23,3 +23,8 @@ features = [
     "Win32_System_StationsAndDesktops",
     "Win32_System_Threading",
 ]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nuvira-portal = { path = "../portal" }
+nuvira-transport.workspace = true
+pipewire = "0.10"

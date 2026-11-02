@@ -43,8 +43,11 @@ overrides:
       - libwebkit2gtk-4.1-0
       - libgtk-3-0
       - libxkbcommon-x11-0
+      # Renamed with the 64-bit time transition (Ubuntu 24.04, Debian 13).
+      - libpipewire-0.3-0t64 | libpipewire-0.3-0
   rpm:
     depends:
       - webkit2gtk4.1
       - gtk3
       - libxkbcommon-x11
+      - pipewire-libs

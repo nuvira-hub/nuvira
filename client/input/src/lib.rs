@@ -7,6 +7,8 @@
 use nuvira_proto::v1::InputEvent;
 
 pub mod keys;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(windows)]
 mod windows;
 
@@ -33,7 +35,12 @@ pub trait InputInjector: Send {
 pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
     #[cfg(windows)]
     return Ok(Box::new(windows::SendInputInjector::new(screen)));
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = screen;
+        Ok(Box::new(linux::PortalInjector::new()?))
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = screen;
         anyhow::bail!("remote input control is not available on this system yet");

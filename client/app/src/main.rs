@@ -30,9 +30,15 @@ use tracing::{info, warn};
 const SOURCE_URL: &str = "https://github.com/nuvira-hub/nuvira";
 /// Terms of use of the public server, in the interface language: `{lang}` is replaced.
 const TERMS_URL: &str = "https://nuvirahub.dev/{lang}/terms/";
-/// This PC can be controlled (capture, input). Not yet on Linux, where the app
-/// only controls other computers.
-const CONTROLLABLE: bool = cfg!(windows);
+/// This PC can be controlled (capture, input): on Windows, and on Linux with a
+/// Wayland session, through the remote desktop portal. With X11 the app only
+/// controls other computers, for now.
+fn controllable() -> bool {
+    cfg!(windows) || (cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some())
+}
+
+/// Unattended access (the system service) exists only on Windows for now.
+const UNATTENDED: bool = cfg!(windows);
 
 /// State shown by the interface (sent with the "state" event).
 #[derive(Debug, Default, Clone, Serialize)]
@@ -40,8 +46,10 @@ struct UiState {
     server: String,
     /// "connecting", "online", "offline", "viewer_only".
     status: String,
-    /// See [`CONTROLLABLE`].
+    /// See [`controllable`].
     controllable: bool,
+    /// See [`UNATTENDED`].
+    unattended: bool,
     device_id: Option<String>,
     websocket: bool,
     /// ID and password are the service's (unattended access).
@@ -288,7 +296,7 @@ fn start_agent(app: &AppHandle) {
     if let Some(old) = state.agent.lock().expect("agent").take() {
         old.abort();
     }
-    if !CONTROLLABLE {
+    if !controllable() {
         return;
     }
     #[cfg(windows)]
@@ -756,7 +764,7 @@ fn init_logging() {
     let _ = std::fs::create_dir_all(&dir);
     let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("nuvira-app.log"));
     let filter =
-        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,wgpu=warn".into());
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,wgpu=warn,zbus=error".into());
     match file {
         Ok(file) => tracing_subscriber::fmt()
             .with_ansi(false)
@@ -786,8 +794,9 @@ fn main() {
     let state = NuviraApp {
         ui: Mutex::new(UiState {
             server: settings.server,
-            status: if CONTROLLABLE { "connecting" } else { "viewer_only" }.into(),
-            controllable: CONTROLLABLE,
+            status: if controllable() { "connecting" } else { "viewer_only" }.into(),
+            controllable: controllable(),
+            unattended: UNATTENDED,
             password: password.clone(),
             ..Default::default()
         }),

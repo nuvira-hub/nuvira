@@ -33,7 +33,7 @@
   "connect.new_password": "Générer un nouveau mot de passe",
   "connect.copied": "Copié",
   "connect.share_hint": "Communiquez votre ID et votre mot de passe à la personne qui vous aide : il vous sera demandé de confirmer la connexion.",
-  "connect.viewer_only": "Sous Linux, NuviraHub permet pour l'instant seulement de contrôler d'autres ordinateurs : cet ordinateur ne peut pas encore être contrôlé à distance.",
+  "connect.viewer_only": "Avec une session X11, NuviraHub permet pour l'instant seulement de contrôler d'autres ordinateurs : cet ordinateur peut être contrôlé à distance avec une session Wayland (celle par défaut sur Ubuntu et Fedora).",
   "connect.service_note": "Accès sans surveillance activé (service NuviraHub) : toute personne ayant le mot de passe permanent se connecte sans confirmation.",
   "connect.title": "Contrôler un ordinateur",
   "connect.hint": "Saisissez l'ID de l'ordinateur à contrôler.",
