@@ -17,6 +17,11 @@ if [ "$1" = "--uninstall" ]; then
     for size in 32 128 256; do
         rm -f "$icons/${size}x${size}/apps/$app_id.png" "$icons/${size}x${size}/apps/nuvira-viewer.png"
     done
+    # An icon cache there (written by older versions of this script) would
+    # still list the icons just removed.
+    if [ -f "$icons/icon-theme.cache" ] && command -v gtk-update-icon-cache >/dev/null; then
+        gtk-update-icon-cache -q -f -t "$icons" || true
+    fi
     echo "NuviraHub removed. Your ID and address book are still in ${XDG_CONFIG_HOME:-$HOME/.config}/nuvira, if you want to delete them too."
     exit 0
 fi
@@ -40,7 +45,8 @@ sed -e "s|^Exec=.*|Exec=$prefix/nuvira|" \
     -e "s|^Icon=.*|Icon=$icons/256x256/apps/nuvira-viewer.png|" \
     "$here/nuvira-viewer.desktop" > "$apps/nuvira-viewer.desktop"
 
+# No icon cache of our own in ~/.local: once written it must be rebuilt at every
+# change, or GTK keeps looking for icons that are no longer there.
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$apps" || true
-command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$icons" || true
 
 echo "NuviraHub installed: open it from the applications menu, or run: $prefix/nuvira"
