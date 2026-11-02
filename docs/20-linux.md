@@ -6,7 +6,7 @@ Since 0.13.0 the app runs on Linux and controls other computers: ID, address boo
 
 ## Packages
 
-`.github/workflows/client-linux.yml` builds them on Ubuntu 22.04 with `tools/package-linux.sh`, at every change to the client and at every tag. The binary needs a glibc at least as new as the one it was built with: building on the oldest distribution we support keeps it running on the newer ones (Ubuntu 22.04+, Debian 12+, Mint 21+, Fedora 40+). The packages are a workflow artifact; they go into the GitHub release by hand, with the signed Windows files.
+`.github/workflows/client-linux.yml` builds them in a Debian 12 container with `tools/package-linux.sh`, at every change to the client and at every tag. The binary needs a glibc at least as new as the one it was built with (2.36), and the PipeWire bindings need PipeWire 0.3.65 or later: building on the oldest distribution we support keeps it running on the newer ones (Debian 12+, Ubuntu 24.04+, Mint 22+, Fedora 40+). Up to 0.13.0 it was built on Ubuntu 22.04, whose PipeWire 0.3.48 is too old for the bindings. The packages are a workflow artifact; they go into the GitHub release by hand, with the signed Windows files.
 
 | File | For | Installs into |
 |---|---|---|

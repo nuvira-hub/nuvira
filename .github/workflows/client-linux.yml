@@ -1,9 +1,10 @@
 name: nuvira-linux
 
-# Builds nuvira-linux-x64.tar.gz, the .deb and the .rpm on Ubuntu 22.04, the oldest distribution we
-# support (the binary needs a glibc at least as new as the build one). The
-# packages are a workflow artifact; they go into the release by hand, together
-# with the signed Windows files.
+# Builds nuvira-linux-x64.tar.gz, the .deb and the .rpm on Debian 12, the oldest
+# distribution we support: the binary needs a glibc at least as new as the build
+# one (2.36), and the PipeWire bindings a PipeWire at least 0.3.65 (Ubuntu 22.04
+# has 0.3.48). The packages are a workflow artifact; they go into the release by
+# hand, together with the signed Windows files.
 on:
   push:
     branches: [main]
@@ -17,25 +18,24 @@ permissions:
 jobs:
   build:
     name: Build and package
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    container: docker.io/library/rust:1-bookworm
     steps:
       - uses: actions/checkout@v4
 
       - name: System packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             build-essential pkg-config nasm file \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
             libxkbcommon-dev libxkbcommon-x11-dev \
             libpipewire-0.3-dev libspa-0.2-dev clang libclang-dev
 
-      - uses: dtolnay/rust-toolchain@stable
-
       - name: nfpm
         run: |
           wget -q https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_amd64.deb
-          sudo dpkg -i nfpm_2.47.0_amd64.deb
+          dpkg -i nfpm_2.47.0_amd64.deb
 
       - uses: Swatinem/rust-cache@v2
 

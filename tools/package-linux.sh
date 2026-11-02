@@ -2,7 +2,7 @@
 # Builds the Linux packages: nuvira-linux-x64.tar.gz (the app, its icons, the
 # .desktop files and install.sh), nuvira-linux-x64.deb and nuvira-linux-x64.rpm
 # (with nfpm). The names carry no version, for the "latest release" links of the
-# website. Build on the oldest distribution we support (Ubuntu 22.04): the
+# website. Build on the oldest distribution we support (Debian 12): the
 # binary needs a glibc at least as new as the build one.
 #
 #   tools/package-linux.sh [out_dir]
@@ -40,11 +40,12 @@ Install for the current user (no sudo):   ./install.sh
 Remove:                                   ./install.sh --uninstall
 
 It needs these packages (on Ubuntu/Debian; most desktops have them):
-  libwebkit2gtk-4.1-0 libgtk-3-0 libxkbcommon-x11-0
+  libwebkit2gtk-4.1-0 libgtk-3-0 libxkbcommon-x11-0 libpipewire-0.3-0
 
-It is built on Ubuntu 22.04, so it needs glibc 2.35 or later: Ubuntu 22.04
-or later, Debian 12 or later, Linux Mint 21 or later. It works with X11
-and with Wayland (through XWayland).
+It is built on Debian 12, so it needs glibc 2.36 and PipeWire 0.3.65 or
+later: Debian 12, Ubuntu 24.04, Linux Mint 22, Fedora 40 or later. It
+controls other computers with X11 and with Wayland; this computer can be
+controlled with a Wayland session.
 EOF
 
 tar -C "$(dirname "$stage")" -czf "$out/nuvira-linux-x64.tar.gz" "nuvira-$version"
