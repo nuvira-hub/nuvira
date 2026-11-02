@@ -83,7 +83,7 @@ impl VideoEncoder for OpenH264Encoder {
             FrameType::IDR | FrameType::I => true,
             _ => false,
         };
-        Ok(Some(EncodedFrame { data: bitstream.to_vec(), keyframe }))
+        Ok(Some(EncodedFrame { data: bitstream.to_vec(), keyframe, ..Default::default() }))
     }
 }
 

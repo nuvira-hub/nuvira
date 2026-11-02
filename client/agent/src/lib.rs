@@ -69,7 +69,7 @@ pub struct AgentConfig {
 
 impl AgentConfig {
     pub fn encoder_settings(&self) -> EncoderSettings {
-        EncoderSettings { bitrate_bps: self.bitrate_kbps * 1000, max_fps: self.fps }
+        EncoderSettings { bitrate_bps: self.bitrate_kbps * 1000, max_fps: self.fps, ..Default::default() }
     }
 
     fn open_capturer(&self) -> Result<Box<dyn Capturer>> {
@@ -1211,6 +1211,7 @@ impl VideoSource {
         let settings = EncoderSettings {
             bitrate_bps: self.bitrate.load(Ordering::Relaxed),
             max_fps: self.fps.load(Ordering::Relaxed),
+            ..Default::default()
         };
         let plan = self.config.plan;
         // A new stream must start with a keyframe.

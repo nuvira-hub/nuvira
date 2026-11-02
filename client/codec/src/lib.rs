@@ -34,9 +34,14 @@ pub struct BgraImage<'a> {
     pub data: &'a [u8],
 }
 
+#[derive(Default)]
 pub struct EncodedFrame {
     pub data: Vec<u8>,
     pub keyframe: bool,
+    /// Kept as long-term reference in this slot (see [`EncoderSettings::ltr`]).
+    pub ltr_mark: Option<u8>,
+    /// Encoded referring only to the long-term reference in this slot.
+    pub ltr_ref: Option<u8>,
 }
 
 /// Decoded I420 image with packed planes (stride = plane width).
@@ -53,13 +58,20 @@ pub struct YuvFrame {
 pub struct EncoderSettings {
     pub bitrate_bps: u32,
     pub max_fps: u32,
+    /// Long-term reference frames ([`LTR_SLOTS`]): after a loss the next frame can
+    /// refer to one the viewer has instead of being a keyframe. Only encoders that
+    /// support them use it (see [`VideoEncoder::use_ltr`]).
+    pub ltr: bool,
 }
 
 impl Default for EncoderSettings {
     fn default() -> Self {
-        Self { bitrate_bps: 8_000_000, max_fps: 60 }
+        Self { bitrate_bps: 8_000_000, max_fps: 60, ltr: false }
     }
 }
+
+/// Long-term reference slots, with [`EncoderSettings::ltr`].
+pub const LTR_SLOTS: u8 = 2;
 
 pub trait VideoEncoder: Send {
     fn name(&self) -> &'static str;
@@ -87,6 +99,18 @@ pub trait VideoEncoder: Send {
 
     /// Changes the bitrate during the session (adaptive bitrate).
     fn set_bitrate(&mut self, _bps: u32) {}
+
+    /// The next frame is kept as long-term reference in `slot` (replacing the one
+    /// there). `false` if the encoder has no long-term references.
+    fn mark_ltr(&mut self, _slot: u8) -> bool {
+        false
+    }
+
+    /// The next frame refers only to the long-term reference in `slot` (recovery
+    /// after a loss, instead of a keyframe). `false` if the encoder cannot.
+    fn use_ltr(&mut self, _slot: u8) -> bool {
+        false
+    }
 
     /// Waits (at most `timeout`) until the encoder can take a frame right away.
     /// The caller can then pick the most recent image only when needed, instead

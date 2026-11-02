@@ -35,7 +35,7 @@ use windows::Win32::System::Threading::{
 };
 
 use crate::gpu::{GpuDevice, GpuTexture, Nv12Converter};
-use crate::{BgraImage, EncodedFrame, EncoderSettings, VideoEncoder, convert};
+use crate::{BgraImage, EncodedFrame, EncoderSettings, LTR_SLOTS, VideoEncoder, convert};
 
 /// Maximum wait for a frame's output before returning `None`
 /// (the frame will come out at the next call).
@@ -151,9 +151,13 @@ fn friendly_name(activate: &IMFActivate) -> String {
     }
 }
 
-fn set_codec_value(api: &ICodecAPI, key: &windows::core::GUID, value: VARIANT, what: &str) {
-    if let Err(e) = unsafe { api.SetValue(key, &value) } {
-        debug!("parameter {what} not supported by the encoder: {e}");
+fn set_codec_value(api: &ICodecAPI, key: &windows::core::GUID, value: VARIANT, what: &str) -> bool {
+    match unsafe { api.SetValue(key, &value) } {
+        Ok(()) => true,
+        Err(e) => {
+            debug!("parameter {what} not supported by the encoder: {e}");
+            false
+        }
     }
 }
 
@@ -189,6 +193,12 @@ fn set_types(
         set_codec_value(api, &CODECAPI_AVEncMPVDefaultBPictureCount, VARIANT::from(0u32), "no B-frames");
         // Periodic keyframe every 10 s as a safety net; the others on request.
         set_codec_value(api, &CODECAPI_AVEncMPVGOPSize, VARIANT::from((fps * 10) as u32), "GOP");
+        if settings.ltr {
+            // Trust mode 1 ("trust until"): the encoder may refer to every long-term
+            // reference until told to use only some (`use_ltr`).
+            let control = (1u32 << 16) | LTR_SLOTS as u32;
+            set_codec_value(api, &CODECAPI_AVEncVideoLTRBufferControl, VARIANT::from(control), "long-term references");
+        }
     }
     unsafe {
         let out = MFCreateMediaType()?;
@@ -232,6 +242,9 @@ struct Session {
     gpu: Option<(Nv12Converter, IMFDXGIDeviceManager)>,
     /// The next frame must be a keyframe (stream started again by `reconfigure`).
     force_key: bool,
+    /// Long-term reference marked and used by each frame given and not yet out
+    /// (the outputs come in the same order: no B-frames).
+    ltr_tags: VecDeque<(Option<u8>, Option<u8>)>,
     _timer: FineTimer,
 }
 
@@ -341,6 +354,7 @@ impl Session {
             sequence_header: Vec::new(),
             gpu,
             force_key: false,
+            ltr_tags: VecDeque::new(),
             _timer: timer,
         })
     }
@@ -394,6 +408,7 @@ impl Session {
         self.need_input = 0;
         self.sequence_header.clear();
         self.force_key = true;
+        self.ltr_tags.clear();
         debug!(elapsed = ?t.elapsed(), "hardware encoder reconfigured");
         Ok(())
     }
@@ -469,7 +484,8 @@ impl Session {
                 data.splice(0..0, self.sequence_header.iter().copied());
             }
         }
-        Ok(Some(EncodedFrame { data, keyframe }))
+        let (ltr_mark, ltr_ref) = self.ltr_tags.pop_front().unwrap_or_default();
+        Ok(Some(EncodedFrame { data, keyframe, ltr_mark, ltr_ref }))
     }
 
     fn read_sequence_header(&self) -> Result<Vec<u8>> {
@@ -558,6 +574,9 @@ pub struct MfEncoder {
     session: Option<Session>,
     outputs: VecDeque<EncodedFrame>,
     started: Instant,
+    /// Long-term reference requests for the next frame.
+    next_mark: Option<u8>,
+    next_use: Option<u8>,
 }
 
 // Used by one thread at a time; MF objects are MTA.
@@ -578,6 +597,8 @@ impl MfEncoder {
             session: None,
             outputs: VecDeque::new(),
             started: Instant::now(),
+            next_mark: None,
+            next_use: None,
         })
     }
 
@@ -657,6 +678,20 @@ impl MfEncoder {
         if force_keyframe && let Some(api) = &session.codec_api {
             set_codec_value(api, &CODECAPI_AVEncVideoForceKeyFrame, VARIANT::from(1u32), "keyframe");
         }
+        // A keyframe needs no reference, and the encoder marks it on its own.
+        let (mark, use_) = (self.next_mark.take(), self.next_use.take());
+        let mut tag = (None, None);
+        if let Some(api) = session.codec_api.as_ref().filter(|_| self.settings.ltr && !force_keyframe) {
+            if let Some(slot) = use_ {
+                let value = (1u32 << 16) | (1u32 << slot);
+                tag.1 = set_codec_value(api, &CODECAPI_AVEncVideoUseLTRFrame, VARIANT::from(value), "use LTR")
+                    .then_some(slot);
+            }
+            if let Some(slot) = mark {
+                tag.0 = set_codec_value(api, &CODECAPI_AVEncVideoMarkLTRFrame, VARIANT::from(slot as u32), "mark LTR")
+                    .then_some(slot);
+            }
+        }
         let waited_input = t_wait.elapsed();
         let time = (self.started.elapsed().as_nanos() / 100) as i64;
         let t_convert = Instant::now();
@@ -665,6 +700,7 @@ impl MfEncoder {
         let t_encode = Instant::now();
         unsafe { session.transform.ProcessInput(0, &sample, 0) }.context("ProcessInput")?;
         session.need_input -= 1;
+        session.ltr_tags.push_back(tag);
 
         // Waits for this frame's output, with a limit: if it does not arrive in time
         // it will be returned at the next call.
@@ -723,6 +759,22 @@ impl VideoEncoder for MfEncoder {
         // applied by stopping the stream and setting the types again (`reconfigure`), with
         // hysteresis. Measured after that: 1.6 Mbit/s asked, 1.5-1.6 sent.
         self.settings.bitrate_bps = bps;
+    }
+
+    fn mark_ltr(&mut self, slot: u8) -> bool {
+        if !self.settings.ltr || slot >= LTR_SLOTS {
+            return false;
+        }
+        self.next_mark = Some(slot);
+        true
+    }
+
+    fn use_ltr(&mut self, slot: u8) -> bool {
+        if !self.settings.ltr || slot >= LTR_SLOTS {
+            return false;
+        }
+        self.next_use = Some(slot);
+        true
     }
 
     fn wait_ready(&mut self, timeout: Duration) -> Result<bool> {

@@ -28,7 +28,7 @@ fn main() {
     }
     let device = gpu::create_device().expect("D3D11 device");
     let texture = GpuTexture(gpu::upload_bgra(&device, w, h, &data).expect("texture"));
-    let settings = EncoderSettings { bitrate_bps: 40_000_000, max_fps: 60 };
+    let settings = EncoderSettings { bitrate_bps: 40_000_000, max_fps: 60, ..Default::default() };
     let mut enc = MfEncoder::with_device(settings, GpuDevice(device)).expect("hardware encoder");
     let mut dec = OpenH264Decoder::new().unwrap();
     let mut decoded = None;

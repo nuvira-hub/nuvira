@@ -24,14 +24,20 @@ const MAX_DATA: usize = 32;
 /// Frames still incomplete this far behind the newest one are dropped.
 const KEEP_BEHIND: u64 = 64;
 
-/// Parity shards for `data` data shards: at least two. With one, a small frame (2–4
-/// shards) was lost whenever two of its shards were: with 2% random loss, about one
-/// frame in 400, a freeze every 8 s at 50 fps.
+/// Parity shards for `data` data shards: at least two when losses are measured. With
+/// one, a small frame (2–4 shards) was lost whenever two of its shards were: with 2%
+/// random loss, about one frame in 400, a freeze every 8 s at 50 fps. Without losses
+/// one is enough, and two doubled small frames: on a 2 Mbit/s link, frames of ~2 kB
+/// and half the link was parity.
 fn parity_for(data: usize, ratio: f64) -> usize {
-    ((data as f64 * ratio).ceil() as usize).clamp(MIN_PARITY, 255 - data)
+    let min = if ratio < LOSSLESS_RATIO { 1 } else { MIN_PARITY };
+    ((data as f64 * ratio).ceil() as usize).clamp(min, 255 - data)
 }
 
 const MIN_PARITY: usize = 2;
+/// Below this ratio no losses are being measured (the agent asks 0.1 + 3 × the share
+/// of shards lost: 0.12 is 0.7% lost).
+const LOSSLESS_RATIO: f64 = 0.12;
 
 /// The datagrams carrying frame `seq`, each at most `max_datagram` bytes, with
 /// `ratio` parity shards per data shard (0.2 = 20% more).

@@ -239,6 +239,33 @@ Where things stand: the datagrams are clearly better with random losses (Wi-Fi, 
 
 Still open for the datagrams: a start that does not overshoot an unknown link.
 
+### Datagrams on a saturated link (2026-11-02)
+
+NUC (agent) → laptop (viewer), relay with `delay=40ms,rate=2mbit`, 45 s, datagrams.
+
+**Smaller datagram send buffer: no effect.** quinn keeps up to 1 MB of datagrams waiting for the congestion window (4 s at 2 Mbit/s), the suspected standing queue. With 1 MB, 64 kB and 16 kB the median stayed at 104–153 ms: the queue is on the link, not in the buffer.
+
+**The queue came from the parity.** The agent's logs showed 1.8–2.0 Mbit/s sent on the 2 Mbit/s link and 0.9 Mbit/s of video: frames of ~2 kB are two shards, and at least two parity shards doubled them. Now one parity shard is enough while no losses are measured (parity asked below 0.12, i.e. under 0.7% of shards lost), two as before with losses:
+
+| 2 Mbit/s, datagrams | Before | One parity shard without losses |
+|---|---|---|
+| Median latency | 125–170 ms | 76–83 ms |
+| 95th percentile | 251–290 ms | 222–259 ms |
+| Freezes | 2–4 | 1–5 |
+| 2% loss, no rate limit | 67 / 78 ms, 0 freezes | 67 / 78 ms, 0 freezes |
+
+The 95th percentile and the freezes come from the first ~10 s (4 Mbit/s asked of a 2 Mbit/s link); afterwards the network latency stays at 46–51 ms. Tried and not kept, no measurable difference: bitrate ceiling after a congestion at 80% instead of 90%, latency baseline over 30 s instead of 10; starting with 0.1 parity instead of 0.2 gave more freezes at the start.
+
+**Recovery without keyframes: long-term references (LTR), not adopted.** Every H.264 hardware encoder here offers them through Media Foundation (`CODECAPI_AVEncVideoLTRBufferControl`, `MarkLTRFrame`, `UseLTRFrame`; gradual intra refresh everywhere but the HD 2500, example `codecapi`). The encoder keeps frames as references; after a loss the next frame refers only to one the viewer has. Example `ltrtest` (frame 30 kept, frames 60–62 dropped, frame 63 from the reference, PSNR of the luminance against the original):
+
+| Encoder | Keyframe | Recovery frame (reference 0.5 s old) | Hardware decoder after recovery |
+|---|---|---|---|
+| Quick Sync (NUC, laptop) | 14.9 kB | 2.0 kB | 68 dB, as without loss (21–27 without recovery) |
+| NVIDIA RTX 4060 Ti | 9.0 kB | 2.4 kB | 69 dB |
+| HD 2500 (PC-LABORATORIO) | 8.2 kB | 21 kB | correct, but larger than a keyframe |
+
+OpenH264, the viewer's default decoder, decodes streams with long-term references wrongly even without losses (22 dB on Quick Sync; the NVIDIA stream not at all) and refuses every frame after a gap, also with error concealment. So it would work only with the hardware decoder (`NUVIRA_DECODER=hardware`, not the default: see `mfdec`). Built and measured live that way (agent marks a reference every 0.5 s, the viewer reports the newest it has and asks to start from it): recoveries came from the reference, but each freeze still lasted 260–370 ms, the time to notice the loss and the round trip over a queued link; a keyframe's extra size costs only ~60 ms at 2 Mbit/s. Total frozen time 0.9–1.7 s against 2.2–8.2 s in two runs each, the count unchanged. Not adopted: small gain, only with the hardware decoder, and a viewer falling back to OpenH264 during a session would show a broken image without any error. The encoder keeps the support (`EncoderSettings::ltr`, `VideoEncoder::mark_ltr` / `use_ltr`) for when the viewer draws the hardware decoder's output directly.
+
 ## What changes over the Internet
 
 The OPNsense configuration (forwarding the server's UDP port) only makes the server reachable; the software still has to be checked under conditions a LAN does not present:

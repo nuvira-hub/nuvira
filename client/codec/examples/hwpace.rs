@@ -40,7 +40,7 @@ fn main() {
         })
         .collect();
 
-    let settings = EncoderSettings { bitrate_bps: 8_000_000, max_fps: 60 };
+    let settings = EncoderSettings { bitrate_bps: 8_000_000, max_fps: 60, ..Default::default() };
     let mut enc = MfEncoder::with_device(settings, GpuDevice(device)).expect("hardware encoder");
     println!(
         "encoder: {}, {w}x{h} encoded at {}x{}, {frames} frames",

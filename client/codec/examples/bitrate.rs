@@ -39,7 +39,7 @@ fn main() {
     };
     let (w, h) = (1280usize, 720usize);
     let frames: Vec<Vec<u8>> = (0..30).map(|t| frame(w, h, t)).collect();
-    let settings = EncoderSettings { bitrate_bps: 6_000_000, max_fps: 30 };
+    let settings = EncoderSettings { bitrate_bps: 6_000_000, max_fps: 30, ..Default::default() };
     let mut enc = nuvira_codec::create_encoder(plan, settings, None).expect("encoder");
     for (half, target) in [(0, 6_000_000u32), (1, 1_000_000)] {
         if half == 1 {
