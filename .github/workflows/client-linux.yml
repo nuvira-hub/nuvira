@@ -1,0 +1,46 @@
+name: nuvira-linux
+
+# Builds nuvira-linux-x64.tar.gz on Ubuntu 22.04, the oldest distribution we
+# support (the binary needs a glibc at least as new as the build one). The
+# archive is a workflow artifact; it goes into the release by hand, together
+# with the signed Windows files.
+on:
+  push:
+    branches: [main]
+    paths: ['client/**', 'proto/**', 'Cargo.*', 'tools/package-linux.sh', '.github/workflows/client-linux.yml']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and package
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config nasm file \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --workspace --release
+
+      - name: Package
+        run: tools/package-linux.sh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuvira-linux-x64
+          path: dist/nuvira-linux-x64.tar.gz
+          if-no-files-found: error
