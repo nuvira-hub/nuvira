@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use ashpd::desktop::remote_desktop::{
     Axis, DeviceType, KeyState, NotifyKeyboardKeycodeOptions, NotifyPointerAxisDiscreteOptions,
     NotifyPointerAxisOptions, NotifyPointerButtonOptions, NotifyPointerMotionAbsoluteOptions, RemoteDesktop,
@@ -65,15 +65,18 @@ pub struct Session {
 
 static CURRENT: Mutex<Weak<Session>> = Mutex::new(Weak::new());
 
-/// The open session, or a new one (which may show the system dialog and wait for
-/// the person's answer).
-pub fn session(token_file: PathBuf) -> Result<Arc<Session>> {
+/// The open session, or a new one. With `ask` the system dialog is shown when
+/// there is no saved permission or it is not accepted, and the person's answer is
+/// awaited; without it only the saved permission is tried (resuming after the
+/// screen was locked: GNOME refuses it while locked, and a dialog at every lock
+/// would be a nuisance).
+pub fn session(token_file: PathBuf, ask: bool) -> Result<Arc<Session>> {
     let mut current = CURRENT.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(session) = current.upgrade().filter(|s| s.is_open()) {
         debug!("portal session reused");
         return Ok(session);
     }
-    let session = Arc::new(Session::start(token_file)?);
+    let session = Arc::new(Session::start(token_file, ask)?);
     *current = Arc::downgrade(&session);
     Ok(session)
 }
@@ -84,14 +87,14 @@ pub fn current() -> Option<Arc<Session>> {
 }
 
 impl Session {
-    fn start(token_file: PathBuf) -> Result<Self> {
+    fn start(token_file: PathBuf, ask: bool) -> Result<Self> {
         let (cmds, rx) = mpsc::unbounded_channel();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let open = Arc::new(AtomicBool::new(true));
         let thread_open = open.clone();
         let thread = std::thread::Builder::new()
             .name("portal".into())
-            .spawn(move || run(token_file, ready_tx, rx, &thread_open))?;
+            .spawn(move || run(token_file, ask, ready_tx, rx, &thread_open))?;
         let screen = ready_rx.recv().map_err(|_| anyhow!("portal thread ended"))??;
         Ok(Self { cmds, screen, open, thread: Mutex::new(Some(thread)) })
     }
@@ -152,6 +155,7 @@ impl Drop for Session {
 
 fn run(
     token_file: PathBuf,
+    ask: bool,
     ready: std::sync::mpsc::Sender<Result<Screen>>,
     mut cmds: mpsc::UnboundedReceiver<Cmd>,
     open_flag: &AtomicBool,
@@ -164,7 +168,7 @@ fn run(
         }
     };
     rt.block_on(async {
-        let (remote, screencast, session, screen) = match open(&token_file).await {
+        let (remote, screencast, session, screen) = match open(&token_file, ask).await {
             Ok(v) => v,
             Err(e) => {
                 let _ = ready.send(Err(e));
@@ -239,12 +243,42 @@ fn state(down: bool) -> KeyState {
 
 type Opened = (RemoteDesktop, Screencast, ashpd::desktop::Session<RemoteDesktop>, Screen);
 
-async fn open(token_file: &std::path::Path) -> Result<Opened> {
-    let remote = RemoteDesktop::new().await.context("remote desktop portal not available")?;
-    let screencast = Screencast::new().await.context("screen cast portal not available")?;
-    let session = remote.create_session(CreateSessionOptions::default()).await?;
+/// How long a session with the saved permission may take to start.
+const RESTORE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Opens the session with the saved permission; if the system no longer accepts
+/// it (revoked, or the token is stale), asks again.
+async fn open(token_file: &std::path::Path, ask: bool) -> Result<Opened> {
     let token = std::fs::read_to_string(token_file).ok();
-    let token = token.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    let Some(token) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) else {
+        if !ask {
+            bail!("no saved remote desktop permission");
+        }
+        return open_with(token_file, None).await;
+    };
+    // With a saved permission there is no dialog: the answer comes at once, or
+    // never (seen right after the screen locked): then it is given up, and the
+    // capture asks again later.
+    match tokio::time::timeout(RESTORE_TIMEOUT, open_with(token_file, Some(token))).await {
+        Err(_) => Err(anyhow!("no answer from the remote desktop portal")),
+        Ok(Err(e)) if !ask => Err(e),
+        Ok(Err(e)) => {
+            info!("saved remote desktop permission not accepted ({e:#}): asking again");
+            let _ = std::fs::remove_file(token_file);
+            open_with(token_file, None).await
+        }
+        Ok(opened) => opened,
+    }
+}
+
+async fn open_with(token_file: &std::path::Path, token: Option<&str>) -> Result<Opened> {
+    // A connection of its own: ashpd's shared one belongs to the runtime that
+    // made it, the thread of the first session, and once that ended every later
+    // request went unanswered.
+    let bus = ashpd::zbus::Connection::session().await.context("D-Bus session bus")?;
+    let remote = RemoteDesktop::with_connection(bus.clone()).await.context("remote desktop portal not available")?;
+    let screencast = Screencast::with_connection(bus).await.context("screen cast portal not available")?;
+    let session = remote.create_session(CreateSessionOptions::default()).await?;
     remote
         .select_devices(
             &session,

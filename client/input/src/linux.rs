@@ -78,6 +78,15 @@ impl PortalInjector {
 
 impl InputInjector for PortalInjector {
     fn inject(&mut self, event: &InputEvent) -> Result<()> {
+        // The capture opens a new session when the system closed the old one
+        // (screen locked and unlocked): the input follows it.
+        if !self.session.is_open()
+            && let Some(session) = nuvira_portal::current()
+        {
+            self.session = session;
+            self.keys.clear();
+            self.buttons.clear();
+        }
         match &event.event {
             Some(Event::MouseMove(m)) => {
                 // Logical coordinates of the shared screen, as the portal wants them.

@@ -8,9 +8,9 @@
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use pipewire as pw;
 use pw::spa;
 use pw::spa::param::video::VideoFormat;
@@ -22,8 +22,8 @@ use crate::{Capturer, Display, Frame};
 /// File in the data folder with the portal's restore token.
 const TOKEN_FILE: &str = "remote-desktop-token";
 
-fn portal_session() -> Result<Arc<nuvira_portal::Session>> {
-    nuvira_portal::session(nuvira_transport::identity::data_dir().join(TOKEN_FILE))
+fn portal_session(ask: bool) -> Result<Arc<nuvira_portal::Session>> {
+    nuvira_portal::session(nuvira_transport::identity::data_dir().join(TOKEN_FILE), ask)
 }
 
 /// The shared screen, as the portal describes it. Without an open session there is
@@ -49,45 +49,37 @@ struct Image {
 
 pub struct PipeWireCapturer {
     display: Display,
-    images: Receiver<Image>,
-    spare: Sender<Vec<u8>>,
+    stream: Option<Stream>,
     frame: Option<Frame>,
-    quit: pw::channel::Sender<()>,
-    thread: Option<JoinHandle<()>>,
-    _session: Arc<nuvira_portal::Session>,
+    /// When to try again to share the screen, after the system stopped it.
+    retry_at: Instant,
 }
 
 impl PipeWireCapturer {
     pub fn new() -> Result<Self> {
-        let session = portal_session()?;
-        let screen = session.screen();
-        let fd = session.pipewire()?;
-        let (images_tx, images) = std::sync::mpsc::sync_channel(1);
-        let (spare, spare_rx) = std::sync::mpsc::channel();
-        let (quit, quit_rx) = pw::channel::channel();
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-        let thread = std::thread::Builder::new().name("pipewire".into()).spawn(move || {
-            if let Err(e) = stream_loop(fd, screen.node_id, images_tx, spare_rx, quit_rx, &ready_tx) {
-                let _ = ready_tx.send(Err(e));
+        let stream = Stream::open(true)?;
+        Ok(Self { display: stream.display.clone(), stream: Some(stream), frame: None, retry_at: Instant::now() })
+    }
+
+    /// The system stopped the sharing (GNOME does it when the screen locks, and
+    /// refuses new sessions until it is unlocked): it is asked again every two
+    /// seconds, with the saved permission, and the images resume by themselves.
+    fn reopen(&mut self, timeout: Duration) -> Result<bool> {
+        if Instant::now() < self.retry_at {
+            std::thread::sleep(timeout);
+            return Ok(false);
+        }
+        match Stream::open(false) {
+            Ok(stream) => {
+                info!("screen sharing resumed");
+                self.stream = Some(stream);
+                Ok(true)
             }
-        })?;
-        let mut capturer = Self {
-            display: display(&screen, None),
-            images,
-            spare,
-            frame: None,
-            quit,
-            thread: Some(thread),
-            _session: session,
-        };
-        // The real size in pixels comes with the format (the portal gives the
-        // logical one, smaller with a display scale above 100%).
-        let size = ready_rx
-            .recv_timeout(Duration::from_secs(10))
-            .map_err(|_| anyhow!("no image format from PipeWire"))??;
-        capturer.display = display(&screen, Some(size));
-        info!(?screen, width = size.0, height = size.1, "PipeWire capture");
-        Ok(capturer)
+            Err(e) => {
+                self.retry_at = Instant::now() + Duration::from_secs(2);
+                Err(e.context("screen sharing stopped on this computer (screen locked?)"))
+            }
+        }
     }
 }
 
@@ -97,10 +89,25 @@ impl Capturer for PipeWireCapturer {
     }
 
     fn next_frame(&mut self, timeout: Duration) -> Result<Option<&Frame>> {
-        let image = match self.images.recv_timeout(timeout) {
+        if self.stream.as_ref().is_none_or(|s| !s.session.is_open()) {
+            if self.stream.take().is_some() {
+                info!("the system stopped the screen sharing");
+                // Asking at once, while the system is still closing the old
+                // session, got no answer at all.
+                self.retry_at = Instant::now() + Duration::from_secs(2);
+            }
+            if !self.reopen(timeout)? {
+                return Ok(None);
+            }
+        }
+        let Some(stream) = &self.stream else { return Ok(None) };
+        let image = match stream.images.recv_timeout(timeout) {
             Ok(image) => image,
             Err(RecvTimeoutError::Timeout) => return Ok(None),
-            Err(RecvTimeoutError::Disconnected) => bail!("the screen stream ended"),
+            Err(RecvTimeoutError::Disconnected) => {
+                self.stream = None;
+                return Ok(None);
+            }
         };
         let mut data = image.data;
         if image.rgb {
@@ -116,7 +123,7 @@ impl Capturer for PipeWireCapturer {
             captured_us: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64),
         };
         if let Some(old) = self.frame.replace(frame) {
-            let _ = self.spare.send(old.data);
+            let _ = stream.spare.send(old.data);
         }
         Ok(self.frame.as_ref())
     }
@@ -126,12 +133,53 @@ impl Capturer for PipeWireCapturer {
     }
 }
 
-impl Drop for PipeWireCapturer {
+/// One PipeWire stream of the shared screen, with its thread.
+struct Stream {
+    display: Display,
+    images: Receiver<Image>,
+    spare: Sender<Vec<u8>>,
+    quit: pw::channel::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+    session: Arc<nuvira_portal::Session>,
+}
+
+impl Stream {
+    fn open(ask: bool) -> Result<Self> {
+        let session = portal_session(ask)?;
+        let screen = session.screen();
+        let fd = session.pipewire()?;
+        let (images_tx, images) = std::sync::mpsc::sync_channel(1);
+        let (spare, spare_rx) = std::sync::mpsc::channel();
+        let (quit, quit_rx) = pw::channel::channel();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::Builder::new().name("pipewire".into()).spawn(move || {
+            if let Err(e) = stream_loop(fd, screen.node_id, images_tx, spare_rx, quit_rx, &ready_tx) {
+                let _ = ready_tx.send(Err(e));
+            }
+        })?;
+        let mut stream =
+            Self { display: display(&screen, None), images, spare, quit, thread: Some(thread), session };
+        // The real size in pixels comes with the format (the portal gives the
+        // logical one, smaller with a display scale above 100%).
+        let size = ready_rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| anyhow!("no image format from PipeWire"))??;
+        stream.display = display(&screen, Some(size));
+        info!(?screen, width = size.0, height = size.1, "PipeWire capture");
+        Ok(stream)
+    }
+}
+
+impl Drop for Stream {
     fn drop(&mut self) {
-        let _ = self.quit.send(());
+        debug!("stopping the PipeWire stream");
+        if self.quit.send(()).is_err() {
+            debug!("PipeWire loop already ended");
+        }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        debug!("PipeWire stream stopped");
     }
 }
 
@@ -241,6 +289,7 @@ fn stream_loop(
     let ml = mainloop.clone();
     let _quit = quit.attach(mainloop.loop_(), move |()| ml.quit());
     mainloop.run();
+    debug!("PipeWire loop ended");
     Ok(())
 }
 
