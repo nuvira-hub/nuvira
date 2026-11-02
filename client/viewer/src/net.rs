@@ -256,6 +256,15 @@ async fn viewer_gone(input_rx: &mut mpsc::UnboundedReceiver<InputEvent>) {
 
 /// Closes the connection and gives the close message time to leave: without it the
 /// agent would notice only at the timeout and stay "busy" in the meantime.
+/// Why the agent closed the connection, when it says it ("@key", translated):
+/// e.g. the screen of a Linux computer is locked.
+async fn agent_reason(conn: &nuvira_transport::Connection) -> Option<String> {
+    let closed = tokio::time::timeout(Duration::from_millis(500), conn.closed()).await.ok()?;
+    let quinn::ConnectionError::ApplicationClosed(close) = closed else { return None };
+    let reason = std::str::from_utf8(&close.reason).ok()?;
+    reason.starts_with('@').then(|| nuvira_i18n::message(reason))
+}
+
 async fn close(conn: &nuvira_transport::Connection) {
     conn.close(0u32.into(), b"end of session");
     let _ = tokio::time::timeout(Duration::from_millis(500), conn.closed()).await;
@@ -364,6 +373,10 @@ async fn session(
         r = handshake(&conn, direct, password, &proxy) => match r {
             Ok(channels) => channels,
             Err(e) => {
+                let e = match agent_reason(&conn).await {
+                    Some(reason) => anyhow::anyhow!(reason),
+                    None => e,
+                };
                 close(&conn).await;
                 return Err(e);
             }

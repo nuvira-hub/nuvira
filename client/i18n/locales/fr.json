@@ -237,6 +237,8 @@
   "agent.no_user": "aucun utilisateur connecté sur l'ordinateur distant pour recevoir le fichier",
   "agent.files_view_only": "l'ordinateur distant est en affichage seul",
   "agent.files_disabled": "les règles du serveur n'autorisent pas le transfert de fichiers",
+  "agent.screen_denied": "la personne devant l'ordinateur distant n'a pas autorisé le contrôle",
+  "agent.screen_unavailable": "l'ordinateur distant ne peut pas partager son écran pour l'instant : il est peut-être verrouillé (déverrouillez-le et reconnectez-vous)",
 
   "server.denied": "accès refusé",
   "server.password_too_short": "le mot de passe doit comporter au moins 8 caractères",

@@ -217,11 +217,11 @@ pub async fn serve_direct(
             Ok(streams) => session(conn.clone(), streams, &config, None).await,
             Err(e) => Err(e),
         };
-        match result {
+        match &result {
             Ok(()) => info!("session with {peer} ended"),
             Err(e) => warn!("session with {peer} ended: {e:#}"),
         }
-        conn.close(0u32.into(), b"end of session");
+        conn.close(0u32.into(), &close_reason(&result));
         if once {
             break;
         }
@@ -596,7 +596,7 @@ async fn relayed_session(
     };
     // The whole endpoint is closed: including a connection left over through the relay,
     // which would otherwise keep the agent "busy" until its timeout.
-    endpoint.close(0u32.into(), b"end of session");
+    endpoint.close(0u32.into(), &close_reason(&result));
     endpoint.wait_idle().await;
     if result.is_ok() {
         info!("session ended");
@@ -1190,6 +1190,17 @@ async fn session(
     }
     drop(chat_tx);
     result
+}
+
+/// What the viewer reads when the connection closes: the "@key" message of the
+/// error that ended the session, if it has one (e.g. the screen of a Linux
+/// computer is locked), translated on its side.
+fn close_reason(result: &Result<()>) -> Vec<u8> {
+    result
+        .as_ref()
+        .err()
+        .and_then(|e| e.chain().map(|c| c.to_string()).find(|m| m.starts_with('@')))
+        .map_or_else(|| b"end of session".to_vec(), String::into_bytes)
 }
 
 /// Capture and encoding of a screen, restartable on another one during the session.

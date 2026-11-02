@@ -171,7 +171,7 @@ fn run(
         let (remote, screencast, session, screen) = match open(&token_file, ask).await {
             Ok(v) => v,
             Err(e) => {
-                let _ = ready.send(Err(e));
+                let _ = ready.send(Err(for_viewer(e)));
                 return;
             }
         };
@@ -235,6 +235,16 @@ fn run(
         let _ = session.close().await;
         info!("portal session closed");
     });
+}
+
+/// Adds the "@" message the viewer shows, translated (see `nuvira_i18n::message`):
+/// the person said no in the dialog, or the system did not share the screen
+/// (GNOME refuses so while the screen is locked).
+fn for_viewer(e: anyhow::Error) -> anyhow::Error {
+    let cancelled = e.chain().any(|c| {
+        matches!(c.downcast_ref(), Some(ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)))
+    });
+    e.context(if cancelled { "@agent.screen_denied" } else { "@agent.screen_unavailable" })
 }
 
 fn state(down: bool) -> KeyState {
@@ -301,11 +311,7 @@ async fn open_with(token_file: &std::path::Path, token: Option<&str>) -> Result<
         .await?
         .response()?;
     info!(restored = token.is_some(), "waiting for the remote desktop permission");
-    let started = remote
-        .start(&session, None, StartOptions::default())
-        .await?
-        .response()
-        .map_err(|e| anyhow!("the remote session was not allowed on this computer ({e})"))?;
+    let started = remote.start(&session, None, StartOptions::default()).await?.response()?;
     if let Some(token) = started.restore_token()
         && let Err(e) = write_private(token_file, token)
     {

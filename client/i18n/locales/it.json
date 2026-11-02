@@ -237,6 +237,8 @@
   "agent.no_user": "nessun utente collegato al computer remoto a cui consegnare il file",
   "agent.files_view_only": "il computer remoto è in sola visualizzazione",
   "agent.files_disabled": "le regole del server non consentono il trasferimento di file",
+  "agent.screen_denied": "la persona al computer remoto non ha consentito il controllo",
+  "agent.screen_unavailable": "il computer remoto non riesce a condividere lo schermo in questo momento: forse è bloccato (sbloccalo e collegati di nuovo)",
 
   "server.denied": "accesso negato",
   "server.password_too_short": "la password deve avere almeno 8 caratteri",
