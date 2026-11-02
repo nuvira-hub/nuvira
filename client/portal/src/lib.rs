@@ -262,9 +262,10 @@ async fn open(token_file: &std::path::Path, ask: bool) -> Result<Opened> {
     match tokio::time::timeout(RESTORE_TIMEOUT, open_with(token_file, Some(token))).await {
         Err(_) => Err(anyhow!("no answer from the remote desktop portal")),
         Ok(Err(e)) if !ask => Err(e),
+        // Not deleted: GNOME refuses it also while the screen is locked. A new
+        // permission replaces it.
         Ok(Err(e)) => {
             info!("saved remote desktop permission not accepted ({e:#}): asking again");
-            let _ = std::fs::remove_file(token_file);
             open_with(token_file, None).await
         }
         Ok(opened) => opened,
