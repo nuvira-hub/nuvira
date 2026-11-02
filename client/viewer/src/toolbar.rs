@@ -22,12 +22,15 @@ use crate::net::NetEvent;
 
 const HTML: &str = include_str!("toolbar.html");
 const CHAT_HTML: &str = include_str!("chat.html");
+const NOTICE_HTML: &str = include_str!("notice.html");
 /// Sizes in logical pixels: open toolbar and the tab to reopen it.
 const BAR: (f64, f64) = (860.0, 38.0);
 /// Chat panel: width and maximum height, distance from the edges.
 const CHAT: (f64, f64) = (340.0, 440.0);
 const CHAT_MARGIN: f64 = 12.0;
 const TAB: (f64, f64) = (56.0, 14.0);
+/// Message in the middle of the window, before the first image.
+const NOTICE: (f64, f64) = (520.0, 76.0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -134,6 +137,16 @@ impl ChatPanel {
     pub fn new(window: Arc<Window>, proxy: EventLoopProxy<NetEvent>) -> Result<Self> {
         let (webview, context) =
             child_webview(&window, proxy, CHAT_HTML, chat_bounds(&window), false).context("chat WebView")?;
+        // On Linux wry shows the GTK window and hides it again, but GTK maps it only
+        // when it handles its events: the empty (black) container would stay above
+        // the image. Hidden again once GTK is done.
+        #[cfg(target_os = "linux")]
+        {
+            while gtk::events_pending() {
+                gtk::main_iteration_do(false);
+            }
+            let _ = webview.set_visible(false);
+        }
         Ok(Self { webview, window, visible: false, _context: context })
     }
 
@@ -179,6 +192,44 @@ impl ChatPanel {
     }
 }
 
+/// Message in the middle of the window while there is no image yet (connecting,
+/// waiting for the person at the remote computer to accept): without it the window
+/// stays black. Dropped at the first image.
+pub struct Notice {
+    webview: WebView,
+    window: Arc<Window>,
+    _context: WebContext,
+}
+
+impl Notice {
+    pub fn new(window: Arc<Window>, proxy: EventLoopProxy<NetEvent>, text: &str) -> Result<Self> {
+        let html = NOTICE_HTML.replace("/*TEXT*/\"\"", &js_string(text));
+        let (webview, context) =
+            child_webview(&window, proxy, &html, notice_bounds(&window), true).context("notice WebView")?;
+        Ok(Self { webview, window, _context: context })
+    }
+
+    pub fn set_text(&self, text: &str) {
+        let _ = self.webview.evaluate_script(&format!("window.nuvira && nuvira.set({})", js_string(text)));
+    }
+
+    pub fn layout(&self) {
+        let _ = self.webview.set_bounds(notice_bounds(&self.window));
+    }
+}
+
+/// In the middle of the window.
+fn notice_bounds(window: &Window) -> Rect {
+    let inner = window.inner_size().to_logical::<f64>(window.scale_factor());
+    let w = NOTICE.0.min(inner.width - 2.0 * CHAT_MARGIN).max(0.0);
+    let h = NOTICE.1.min(inner.height).max(0.0);
+    Rect {
+        position: LogicalPosition::new(((inner.width - w) / 2.0).round(), ((inner.height - h) / 2.0).round())
+            .into(),
+        size: LogicalSize::new(w, h).into(),
+    }
+}
+
 /// WebView child of the session window, with the page's messages forwarded to the viewer.
 fn child_webview(
     window: &Window,
@@ -201,8 +252,7 @@ fn child_webview(
             .with_background_color((0x1f, 0x25, 0x2b, 0xff))
             .with_bounds(bounds)
             .with_visible(visible)
-            // Strings in the session's language, available to the page before it runs.
-            .with_initialization_script(format!("window.I18N = {};", nuvira_i18n::json()))
+            .with_initialization_script(init_script())
             .with_ipc_handler(move |request| {
                 if let Some(action) = Action::parse(request.body()) {
                     let _ = proxy.send_event(NetEvent::Toolbar(action));
@@ -211,6 +261,16 @@ fn child_webview(
             .build_as_child(window)
     })?;
     Ok((webview, context))
+}
+
+/// Run by every page of the viewer before its own script: the strings in the
+/// session's language, and no context menu (on Linux WebKitGTK's stays open
+/// above every window when the WebView is a child of the session window).
+pub fn init_script() -> String {
+    format!(
+        "window.I18N = {}; document.addEventListener('contextmenu', e => e.preventDefault());",
+        nuvira_i18n::json()
+    )
 }
 
 /// Builds a WebView, trying again for a couple of seconds while WebView2 answers

@@ -3356,6 +3356,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "clap",
+ "gtk",
  "nu-ansi-term",
  "nuvira-clipboard",
  "nuvira-codec",
@@ -3374,6 +3375,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wgpu",
+ "windows",
  "winit",
  "wry",
 ]

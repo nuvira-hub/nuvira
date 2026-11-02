@@ -10,6 +10,7 @@
   "status.online": "Prêt : joignable avec cet ID",
   "status.online_ws": "Prêt : joignable avec cet ID (via WebSocket)",
   "status.offline": "Non connecté au serveur",
+  "status.viewer_only": "Uniquement pour contrôler d'autres ordinateurs",
   "status.offline_reason": "Non connecté au serveur : {reason}",
   "status.server_public": "Serveur : serveur public NuviraHub",
   "status.terms": "Conditions d'utilisation",
@@ -32,6 +33,7 @@
   "connect.new_password": "Générer un nouveau mot de passe",
   "connect.copied": "Copié",
   "connect.share_hint": "Communiquez votre ID et votre mot de passe à la personne qui vous aide : il vous sera demandé de confirmer la connexion.",
+  "connect.viewer_only": "Sous Linux, NuviraHub permet pour l'instant seulement de contrôler d'autres ordinateurs : cet ordinateur ne peut pas encore être contrôlé à distance.",
   "connect.service_note": "Accès sans surveillance activé (service NuviraHub) : toute personne ayant le mot de passe permanent se connecte sans confirmation.",
   "connect.title": "Contrôler un ordinateur",
   "connect.hint": "Saisissez l'ID de l'ordinateur à contrôler.",
@@ -212,6 +214,7 @@
 
   "viewer.title_connecting": "NuviraHub — connexion à {agent}…",
   "viewer.title_pending": "NuviraHub — en attente de l'acceptation de {agent}…",
+  "viewer.connecting": "Connexion à {agent}…",
   "viewer.pending": "En attente que la personne à l'ordinateur distant accepte…",
   "app.waiting_confirmation": "En attente que la personne à l'ordinateur distant accepte la connexion…",
   "viewer.title": "NuviraHub — {agent} · {fps} ips · latence {latency} · RTT {rtt} ms · {mbps} Mbit/s · enc. {enc} ms · déc. {dec} ms",

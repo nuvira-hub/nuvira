@@ -83,6 +83,7 @@ impl Pipeline {
         let shared = Arc::new(Shared::default());
         let mut pipeline = Self { shared: shared.clone(), threads: Vec::new() };
 
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut capturer = open_capturer()?;
         #[cfg(windows)]
         let device = if gpu { capturer.enable_gpu_output().map(GpuDevice) } else { None };

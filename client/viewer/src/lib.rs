@@ -146,6 +146,107 @@ fn ansi_colors() -> bool {
     std::io::IsTerminal::is_terminal(&std::io::stderr())
 }
 
+/// On Linux the WebViews can be children of the window only under X11 (wry), so
+/// the window goes through XWayland on a Wayland desktop; GTK, which draws them,
+/// is started here.
+fn event_loop() -> Result<EventLoop<NetEvent>> {
+    let mut builder = EventLoop::<NetEvent>::with_user_event();
+    #[cfg(target_os = "linux")]
+    {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        // WebKit's GPU path (DMA-BUF) fails without DRI3 (virtual machines, some
+        // drivers): the toolbar is small and is drawn just as well by the CPU.
+        // SAFETY: at startup, before the network thread exists.
+        unsafe {
+            std::env::set_var("GDK_BACKEND", "x11");
+            if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            }
+        }
+        gtk::init().context("GTK not available")?;
+        builder.with_x11();
+        let event_loop = builder.build()?;
+        keep_gtk_x11_errors(&event_loop);
+        return Ok(event_loop);
+    }
+    #[allow(unreachable_code)]
+    Ok(builder.build()?)
+}
+
+/// Xlib has one error handler per process, and winit's takes the errors of GTK's
+/// own X connection too (a WebView's window already destroyed, GLX without a
+/// GPU): it would report them at its next call, and some of its calls panic on
+/// an error. Errors of other connections are only logged.
+#[cfg(target_os = "linux")]
+fn keep_gtk_x11_errors(event_loop: &EventLoop<NetEvent>) {
+    use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+    let Some(ours) = event_loop.display_handle().ok().and_then(|h| match h.as_raw() {
+        RawDisplayHandle::Xlib(xlib) => xlib.display.map(|d| d.as_ptr() as usize),
+        _ => None,
+    }) else {
+        return;
+    };
+    winit::platform::x11::register_xlib_error_hook(Box::new(move |display, _event| {
+        let other = display as usize != ours;
+        if other {
+            debug!("X11 error of GTK's connection, ignored");
+        }
+        other
+    }));
+}
+
+/// Icon of the session windows: the N inside a screen, distinct from the app's.
+#[cfg(not(target_os = "linux"))]
+const ICON: &[u8] = include_bytes!("../icons/viewer-64.png");
+#[cfg(target_os = "linux")]
+const ICON_LARGE: &[u8] = include_bytes!("../icons/viewer-256.png");
+
+fn icon(png_bytes: &[u8]) -> Option<winit::window::Icon> {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png_bytes)).read_info().ok()?;
+    let mut rgba = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut rgba).ok()?;
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    rgba.truncate(info.buffer_size());
+    winit::window::Icon::from_rgba(rgba, info.width, info.height).ok()
+}
+
+/// Attributes shared by the viewer's windows (session, file manager): their own
+/// icon and, on Linux, their own window class, so that the desktop does not take
+/// them for the app's windows.
+fn window_attributes() -> winit::window::WindowAttributes {
+    let attrs = Window::default_attributes();
+    #[cfg(windows)]
+    let attrs = {
+        use winit::platform::windows::WindowAttributesExtWindows;
+        attrs.with_window_icon(icon(ICON)).with_taskbar_icon(icon(ICON))
+    };
+    #[cfg(target_os = "linux")]
+    let attrs = {
+        use winit::platform::x11::WindowAttributesExtX11;
+        attrs.with_window_icon(icon(ICON_LARGE)).with_name("nuvira-viewer", "nuvira-viewer")
+    };
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let attrs = attrs.with_window_icon(icon(ICON));
+    attrs
+}
+
+/// On Windows the session windows form their own group in the taskbar, with their
+/// icon, instead of joining the app's (same program).
+#[cfg(windows)]
+fn own_taskbar_group() {
+    // SAFETY: a static wide string; called once at start-up.
+    let result = unsafe {
+        windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(windows::core::w!(
+            "NuviraHub.Viewer"
+        ))
+    };
+    if let Err(e) = result {
+        debug!("taskbar group not set: {e}");
+    }
+}
+
 /// The viewer's command line: `args` as from `std::env::args_os()` (program name first).
 pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     let _ = tracing_subscriber::fmt()
@@ -178,7 +279,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     println!("{COPYRIGHT}");
 
     let started = Instant::now();
-    let event_loop = EventLoop::<NetEvent>::with_user_event().build()?;
+    #[cfg(windows)]
+    own_taskbar_group();
+    let event_loop = event_loop()?;
     if let Some(secs) = args.duration {
         let proxy = event_loop.create_proxy();
         std::thread::spawn(move || {
@@ -216,6 +319,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         renderer: None,
         toolbar: None,
         chat: None,
+        notice: None,
         quality: nuvira_proto::v1::Quality::Balanced,
         agent: args.agent.clone(),
         stats: Stats::new(),
@@ -254,6 +358,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     }
     // Orderly shutdown: toolbar and wgpu surface, then the window, then the rest.
     // Left to the implicit order, the viewer sometimes crashed on exit.
+    drop(app.notice.take());
     drop(app.chat.take());
     drop(app.toolbar.take());
     drop(app.renderer.take());
@@ -297,6 +402,8 @@ struct App {
     renderer: Option<Renderer>,
     toolbar: Option<toolbar::Toolbar>,
     chat: Option<toolbar::ChatPanel>,
+    /// Message in the middle of the window until the first image.
+    notice: Option<toolbar::Notice>,
     quality: nuvira_proto::v1::Quality,
     agent: String,
     stats: Stats,
@@ -532,11 +639,24 @@ impl App {
 }
 
 impl ApplicationHandler<NetEvent> for App {
+    /// GTK has its own connection to the X server: its events are handled here, and
+    /// the loop wakes up at least every 16 ms so that the WebViews answer even
+    /// while no frames arrive.
+    #[cfg(target_os = "linux")]
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        while gtk::events_pending() {
+            gtk::main_iteration_do(false);
+        }
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
+            Instant::now() + Duration::from_millis(16),
+        ));
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
-        let attrs = Window::default_attributes()
+        let attrs = window_attributes()
             .with_title(tf("viewer.title_connecting", &[("agent", &self.agent)]))
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
         let window = match event_loop.create_window(attrs) {
@@ -573,6 +693,11 @@ impl ApplicationHandler<NetEvent> for App {
             Ok(chat) => self.chat = Some(chat),
             Err(e) => error!("chat not available: {e:#}"),
         }
+        let connecting = tf("viewer.connecting", &[("agent", &self.agent)]);
+        match toolbar::Notice::new(window.clone(), self.proxy.clone(), &connecting) {
+            Ok(notice) => self.notice = Some(notice),
+            Err(e) => debug!("notice not available: {e:#}"),
+        }
         self.window = Some(window);
         self.update_toolbar_state();
         // The connection starts only once window and rendering are ready: when the
@@ -601,6 +726,9 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.update(&format!("{{name:{}}}", toolbar::js_string(&t("viewer.pending"))));
+                }
+                if let Some(notice) = &self.notice {
+                    notice.set_text(&t("viewer.pending"));
                 }
             }
             NetEvent::Connected { agent, direct, width, height, file_manager } => {
@@ -647,6 +775,8 @@ impl ApplicationHandler<NetEvent> for App {
                     last.u.clone_from(&frame.yuv.u);
                     last.v.clone_from(&frame.yuv.v);
                 }
+                // The image is there: no more waiting message.
+                self.notice = None;
                 let Some(renderer) = self.renderer.as_mut() else { return };
                 let t = Instant::now();
                 renderer.upload(&frame.yuv);
@@ -787,6 +917,9 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 if let Some(chat) = &self.chat {
                     chat.layout();
+                }
+                if let Some(notice) = &self.notice {
+                    notice.layout();
                 }
                 self.update_toolbar_state();
                 self.send_view_size();

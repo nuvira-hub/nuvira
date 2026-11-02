@@ -134,6 +134,10 @@ function render(state) {
   $("service-note").classList.toggle("hidden", !state.service);
   $("server-service").classList.toggle("hidden", !state.service);
   $("install-off").classList.toggle("hidden", state.service);
+  // Linux for now: only controls other computers.
+  $("this-pc").classList.toggle("hidden", !state.controllable);
+  $("viewer-only").classList.toggle("hidden", state.controllable);
+  $("unattended").classList.toggle("hidden", !state.controllable);
   $("update-bar").classList.toggle("hidden", !state.update && !state.installed && !state.service_stopped);
   if (!$("update-button").disabled) {
     if (!state.service_stopped) repairError = null;

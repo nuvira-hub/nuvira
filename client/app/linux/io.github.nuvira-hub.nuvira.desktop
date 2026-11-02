@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=NuviraHub
+Comment=Remote desktop: control other computers
+Exec=nuvira
+Icon=io.github.nuvira-hub.nuvira
+Terminal=false
+Categories=Network;RemoteAccess;
+StartupWMClass=nuvira

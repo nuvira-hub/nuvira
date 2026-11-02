@@ -193,7 +193,6 @@ fn run_service() -> anyhow::Result<()> {
 }
 
 #[cfg(not(windows))]
-fn main() {
-    eprintln!("{COPYRIGHT}\nnuvira-service exists only for Windows for now");
-    std::process::exit(1);
+pub fn run(_args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<()> {
+    anyhow::bail!("{COPYRIGHT}\nnuvira-service exists only for Windows for now")
 }

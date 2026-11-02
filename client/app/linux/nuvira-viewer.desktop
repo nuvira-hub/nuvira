@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=NuviraHub session
+Comment=Remote session window of NuviraHub
+Exec=nuvira
+Icon=nuvira-viewer
+Terminal=false
+NoDisplay=true
+StartupWMClass=nuvira-viewer

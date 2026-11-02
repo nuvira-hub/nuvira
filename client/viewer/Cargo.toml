@@ -27,12 +27,18 @@ serde_json = "1"
 tokio = { workspace = true, features = ["fs"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-nu-ansi-term.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
 wry = "0.57"
 rfd = "0.15"
 png.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+nu-ansi-term.workspace = true
+windows = { workspace = true, features = ["Win32_UI_Shell"] }
+
+# The WebViews (toolbar, chat, file manager) are GTK widgets: GTK must be started
+# and its events handled in the winit loop.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"

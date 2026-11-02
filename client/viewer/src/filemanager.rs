@@ -95,9 +95,12 @@ impl FileManager {
             ui.window.focus_window();
             return Ok(());
         }
-        let mut attrs = Window::default_attributes()
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut attrs = crate::window_attributes()
             .with_title(nuvira_i18n::t("fm.title"))
             .with_inner_size(winit::dpi::LogicalSize::new(1000.0, 640.0));
+        #[cfg(not(windows))]
+        let _ = owner;
         #[cfg(windows)]
         {
             let hwnd = owner
@@ -122,7 +125,7 @@ impl FileManager {
                 .with_html(HTML)
                 .with_background_color((0x1f, 0x25, 0x2b, 0xff))
                 .with_bounds(full(&window))
-                .with_initialization_script(format!("window.I18N = {};", nuvira_i18n::json()))
+                .with_initialization_script(crate::toolbar::init_script())
                 .with_ipc_handler(move |request| {
                     let _ = proxy.send_event(NetEvent::FileManager(request.body().clone()));
                 })

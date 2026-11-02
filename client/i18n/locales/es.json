@@ -10,6 +10,7 @@
   "status.online": "Listo: accesible con este ID",
   "status.online_ws": "Listo: accesible con este ID (vía WebSocket)",
   "status.offline": "Sin conexión con el servidor",
+  "status.viewer_only": "Solo para controlar otros equipos",
   "status.offline_reason": "Sin conexión con el servidor: {reason}",
   "status.server_public": "Servidor: servidor público de NuviraHub",
   "status.terms": "Condiciones de uso",
@@ -32,6 +33,7 @@
   "connect.new_password": "Generar una nueva contraseña",
   "connect.copied": "Copiado",
   "connect.share_hint": "Comunique su ID y contraseña a la persona que le ayuda: se le pedirá que confirme la conexión.",
+  "connect.viewer_only": "En Linux, por ahora, NuviraHub solo sirve para controlar otros equipos: este equipo todavía no se puede controlar de forma remota.",
   "connect.service_note": "Acceso desatendido activado (servicio NuviraHub): quien tenga la contraseña permanente se conecta sin confirmación.",
   "connect.title": "Controlar un equipo",
   "connect.hint": "Escriba el ID del equipo que quiere controlar.",
@@ -212,6 +214,7 @@
 
   "viewer.title_connecting": "NuviraHub — conectando con {agent}…",
   "viewer.title_pending": "NuviraHub — esperando a que {agent} acepte…",
+  "viewer.connecting": "Conectando con {agent}…",
   "viewer.pending": "Esperando a que la persona del equipo remoto acepte…",
   "app.waiting_confirmation": "Esperando a que la persona del equipo remoto acepte la conexión…",
   "viewer.title": "NuviraHub — {agent} · {fps} fps · latencia {latency} · RTT {rtt} ms · {mbps} Mbit/s · cod. {enc} ms · decod. {dec} ms",

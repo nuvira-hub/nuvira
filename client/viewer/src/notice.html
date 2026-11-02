@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bar: #1f252b;
+    --hover: #323a42;
+    --text: #e6eaee;
+    --accent: #3aa7cc;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bar); color: var(--text);
+    font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+    cursor: default; user-select: none; -webkit-user-select: none;
+  }
+  body {
+    display: flex; align-items: center; gap: 16px; padding: 0 22px;
+    border: 1px solid var(--hover);
+  }
+  .spinner {
+    flex: none; width: 26px; height: 26px; border-radius: 50%;
+    border: 3px solid var(--hover); border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #text { margin: 0; }
+</style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <p id="text"></p>
+<script>
+  // Message shown while there is no image yet; the viewer changes it with
+  // `nuvira.set("...")`.
+  window.nuvira = {
+    set(text) { document.getElementById("text").textContent = text; },
+  };
+  nuvira.set(/*TEXT*/"");
+</script>
+</body>
+</html>

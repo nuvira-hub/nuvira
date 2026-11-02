@@ -10,6 +10,7 @@
   "status.online": "Ready: reachable with this ID",
   "status.online_ws": "Ready: reachable with this ID (via WebSocket)",
   "status.offline": "Not connected to the server",
+  "status.viewer_only": "Only for controlling other computers",
   "status.offline_reason": "Not connected to the server: {reason}",
   "status.server_public": "Server: NuviraHub public server",
   "status.terms": "Terms of use",
@@ -32,6 +33,7 @@
   "connect.new_password": "Generate a new password",
   "connect.copied": "Copied",
   "connect.share_hint": "Give your ID and password to the person helping you: you will be asked to confirm the connection.",
+  "connect.viewer_only": "On Linux, for now, NuviraHub can only control other computers: this computer cannot be controlled remotely yet.",
   "connect.service_note": "Unattended access is on (NuviraHub service): anyone with the permanent password connects without confirmation.",
   "connect.title": "Control a computer",
   "connect.hint": "Type the ID of the computer to control.",
@@ -212,6 +214,7 @@
 
   "viewer.title_connecting": "NuviraHub — connecting to {agent}…",
   "viewer.title_pending": "NuviraHub — waiting for {agent} to accept…",
+  "viewer.connecting": "Connecting to {agent}…",
   "viewer.pending": "Waiting for the person at the remote computer to accept…",
   "app.waiting_confirmation": "Waiting for the person at the remote computer to accept the connection…",
   "viewer.title": "NuviraHub — {agent} · {fps} fps · latency {latency} · RTT {rtt} ms · {mbps} Mbit/s · enc. {enc} ms · dec. {dec} ms",

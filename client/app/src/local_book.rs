@@ -204,14 +204,73 @@ fn unprotect(stored: &str) -> String {
     }
 }
 
+/// Without DPAPI: AES-256-GCM with a random key in a file readable only by this
+/// user (`book.key`, next to the address book). A copy of the address book alone
+/// does not reveal the passwords.
 #[cfg(not(windows))]
-fn protect(_plain: &str) -> Result<String, String> {
-    Err(t("err.unexpected"))
+fn book_key() -> Result<ring::aead::LessSafeKey, String> {
+    use ring::aead::{AES_256_GCM, LessSafeKey, UnboundKey};
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let path = nuvira_transport::identity::data_dir().join("book.key");
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let mut bytes = vec![0u8; 32];
+            ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes)
+                .map_err(|_| t("err.unexpected"))?;
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            }
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .and_then(|mut f| f.write_all(&bytes))
+                .map_err(|e| e.to_string())?;
+            bytes
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    let key = UnboundKey::new(&AES_256_GCM, &bytes).map_err(|_| t("err.unexpected"))?;
+    Ok(LessSafeKey::new(key))
 }
 
 #[cfg(not(windows))]
-fn unprotect(_stored: &str) -> String {
-    String::new()
+fn protect(plain: &str) -> Result<String, String> {
+    use ring::aead::{Aad, NONCE_LEN, Nonce};
+
+    let key = book_key()?;
+    let mut nonce = [0u8; NONCE_LEN];
+    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut nonce)
+        .map_err(|_| t("err.unexpected"))?;
+    let mut data = plain.as_bytes().to_vec();
+    key.seal_in_place_append_tag(Nonce::assume_unique_for_key(nonce), Aad::empty(), &mut data)
+        .map_err(|_| t("err.unexpected"))?;
+    Ok(format!("key:{}{}", hex(&nonce), hex(&data)))
+}
+
+/// Empty if the password cannot be read (another user or computer).
+#[cfg(not(windows))]
+fn unprotect(stored: &str) -> String {
+    use ring::aead::{Aad, NONCE_LEN, Nonce};
+
+    let Some(bytes) = stored.strip_prefix("key:").and_then(unhex) else {
+        return String::new();
+    };
+    let (Ok(key), Some((nonce, data))) = (book_key(), bytes.split_at_checked(NONCE_LEN)) else {
+        return String::new();
+    };
+    let Ok(nonce) = Nonce::try_assume_unique_for_key(nonce) else {
+        return String::new();
+    };
+    let mut data = data.to_vec();
+    match key.open_in_place(nonce, Aad::empty(), &mut data) {
+        Ok(plain) => String::from_utf8_lossy(plain).into_owned(),
+        Err(_) => String::new(),
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -235,6 +294,16 @@ mod tests {
         assert_eq!(unhex(&hex(&bytes)).unwrap(), bytes);
         assert!(unhex("abc").is_none());
         assert!(unhex("zz").is_none());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn key_round_trip() {
+        let stored = protect("pàssword").unwrap();
+        assert!(stored.starts_with("key:") && !stored.contains("pàssword"));
+        assert_eq!(unprotect(&stored), "pàssword");
+        assert_eq!(unprotect("key:00"), "");
+        assert_eq!(unprotect(""), "");
     }
 
     #[cfg(windows)]

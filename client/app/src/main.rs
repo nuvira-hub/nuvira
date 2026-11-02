@@ -30,13 +30,18 @@ use tracing::{info, warn};
 const SOURCE_URL: &str = "https://github.com/nuvira-hub/nuvira";
 /// Terms of use of the public server, in the interface language: `{lang}` is replaced.
 const TERMS_URL: &str = "https://nuvirahub.dev/{lang}/terms/";
+/// This PC can be controlled (capture, input). Not yet on Linux, where the app
+/// only controls other computers.
+const CONTROLLABLE: bool = cfg!(windows);
 
 /// State shown by the interface (sent with the "state" event).
 #[derive(Debug, Default, Clone, Serialize)]
 struct UiState {
     server: String,
-    /// "connecting", "online", "offline".
+    /// "connecting", "online", "offline", "viewer_only".
     status: String,
+    /// See [`CONTROLLABLE`].
+    controllable: bool,
     device_id: Option<String>,
     websocket: bool,
     /// ID and password are the service's (unattended access).
@@ -241,6 +246,7 @@ struct NuviraApp {
     plan: Mutex<Option<EncoderPlan>>,
     address_book: address_book::Link,
     /// Server the service's agent is registered on (from its Info), if linked.
+    #[cfg_attr(not(windows), allow(dead_code))]
     service_server: Mutex<Option<String>>,
 }
 
@@ -281,6 +287,9 @@ fn start_agent(app: &AppHandle) {
     let state = app.state::<NuviraApp>();
     if let Some(old) = state.agent.lock().expect("agent").take() {
         old.abort();
+    }
+    if !CONTROLLABLE {
+        return;
     }
     #[cfg(windows)]
     if nuvira_agent::ipc::service_installed() {
@@ -498,6 +507,7 @@ fn get_state(state: State<NuviraApp>) -> UiState {
 }
 
 /// Server as shown in the settings: empty for the public one.
+#[cfg(windows)]
 fn shown_server(server: &str) -> String {
     if server.trim().eq_ignore_ascii_case(nuvira_transport::signal::PUBLIC_SERVER) {
         String::new()
@@ -776,7 +786,8 @@ fn main() {
     let state = NuviraApp {
         ui: Mutex::new(UiState {
             server: settings.server,
-            status: "connecting".into(),
+            status: if CONTROLLABLE { "connecting" } else { "viewer_only" }.into(),
+            controllable: CONTROLLABLE,
             password: password.clone(),
             ..Default::default()
         }),
@@ -989,7 +1000,11 @@ fn previous_copy() -> Option<PathBuf> {
 
 /// Without the service (which updates an installed NuviraHub by itself) the app asks
 /// its server for a newer version at start-up and every 6 hours, and offers it.
+/// Updates exist only for Windows for now.
 fn start_update_checks(app: &AppHandle) {
+    if nuvira_update::platform() == "unsupported" {
+        return;
+    }
     if let Some(old) = previous_copy() {
         let _ = std::fs::remove_file(old);
     }
