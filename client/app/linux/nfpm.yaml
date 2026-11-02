@@ -1,0 +1,50 @@
+# .deb and .rpm of NuviraHub, built by tools/package-linux.sh with nfpm.
+# Paths are relative to the staging folder that script prepares.
+name: nuvira
+arch: amd64
+platform: linux
+version: ${VERSION}
+maintainer: NuviraHub <security@nuvirahub.dev>
+description: |
+  NuviraHub: remote desktop.
+  On Linux, for now, it controls other computers: this computer cannot be
+  controlled remotely yet.
+vendor: NuviraHub
+homepage: https://nuvirahub.dev
+license: AGPL-3.0-or-later
+section: net
+
+contents:
+  - src: nuvira
+    dst: /usr/bin/nuvira
+    file_info: { mode: 0755 }
+  - src: io.github.nuvira-hub.nuvira.desktop
+    dst: /usr/share/applications/io.github.nuvira-hub.nuvira.desktop
+  - src: nuvira-viewer.desktop
+    dst: /usr/share/applications/nuvira-viewer.desktop
+  - src: icons/app-32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/io.github.nuvira-hub.nuvira.png
+  - src: icons/app-128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/io.github.nuvira-hub.nuvira.png
+  - src: icons/app-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/io.github.nuvira-hub.nuvira.png
+  - src: icons/viewer-32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/nuvira-viewer.png
+  - src: icons/viewer-128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/nuvira-viewer.png
+  - src: icons/viewer-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/nuvira-viewer.png
+  - src: LICENSE
+    dst: /usr/share/doc/nuvira/LICENSE
+
+overrides:
+  deb:
+    depends:
+      - libwebkit2gtk-4.1-0
+      - libgtk-3-0
+      - libxkbcommon-x11-0
+  rpm:
+    depends:
+      - webkit2gtk4.1
+      - gtk3
+      - libxkbcommon-x11

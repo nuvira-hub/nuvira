@@ -1,6 +1,6 @@
 #!/bin/bash
-# Builds the Linux archive nuvira-linux-x64.tar.gz: the app, its icons, the
-# .desktop files and install.sh. Build on the oldest distribution we support
+# Builds the Linux packages: nuvira-linux-x64.tar.gz (the app, its icons, the
+# .desktop files and install.sh), plus a .deb and an .rpm with nfpm. Build on the oldest distribution we support
 # (Ubuntu 22.04): the binary needs a glibc at least as new as the build one.
 #
 #   tools/package-linux.sh [out_dir]
@@ -15,6 +15,7 @@ trap 'rm -rf "$(dirname "$stage")"' EXIT
 cargo build --release -p nuvira-app
 
 mkdir -p "$stage/icons" "$out"
+out=$(cd "$out" && pwd)
 install -m 755 target/release/nuvira "$stage/nuvira"
 strip "$stage/nuvira"
 install -m 755 client/app/linux/install.sh "$stage/install.sh"
@@ -45,4 +46,8 @@ and with Wayland (through XWayland).
 EOF
 
 tar -C "$(dirname "$stage")" -czf "$out/nuvira-linux-x64.tar.gz" "nuvira-$version"
-echo "$out/nuvira-linux-x64.tar.gz"
+cp client/app/linux/nfpm.yaml "$stage/"
+for packager in deb rpm; do
+    (cd "$stage" && VERSION=$version nfpm package -f nfpm.yaml -p $packager -t "$out/")
+done
+ls -l "$out"

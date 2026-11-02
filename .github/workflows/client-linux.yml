@@ -1,8 +1,8 @@
 name: nuvira-linux
 
-# Builds nuvira-linux-x64.tar.gz on Ubuntu 22.04, the oldest distribution we
+# Builds nuvira-linux-x64.tar.gz, the .deb and the .rpm on Ubuntu 22.04, the oldest distribution we
 # support (the binary needs a glibc at least as new as the build one). The
-# archive is a workflow artifact; it goes into the release by hand, together
+# packages are a workflow artifact; they go into the release by hand, together
 # with the signed Windows files.
 on:
   push:
@@ -31,6 +31,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: nfpm
+        run: |
+          wget -q https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_amd64.deb
+          sudo dpkg -i nfpm_2.47.0_amd64.deb
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Test
@@ -42,5 +47,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: nuvira-linux-x64
-          path: dist/nuvira-linux-x64.tar.gz
+          path: |
+            dist/nuvira-linux-x64.tar.gz
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
