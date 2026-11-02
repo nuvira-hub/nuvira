@@ -11,12 +11,13 @@
 # in the user's store. Files already signed are left as they are, so that the same
 # nuvira.exe goes into the setup, the update and the release.
 #
-#   NUVIRA_SIGN_SUBJECT   name on the certificate (default "Alessandro Blason")
+#   NUVIRA_SIGN_SUBJECT   name on the certificate (default "Open Source Developer
+#                         Alessandro Blason", the form of Certum's open source certificates)
 #   NUVIRA_UNSIGNED=1     skip signing (test builds only, never for a release)
 
 set -euo pipefail
 
-SUBJECT="${NUVIRA_SIGN_SUBJECT:-Alessandro Blason}"
+SUBJECT="${NUVIRA_SIGN_SUBJECT:-Open Source Developer Alessandro Blason}"
 TIMESTAMP="http://time.certum.pl"
 
 if [ "${NUVIRA_UNSIGNED:-}" = 1 ]; then
