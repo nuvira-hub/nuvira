@@ -46,3 +46,13 @@ On Windows the saved passwords are protected with DPAPI. On Linux they are encry
 **Controlled Linux computer** (Ubuntu 26.04 VM, viewer on a Fedora 44 VM, both GNOME 50 on Wayland): screen at 1280×800 (openh264), mouse, keyboard with accents, wheel, clipboard with text and images both ways, files both ways (3 MB, same SHA-256); the saved permission skips the dialog; sharing resumes by itself after locking and unlocking the screen. Also from app to app through the public server, with NuviraHub's confirmation.
 
 **Linux technician:** Ubuntu 26.04 (GNOME on Wayland, VM without GPU) controlling the NUC (Windows 11): direct path, 1920×1080, median latency 6 ms, decode 2.4 ms; the archive and the `.deb` from the workflow install and start, with their icons in the menu and in the dash.
+
+## To do
+
+- **X11 sessions** (Linux Mint, Xfce, older desktops): today they only control other computers. Capture with MIT-SHM, input with XTest.
+- **Unattended access**: a systemd service with the permanent password. On Wayland the portal works only in an unlocked user session, so a locked screen cannot be reached; the way is probably Mutter's remote desktop API, as gnome-remote-desktop uses it.
+- **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
+- **Several screens on Wayland**: one shared screen, chosen in the system dialog.
+- **Other desktops**: tested with GNOME only; KDE Plasma to be tested; Sway and Hyprland have no remote desktop portal (screen without input).
+- **Performance**: DMA-BUF capture, the cursor as metadata, hardware encoding (VAAPI, NVENC).
+- **Ubuntu 22.04 and Mint 21**: dropped in 0.14.0 (PipeWire too old); possible by loading PipeWire at run time.
