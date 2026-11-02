@@ -49,6 +49,6 @@ jobs:
           name: nuvira-linux-x64
           path: |
             dist/nuvira-linux-x64.tar.gz
-            dist/*.deb
-            dist/*.rpm
+            dist/nuvira-linux-x64.deb
+            dist/nuvira-linux-x64.rpm
           if-no-files-found: error

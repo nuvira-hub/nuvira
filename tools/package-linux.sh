@@ -1,7 +1,9 @@
 #!/bin/bash
 # Builds the Linux packages: nuvira-linux-x64.tar.gz (the app, its icons, the
-# .desktop files and install.sh), plus a .deb and an .rpm with nfpm. Build on the oldest distribution we support
-# (Ubuntu 22.04): the binary needs a glibc at least as new as the build one.
+# .desktop files and install.sh), nuvira-linux-x64.deb and nuvira-linux-x64.rpm
+# (with nfpm). The names carry no version, for the "latest release" links of the
+# website. Build on the oldest distribution we support (Ubuntu 22.04): the
+# binary needs a glibc at least as new as the build one.
 #
 #   tools/package-linux.sh [out_dir]
 set -euo pipefail
@@ -48,6 +50,6 @@ EOF
 tar -C "$(dirname "$stage")" -czf "$out/nuvira-linux-x64.tar.gz" "nuvira-$version"
 cp client/app/linux/nfpm.yaml "$stage/"
 for packager in deb rpm; do
-    (cd "$stage" && VERSION=$version nfpm package -f nfpm.yaml -p $packager -t "$out/")
+    (cd "$stage" && VERSION=$version nfpm package -f nfpm.yaml -p $packager -t "$out/nuvira-linux-x64.$packager")
 done
 ls -l "$out"
