@@ -121,10 +121,27 @@ fn downloads_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(text?))
 }
 
+/// Downloads folder of the user: on Linux the one of `user-dirs.dirs`, which
+/// follows the language of the desktop ("Scaricati", "Téléchargements"...).
 #[cfg(not(windows))]
 fn downloads_dir() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME not set")?;
-    Ok(PathBuf::from(home).join("Downloads"))
+    let home = PathBuf::from(std::env::var_os("HOME").context("HOME not set")?);
+    let config = std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| home.join(".config"), PathBuf::from);
+    let dirs = std::fs::read_to_string(config.join("user-dirs.dirs")).unwrap_or_default();
+    Ok(xdg_download_dir(&dirs, &home).unwrap_or_else(|| home.join("Downloads")))
+}
+
+/// `XDG_DOWNLOAD_DIR="$HOME/..."` of a `user-dirs.dirs` file.
+#[cfg(not(windows))]
+fn xdg_download_dir(dirs: &str, home: &std::path::Path) -> Option<PathBuf> {
+    let value = dirs.lines().find_map(|line| line.trim().strip_prefix("XDG_DOWNLOAD_DIR="))?;
+    let value = value.trim().trim_matches('"');
+    let path = match value.strip_prefix("$HOME") {
+        Some(rest) => home.join(rest.trim_start_matches('/')),
+        None => PathBuf::from(value),
+    };
+    // A value equal to $HOME means "no such folder" for the specification.
+    (path.is_absolute() && path != home).then_some(path)
 }
 
 #[cfg(test)]
@@ -138,6 +155,20 @@ mod tests {
         assert_eq!(safe_name("a:b?.txt"), "a_b_.txt");
         assert_eq!(safe_name(".."), "file");
         assert_eq!(safe_name("nome. "), "nome");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn xdg_downloads() {
+        let home = std::path::Path::new("/home/a");
+        let dirs = "# comment
+XDG_DESKTOP_DIR=\"$HOME/Scrivania\"
+XDG_DOWNLOAD_DIR=\"$HOME/Scaricati\"
+";
+        assert_eq!(xdg_download_dir(dirs, home), Some(home.join("Scaricati")));
+        assert_eq!(xdg_download_dir("XDG_DOWNLOAD_DIR=\"/data/dl\"", home), Some("/data/dl".into()));
+        assert_eq!(xdg_download_dir("XDG_DOWNLOAD_DIR=\"$HOME/\"", home), None);
+        assert_eq!(xdg_download_dir("", home), None);
     }
 
     #[test]
