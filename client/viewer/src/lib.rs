@@ -731,12 +731,12 @@ impl ApplicationHandler<NetEvent> for App {
                     notice.set_text(&t("viewer.pending"));
                 }
             }
-            NetEvent::Connected { agent, direct, width, height, file_manager } => {
+            NetEvent::Connected { agent, direct, width, height, file_manager, secure_attention } => {
                 info!("remote screen {width}x{height}");
                 self.sent_view_size = None;
                 self.send_view_size();
                 if let Some(toolbar) = &self.toolbar {
-                    toolbar.update(&format!("{{fileManager:{file_manager}}}"));
+                    toolbar.update(&format!("{{fileManager:{file_manager},secureAttention:{secure_attention}}}"));
                 }
                 let (downloads, download_dir, uploads, upload_dir, resume) =
                     std::mem::take(&mut self.cli_transfers);

@@ -29,6 +29,8 @@ pub enum NetEvent {
         height: u32,
         /// The agent answers the file manager.
         file_manager: bool,
+        /// Ctrl+Alt+Del means something there: only on Windows.
+        secure_attention: bool,
     },
     /// There is a new frame to show in the [`FrameSlot`].
     FrameReady,
@@ -337,6 +339,8 @@ async fn handshake(
         width: format.width,
         height: format.height,
         file_manager: agent.file_manager,
+        // Older agents send no system: they are all Windows.
+        secure_attention: agent.os.is_empty() || agent.os == "windows",
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);

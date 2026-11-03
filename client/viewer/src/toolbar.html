@@ -157,6 +157,7 @@
       }
       if ("viewOnly" in state) document.getElementById("viewonly").classList.toggle("on", state.viewOnly);
       if ("fileManager" in state) document.getElementById("files").hidden = !state.fileManager;
+      if ("secureAttention" in state) document.getElementById("sas").hidden = !state.secureAttention;
       if ("actualSize" in state) {
         const b = document.getElementById("actual");
         b.classList.toggle("on", state.actualSize);
