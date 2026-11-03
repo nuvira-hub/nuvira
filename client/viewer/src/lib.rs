@@ -1011,10 +1011,23 @@ impl ApplicationHandler<NetEvent> for App {
 /// W3C name (`KeyboardEvent.code`) of a winit key. The names are the same except
 /// for the Windows/Cmd key, which winit calls "Super".
 fn w3c_code(code: winit::keyboard::KeyCode) -> String {
-    match format!("{code:?}").as_str() {
+    let name = match format!("{code:?}").as_str() {
         "SuperLeft" => "MetaLeft".into(),
         "SuperRight" => "MetaRight".into(),
-        other => other.into(),
+        other => other.to_string(),
+    };
+    if cfg!(target_os = "macos") { mac_swap(name) } else { name }
+}
+
+/// On a Mac, Cmd does what Ctrl does on Windows and Linux (Cmd+C, Cmd+V, Cmd+Z):
+/// towards the remote computer the two are swapped. Option is already Alt.
+fn mac_swap(name: String) -> String {
+    match name.as_str() {
+        "MetaLeft" => "ControlLeft".into(),
+        "MetaRight" => "ControlRight".into(),
+        "ControlLeft" => "MetaLeft".into(),
+        "ControlRight" => "MetaRight".into(),
+        _ => name,
     }
 }
 
@@ -1045,9 +1058,17 @@ impl Stats {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn super_becomes_meta() {
         assert_eq!(w3c_code(winit::keyboard::KeyCode::SuperLeft), "MetaLeft");
         assert_eq!(w3c_code(winit::keyboard::KeyCode::KeyA), "KeyA");
+    }
+
+    #[test]
+    fn mac_cmd_is_ctrl() {
+        assert_eq!(mac_swap("MetaLeft".into()), "ControlLeft");
+        assert_eq!(mac_swap("ControlRight".into()), "MetaRight");
+        assert_eq!(mac_swap("KeyC".into()), "KeyC");
     }
 }
