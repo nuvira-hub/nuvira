@@ -198,8 +198,26 @@ fn keep_gtk_x11_errors(event_loop: &EventLoop<NetEvent>) {
 /// Icon of the session windows: the N inside a screen, distinct from the app's.
 #[cfg(not(target_os = "linux"))]
 const ICON: &[u8] = include_bytes!("../icons/viewer-64.png");
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const ICON_LARGE: &[u8] = include_bytes!("../icons/viewer-256.png");
+
+/// On macOS the session window belongs to the same bundle as the app, so the
+/// Dock would show the app's icon twice: the viewer sets its own at start.
+#[cfg(target_os = "macos")]
+fn dock_icon() {
+    use objc2::AnyThread as _;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let data = NSData::with_bytes(ICON_LARGE);
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else { return };
+    #[allow(unused_unsafe)]
+    unsafe {
+        NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image));
+    }
+}
 
 fn icon(png_bytes: &[u8]) -> Option<winit::window::Icon> {
     let mut reader = png::Decoder::new(std::io::Cursor::new(png_bytes)).read_info().ok()?;
@@ -656,6 +674,8 @@ impl ApplicationHandler<NetEvent> for App {
         if self.window.is_some() {
             return;
         }
+        #[cfg(target_os = "macos")]
+        dock_icon();
         let attrs = window_attributes()
             .with_title(tf("viewer.title_connecting", &[("agent", &self.agent)]))
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
