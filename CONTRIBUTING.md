@@ -11,14 +11,14 @@ Thank you for wanting to help. Bug reports, ideas and translations are welcome i
 
 ## Contributor licence agreement
 
-NuviraHub is open source (AGPL-3.0-or-later) and is also the base of NuviraHub Pro, sold under a commercial licence. To be able to include contributions in both, every contributor agrees to the following when submitting a contribution (a pull request, a patch or a translation):
+NuviraHub is open source (AGPL-3.0-or-later) and is also the base of NuviraHub Pro, sold under a commercial licence. To be able to include contributions in both, every contributor accepts the **[Contributor Licence Agreement](CLA.md)** once. In short:
 
 1. You keep the copyright of your contribution.
-2. You grant Alessandro Blason, the copyright holder of NuviraHub, a perpetual, worldwide, non-exclusive, royalty-free and irrevocable licence to use, copy, modify, distribute and sublicense your contribution, also under licences other than the AGPL, including proprietary ones.
-3. You confirm that the contribution is your own work, or that you have the right to submit it under these terms, and that it does not knowingly infringe anyone's rights.
-4. Your contribution is in any case also available to everyone under the AGPL-3.0-or-later, like the rest of the project.
+2. You grant Alessandro Blason, the copyright holder of NuviraHub, a perpetual, worldwide, non-exclusive, royalty-free and irrevocable licence to use, modify, distribute and sublicense it, also under licences other than the AGPL, and a licence to the patents your contribution needs.
+3. You confirm that it is your own work, or that you have the right to submit it (also towards your employer).
+4. Every contribution included in NuviraHub is available to everyone under the AGPL-3.0-or-later, like the rest of the project.
 
-The first time you open a pull request you will be asked to confirm this agreement with a comment.
+The full text in [CLA.md](CLA.md) is what counts. On your first pull request a bot asks you to accept it with a comment; it then applies to all your contributions.
 
 ## Security problems
 

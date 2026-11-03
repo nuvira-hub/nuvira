@@ -116,7 +116,7 @@ The [documentation](docs/README.md) describes the architecture, the protocol, se
 
 ## Contributing and security
 
-Bug reports and ideas are welcome in the [issues](https://github.com/nuvira-hub/nuvira/issues). Before opening a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md). For security problems, please do not open a public issue: see [SECURITY.md](SECURITY.md).
+Bug reports and ideas are welcome in the [issues](https://github.com/nuvira-hub/nuvira/issues). Before opening a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md): contributors accept the [Contributor Licence Agreement](CLA.md) once, with a comment. For security problems, please do not open a public issue: see [SECURITY.md](SECURITY.md).
 
 ## Licence
 
