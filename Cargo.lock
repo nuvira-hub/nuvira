@@ -3361,6 +3361,7 @@ dependencies = [
  "pipewire",
  "tracing",
  "windows",
+ "x11rb",
 ]
 
 [[package]]
@@ -3403,6 +3404,7 @@ dependencies = [
  "nuvira-proto",
  "tracing",
  "windows",
+ "x11rb",
 ]
 
 [[package]]

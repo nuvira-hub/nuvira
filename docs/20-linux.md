@@ -2,7 +2,7 @@
 
 [← Index](README.md)
 
-Since 0.13.0 the app runs on Linux and controls other computers: ID, address book, connecting, the session window with its toolbar. Since 0.14.0 a Linux computer with a **Wayland** session (the default on Ubuntu and Fedora) can also be controlled: screen, mouse, keyboard, clipboard, files. With an X11 session it cannot yet: the app says so and hides that part of the main window (`controllable()` in `client/app/src/main.rs`). Unattended access (the service) and automatic updates exist only for Windows for now.
+Since 0.13.0 the app runs on Linux and controls other computers: ID, address book, connecting, the session window with its toolbar. Since 0.14.0 a Linux computer with a **Wayland** session (the default on Ubuntu and Fedora) can also be controlled: screen, mouse, keyboard, clipboard, files. After 0.14.0 an **X11** session can be controlled too (Linux Mint, Xfce): see below; not released yet. Unattended access (the service) and automatic updates exist only for Windows for now.
 
 ## Packages
 
@@ -37,6 +37,10 @@ On Wayland a program cannot read the screen or inject input by itself: it asks t
 - **Clipboard** goes through arboard (X11, through XWayland), as on the viewer side.
 - **Build:** `libpipewire-0.3-dev`, `libspa-0.2-dev` and clang (bindgen); at run time `libpipewire-0.3-0`.
 
+## Controlled computer on X11
+
+First version, tested on Linux Mint 22.3 Cinnamon. `client/capture/src/x11.rs` reads the root window with `GetImage` (no shared memory yet) and draws the cursor from XFixes on top; a still screen is detected by comparing the image and the pointer position with the previous ones. `client/input/src/x11.rs` injects with XTest: X key codes are the Linux ones plus 8, the wheel is clicks of buttons 4–7. The backend follows the session: `WAYLAND_DISPLAY` → portal, otherwise X11. No permission dialog on X11.
+
 ## Local address book
 
 On Windows the saved passwords are protected with DPAPI. On Linux they are encrypted with AES-256-GCM, with a random key in `book.key` (mode 0600) in the data folder (`~/.config/nuvira`): it keeps them out of backups and synced folders of the address book alone, not from someone who can read the user's files.
@@ -45,11 +49,13 @@ On Windows the saved passwords are protected with DPAPI. On Linux they are encry
 
 **Controlled Linux computer** (Ubuntu 26.04 VM, viewer on a Fedora 44 VM, both GNOME 50 on Wayland): screen at 1280×800 (openh264), mouse, keyboard with accents, wheel, clipboard with text and images both ways, files both ways (3 MB, same SHA-256); the saved permission skips the dialog; sharing resumes by itself after locking and unlocking the screen. Also from app to app through the public server, with NuviraHub's confirmation.
 
+**Controlled Linux on X11** (2026-11-03, Mint 22.3 Cinnamon VM, from Fedora): mouse, keyboard with accents, wheel; about 25 fps while things move (software encoding 17 ms per frame), almost nothing on a still screen.
+
 **Linux technician:** Ubuntu 26.04 (GNOME on Wayland, VM without GPU) controlling the NUC (Windows 11): direct path, 1920×1080, median latency 6 ms, decode 2.4 ms; the archive and the `.deb` from the workflow install and start, with their icons in the menu and in the dash.
 
 ## To do
 
-- **X11 sessions** (Linux Mint, Xfce, older desktops): today they only control other computers. Capture with MIT-SHM, input with XTest.
+- **X11, faster capture**: MIT-SHM and XDamage instead of `GetImage` and comparing images.
 - **Unattended access**: a systemd service with the permanent password. On Wayland the portal works only in an unlocked user session, so a locked screen cannot be reached; the way is probably Mutter's remote desktop API, as gnome-remote-desktop uses it.
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
