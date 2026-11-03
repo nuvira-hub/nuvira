@@ -23,3 +23,4 @@ features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nuvira-portal = { path = "../portal" }
+x11rb = { version = "0.13", features = ["xtest"] }

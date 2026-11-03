@@ -9,6 +9,8 @@ use nuvira_proto::v1::InputEvent;
 pub mod keys;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod x11;
 #[cfg(windows)]
 mod windows;
 
@@ -38,7 +40,11 @@ pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
     #[cfg(target_os = "linux")]
     {
         let _ = screen;
-        Ok(Box::new(linux::PortalInjector::new()?))
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            Ok(Box::new(linux::PortalInjector::new()?))
+        } else {
+            Ok(Box::new(x11::XTestInjector::new()?))
+        }
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {

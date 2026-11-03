@@ -3,7 +3,8 @@
 //! Each system has its own implementation behind the [`Capturer`] trait:
 //! - Windows: DXGI Desktop Duplication (`windows.rs`);
 //! - macOS: ScreenCaptureKit (phase 4);
-//! - Linux on Wayland: the remote desktop portal and PipeWire (`linux.rs`).
+//! - Linux on Wayland: the remote desktop portal and PipeWire (`linux.rs`);
+//! - Linux on X11: `GetImage` of the root window (`x11.rs`).
 
 use std::time::Duration;
 
@@ -14,6 +15,8 @@ pub mod desktop;
 mod gdi;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod x11;
 mod synthetic;
 #[cfg(windows)]
 mod windows;
@@ -74,7 +77,7 @@ pub fn displays() -> anyhow::Result<Vec<Display>> {
         _ => Ok(gdi::displays()),
     };
     #[cfg(target_os = "linux")]
-    return Ok(linux::displays());
+    return if wayland() { Ok(linux::displays()) } else { x11::displays() };
     #[cfg(not(any(windows, target_os = "linux")))]
     anyhow::bail!("screen capture is not available on this system yet");
 }
@@ -93,13 +96,19 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
     #[cfg(target_os = "linux")]
     {
         let _ = index;
-        linux::open()
+        if wayland() { linux::open() } else { x11::open() }
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = index;
         anyhow::bail!("screen capture is not available on this system yet");
     }
+}
+
+/// A Wayland session (capture through the portal); otherwise X11.
+#[cfg(target_os = "linux")]
+pub fn wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
 
 /// `NUVIRA_CAPTURE=gdi`: GDI capture even where DXGI works (tests).

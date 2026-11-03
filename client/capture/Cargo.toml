@@ -28,3 +28,4 @@ features = [
 nuvira-portal = { path = "../portal" }
 nuvira-transport.workspace = true
 pipewire = "0.10"
+x11rb = { version = "0.13", features = ["xfixes"] }
