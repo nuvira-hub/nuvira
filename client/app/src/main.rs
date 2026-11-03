@@ -39,6 +39,33 @@ fn controllable() -> bool {
         || (cfg!(target_os = "linux") && ["WAYLAND_DISPLAY", "DISPLAY"].iter().any(|v| std::env::var_os(v).is_some()))
 }
 
+/// macOS gives the screen and accepts mouse and keyboard only with two
+/// permissions the person grants in System Settings. Asked at start: the system
+/// shows its own dialog for Screen Recording (once), and Accessibility's page of
+/// the settings is opened while it is missing.
+#[cfg(target_os = "macos")]
+fn mac_permissions() {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+        fn CGRequestScreenCaptureAccess() -> bool;
+    }
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+    if !unsafe { CGPreflightScreenCaptureAccess() } {
+        info!("asking for the Screen Recording permission");
+        unsafe { CGRequestScreenCaptureAccess() };
+    }
+    if !unsafe { AXIsProcessTrusted() } {
+        info!("opening the Accessibility settings");
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn();
+    }
+}
+
 /// Unattended access (the system service) exists only on Windows for now.
 const UNATTENDED: bool = cfg!(windows);
 
@@ -301,6 +328,8 @@ fn start_agent(app: &AppHandle) {
     if !controllable() {
         return;
     }
+    #[cfg(target_os = "macos")]
+    mac_permissions();
     #[cfg(windows)]
     if nuvira_agent::ipc::service_installed() {
         start_service_link(app);

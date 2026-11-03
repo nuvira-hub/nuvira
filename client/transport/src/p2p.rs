@@ -306,7 +306,15 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     let mut direct = tokio::task::JoinSet::new();
     if !force_relay {
         for peer in peers {
-            let connecting = endpoint.connect(peer, "nuvira-device")?;
+            // An address this socket cannot reach (an IPv6 one from an IPv4-only
+            // socket) is skipped: the others and the relay are still tried.
+            let connecting = match endpoint.connect(peer, "nuvira-device") {
+                Ok(connecting) => connecting,
+                Err(e) => {
+                    debug!("direct attempt to {peer} skipped: {e}");
+                    continue;
+                }
+            };
             direct.spawn(async move { connecting.await.map_err(|e| (peer, e)) });
         }
     }
