@@ -1,0 +1,37 @@
+name: nuvira-macos
+
+# Builds the app on macOS (Apple Silicon). For now only a build, to see what
+# still needs porting; signing, the universal bundle and the .dmg come later.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: brew install nasm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # --keep-going: every crate that fails is reported, not only the first.
+      - name: Build
+        run: cargo build --release --workspace --keep-going 2>&1 | tee build.log; exit "${PIPESTATUS[0]}"
+
+      - name: Tests
+        if: success()
+        run: cargo test --release --workspace
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-build-log
+          path: build.log
