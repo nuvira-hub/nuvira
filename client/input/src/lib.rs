@@ -9,6 +9,8 @@ use nuvira_proto::v1::InputEvent;
 pub mod keys;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+pub mod macos;
 #[cfg(target_os = "linux")]
 mod x11;
 #[cfg(windows)]
@@ -46,7 +48,9 @@ pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
             Ok(Box::new(x11::XTestInjector::new()?))
         }
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    return Ok(Box::new(macos::QuartzInjector::new(screen)?));
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = screen;
         anyhow::bail!("remote input control is not available on this system yet");
