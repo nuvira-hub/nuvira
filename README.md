@@ -37,8 +37,8 @@
 | | Controls other computers | Can be controlled | Unattended access |
 |---|:-:|:-:|:-:|
 | **Windows** 10 and 11 | ✅ | ✅ | ✅ |
-| **Linux**, Wayland session (Ubuntu, Fedora) | ✅ | ✅ | — |
-| **Linux**, X11 session (Linux Mint, Xfce) | ✅ | ✅ | — |
+| **Linux**, Wayland session (Ubuntu, Fedora) | ✅ | ✅ | planned |
+| **Linux**, X11 session (Linux Mint, Xfce) | ✅ | ✅ | planned |
 | **macOS** | in testing | planned | planned |
 
 Linux packages are `.deb`, `.rpm` and `.tar.gz`, for 64-bit Debian 12, Ubuntu 24.04, Mint 22, Fedora 40 or later. On Wayland the system asks the person at the computer to allow remote control the first time. Tested with GNOME and Cinnamon.
