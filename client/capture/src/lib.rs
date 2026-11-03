@@ -2,7 +2,7 @@
 //!
 //! Each system has its own implementation behind the [`Capturer`] trait:
 //! - Windows: DXGI Desktop Duplication (`windows.rs`);
-//! - macOS: ScreenCaptureKit (phase 4);
+//! - macOS: ScreenCaptureKit (`macos.rs`);
 //! - Linux on Wayland: the remote desktop portal and PipeWire (`linux.rs`);
 //! - Linux on X11: `GetImage` of the root window (`x11.rs`).
 
@@ -17,6 +17,8 @@ mod gdi;
 mod linux;
 #[cfg(target_os = "linux")]
 mod x11;
+#[cfg(target_os = "macos")]
+mod macos;
 mod synthetic;
 #[cfg(windows)]
 mod windows;
@@ -78,7 +80,9 @@ pub fn displays() -> anyhow::Result<Vec<Display>> {
     };
     #[cfg(target_os = "linux")]
     return if wayland() { Ok(linux::displays()) } else { x11::displays() };
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    return macos::displays();
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     anyhow::bail!("screen capture is not available on this system yet");
 }
 
@@ -98,7 +102,9 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
         let _ = index;
         if wayland() { linux::open() } else { x11::open() }
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    return macos::open(index);
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = index;
         anyhow::bail!("screen capture is not available on this system yet");

@@ -30,10 +30,13 @@ use tracing::{info, warn};
 const SOURCE_URL: &str = "https://github.com/nuvira-hub/nuvira";
 /// Terms of use of the public server, in the interface language: `{lang}` is replaced.
 const TERMS_URL: &str = "https://nuvirahub.dev/{lang}/terms/";
-/// This PC can be controlled (capture, input): on Windows, and on Linux with a
-/// Wayland session (remote desktop portal) or an X11 one (XTest).
+/// This PC can be controlled (capture, input): on Windows, on macOS
+/// (ScreenCaptureKit, Quartz events) and on Linux with a Wayland session
+/// (remote desktop portal) or an X11 one (XTest).
 fn controllable() -> bool {
-    cfg!(windows) || (cfg!(target_os = "linux") && ["WAYLAND_DISPLAY", "DISPLAY"].iter().any(|v| std::env::var_os(v).is_some()))
+    cfg!(windows)
+        || cfg!(target_os = "macos")
+        || (cfg!(target_os = "linux") && ["WAYLAND_DISPLAY", "DISPLAY"].iter().any(|v| std::env::var_os(v).is_some()))
 }
 
 /// Unattended access (the system service) exists only on Windows for now.

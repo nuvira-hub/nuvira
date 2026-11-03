@@ -239,6 +239,7 @@
   "agent.files_disabled": "las reglas del servidor no permiten transferir archivos",
   "agent.screen_denied": "la persona del ordenador remoto no ha permitido el control",
   "agent.screen_unavailable": "el ordenador remoto no puede compartir su pantalla ahora: puede que esté bloqueado (desbloquéalo y vuelve a conectarte)",
+  "agent.screen_permission_mac": "el Mac todavía no ha permitido compartir la pantalla: en el Mac, abre Ajustes del Sistema → Privacidad y seguridad → Grabación de pantalla (y Accesibilidad, para el ratón y el teclado), activa NuviraHub y vuelve a conectarte",
 
   "server.denied": "acceso denegado",
   "server.password_too_short": "la contraseña debe tener al menos 8 caracteres",
