@@ -1,0 +1,8 @@
+
+# ScreenCaptureKit's bindings (macOS) include a Swift bridge: the program must
+# find the Swift runtime of the system.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/swift"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/swift"]
