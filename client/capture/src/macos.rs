@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use core_graphics::display::CGDisplay;
-use screencapturekit::cm::{CMSampleBufferExt, CMTime};
+use screencapturekit::cm::{CMSampleBufferExt, CMTime, SCFrameStatus};
 use screencapturekit::cv::CVPixelBufferLockFlags;
 use screencapturekit::prelude::*;
 use tracing::info;
@@ -109,11 +109,11 @@ impl ScreenCaptureKitCapturer {
         }
         .filter(|&i| i < list.len())
         .context("screen not found")?;
-        let (sc_display, display) = list.swap_remove(pick);
+        let (sc_display, screen) = list.swap_remove(pick);
         let filter = SCContentFilter::create().with_display(&sc_display).with_excluding_windows(&[]).build()?;
         let config = SCStreamConfiguration::new()
-            .with_width(display.width)
-            .with_height(display.height)
+            .with_width(screen.width)
+            .with_height(screen.height)
             .with_pixel_format(PixelFormat::BGRA)
             .with_shows_cursor(true)
             .with_queue_depth(3)
@@ -122,8 +122,8 @@ impl ScreenCaptureKitCapturer {
         let mut stream = SCStream::new(&filter, &config)?;
         stream.add_output_handler(Handler { images: Mutex::new(tx) }, SCStreamOutputType::Screen)?;
         stream.start_capture().map_err(|e| anyhow!("{e:?}")).context("@agent.screen_permission_mac")?;
-        info!(name = display.name, width = display.width, height = display.height, "ScreenCaptureKit capture");
-        Ok(Self { display, stream, images, frame: None })
+        info!(name = screen.name, width = screen.width, height = screen.height, "ScreenCaptureKit capture");
+        Ok(Self { display: screen, stream, images, frame: None })
     }
 }
 
