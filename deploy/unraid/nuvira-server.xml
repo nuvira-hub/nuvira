@@ -17,7 +17,7 @@
   <Project>https://nuvirahub.dev</Project>
   <ReadMe>https://github.com/nuvira-hub/nuvira/blob/main/deploy/README.md</ReadMe>
   <TemplateURL>https://raw.githubusercontent.com/alexbn71/unraid-templates/main/NuviraHub/nuvira-server.xml</TemplateURL>
-  <Overview>Your own server for NuviraHub, the self-hosted remote desktop and remote support app (open source, AGPL-3.0).[br][br]
+  <Overview>Your own server for NuviraHub, the self-hosted remote desktop and remote support app for Windows and Linux (open source, AGPL-3.0).[br][br]
 It handles signalling, the relay for devices that cannot connect directly, and the signed updates of the apps. Sessions are end-to-end encrypted between the two devices: the server never sees screen, input, clipboard or files.[br][br]
 In the NuviraHub app, enter this server's address in Settings → Server. A single port, 21116 UDP (plus TCP for the WebSocket fallback). Server address books, accounts, web console and the other team features are in the Pro edition (nuvira-server-pro).</Overview>
   <Category>Network:Other Tools:</Category>
@@ -28,8 +28,10 @@ In the NuviraHub app, enter this server's address in Settings → Server. A sing
   <PostArgs/>
   <Requires>Forward port 21116 UDP (and TCP for the WebSocket fallback) from the router to Unraid, to reach the server from outside your network. Back up the Data folder: it holds the server's identity, which the apps pin.</Requires>
   <Changes>
+### 0.15.0 (2026-11-03)
+- The apps for Linux can be controlled too (Wayland and X11 sessions); the server is unchanged. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.12.1 (2026-10-31)
-- First public release of the open source edition. Notes: https://github.com/nuvira-hub/nuvira/releases
+- First public release of the open source edition.
   </Changes>
   <Config Name="Port (UDP)" Target="21116" Default="21116" Mode="udp" Description="Signalling and relay (QUIC). Forward it on the router." Type="Port" Display="always" Required="true" Mask="false">21116</Config>
   <Config Name="Port (TCP)" Target="21116" Default="21116" Mode="tcp" Description="WebSocket fallback for networks that block UDP, and app updates. Forward it on the router." Type="Port" Display="always" Required="false" Mask="false">21116</Config>
