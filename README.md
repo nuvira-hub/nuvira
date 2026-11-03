@@ -39,7 +39,7 @@
 | **Windows** 10 and 11 | ✅ | ✅ | ✅ |
 | **Linux**, Wayland session (Ubuntu, Fedora) | ✅ | ✅ | planned |
 | **Linux**, X11 session (Linux Mint, Xfce) | ✅ | ✅ | planned |
-| **macOS** | in testing | planned | planned |
+| **macOS** 13 or later | ✅ | ✅ | planned |
 
 Linux packages are `.deb`, `.rpm` and `.tar.gz`, for 64-bit Debian 12, Ubuntu 24.04, Mint 22, Fedora 40 or later. On Wayland the system asks the person at the computer to allow remote control the first time. Tested with GNOME and Cinnamon.
 
@@ -59,6 +59,7 @@ Linux packages are `.deb`, `.rpm` and `.tar.gz`, for 64-bit Debian 12, Ubuntu 24
 From the **[latest release](https://github.com/nuvira-hub/nuvira/releases/latest)**:
 
 - **Windows**: `nuvira-setup.exe` (installer) or `nuvira.exe` (runs without installing). Signed with a Certum code signing certificate.
+- **macOS**: `nuvira-macos.dmg`, a universal app (Apple Silicon and Intel), signed and notarized by Apple. The first time, macOS asks to allow Screen Recording and Accessibility.
 - **Linux**:
   - `nuvira-linux-x64.deb`: `sudo apt install ./nuvira-linux-x64.deb`.
   - `nuvira-linux-x64.rpm`: `sudo dnf install ./nuvira-linux-x64.rpm`.
