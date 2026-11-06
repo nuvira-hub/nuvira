@@ -178,6 +178,7 @@
           <label class="check"><input id="policy-privacy" type="checkbox"> <span data-i18n="admin.policy_privacy">No privacy mode</span></label>
           <label class="check"><input id="policy-terminal" type="checkbox"> <span data-i18n="admin.policy_terminal">No remote terminal</span></label>
           <label class="check"><input id="policy-tunnel" type="checkbox"> <span data-i18n="admin.policy_tunnel">No TCP tunnels</span></label>
+          <label class="check"><input id="policy-print" type="checkbox"> <span data-i18n="admin.policy_print">No remote printing</span></label>
           <div class="actions"><span class="spacer"></span><button type="submit" class="primary" data-i18n="admin.policy_save">Apply to all</button></div>
         </form>
         <p id="policy-message" class="message hidden"></p>
@@ -251,11 +252,19 @@
         <div id="privacy-settings" class="hidden">
         <label class="check"><input id="privacy-allowed" type="checkbox"> <span data-i18n="settings.privacy_allowed">Allow privacy mode</span></label>
         <p class="hint" data-i18n="settings.privacy_hint">Whoever controls this computer can turn its screen black and block its mouse and keyboard while working. Ctrl+Alt+Del always locks the computer.</p>
+        <label class="check"><input id="print-allowed" type="checkbox"> <span data-i18n="settings.print_allowed">Allow remote printing</span></label>
+        <p class="hint" data-i18n="settings.print_hint">During a session, what is printed on the "NuviraHub" printer of this computer comes out of the printer of whoever controls it. The printer is installed with unattended access.</p>
         </div>
         <label class="check"><input id="terminal-allowed" type="checkbox"> <span data-i18n="settings.terminal_allowed">Allow the remote terminal</span></label>
         <p class="hint" data-i18n="settings.terminal_hint">Whoever connects to this computer can open a command prompt with the rights of the user signed in, without seeing the desktop. The strip at the top says when a terminal is open.</p>
         <label class="check"><input id="tunnel-allowed" type="checkbox"> <span data-i18n="settings.tunnel_allowed">Allow tunnels to the local network</span></label>
         <p class="hint" data-i18n="settings.tunnel_hint">With a NuviraHub Pro server, whoever controls this computer can reach through it the addresses of its local network, e.g. the router's web panel or another PC's Remote Desktop. Never internet addresses.</p>
+        </div>
+
+        <div id="print-auto" class="hidden">
+        <h2 data-i18n="settings.printing">Printing</h2>
+        <p class="hint" id="print-auto-text"></p>
+        <div class="actions"><span class="spacer"></span><button type="button" id="print-ask" data-i18n="settings.print_ask">Ask every time</button></div>
         </div>
 
         <h2 data-i18n="settings.language">Language</h2>

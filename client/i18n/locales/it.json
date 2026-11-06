@@ -465,5 +465,26 @@
   "server.sso_failed": "accesso con il provider non riuscito",
   "server.sso_username_taken": "sul server esiste già un account con questo nome: rivolgiti a un amministratore",
   "support.title": "Assistenza",
-  "err.locked": "questa impostazione è stabilita da chi ha fornito il programma"
+  "err.locked": "questa impostazione è stabilita da chi ha fornito il programma",
+
+  "admin.policy_print": "Niente stampa remota",
+  "settings.print_allowed": "Consenti la stampa remota",
+  "settings.print_hint": "Durante una sessione, quello che si stampa sulla stampante \"NuviraHub\" di questo computer esce dalla stampante di chi lo controlla. La stampante si installa con l'accesso non presidiato.",
+  "settings.printing": "Stampa",
+  "settings.print_auto": "I documenti stampati dai computer remoti vanno su \"{printer}\" senza chiedere.",
+  "settings.print_ask": "Chiedi ogni volta",
+  "viewer.print_printing": "Stampa di \"{name}\" su {printer}…",
+  "viewer.print_done": "\"{name}\" stampato su {printer}",
+  "viewer.print_failed": "\"{name}\" non stampato: {reason}",
+  "viewer.print_saved": "\"{name}\" salvato in {path}",
+  "pr.title": "Stampa",
+  "pr.heading": "Il computer remoto ha stampato un documento",
+  "pr.details": "{size} · stampato su {agent}",
+  "pr.printer": "Stampante",
+  "pr.automatic": "D'ora in poi stampa su questa stampante senza chiedere",
+  "pr.print": "Stampa",
+  "pr.save": "Salva come PDF…",
+  "pr.cancel": "Non stampare",
+  "pr.waiting": "Altri documenti in attesa: {count}",
+  "pr.no_printers": "Su questo computer non c'è nessuna stampante: salva il documento come PDF."
 }

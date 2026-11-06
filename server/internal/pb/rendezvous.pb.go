@@ -846,7 +846,9 @@ type Policy struct {
 	// No remote terminal.
 	NoTerminal bool `protobuf:"varint,5,opt,name=no_terminal,json=noTerminal,proto3" json:"no_terminal,omitempty"`
 	// No TCP tunnels.
-	NoTunnel      bool `protobuf:"varint,6,opt,name=no_tunnel,json=noTunnel,proto3" json:"no_tunnel,omitempty"`
+	NoTunnel bool `protobuf:"varint,6,opt,name=no_tunnel,json=noTunnel,proto3" json:"no_tunnel,omitempty"`
+	// No remote printing (documents of the PC printed at the technician's).
+	NoPrint       bool `protobuf:"varint,7,opt,name=no_print,json=noPrint,proto3" json:"no_print,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -919,6 +921,13 @@ func (x *Policy) GetNoTerminal() bool {
 func (x *Policy) GetNoTunnel() bool {
 	if x != nil {
 		return x.NoTunnel
+	}
+	return false
+}
+
+func (x *Policy) GetNoPrint() bool {
+	if x != nil {
+		return x.NoPrint
 	}
 	return false
 }
@@ -4775,7 +4784,7 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"Registered\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12)\n" +
 	"\x06policy\x18\x02 \x01(\v2\x11.nuvira.v1.PolicyR\x06policy\x12\x1a\n" +
-	"\bfeatures\x18\x03 \x03(\tR\bfeatures\"\xca\x01\n" +
+	"\bfeatures\x18\x03 \x03(\tR\bfeatures\"\xe5\x01\n" +
 	"\x06Policy\x12%\n" +
 	"\x0econfirm_always\x18\x01 \x01(\bR\rconfirmAlways\x12\x19\n" +
 	"\bno_files\x18\x02 \x01(\bR\anoFiles\x12!\n" +
@@ -4784,7 +4793,8 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"no_privacy\x18\x04 \x01(\bR\tnoPrivacy\x12\x1f\n" +
 	"\vno_terminal\x18\x05 \x01(\bR\n" +
 	"noTerminal\x12\x1b\n" +
-	"\tno_tunnel\x18\x06 \x01(\bR\bnoTunnel\"K\n" +
+	"\tno_tunnel\x18\x06 \x01(\bR\bnoTunnel\x12\x19\n" +
+	"\bno_print\x18\a \x01(\bR\anoPrint\"K\n" +
 	"\aConnect\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12#\n" +
 	"\raccount_token\x18\x02 \x01(\tR\faccountToken\"\x93\x01\n" +

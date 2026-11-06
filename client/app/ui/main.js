@@ -106,6 +106,23 @@ $("tunnel-allowed").addEventListener("change", async (e) => {
   }
 });
 
+$("print-allowed").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_print_allowed", { allowed: e.target.checked });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !e.target.checked;
+  }
+});
+
+$("print-ask").addEventListener("click", async () => {
+  try {
+    await invoke("print_ask_again");
+  } catch (err) {
+    console.error(err);
+  }
+});
+
 $("language").addEventListener("change", async (e) => {
   useStrings(await invoke("set_language", { language: e.target.value }));
 });
@@ -118,6 +135,8 @@ function showSection(name) {
   section = name;
   for (const page of document.querySelectorAll(".page")) page.classList.toggle("hidden", page.id !== `sec-${name}`);
   for (const nav of document.querySelectorAll(".nav")) nav.classList.toggle("active", nav.dataset.section === name);
+  // The session window may have changed the printing choice.
+  if (name === "settings") invoke("get_state").then(render).catch(console.error);
   if (name === "chat") {
     chatSeen = current?.chat.length ?? 0;
     $("chat-unread").classList.add("hidden");
@@ -171,6 +190,9 @@ function render(state) {
   $("privacy-allowed").checked = state.privacy_allowed;
   $("terminal-allowed").checked = state.terminal_allowed;
   $("tunnel-allowed").checked = state.tunnel_allowed;
+  $("print-allowed").checked = state.print_allowed;
+  $("print-auto").classList.toggle("hidden", !state.print_auto);
+  $("print-auto-text").textContent = state.print_auto ? t("settings.print_auto", { printer: state.print_auto }) : "";
   $("update-bar").classList.toggle("hidden", !state.update && !state.installed && !state.service_stopped);
   if (!$("update-button").disabled) {
     if (!state.service_stopped) repairError = null;

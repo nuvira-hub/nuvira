@@ -140,7 +140,7 @@ message FileReceived {
 }
 
 // `file` channel (unidirectional stream viewer -> agent, one per file, opened after
-// the input one). The first message carries name and size, the following ones
+// the input one; agent -> viewer for downloads, clipboard images and printed documents). The first message carries name and size, the following ones
 // only data (at most 256 KB each). The end of the stream closes the file.
 message FileChunk {
   string name = 1;
@@ -154,6 +154,9 @@ message FileChunk {
   string dir = 5;
   uint64 offset = 6;
   uint32 transfer_id = 7;
+  // In the first chunk, agent -> viewer: the stream carries a document printed on the
+  // agent's NuviraHub printer (PDF), `name` its title, to be printed at the viewer.
+  bool print = 8;
 }
 
 // Chat message between the controlling side and the person at the PC (both directions).
@@ -277,6 +280,10 @@ message Hello {
   // From the agent: it can restart the computer (Restart) and comes back by itself
   // afterwards (unattended access).
   bool restart = 12;
+  // From the viewer: it prints documents of the agent (FileChunk.print). From the
+  // agent: what is printed on its NuviraHub printer during the session reaches the
+  // viewer.
+  bool print = 13;
 }
 
 // First message of every bidirectional stream the viewer opens after the control

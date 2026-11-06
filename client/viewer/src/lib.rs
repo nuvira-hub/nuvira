@@ -8,6 +8,7 @@
 mod cpu;
 mod filemanager;
 mod net;
+mod printing;
 mod render;
 mod report;
 mod terminal;
@@ -178,6 +179,16 @@ struct Args {
     /// With --download/--upload: continue what an interrupted transfer left (the `.part`).
     #[arg(long)]
     resume: bool,
+
+    /// Automated tests: documents printed on the remote computer go to this printer
+    /// without asking (remote printing).
+    #[arg(long, value_name = "PRINTER", hide = true)]
+    print_to: Option<String>,
+
+    /// Automated tests: documents printed on the remote computer are saved in this
+    /// folder without asking.
+    #[arg(long, value_name = "DIR", hide = true, conflicts_with = "print_to")]
+    print_save: Option<PathBuf>,
 }
 
 /// Colours in the logs only if the terminal understands them (the old Windows
@@ -387,6 +398,14 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         term_link: None,
         tunnels: Default::default(),
         tunnel_link: None,
+        printing: printing::Printing::new(
+            match (&args.print_to, &args.print_save) {
+                (Some(printer), _) => Some(printing::Test::PrintTo(printer.clone())),
+                (None, Some(dir)) => Some(printing::Test::SaveIn(dir.clone())),
+                (None, None) => None,
+            },
+            args.agent.clone(),
+        ),
         terminal_type: args.terminal_type.as_ref().map(|t| t.replace("\\n", "\r").into_bytes()),
         terminal_log: args.terminal_log.as_ref().and_then(|p| match std::fs::File::create(p) {
             Ok(f) => Some(f),
@@ -494,6 +513,8 @@ struct App {
     tunnels: tunnels::Tunnels,
     /// Towards the network for the tunnels.
     tunnel_link: Option<UnboundedSender<net::TunnelCmd>>,
+    /// Documents printed on the remote computer, and the print window.
+    printing: printing::Printing,
     /// Towards the network for the terminals, once connected to an agent that has them.
     term_link: Option<UnboundedSender<net::TermCmd>>,
     /// `--terminal-type`: still to type in the first terminal.
@@ -952,6 +973,7 @@ impl ApplicationHandler<NetEvent> for App {
                 terminal,
                 tunnel,
                 restart,
+                print,
             } => {
                 if self.restarting.take().is_some() {
                     info!("connected again after the restart");
@@ -975,6 +997,12 @@ impl ApplicationHandler<NetEvent> for App {
                     return;
                 }
                 info!("remote screen {width}x{height}");
+                if print {
+                    info!("remote printing: what is printed on the NuviraHub printer there arrives here");
+                }
+                if !agent.is_empty() {
+                    self.printing.agent = agent.clone();
+                }
                 self.sent_view_size = None;
                 self.send_view_size();
                 if let Some(toolbar) = &self.toolbar {
@@ -1140,6 +1168,23 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::TerminalPage { window, body } => self.terminals.message(window, &body),
             NetEvent::TunnelPage(body) => self.tunnels.message(&body),
+            NetEvent::PrintJob { name, data } => {
+                if let Some(text) = self.printing.arrived(name, data, event_loop, &self.proxy) {
+                    self.notice(&text, false);
+                }
+            }
+            NetEvent::PrintPage(body) => {
+                if let Some(text) = self.printing.message(&body, &self.proxy) {
+                    self.notice(&text, false);
+                }
+            }
+            NetEvent::Printed { name, printer, error } => {
+                let text = match error.is_empty() {
+                    true => tf("viewer.print_done", &[("name", &name), ("printer", &printer)]),
+                    false => tf("viewer.print_failed", &[("name", &name), ("reason", &error)]),
+                };
+                self.notice(&text, false);
+            }
             NetEvent::TunnelListening { id, local_port, error } => self.tunnels.listening(id, local_port, error),
             NetEvent::TunnelConnection { id, error } => self.tunnels.connection_error(id, error),
             NetEvent::TerminalOutput { id, data } => {
@@ -1247,6 +1292,10 @@ impl ApplicationHandler<NetEvent> for App {
         }
         if self.tunnels.owns(id) {
             self.tunnels.window_event(&event);
+            return;
+        }
+        if self.printing.owns(id) {
+            self.printing.window_event(&event);
             return;
         }
         match event {

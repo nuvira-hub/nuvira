@@ -465,5 +465,26 @@
   "server.sso_failed": "échec de la connexion avec le fournisseur",
   "server.sso_username_taken": "un compte portant ce nom existe déjà sur le serveur : contactez un administrateur",
   "support.title": "Assistance",
-  "err.locked": "ce réglage est fixé par le fournisseur du programme"
+  "err.locked": "ce réglage est fixé par le fournisseur du programme",
+
+  "admin.policy_print": "Pas d'impression à distance",
+  "settings.print_allowed": "Autoriser l'impression à distance",
+  "settings.print_hint": "Pendant une session, ce qui est imprimé sur l'imprimante « NuviraHub » de cet ordinateur sort de l'imprimante de la personne qui le contrôle. L'imprimante est installée avec l'accès sans surveillance.",
+  "settings.printing": "Impression",
+  "settings.print_auto": "Les documents imprimés par les ordinateurs distants vont sur « {printer} » sans demander.",
+  "settings.print_ask": "Demander à chaque fois",
+  "viewer.print_printing": "Impression de « {name} » sur {printer}…",
+  "viewer.print_done": "« {name} » imprimé sur {printer}",
+  "viewer.print_failed": "« {name} » non imprimé : {reason}",
+  "viewer.print_saved": "« {name} » enregistré dans {path}",
+  "pr.title": "Imprimer",
+  "pr.heading": "L'ordinateur distant a imprimé un document",
+  "pr.details": "{size} · imprimé sur {agent}",
+  "pr.printer": "Imprimante",
+  "pr.automatic": "Désormais, imprimer sur cette imprimante sans demander",
+  "pr.print": "Imprimer",
+  "pr.save": "Enregistrer en PDF…",
+  "pr.cancel": "Ne pas imprimer",
+  "pr.waiting": "Autres documents en attente : {count}",
+  "pr.no_printers": "Il n'y a aucune imprimante sur cet ordinateur : enregistrez le document en PDF."
 }

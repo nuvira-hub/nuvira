@@ -39,6 +39,21 @@ pub enum NetEvent {
         tunnel: bool,
         /// The agent can restart the computer.
         restart: bool,
+        /// What is printed on the remote computer's NuviraHub printer arrives here.
+        print: bool,
+    },
+    /// A document printed on the remote computer (PDF).
+    PrintJob {
+        name: String,
+        data: Vec<u8>,
+    },
+    /// Message of the print window's page.
+    PrintPage(String),
+    /// A remote document was printed here (`error` empty) or not.
+    Printed {
+        name: String,
+        printer: String,
+        error: String,
     },
     /// A tunnel listens on `local_port` of this computer, or could not (`error`).
     TunnelListening {
@@ -413,6 +428,7 @@ async fn handshake(
             video_datagrams: std::env::var_os("NUVIRA_VIDEO_FEC").is_some()
                 && conn.max_datagram_size().is_some(),
             terminal_only,
+            print: !terminal_only && crate::printing::available(),
             ..Default::default()
         })))
         .await?;
@@ -455,6 +471,7 @@ async fn handshake(
             terminal: true,
             tunnel: agent.tunnel,
             restart: false,
+            print: false,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None));
     }
@@ -481,6 +498,7 @@ async fn handshake(
         terminal: agent.terminal,
         tunnel: agent.tunnel,
         restart: agent.restart,
+        print: agent.print,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -666,7 +684,7 @@ async fn session(
     };
 
     // After the video one, the agent's unidirectional streams carry images copied to
-    // its clipboard and the files downloaded with the file manager.
+    // its clipboard, the files downloaded with the file manager and printed documents.
     let streams = {
         let clipboard = clipboard.clone();
         let conn = conn.clone();
@@ -688,6 +706,15 @@ async fn session(
                             Err(e) => (false, format!("{e:#}")),
                         };
                         let _ = proxy.send_event(NetEvent::TransferDone { id, ok, message });
+                        return;
+                    }
+                    if first.print {
+                        match nuvira_transport::read_stream(&mut rx, &first, crate::printing::MAX_DOCUMENT).await {
+                            Ok(data) => {
+                                let _ = proxy.send_event(NetEvent::PrintJob { name: first.name, data });
+                            }
+                            Err(e) => warn!("printed document not received: {e:#}"),
+                        }
                         return;
                     }
                     if !first.clipboard_image {

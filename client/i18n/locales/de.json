@@ -465,5 +465,26 @@
   "server.sso_failed": "Anmeldung beim Anbieter fehlgeschlagen",
   "server.sso_username_taken": "auf dem Server gibt es bereits ein Konto mit diesem Namen: wenden Sie sich an einen Administrator",
   "support.title": "Support",
-  "err.locked": "diese Einstellung ist vom Anbieter des Programms festgelegt"
+  "err.locked": "diese Einstellung ist vom Anbieter des Programms festgelegt",
+
+  "admin.policy_print": "Kein Ferndruck",
+  "settings.print_allowed": "Ferndruck erlauben",
+  "settings.print_hint": "Während einer Sitzung kommt, was auf dem Drucker „NuviraHub“ dieses Computers gedruckt wird, aus dem Drucker der Person, die ihn steuert. Der Drucker wird mit dem unbeaufsichtigten Zugriff installiert.",
+  "settings.printing": "Drucken",
+  "settings.print_auto": "Von entfernten Computern gedruckte Dokumente gehen ohne Nachfrage an „{printer}“.",
+  "settings.print_ask": "Jedes Mal fragen",
+  "viewer.print_printing": "„{name}“ wird auf {printer} gedruckt…",
+  "viewer.print_done": "„{name}“ auf {printer} gedruckt",
+  "viewer.print_failed": "„{name}“ nicht gedruckt: {reason}",
+  "viewer.print_saved": "„{name}“ gespeichert in {path}",
+  "pr.title": "Drucken",
+  "pr.heading": "Der entfernte Computer hat ein Dokument gedruckt",
+  "pr.details": "{size} · gedruckt auf {agent}",
+  "pr.printer": "Drucker",
+  "pr.automatic": "Ab jetzt ohne Nachfrage auf diesem Drucker drucken",
+  "pr.print": "Drucken",
+  "pr.save": "Als PDF speichern…",
+  "pr.cancel": "Nicht drucken",
+  "pr.waiting": "Weitere Dokumente in der Warteschlange: {count}",
+  "pr.no_printers": "Auf diesem Computer gibt es keinen Drucker: Speichern Sie das Dokument als PDF."
 }

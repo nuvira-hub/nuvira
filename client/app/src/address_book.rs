@@ -557,6 +557,8 @@ pub struct PolicyUi {
     pub no_terminal: bool,
     #[serde(default)]
     pub no_tunnel: bool,
+    #[serde(default)]
+    pub no_print: bool,
 }
 
 impl From<pb::Policy> for PolicyUi {
@@ -568,6 +570,7 @@ impl From<pb::Policy> for PolicyUi {
             no_privacy: p.no_privacy,
             no_terminal: p.no_terminal,
             no_tunnel: p.no_tunnel,
+            no_print: p.no_print,
         }
     }
 }
@@ -590,6 +593,7 @@ pub async fn address_book_save_policy(app: AppHandle, policy: PolicyUi) -> Resul
         no_privacy: policy.no_privacy,
         no_terminal: policy.no_terminal,
         no_tunnel: policy.no_tunnel,
+        no_print: policy.no_print,
     };
     match call(&app, Call::PutPolicy(policy)).await? {
         Some(ApiResult::Policy(policy)) => Ok(policy.into()),

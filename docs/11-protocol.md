@@ -47,7 +47,7 @@ Technician (A)           Server                      Remote (B)
 | `control` | reliable stream | hello, authentication, video format, screens, quality, feedback for the adaptive bitrate, clipboard, chat, file outcome, privacy mode, remote restart, close |
 | `input` | reliable stream | mouse, keyboard, wheel, Ctrl+Alt+Del |
 | `video` | reliable stream (planned: datagrams) | encoded frames, keyframe requests on the control channel |
-| `file` | one stream per file | name and size, then data |
+| `file` | one stream per file | name and size, then data; from the agent also clipboard images, downloads and printed documents (see [29-remote-printing.md](29-remote-printing.md)) |
 | `audio` | datagrams (planned) | Opus |
 | `tunnel` | one stream per connection (planned) | TCP port forwarding |
 | `tunnel` | one bidirectional stream per TCP connection (Pro) | raw bytes after `TunnelOpen`/`TunnelResult` (see [26-tcp-tunnel.md](26-tcp-tunnel.md)) |

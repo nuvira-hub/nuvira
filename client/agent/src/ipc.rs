@@ -267,7 +267,13 @@ async fn serve_app(
 /// if another process already has a pipe with the same name.
 #[cfg(windows)]
 fn create_pipe(name: &str, first: bool) -> Result<NamedPipeServer> {
-    let sddl = HSTRING::from("D:P(A;;GA;;;SY)(A;;GRGW;;;IU)");
+    create_pipe_with(name, first, "D:P(A;;GA;;;SY)(A;;GRGW;;;IU)")
+}
+
+/// Pipe with the access rules of `sddl` (see [`create_pipe`]).
+#[cfg(windows)]
+pub(crate) fn create_pipe_with(name: &str, first: bool, sddl: &str) -> Result<NamedPipeServer> {
+    let sddl = HSTRING::from(sddl);
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
     unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(&sddl, 1, &mut descriptor, None) }
         .context("pipe security descriptor")?;

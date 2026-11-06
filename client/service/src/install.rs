@@ -251,6 +251,11 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     .context("firewall rule")?;
 
     allow_software_sas()?;
+    // Remote printing: without the printer the rest works the same.
+    match crate::printer::install() {
+        Ok(done) => step(done),
+        Err(e) => step(&format!("NuviraHub printer not installed: {e:#}")),
+    }
     step("service configured, starting it");
 
     let _ = std::fs::remove_file(config::online_path());
@@ -601,6 +606,9 @@ pub fn uninstall(remove_program: bool) -> Result<()> {
     let _ =
         run(Command::new("netsh")
             .raw_arg(format!("advfirewall firewall delete rule name=\"{FIREWALL_RULE}\"")));
+    if let Err(e) = crate::printer::uninstall() {
+        println!("NuviraHub printer not removed: {e:#}");
+    }
     if !remove_program {
         println!(
             "the program remains in {} and the data in {} (with the device ID, reused if you reinstall)",

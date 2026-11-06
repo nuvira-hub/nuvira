@@ -25,3 +25,4 @@
 | 26 | [TCP tunnels](26-tcp-tunnel.md) | NuviraHub Pro: a local port that leads to an address of the remote computer's network (web panel, Remote Desktop) |
 | 27 | [Remote restart](27-remote-restart.md) | Restarting the controlled computer from the session; the viewer waits and connects again by itself |
 | 28 | [Web client](28-web-client.md) | NuviraHub Pro: controlling computers from a browser, with the same end-to-end encryption (QUIC and TLS in WebAssembly through the server's WebSocket) |
+| 29 | [Remote printing](29-remote-printing.md) | Documents printed on the controlled computer's NuviraHub printer come out of the technician's printer |

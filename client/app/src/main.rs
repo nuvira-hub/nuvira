@@ -120,6 +120,11 @@ struct UiState {
     terminal_allowed: bool,
     /// TCP tunnels allowed on this PC (settings).
     tunnel_allowed: bool,
+    /// Remote printing allowed on this PC (settings, Windows).
+    print_allowed: bool,
+    /// Documents of remote computers go to this printer without asking (chosen in the
+    /// session window's print window; `print.json` of the viewer).
+    print_auto: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,6 +192,9 @@ struct Settings {
     /// The person at this PC does not allow TCP tunnels to its network.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_tunnel: bool,
+    /// The person at this PC does not allow remote printing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    no_print: bool,
 }
 
 /// Server written in the program's file name, e.g. `nuvira-host=nuvira.example.com.exe`
@@ -587,7 +595,31 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
 
 #[tauri::command]
 fn get_state(state: State<NuviraApp>) -> UiState {
-    state.ui.lock().expect("state").clone()
+    let mut ui = state.ui.lock().expect("state");
+    // The session window changes it: read again every time.
+    ui.print_auto = print_choice()
+        .filter(|c| c["automatic"].as_bool() == Some(true))
+        .and_then(|c| c["printer"].as_str().map(String::from));
+    ui.clone()
+}
+
+/// Where the session window prints the documents of remote computers (`print.json`).
+fn print_choice_path() -> PathBuf {
+    nuvira_transport::identity::data_dir().join("print.json")
+}
+
+fn print_choice() -> Option<serde_json::Value> {
+    serde_json::from_str(&std::fs::read_to_string(print_choice_path()).ok()?).ok()
+}
+
+/// The session window asks again where to print the documents of remote computers.
+#[tauri::command]
+fn print_ask_again(app: AppHandle, state: State<NuviraApp>) -> Result<(), String> {
+    let mut choice = print_choice().unwrap_or_else(|| serde_json::json!({}));
+    choice["automatic"] = false.into();
+    std::fs::write(print_choice_path(), choice.to_string()).map_err(|e| e.to_string())?;
+    state.update(&app, |ui| ui.print_auto = None);
+    Ok(())
 }
 
 /// Server as shown in the settings: empty for the public one.
@@ -704,12 +736,24 @@ fn set_tunnel_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) ->
     Ok(())
 }
 
+/// Like [`set_privacy_allowed`], for remote printing.
+#[tauri::command]
+fn set_print_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.no_print = !allowed;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.send(AgentCommand::AllowPrint { allow: allowed });
+    state.update(&app, |ui| ui.print_allowed = allowed);
+    Ok(())
+}
+
 /// What the person at this PC allows, for the agent (the app's or the service's).
 fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
     let settings = load_settings();
     let _ = commands.send(AgentCommand::AllowPrivacy { allow: !settings.no_privacy });
     let _ = commands.send(AgentCommand::AllowTerminal { allow: !settings.no_terminal });
     let _ = commands.send(AgentCommand::AllowTunnel { allow: !settings.no_tunnel });
+    let _ = commands.send(AgentCommand::AllowPrint { allow: !settings.no_print });
 }
 
 #[tauri::command]
@@ -984,6 +1028,7 @@ fn main() {
             privacy_allowed: !settings.no_privacy,
             terminal_allowed: !settings.no_terminal,
             tunnel_allowed: !settings.no_tunnel,
+            print_allowed: !settings.no_print,
             ..Default::default()
         }),
         password: Arc::new(Mutex::new(password)),
@@ -1004,6 +1049,8 @@ fn main() {
             set_privacy_allowed,
             set_terminal_allowed,
             set_tunnel_allowed,
+            set_print_allowed,
+            print_ask_again,
             respond,
             send_chat,
             connect_entry,

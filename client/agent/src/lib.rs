@@ -13,6 +13,7 @@ mod fsops;
 pub mod ipc;
 mod inventory;
 mod pipeline;
+mod printer;
 mod pty;
 mod restart;
 mod terminal;
@@ -209,6 +210,11 @@ pub enum AgentCommand {
     AllowTunnel {
         allow: bool,
     },
+    /// The person at the PC allows remote printing or not (Windows: the NuviraHub
+    /// printer sends what is printed on it to the technician).
+    AllowPrint {
+        allow: bool,
+    },
 }
 
 /// Choices of the person at the PC kept by the agent (`permissions.json` in its
@@ -221,6 +227,8 @@ struct Permissions {
     terminal: bool,
     #[serde(default = "yes")]
     tunnel: bool,
+    #[serde(default = "yes")]
+    print: bool,
 }
 
 fn yes() -> bool {
@@ -236,7 +244,7 @@ impl Permissions {
         std::fs::read_to_string(Self::path())
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(Self { privacy: true, terminal: true, tunnel: true })
+            .unwrap_or(Self { privacy: true, terminal: true, tunnel: true, print: true })
     }
 
     fn save(self) {
@@ -344,6 +352,7 @@ pub async fn serve_via_server(
         allow_privacy: AtomicBool::new(permissions.privacy),
         allow_terminal: AtomicBool::new(permissions.terminal),
         allow_tunnel: AtomicBool::new(permissions.tunnel),
+        allow_print: AtomicBool::new(permissions.print),
         features: Mutex::new(Vec::new()),
         unattended: opts.unattended,
         restarting: AtomicBool::new(false),
@@ -455,6 +464,8 @@ struct SessionContext {
     allow_terminal: AtomicBool,
     /// The person at the PC allows TCP tunnels ([`AgentCommand::AllowTunnel`]).
     allow_tunnel: AtomicBool,
+    /// The person at the PC allows remote printing ([`AgentCommand::AllowPrint`]).
+    allow_print: AtomicBool,
     /// Optional modules of the server (NuviraHub Pro), from the registration.
     features: Mutex<Vec<String>>,
     /// See [`ServerOptions::unattended`].
@@ -470,6 +481,7 @@ impl SessionContext {
             privacy: self.allow_privacy.load(Ordering::Relaxed),
             terminal: self.allow_terminal.load(Ordering::Relaxed),
             tunnel: self.allow_tunnel.load(Ordering::Relaxed),
+            print: self.allow_print.load(Ordering::Relaxed),
         }
         .save();
     }
@@ -483,6 +495,7 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
         no_privacy = policy.no_privacy,
         no_terminal = policy.no_terminal,
         no_tunnel = policy.no_tunnel,
+        no_print = policy.no_print,
         "rules of the server"
     );
     *ctx.policy.lock().expect("policy") = policy;
@@ -697,6 +710,13 @@ async fn signal_loop(
                 Some(AgentCommand::AllowTunnel { allow }) => {
                     if ctx.allow_tunnel.swap(allow, Ordering::Relaxed) != allow {
                         info!(allow, "tunnels allowed by the person at the PC");
+                        ctx.save_permissions();
+                    }
+                    None
+                }
+                Some(AgentCommand::AllowPrint { allow }) => {
+                    if ctx.allow_print.swap(allow, Ordering::Relaxed) != allow {
+                        info!(allow, "remote printing allowed by the person at the PC");
                         ctx.save_permissions();
                     }
                     None
@@ -955,6 +975,19 @@ async fn session(
         && !config.view_only
         && config.synthetic.is_none()
         && restart::available();
+    // Remote printing, to a viewer that prints: allowed by the person at the PC (always
+    // without the app: LAN tests) and by the server's rules, during the session only.
+    let print_allowed = || gate.is_none_or(|g| g.ctx.allow_print.load(Ordering::Relaxed));
+    let printer = match hello.print
+        && !terminal_only
+        && !config.view_only
+        && config.synthetic.is_none()
+        && !policy.no_print
+        && print_allowed()
+    {
+        true => printer::listen(),
+        false => None,
+    };
     // Video as datagrams with error correction, when the viewer asks for it.
     let video_datagrams = hello.video_datagrams && conn.max_datagram_size().is_some();
     let hello = Hello {
@@ -969,6 +1002,7 @@ async fn session(
         terminal: terminal_refused().is_none(),
         tunnel: tunnel_refused().is_none(),
         restart: restart_available && !terminal_only,
+        print: printer.is_some(),
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -1509,11 +1543,22 @@ async fn session(
         anyhow::Ok(())
     };
 
+    // A failure of remote printing does not end the session.
+    let printing = async {
+        if let Some(printer) = printer
+            && let Err(e) = printer.serve(conn.clone(), print_allowed).await
+        {
+            warn!("remote printing stopped: {e:#}");
+        }
+        std::future::pending::<Result<()>>().await
+    };
+
     let result = tokio::select! {
         r = video => r.context("sending video"),
         r = control_loop => r.context("control channel"),
         r = input => r.context("input channel"),
         r = accept_streams(&conn, (&terminal_refused, &tunnel_refused)) => r,
+        r = printing => r,
     };
     let last = pipeline.lock().expect("pipeline").take();
     let _ = tokio::task::spawn_blocking(move || drop(last)).await;
@@ -1763,6 +1808,7 @@ fn local_hello() -> Hello {
         terminal_only: false,
         tunnel: false,
         restart: false,
+        print: false,
     }
 }
 

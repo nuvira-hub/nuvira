@@ -24,6 +24,8 @@ mod install;
 pub use install::{ServiceState, installed_version, run_elevated, service_state};
 #[cfg(windows)]
 mod launch;
+#[cfg(windows)]
+mod printer;
 
 /// The program installed with the service (in Program Files).
 #[cfg(windows)]
@@ -93,6 +95,13 @@ enum Cmd {
         #[arg(long, value_name = "FILE")]
         report: Option<std::path::PathBuf>,
     },
+    /// Installs the NuviraHub printer (remote printing) again, or removes it with
+    /// --remove; the service installs and removes it by itself.
+    #[command(hide = true)]
+    Printer {
+        #[arg(long)]
+        remove: bool,
+    },
     /// Used by the Windows service manager.
     #[command(hide = true)]
     Run,
@@ -141,6 +150,8 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         }
         Cmd::Uninstall { remove_program } => install::uninstall(remove_program),
         Cmd::Status => install::status(),
+        Cmd::Printer { remove: false } => printer::install().map(|done| println!("{done}")),
+        Cmd::Printer { remove: true } => printer::uninstall().map(|()| println!("NuviraHub printer removed")),
         Cmd::Run => run_service(),
         Cmd::Update => install::update(),
     }

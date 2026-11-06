@@ -482,6 +482,7 @@ function showPolicy(policy) {
   $("policy-privacy").checked = policy.no_privacy;
   $("policy-terminal").checked = policy.no_terminal;
   $("policy-tunnel").checked = policy.no_tunnel;
+  $("policy-print").checked = policy.no_print;
 }
 
 $("policy-form").addEventListener("submit", async (e) => {
@@ -493,6 +494,7 @@ $("policy-form").addEventListener("submit", async (e) => {
     no_privacy: $("policy-privacy").checked,
     no_terminal: $("policy-terminal").checked,
     no_tunnel: $("policy-tunnel").checked,
+    no_print: $("policy-print").checked,
   };
   try {
     showPolicy(await call("address_book_save_policy", { policy }, "policy-message"));

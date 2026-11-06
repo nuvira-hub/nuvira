@@ -115,6 +115,8 @@ message Policy {
   bool no_terminal = 5;
   // No TCP tunnels.
   bool no_tunnel = 6;
+  // No remote printing (documents of the PC printed at the technician's).
+  bool no_print = 7;
 }
 
 // The viewer asks to connect to a device.

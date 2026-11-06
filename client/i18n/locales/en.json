@@ -465,5 +465,26 @@
   "server.sso_failed": "sign-in with the provider failed",
   "server.sso_username_taken": "an account with this name already exists on the server: ask an administrator",
   "support.title": "Support",
-  "err.locked": "this setting is fixed by whoever provided the program"
+  "err.locked": "this setting is fixed by whoever provided the program",
+
+  "admin.policy_print": "No remote printing",
+  "settings.print_allowed": "Allow remote printing",
+  "settings.print_hint": "During a session, what is printed on the \"NuviraHub\" printer of this computer comes out of the printer of whoever controls it. The printer is installed with unattended access.",
+  "settings.printing": "Printing",
+  "settings.print_auto": "Documents printed by remote computers go to \"{printer}\" without asking.",
+  "settings.print_ask": "Ask every time",
+  "viewer.print_printing": "Printing \"{name}\" on {printer}…",
+  "viewer.print_done": "\"{name}\" printed on {printer}",
+  "viewer.print_failed": "\"{name}\" not printed: {reason}",
+  "viewer.print_saved": "\"{name}\" saved in {path}",
+  "pr.title": "Print",
+  "pr.heading": "The remote computer printed a document",
+  "pr.details": "{size} · printed on {agent}",
+  "pr.printer": "Printer",
+  "pr.automatic": "From now on print on this printer without asking",
+  "pr.print": "Print",
+  "pr.save": "Save as PDF…",
+  "pr.cancel": "Don't print",
+  "pr.waiting": "Other documents waiting: {count}",
+  "pr.no_printers": "There is no printer on this computer: save the document as PDF."
 }

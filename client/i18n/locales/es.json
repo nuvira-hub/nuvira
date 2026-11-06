@@ -465,5 +465,26 @@
   "server.sso_failed": "no se ha podido iniciar sesión con el proveedor",
   "server.sso_username_taken": "ya existe una cuenta con este nombre en el servidor: consulta a un administrador",
   "support.title": "Asistencia",
-  "err.locked": "este ajuste lo fija quien ha proporcionado el programa"
+  "err.locked": "este ajuste lo fija quien ha proporcionado el programa",
+
+  "admin.policy_print": "Sin impresión remota",
+  "settings.print_allowed": "Permitir la impresión remota",
+  "settings.print_hint": "Durante una sesión, lo que se imprime en la impresora «NuviraHub» de este equipo sale por la impresora de quien lo controla. La impresora se instala con el acceso desatendido.",
+  "settings.printing": "Impresión",
+  "settings.print_auto": "Los documentos impresos por equipos remotos van a «{printer}» sin preguntar.",
+  "settings.print_ask": "Preguntar cada vez",
+  "viewer.print_printing": "Imprimiendo «{name}» en {printer}…",
+  "viewer.print_done": "«{name}» impreso en {printer}",
+  "viewer.print_failed": "«{name}» no impreso: {reason}",
+  "viewer.print_saved": "«{name}» guardado en {path}",
+  "pr.title": "Imprimir",
+  "pr.heading": "El equipo remoto ha impreso un documento",
+  "pr.details": "{size} · impreso en {agent}",
+  "pr.printer": "Impresora",
+  "pr.automatic": "A partir de ahora imprimir en esta impresora sin preguntar",
+  "pr.print": "Imprimir",
+  "pr.save": "Guardar como PDF…",
+  "pr.cancel": "No imprimir",
+  "pr.waiting": "Otros documentos en espera: {count}",
+  "pr.no_printers": "No hay ninguna impresora en este equipo: guarda el documento como PDF."
 }
