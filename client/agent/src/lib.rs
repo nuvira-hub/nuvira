@@ -11,6 +11,7 @@ mod files;
 mod fsops;
 #[cfg(any(windows, unix))]
 pub mod ipc;
+mod inventory;
 mod pipeline;
 
 use std::collections::HashMap;
@@ -442,10 +443,19 @@ async fn signal_loop(
 
     let mut accepted: HashMap<String, Request> = HashMap::new();
     let (report_tx, mut reports) = mpsc::unbounded_channel::<nuvira_proto::v1::SessionReport>();
+    // Light RMM: the inventory goes only to a server that asks for it.
+    let send_inventory = signal.features.iter().any(|f| f == "pro.inventory");
+    let mut inventory_tick = tokio::time::interval(inventory::INTERVAL);
 
     loop {
         let reply = tokio::select! {
             Some(report) = reports.recv() => Some(client_message::Msg::SessionReport(report)),
+            _ = inventory_tick.tick(), if send_inventory => {
+                match tokio::task::spawn_blocking(inventory::collect).await {
+                    Ok(inv) => Some(client_message::Msg::Inventory(inv)),
+                    Err(_) => None,
+                }
+            }
             msg = signal.rx.recv() => match msg? {
                 Some(server_message::Msg::Policy(policy)) => {
                     set_policy(ctx, policy);
@@ -521,6 +531,10 @@ async fn signal_loop(
                         ctx.busy.fetch_sub(1, Ordering::Relaxed);
                         let _ = ctx.events.send(AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) });
                     });
+                    None
+                }
+                Some(server_message::Msg::Wake(wake)) => {
+                    tokio::task::spawn_blocking(move || inventory::wake(&wake.macs));
                     None
                 }
                 Some(server_message::Msg::SupportStatus(status)) => {
