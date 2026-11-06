@@ -92,9 +92,12 @@
           </p>
         </div>
 
-        <div id="sq-card" class="this-pc sq-card hidden">
-          <form id="sq-form" class="stack">
+        <div id="sq-card" class="this-pc sq-card collapsed hidden">
+          <button type="button" id="sq-toggle" class="sq-toggle" aria-expanded="false" aria-controls="sq-form">
             <strong data-i18n="support.ask_title">Ask for support</strong>
+            <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <form id="sq-form" class="stack">
             <span class="hint" data-i18n="support.ask_hint">Your request goes to the support team: the first free technician connects, and you accept.</span>
             <input id="sq-message" maxlength="500" data-i18n-placeholder="support.message" placeholder="What do you need? (optional)">
             <div class="actions"><span class="spacer"></span><button type="submit" class="primary" data-i18n="support.ask">Ask for support</button></div>

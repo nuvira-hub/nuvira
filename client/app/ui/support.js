@@ -31,6 +31,25 @@ function renderSupport(state) {
   if (!technician && section === "queue") showSection("connect");
 }
 
+// The card stays collapsed to its title unless opened (remembered on this computer).
+function setSupportCollapsed(collapsed) {
+  $("sq-card").classList.toggle("collapsed", collapsed);
+  $("sq-toggle").setAttribute("aria-expanded", String(!collapsed));
+}
+try {
+  setSupportCollapsed(localStorage.getItem("sq-expanded") !== "1");
+} catch {
+  setSupportCollapsed(true);
+}
+$("sq-toggle").addEventListener("click", () => {
+  const collapsed = !$("sq-card").classList.contains("collapsed");
+  setSupportCollapsed(collapsed);
+  try {
+    localStorage.setItem("sq-expanded", collapsed ? "0" : "1");
+  } catch {}
+  if (!collapsed) $("sq-message").focus();
+});
+
 $("sq-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {

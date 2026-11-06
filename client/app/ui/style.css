@@ -297,6 +297,16 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 
 /* Support queue */
 .sq-card { flex-direction: column; align-items: stretch; }
+.sq-toggle {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  background: none; border: none; padding: 0; text-align: left; color: inherit; cursor: pointer;
+}
+.sq-toggle:hover { background: none; }
+.sq-toggle svg { width: 18px; height: 18px; color: var(--muted); transition: transform .15s; }
+.sq-card:not(.collapsed) .sq-toggle svg { transform: rotate(180deg); }
+/* Collapsed: only the title; a request already sent always shows its state. */
+.sq-card.collapsed #sq-form, .sq-card.collapsed #sq-error { display: none; }
 .queue-item { justify-content: space-between; }
 .queue-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .queue-message { overflow-wrap: anywhere; }
