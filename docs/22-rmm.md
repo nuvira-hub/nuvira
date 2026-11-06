@@ -10,4 +10,4 @@ With a NuviraHub Pro server that offers it (feature `pro.inventory`), the comput
 - **Where.** The web console shows a health column in the devices list and, on a click, the inventory and the "Wake up" button. In the app, "Info" next to a computer of the address book shows the same. An account sees the inventory of the computers in its address books; administrators see all of them.
 - **Server.** The base server passes the inventories to a module implementing `ext.InventoryDesk` and otherwise ignores them; agents send them only when the server asks (`pro.inventory`).
 
-Tested on 2026-11-06 with the Pro test server on a Linux VM: inventories of Fedora, Linux Mint and Windows 10 (PC-LABORATORIO), health, and a wake request for Fedora sent by Mint (the magic packet left Mint; turning a real PC on is still to try).
+Tested on 2026-11-06 with the Pro test server on a Linux VM: inventories of Fedora, Linux Mint and Windows 10 (PC-LABORATORIO), health, a wake request for Fedora sent by Mint, and PC-LABORATORIO shut down from Windows (fast startup on) and turned on again by a packet sent by the Fedora VM: Windows started 13 seconds after the request.
