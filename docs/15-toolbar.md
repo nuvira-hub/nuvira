@@ -22,6 +22,7 @@ Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs`
 | Ctrl+Alt+Del | Same as Ctrl+Alt+End (see [14-phase3-service.md](14-phase3-service.md)) | service |
 | Eye | View only: mouse and keyboard are not sent | viewer |
 | Screen with a slash | Privacy mode: the remote screen turns black and its mouse and keyboard are blocked (see [24-privacy-mode.md](24-privacy-mode.md)); only when the agent has it | agent: `SetPrivacy` (Windows) |
+| Two arrows | TCP tunnels (Pro, see [26-tcp-tunnel.md](26-tcp-tunnel.md)); only when the agent offers them | agent: tunnel streams |
 | Prompt | Opens a remote terminal window (see [25-remote-terminal.md](25-remote-terminal.md)); only when the agent offers it | agent: terminal stream |
 | Chat, Send file | See [16-clipboard-chat-files.md](16-clipboard-chat-files.md) | viewer, agent |
 | Real size | 1:1 instead of fitting the window; the image follows the mouse, so moving it from one edge of the window to the other crosses the whole remote screen. `--actual-size` starts in this mode | viewer |

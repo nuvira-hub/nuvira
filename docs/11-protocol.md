@@ -50,6 +50,7 @@ Technician (A)           Server                      Remote (B)
 | `file` | one stream per file | name and size, then data |
 | `audio` | datagrams (planned) | Opus |
 | `tunnel` | one stream per connection (planned) | TCP port forwarding |
+| `tunnel` | one bidirectional stream per TCP connection (Pro) | raw bytes after `TunnelOpen`/`TunnelResult` (see [26-tcp-tunnel.md](26-tcp-tunnel.md)) |
 | `terminal` | one bidirectional stream per terminal | shell in a pseudo-terminal (see [25-remote-terminal.md](25-remote-terminal.md)) |
 
 With the WebSocket fallback the same QUIC connection runs inside the WebSocket tunnel, so the channels are unchanged.
