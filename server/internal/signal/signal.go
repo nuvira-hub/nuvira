@@ -168,6 +168,12 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 			s.report(c, m.SessionReport)
 		case *pb.ClientMessage_SupportRequest:
 			s.supportRequest(c, m.SupportRequest)
+		case *pb.ClientMessage_Inventory:
+			for _, mod := range s.modules {
+				if d, ok := mod.(ext.InventoryDesk); ok {
+					d.Inventory(c.device.ID, conn.RemoteAddr().String(), m.Inventory)
+				}
+			}
 		default:
 			_ = c.send(errorMsg("unexpected message", ""))
 		}
@@ -302,6 +308,24 @@ func (s *Server) supportRequest(c *client, req *pb.SupportRequest) {
 	for _, d := range desks {
 		d.SupportRequest(c.device.ID, c.device.Name, req)
 	}
+}
+
+// Online tells whether a device is connected now.
+func (s *Server) Online(deviceID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.online[deviceID] != nil
+}
+
+// SendWake asks a connected device to send Wake-on-LAN packets.
+func (s *Server) SendWake(deviceID string, macs []string) bool {
+	s.mu.Lock()
+	c := s.online[deviceID]
+	s.mu.Unlock()
+	if c == nil {
+		return false
+	}
+	return c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Wake{Wake: &pb.Wake{Macs: macs}}}) == nil
 }
 
 // SendSupportStatus tells a connected device the state of its support request.

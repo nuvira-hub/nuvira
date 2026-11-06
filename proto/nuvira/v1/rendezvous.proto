@@ -24,6 +24,8 @@ message ClientMessage {
     SessionReport session_report = 7;
     // Support queue (NuviraHub Pro, feature "pro.support_queue").
     SupportRequest support_request = 8;
+    // Light RMM (NuviraHub Pro, feature "pro.inventory"): what this computer is.
+    Inventory inventory = 9;
   }
 }
 
@@ -39,6 +41,8 @@ message ServerMessage {
     Policy policy = 7;
     // Support queue: state of this device's request.
     SupportStatus support_status = 8;
+    // Light RMM: send a Wake-on-LAN packet to these MAC addresses on the local network.
+    Wake wake = 9;
   }
 }
 
@@ -202,6 +206,9 @@ message ApiRequest {
     TakeRequest take_request = 25;
     // Session log (NuviraHub Pro): what the technician did, written after the session.
     SessionNote session_note = 26;
+    // Light RMM (NuviraHub Pro): for the computers the account sees in its books.
+    GetInventory get_inventory = 27;
+    WakeDevice wake_device = 28;
   }
 }
 
@@ -222,6 +229,65 @@ message SupportStatus {
   uint32 position = 1;
   string taken_by = 2;
   bool closed = 3;
+}
+
+// What a computer is, sent by its agent at registration and every 15 minutes
+// when the server announces "pro.inventory". Sizes in bytes.
+message Inventory {
+  string os = 1;
+  string os_version = 2;
+  string hostname = 3;
+  // User signed in to the desktop, if known.
+  string user = 4;
+  string cpu = 5;
+  uint32 cores = 6;
+  uint64 memory_total = 7;
+  uint64 memory_available = 8;
+  repeated Disk disks = 9;
+  uint64 uptime_s = 10;
+  string app_version = 11;
+  repeated NetworkInterface interfaces = 12;
+}
+
+message Disk {
+  string mount = 1;
+  uint64 total = 2;
+  uint64 available = 3;
+}
+
+message NetworkInterface {
+  string name = 1;
+  // "aa:bb:cc:dd:ee:ff"
+  string mac = 2;
+  // Addresses with prefix, e.g. "192.168.1.20/24".
+  repeated string addresses = 3;
+}
+
+message Wake {
+  repeated string macs = 1;
+}
+
+message GetInventory {
+  string device_id = 1;
+}
+
+// Inventory and health of a computer as the server knows them.
+message DeviceInventory {
+  string device_id = 1;
+  Inventory inventory = 2;
+  // Unix seconds of the last inventory; 0: never received.
+  int64 updated = 3;
+  bool online = 4;
+  // "ok", "warning", "critical" or "unknown", with the reasons ("@key" texts).
+  string health = 5;
+  repeated string health_reasons = 6;
+  // Address the server saw the computer from.
+  string public_address = 7;
+}
+
+// Wakes a computer up: another online computer of its network sends the packet.
+message WakeDevice {
+  string device_id = 1;
 }
 
 // Note of the account's latest session with the device (within a day).
@@ -294,6 +360,7 @@ message ApiResponse {
     SsoUrl sso_url = 13;
     Queue queue = 14;
     TakenRequest taken = 15;
+    DeviceInventory inventory = 16;
   }
 }
 

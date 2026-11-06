@@ -39,6 +39,11 @@ type Host interface {
 	// SendSupportStatus tells a device the state of its support request; false if
 	// the device is not connected.
 	SendSupportStatus(deviceID string, status *pb.SupportStatus) bool
+	// Online tells whether a device is connected now.
+	Online(deviceID string) bool
+	// SendWake asks a connected device to send Wake-on-LAN packets to these MAC
+	// addresses on its network; false if it is not connected.
+	SendWake(deviceID string, macs []string) bool
 }
 
 // Conn is the app connection an API request came on; the sign-in stays bound to it.
@@ -131,6 +136,12 @@ type SessionEvent struct {
 type SupportDesk interface {
 	SupportRequest(deviceID, deviceName string, req *pb.SupportRequest)
 	DeviceOffline(deviceID string)
+}
+
+// InventoryDesk is implemented by the light RMM module (NuviraHub Pro): it gets the
+// inventories the devices send, with the address the server sees them from.
+type InventoryDesk interface {
+	Inventory(deviceID, remoteAddr string, inv *pb.Inventory)
 }
 
 // SessionObserver is implemented by modules that want the steps of the sessions
