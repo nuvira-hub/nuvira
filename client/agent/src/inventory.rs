@@ -45,9 +45,10 @@ pub fn collect() -> Inventory {
             })
         })
         .collect();
+    let (os, os_version) = os();
     Inventory {
-        os: System::name().unwrap_or_default(),
-        os_version: System::long_os_version().or_else(System::os_version).unwrap_or_default(),
+        os,
+        os_version,
         hostname: nuvira_transport::device_name(),
         user: desktop_user(),
         cpu,
@@ -59,6 +60,18 @@ pub fn collect() -> Inventory {
         app_version: env!("CARGO_PKG_VERSION").into(),
         interfaces,
     }
+}
+
+/// Name and version of the system, shown together: "Fedora Linux" "44",
+/// "Windows 10 Pro" "19045" (the build), "macOS 26.1 Tahoe" "". The long name
+/// already has the version on Windows and macOS, and repeats "Linux" on Linux.
+fn os() -> (String, String) {
+    if cfg!(target_os = "linux") {
+        return (System::name().unwrap_or_default(), System::os_version().unwrap_or_default());
+    }
+    let name = System::long_os_version().or_else(System::name).unwrap_or_default();
+    let build = if cfg!(windows) { System::kernel_version().unwrap_or_default() } else { String::new() };
+    (name, build)
 }
 
 /// The user of the desktop, when the agent runs as that user (not as the
