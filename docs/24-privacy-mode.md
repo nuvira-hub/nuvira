@@ -42,4 +42,6 @@ The viewer window (PrintWindow of that window only) showed the real desktop duri
 
 Same day, from Linux: the viewer on the Ubuntu 26.04 VM (Wayland) with `--privacy` towards PC-LABORATORIO gave the same results as the "during" column. The agent on the same VM announces no privacy mode: the NUC viewer with `--privacy` reported it as not available, without the button, and the session went on normally.
 
+Rule "No privacy mode", same day, with the Pro test server on the Ubuntu VM and the agent on PC-LABORATORIO: turned on from the console API, the agent received it while connected (log "rules of the server … no_privacy=true"); the next session with `--privacy` found privacy mode not available and no black window was created. Turned off again: the following session turned it on.
+
 Not tested yet: turning it off from the button while the session goes on, two screens, an elevated window in front, the agent started by nuvira-service.
