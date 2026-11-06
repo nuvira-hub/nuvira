@@ -110,6 +110,9 @@ message Policy {
 // The viewer asks to connect to a device.
 message Connect {
   string device_id = 1;
+  // Address book sign-in of the app that opened the viewer (NuviraHub Pro): the
+  // session log records which account worked on the device. Never stored.
+  string account_token = 2;
 }
 
 // To the requested device: someone wants to connect.
@@ -197,6 +200,8 @@ message ApiRequest {
     // Support queue (NuviraHub Pro): every signed-in account sees it and takes requests.
     GetQueue get_queue = 24;
     TakeRequest take_request = 25;
+    // Session log (NuviraHub Pro): what the technician did, written after the session.
+    SessionNote session_note = 26;
   }
 }
 
@@ -217,6 +222,12 @@ message SupportStatus {
   uint32 position = 1;
   string taken_by = 2;
   bool closed = 3;
+}
+
+// Note of the account's latest session with the device (within a day).
+message SessionNote {
+  string device_id = 1;
+  string note = 2;
 }
 
 message GetQueue {}

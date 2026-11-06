@@ -1,4 +1,10 @@
 {
+  "note.title": "What did you do?",
+  "note.hint": "Session with {name}: a short note for the report (optional).",
+  "note.placeholder": "E.g. printer driver reinstalled",
+  "note.skip": "Skip",
+  "note.save": "Save",
+  "server.session_not_found": "no recent session with this computer",
   "nav.queue": "Support queue",
   "support.ask_title": "Ask for support",
   "support.ask_hint": "Your request goes to the support team: the first free technician connects, and you accept.",

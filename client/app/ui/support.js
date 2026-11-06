@@ -12,6 +12,7 @@ function supportAvailable(state) {
 
 function renderSupport(state) {
   supportState = state;
+  renderNote(state);
   const available = supportAvailable(state);
   $("sq-card").classList.toggle("hidden", !(available && state.controllable));
   const open = Boolean(state.support);
@@ -106,3 +107,35 @@ $("nav-queue").addEventListener("click", () => {
   clearInterval(queueTimer);
   queueTimer = setInterval(() => (section === "queue" ? refreshQueue() : clearInterval(queueTimer)), 3000);
 });
+
+// Note at the end of a session (session log, NuviraHub Pro).
+let noteFor = null;
+
+function renderNote(state) {
+  const request = state.note_request;
+  $("note").classList.toggle("hidden", !request);
+  if (!request || noteFor === request.device_id + request.name) return;
+  noteFor = request.device_id + request.name;
+  $("note-hint").textContent = t("note.hint", { name: request.name || formatId(request.device_id) });
+  $("note-text").value = "";
+  $("note-error").classList.add("hidden");
+  $("note-text").focus();
+}
+
+async function sendNote(note) {
+  const request = supportState?.note_request;
+  if (!request) return;
+  try {
+    await invoke("session_note", { deviceId: request.device_id, note });
+    noteFor = null;
+  } catch (err) {
+    $("note-error").textContent = msg(String(err));
+    $("note-error").classList.remove("hidden");
+  }
+}
+
+$("note-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  sendNote($("note-text").value.trim());
+});
+$("note-skip").addEventListener("click", () => sendNote(""));

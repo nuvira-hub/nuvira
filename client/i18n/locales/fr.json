@@ -1,4 +1,10 @@
 {
+  "note.title": "Qu'avez-vous fait ?",
+  "note.hint": "Session avec {name} : une courte note pour le rapport (facultative).",
+  "note.placeholder": "Ex. pilote de l'imprimante réinstallé",
+  "note.skip": "Passer",
+  "note.save": "Enregistrer",
+  "server.session_not_found": "aucune session récente avec cet ordinateur",
   "nav.queue": "File d'assistance",
   "support.ask_title": "Demander de l'aide",
   "support.ask_hint": "Votre demande arrive à l'équipe d'assistance : le premier technicien libre se connecte, et vous acceptez.",

@@ -97,6 +97,8 @@ struct UiState {
     account: Option<address_book::AccountUi>,
     /// This computer's support request, while it is open (support queue).
     support: Option<SupportUi>,
+    /// A session just ended: the interface asks the technician for a note.
+    note_request: Option<NoteRequestUi>,
     books: Vec<address_book::BookUi>,
     address_book_error: Option<String>,
     /// Optional modules of the server (NuviraHub Pro): the interface shows their
@@ -121,6 +123,12 @@ struct ChatLine {
     /// App notice (e.g. file received), not a message.
     system: bool,
     text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct NoteRequestUi {
+    device_id: String,
+    name: String,
 }
 
 /// State of this computer's support request: its place in the queue (0 until the
@@ -729,6 +737,14 @@ pub(crate) fn launch_viewer(
     if let Some(key) = load_settings().server_key {
         command.args(["--server-key", &key]);
     }
+    // Signed in to the address book: the session log records the account, and at
+    // the end the technician may write what they did.
+    let settings = load_settings();
+    if let Some(token) = &settings.token {
+        command.env("NUVIRA_ACCOUNT_TOKEN", token);
+    }
+    let ask_note = settings.token.is_some()
+        && state.ui.lock().expect("state").features.iter().any(|f| f == "pro.session_log");
     let mut child = command
         .env("NUVIRA_PASSWORD", &password)
         // The session window uses the app's language.
@@ -743,8 +759,10 @@ pub(crate) fn launch_viewer(
     // The viewer reports on its standard output: session started (time for the
     // address book's automatic add) and, at the end, why it closed.
     let closed_reason = std::sync::Arc::new(Mutex::new(None::<String>));
+    let connected_name = std::sync::Arc::new(Mutex::new(None::<String>));
+    let note_device = device_id.clone();
     let reader = child.stdout.take().map(|stdout| {
-        let (app, closed_reason) = (app.clone(), closed_reason.clone());
+        let (app, closed_reason, connected_name) = (app.clone(), closed_reason.clone(), connected_name.clone());
         std::thread::spawn(move || {
             use std::io::BufRead;
             for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -753,6 +771,7 @@ pub(crate) fn launch_viewer(
                         .update(&app, |ui| ui.viewer_message = Some("@app.waiting_confirmation".into()));
                 } else if let Some(name) = line.strip_prefix("@connected\t") {
                     app.state::<NuviraApp>().update(&app, |ui| ui.viewer_message = None);
+                    *connected_name.lock().expect("name") = Some(name.to_string());
                     address_book::auto_add(&app, device_id.clone(), name.to_string(), password.clone());
                 } else if let Some(reason) = line.strip_prefix("@closed\t") {
                     // Already translated by the viewer.
@@ -783,9 +802,28 @@ pub(crate) fn launch_viewer(
             }
             _ => None,
         };
+        let name = connected_name.lock().expect("name").take();
         let state = app.state::<NuviraApp>();
-        state.update(&app, |ui| ui.viewer_message = message);
+        state.update(&app, |ui| {
+            ui.viewer_message = message;
+            // A session was held: what was done goes in the session log (reports).
+            if let Some(name) = name.filter(|_| ask_note) {
+                ui.note_request = Some(NoteRequestUi { device_id: note_device, name });
+            }
+        });
     });
+    Ok(())
+}
+
+/// The technician's note on the session just ended (NuviraHub Pro session log);
+/// an empty note only closes the question.
+#[tauri::command]
+async fn session_note(app: AppHandle, device_id: String, note: String) -> Result<(), String> {
+    if !note.trim().is_empty() {
+        // On error the question stays open, with the note still written.
+        address_book::session_note(&app, device_id, note).await?;
+    }
+    app.state::<NuviraApp>().update(&app, |ui| ui.note_request = None);
     Ok(())
 }
 
@@ -900,6 +938,7 @@ fn main() {
             repair_service,
             request_support,
             cancel_support,
+            session_note,
             address_book::support_queue,
             address_book::support_take,
             uninstall_service,

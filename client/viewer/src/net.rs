@@ -227,7 +227,9 @@ async fn open_connection(target: Target) -> Result<(nuvira_transport::Connection
                 signal::known_server::remember(&server_name, &sig.server_fingerprint)?;
             }
             info!(id = sig.device_id, "registered on {server_name}; requesting {device_id}");
-            sig.tx.send(client_message::Msg::Connect(Connect { device_id: device_id.clone() })).await?;
+            // The app's address book sign-in, for the session log (who worked on it).
+            let account_token = std::env::var("NUVIRA_ACCOUNT_TOKEN").unwrap_or_default();
+            sig.tx.send(client_message::Msg::Connect(Connect { device_id: device_id.clone(), account_token })).await?;
             let route = loop {
                 match sig.rx.recv().await? {
                     Some(server_message::Msg::Route(r)) if r.role() == Role::Viewer => break r,

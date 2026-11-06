@@ -1,4 +1,10 @@
 {
+  "note.title": "¿Qué has hecho?",
+  "note.hint": "Sesión con {name}: una nota breve para el informe (opcional).",
+  "note.placeholder": "P. ej. reinstalado el controlador de la impresora",
+  "note.skip": "Omitir",
+  "note.save": "Guardar",
+  "server.session_not_found": "ninguna sesión reciente con este ordenador",
   "nav.queue": "Cola de asistencia",
   "support.ask_title": "Pedir asistencia",
   "support.ask_hint": "Tu solicitud llega al equipo de asistencia: el primer técnico libre se conecta, y tú aceptas.",

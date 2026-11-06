@@ -157,7 +157,7 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 		}
 		switch m := msg.Msg.(type) {
 		case *pb.ClientMessage_Connect:
-			s.connect(c, m.Connect.DeviceId)
+			s.connect(c, m.Connect.DeviceId, m.Connect.AccountToken)
 		case *pb.ClientMessage_Accept:
 			s.accept(c, m.Accept.SessionId)
 		case *pb.ClientMessage_Reject:
@@ -316,7 +316,7 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func (s *Server) connect(viewer *client, target string) {
+func (s *Server) connect(viewer *client, target, accountToken string) {
 	if ip, ok := relay.HostOf(viewer.conn.RemoteAddr()); ok && !s.connectLimit.allow(ip, time.Now()) {
 		s.log.Info("connection request refused: too many", "from", viewer.device.ID, "to", target, "address", ip)
 		_ = viewer.send(errorMsg("@server.rate_limited", ""))
@@ -353,7 +353,7 @@ func (s *Server) connect(viewer *client, target string) {
 		return
 	}
 	s.event(ext.SessionEvent{ID: p.id, Kind: ext.SessionRequested, ViewerID: viewer.device.ID, ViewerName: viewer.device.Name,
-		AgentID: agent.device.ID, AgentName: agent.device.Name})
+		AgentID: agent.device.ID, AgentName: agent.device.Name, ViewerToken: accountToken})
 }
 
 // take removes the session from the pending requests, if it belongs to this agent.

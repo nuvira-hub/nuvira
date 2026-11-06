@@ -1,4 +1,10 @@
 {
+  "note.title": "Was haben Sie gemacht?",
+  "note.hint": "Sitzung mit {name}: eine kurze Notiz für den Bericht (optional).",
+  "note.placeholder": "z. B. Druckertreiber neu installiert",
+  "note.skip": "Überspringen",
+  "note.save": "Speichern",
+  "server.session_not_found": "keine aktuelle Sitzung mit diesem Computer",
   "nav.queue": "Support-Warteschlange",
   "support.ask_title": "Hilfe anfordern",
   "support.ask_hint": "Ihre Anfrage geht an das Support-Team: Der erste freie Techniker verbindet sich, und Sie stimmen zu.",

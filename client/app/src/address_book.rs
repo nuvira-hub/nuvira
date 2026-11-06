@@ -706,3 +706,8 @@ pub async fn support_take(app: AppHandle, id: String) -> Result<(), String> {
     let password = format!("{}{}", nuvira_viewer::SUPPORT_TICKET, taken.ticket);
     crate::launch_viewer(&app, &app.state::<NuviraApp>(), taken.device_id, password)
 }
+
+/// Writes the note of the account's latest session with the device.
+pub async fn session_note(app: &AppHandle, device_id: String, note: String) -> Result<(), String> {
+    call(app, Call::SessionNote(pb::SessionNote { device_id, note })).await.map(|_| ())
+}

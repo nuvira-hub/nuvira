@@ -120,6 +120,9 @@ type SessionEvent struct {
 	AgentName  string
 	Reason     string
 	Report     *pb.SessionReport
+	// ViewerToken is the address book sign-in the viewer presented (requested
+	// only): a module with accounts tells whose it is. Never to be stored.
+	ViewerToken string
 }
 
 // SupportDesk is implemented by the support queue module (NuviraHub Pro): it gets

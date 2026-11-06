@@ -307,6 +307,19 @@
     </footer>
   </div>
 
+  <div id="note" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="note-title">
+    <form id="note-form" class="dialog stack">
+      <h2 id="note-title" data-i18n="note.title">What did you do?</h2>
+      <p class="hint" id="note-hint"></p>
+      <textarea id="note-text" rows="4" maxlength="1000" data-i18n-placeholder="note.placeholder" placeholder="E.g. printer driver reinstalled"></textarea>
+      <div class="actions">
+        <button type="button" id="note-skip" data-i18n="note.skip">Skip</button>
+        <button type="submit" class="primary" data-i18n="note.save">Save</button>
+      </div>
+      <p id="note-error" class="message hidden"></p>
+    </form>
+  </div>
+
   <div id="incoming" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="incoming-title">
     <div class="dialog">
       <h2 id="incoming-title" data-i18n="incoming.title">Connection request</h2>

@@ -1,4 +1,10 @@
 {
+  "note.title": "Cosa hai fatto?",
+  "note.hint": "Sessione con {name}: una breve nota per il report (facoltativa).",
+  "note.placeholder": "Es. reinstallato il driver della stampante",
+  "note.skip": "Salta",
+  "note.save": "Salva",
+  "server.session_not_found": "nessuna sessione recente con questo computer",
   "nav.queue": "Coda di assistenza",
   "support.ask_title": "Chiedi assistenza",
   "support.ask_hint": "La richiesta arriva al team di assistenza: il primo tecnico libero si collega, e tu accetti.",
