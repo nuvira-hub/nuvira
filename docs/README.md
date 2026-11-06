@@ -17,3 +17,4 @@
 | 18 | [Installation on Windows](18-installer.md) | One program, server in the file name, install from the app, NSIS setup |
 | 19 | [Automatic updates](19-updates.md) | Signed versions from the own server, service and portable copies |
 | 20 | [Linux](20-linux.md) | The app controls other computers; on Wayland it can be controlled too (portal, PipeWire); .deb, .rpm and archive |
+| 21 | [Support queue](21-support-queue.md) | NuviraHub Pro: the customer asks for help, the first free technician takes the request |
