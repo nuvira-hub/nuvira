@@ -1,4 +1,10 @@
 {
+  "rmm.disk_critical": "a disk is almost full (less than 10% free)",
+  "rmm.disk_low": "a disk is getting full (less than 20% free)",
+  "rmm.memory_low": "little free memory",
+  "rmm.uptime_long": "on for more than 30 days without a restart",
+  "rmm.no_mac": "the computer's network address (MAC) is not known yet: it is learnt while the computer is on",
+  "rmm.no_relay": "no other computer of the same network is on to send the wake-up packet",
   "note.title": "What did you do?",
   "note.hint": "Session with {name}: a short note for the report (optional).",
   "note.placeholder": "E.g. printer driver reinstalled",

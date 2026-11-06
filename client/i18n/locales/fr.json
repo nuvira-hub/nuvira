@@ -1,4 +1,10 @@
 {
+  "rmm.disk_critical": "un disque est presque plein (moins de 10 % libre)",
+  "rmm.disk_low": "un disque se remplit (moins de 20 % libre)",
+  "rmm.memory_low": "peu de mémoire libre",
+  "rmm.uptime_long": "allumé depuis plus de 30 jours sans redémarrage",
+  "rmm.no_mac": "l'adresse réseau (MAC) de l'ordinateur n'est pas encore connue : elle est apprise pendant qu'il est allumé",
+  "rmm.no_relay": "aucun autre ordinateur du même réseau n'est allumé pour envoyer le paquet de réveil",
   "note.title": "Qu'avez-vous fait ?",
   "note.hint": "Session avec {name} : une courte note pour le rapport (facultative).",
   "note.placeholder": "Ex. pilote de l'imprimante réinstallé",

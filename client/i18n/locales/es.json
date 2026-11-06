@@ -1,4 +1,10 @@
 {
+  "rmm.disk_critical": "un disco está casi lleno (menos del 10 % libre)",
+  "rmm.disk_low": "un disco se está llenando (menos del 20 % libre)",
+  "rmm.memory_low": "poca memoria libre",
+  "rmm.uptime_long": "encendido desde hace más de 30 días sin reiniciar",
+  "rmm.no_mac": "la dirección de red (MAC) del ordenador aún no se conoce: se aprende mientras está encendido",
+  "rmm.no_relay": "ningún otro ordenador de la misma red está encendido para enviar el paquete de encendido",
   "note.title": "¿Qué has hecho?",
   "note.hint": "Sesión con {name}: una nota breve para el informe (opcional).",
   "note.placeholder": "P. ej. reinstalado el controlador de la impresora",

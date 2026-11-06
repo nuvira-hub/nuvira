@@ -1,4 +1,10 @@
 {
+  "rmm.disk_critical": "ein Datenträger ist fast voll (weniger als 10 % frei)",
+  "rmm.disk_low": "ein Datenträger wird voll (weniger als 20 % frei)",
+  "rmm.memory_low": "wenig freier Arbeitsspeicher",
+  "rmm.uptime_long": "seit mehr als 30 Tagen ohne Neustart eingeschaltet",
+  "rmm.no_mac": "die Netzwerkadresse (MAC) des Computers ist noch nicht bekannt: Sie wird gelernt, während er eingeschaltet ist",
+  "rmm.no_relay": "kein anderer Computer im selben Netzwerk ist eingeschaltet, um das Weckpaket zu senden",
   "note.title": "Was haben Sie gemacht?",
   "note.hint": "Sitzung mit {name}: eine kurze Notiz für den Bericht (optional).",
   "note.placeholder": "z. B. Druckertreiber neu installiert",

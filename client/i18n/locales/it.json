@@ -1,4 +1,10 @@
 {
+  "rmm.disk_critical": "un disco è quasi pieno (meno del 10% libero)",
+  "rmm.disk_low": "un disco si sta riempiendo (meno del 20% libero)",
+  "rmm.memory_low": "poca memoria libera",
+  "rmm.uptime_long": "acceso da più di 30 giorni senza un riavvio",
+  "rmm.no_mac": "l'indirizzo di rete (MAC) del computer non è ancora noto: si impara mentre il computer è acceso",
+  "rmm.no_relay": "nessun altro computer della stessa rete è acceso per inviare il pacchetto di accensione",
   "note.title": "Cosa hai fatto?",
   "note.hint": "Sessione con {name}: una breve nota per il report (facoltativa).",
   "note.placeholder": "Es. reinstallato il driver della stampante",
