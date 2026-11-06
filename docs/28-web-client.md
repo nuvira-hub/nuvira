@@ -49,4 +49,6 @@ With a test bench that served the page on `localhost` and forwarded the WebSocke
 - **Sign-in** on the Pro test server of a Linux VM: wrong password refused, address book shown, sign-in kept after reloading the page, sign-out.
 - The Pro server itself serves `/web/` with the WebAssembly as `application/wasm` and the security headers; the page works under them (WebAssembly and WebSocket allowed, nothing else).
 
-Still to try: the page behind the real HTTPS proxy of the NAS with a licence that includes the web client, Firefox and Safari, a Windows PC with a user signed in (files and terminal on Windows), a long session over the Internet.
+Then, the same day, the page served by the Pro server on the NAS behind its HTTPS proxy (Nginx Proxy Manager with Let's Encrypt, WebSocket on): `config.json` says HTTPS and licensed, `/nuvira` upgrades to a WebSocket; from Edge on that page Mint again (video, terminal, file manager up and down with the same content) and LAB (video).
+
+Still to try: the page from outside the home network (phone on mobile data), Firefox and Safari, a Windows PC with a user signed in (files and terminal on Windows), a long session over the Internet.
