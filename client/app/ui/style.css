@@ -300,3 +300,12 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .queue-item { justify-content: space-between; }
 .queue-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .queue-message { overflow-wrap: anywhere; }
+
+/* Light RMM */
+.inventory-health { font-weight: 600; }
+.inventory-health.ok { color: var(--ok, #1e8e3e); }
+.inventory-health.warning { color: #b86e00; }
+.inventory-health.critical { color: var(--danger, #b3261e); }
+.inventory-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.inventory-table th { text-align: left; font-weight: 500; color: var(--muted); padding: 3px 10px 3px 0; white-space: nowrap; vertical-align: top; }
+.inventory-table td { padding: 3px 0; overflow-wrap: anywhere; }

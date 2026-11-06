@@ -178,7 +178,14 @@ function entryRow(entry) {
   const connect = el("button", "primary", t("address_book.connect"));
   connect.addEventListener("click", () => connectEntry(entry));
   row.addEventListener("dblclick", () => connectEntry(entry));
-  row.append(avatar, who, edit, connect);
+  row.append(avatar, who, edit);
+  // Light RMM (NuviraHub Pro): inventory, health and wake-on-LAN (rmm.js).
+  if ((addressBook?.features ?? []).includes("pro.inventory")) {
+    const info = el("button", "", t("rmm.info"));
+    info.addEventListener("click", () => openInventory(entry));
+    row.append(info);
+  }
+  row.append(connect);
   return row;
 }
 

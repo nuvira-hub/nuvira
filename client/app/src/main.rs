@@ -940,6 +940,8 @@ fn main() {
             cancel_support,
             session_note,
             address_book::support_queue,
+            address_book::device_inventory,
+            address_book::wake_device,
             address_book::support_take,
             uninstall_service,
             apply_update,

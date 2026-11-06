@@ -711,3 +711,55 @@ pub async fn support_take(app: AppHandle, id: String) -> Result<(), String> {
 pub async fn session_note(app: &AppHandle, device_id: String, note: String) -> Result<(), String> {
     call(app, Call::SessionNote(pb::SessionNote { device_id, note })).await.map(|_| ())
 }
+
+/// Inventory of a computer the account sees (light RMM, NuviraHub Pro).
+#[derive(Debug, Clone, Serialize)]
+pub struct InventoryUi {
+    online: bool,
+    health: String,
+    health_reasons: Vec<String>,
+    /// Seconds since 1970 of the last inventory; 0: never.
+    updated: i64,
+    public_address: String,
+    os: String,
+    user: String,
+    cpu: String,
+    cores: u32,
+    memory_total: u64,
+    memory_available: u64,
+    uptime_s: u64,
+    app_version: String,
+    disks: Vec<(String, u64, u64)>,
+    interfaces: Vec<(String, String, Vec<String>)>,
+}
+
+#[tauri::command]
+pub async fn device_inventory(app: AppHandle, device_id: String) -> Result<InventoryUi, String> {
+    let Some(ApiResult::Inventory(d)) = call(&app, Call::GetInventory(pb::GetInventory { device_id })).await? else {
+        return Err(t("err.server_too_old"));
+    };
+    let inv = d.inventory.unwrap_or_default();
+    Ok(InventoryUi {
+        online: d.online,
+        health: d.health,
+        health_reasons: d.health_reasons,
+        updated: d.updated,
+        public_address: d.public_address,
+        os: format!("{} {}", inv.os, inv.os_version).trim().to_string(),
+        user: inv.user,
+        cpu: inv.cpu,
+        cores: inv.cores,
+        memory_total: inv.memory_total,
+        memory_available: inv.memory_available,
+        uptime_s: inv.uptime_s,
+        app_version: inv.app_version,
+        disks: inv.disks.into_iter().map(|d| (d.mount, d.total, d.available)).collect(),
+        interfaces: inv.interfaces.into_iter().map(|n| (n.name, n.mac, n.addresses)).collect(),
+    })
+}
+
+/// Wakes a computer up through another online computer of its network.
+#[tauri::command]
+pub async fn wake_device(app: AppHandle, device_id: String) -> Result<(), String> {
+    call(&app, Call::WakeDevice(pb::WakeDevice { device_id })).await.map(|_| ())
+}

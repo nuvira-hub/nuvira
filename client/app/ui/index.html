@@ -307,6 +307,19 @@
     </footer>
   </div>
 
+  <div id="inventory" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="inventory-title">
+    <div class="dialog stack">
+      <h2 id="inventory-title"></h2>
+      <p id="inventory-health" class="inventory-health"></p>
+      <table id="inventory-table" class="inventory-table"></table>
+      <p id="inventory-message" class="message hidden"></p>
+      <div class="actions">
+        <button type="button" id="inventory-wake" class="hidden" data-i18n="rmm.wake">Wake up</button>
+        <button type="button" id="inventory-close" class="primary" data-i18n="rmm.close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="note" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="note-title">
     <form id="note-form" class="dialog stack">
       <h2 id="note-title" data-i18n="note.title">What did you do?</h2>
@@ -365,5 +378,6 @@
   <script src="main.js"></script>
   <script src="address-book.js"></script>
   <script src="support.js"></script>
+  <script src="rmm.js"></script>
 </body>
 </html>
