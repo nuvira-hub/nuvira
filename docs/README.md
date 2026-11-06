@@ -21,3 +21,4 @@
 | 22 | [Inventory, health and Wake-on-LAN](22-rmm.md) | NuviraHub Pro: what each computer is, its health, and waking it through another computer of the same network |
 | 23 | [REST API of the Pro server](23-rest-api.md) | NuviraHub Pro: devices, address books, sessions, reports and the support queue for ticketing and management software |
 | 24 | [Privacy mode](24-privacy-mode.md) | Black screen and blocked mouse and keyboard at the controlled PC while the technician works (Windows) |
+| 25 | [Remote terminal](25-remote-terminal.md) | A command prompt of the remote computer, with or without its desktop; as the user signed in |

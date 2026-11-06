@@ -92,7 +92,7 @@ The app opens a signalling connection with `Register.api_only` (it does not appe
 
 ## Rules for all the devices (policy)
 
-Administration → "Rules for all the computers" (phase 5, 2026-10-27): the person at the computer must always accept (also with the permanent password), no file transfers, no shared clipboard, no privacy mode (since 2026-11-06, see [24-privacy-mode.md](24-privacy-mode.md)). Stored by the server (`policy` table), sent to each device at registration (`Registered.policy`) and to every connected device as soon as an administrator changes them (`ServerMessage.policy`); applied by the agent at the start of each session. They can only restrict: a device never allows more than its own settings because of them. With "always accept" and no app open on the PC (service only), sessions are refused.
+Administration → "Rules for all the computers" (phase 5, 2026-10-27): the person at the computer must always accept (also with the permanent password), no file transfers, no shared clipboard, no privacy mode, no remote terminal (since 2026-11-06, see [24-privacy-mode.md](24-privacy-mode.md) and [25-remote-terminal.md](25-remote-terminal.md)). Stored by the server (`policy` table), sent to each device at registration (`Registered.policy`) and to every connected device as soon as an administrator changes them (`ServerMessage.policy`); applied by the agent at the start of each session. They can only restrict: a device never allows more than its own settings because of them. With "always accept" and no app open on the PC (service only), sessions are refused.
 
 Tested on the NUC test server: rules received at registration; with the permanent password the viewer showed "waiting for the person to accept", then "no answer" after 30 s.
 

@@ -45,7 +45,7 @@ Priority legend: **M** = MVP, **1** = version 1.0, **2** = later versions.
 ### 4.4 Tools without video
 | Feature | Priority |
 |---|---|
-| Remote terminal (PowerShell/cmd, bash/zsh) | 1 |
+| Remote terminal (PowerShell/cmd, bash/zsh) — ✅ see [25](25-remote-terminal.md) | 1 |
 | Process and service management | 2 |
 | System information and hardware/software inventory | 1 |
 | Event log / journal viewer | 2 |

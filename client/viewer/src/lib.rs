@@ -850,6 +850,7 @@ impl ApplicationHandler<NetEvent> for App {
                     if !agent.is_empty() {
                         self.agent = agent;
                     }
+                    self.terminals.set_title(&tf("term.title", &[("agent", &self.agent)]));
                     return;
                 }
                 info!("remote screen {width}x{height}");

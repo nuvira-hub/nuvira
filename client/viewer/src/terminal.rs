@@ -171,6 +171,13 @@ impl Terminals {
         }
     }
 
+    /// Title of every window (the name of the computer is known once connected).
+    pub fn set_title(&self, title: &str) {
+        for term in self.windows.values() {
+            term.window.set_title(title);
+        }
+    }
+
     /// A message for every window (connection lost, waiting for the confirmation...).
     pub fn status(&self, text: &str) {
         for term in self.windows.values() {
