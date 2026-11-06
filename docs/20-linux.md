@@ -47,7 +47,7 @@ A systemd **user** service, `nuvira-agent.service`, runs the agent as the person
 
 - **Start.** An autostart entry (`~/.config/autostart/nuvira-agent.desktop`) runs `nuvira service start` at login: it imports the desktop session's variables (display, Wayland, D-Bus) into systemd and restarts the service, so the agent can read the screen. systemd restarts it if it ends.
 - **App.** With the service installed the app runs no agent of its own: it connects to the service's one through a Unix socket in `$XDG_RUNTIME_DIR/nuvira/` (folder 0700), and each side accepts only a process of the same user (`SO_PEERCRED`). It shows the service's ID and temporary password; the permanent one is accepted without confirmation.
-- **Wayland.** The app asks GNOME's permission when installing, while the person is there; the service then uses the saved permission (no dialog, also after a restart).
+- **Wayland.** GNOME's permission is asked when installing, while the person is there, and the service then uses it (no dialog, also after a restart). GNOME ties a saved permission to the program that asked for it, telling programs apart by their systemd unit: asked from the app it was refused to the service (Fedora, 2026-11-06). So it is asked by `nuvira service portal`, started through `systemd-run` like the service.
 - **Limits.** Nothing runs before someone logs in: after a restart the computer needs automatic login. On GNOME with Wayland the screen must not lock, since GNOME refuses to share it while locked. The login screen itself cannot be reached.
 
 ## Local address book

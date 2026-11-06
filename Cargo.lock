@@ -3355,7 +3355,6 @@ version = "0.15.0"
 dependencies = [
  "anyhow",
  "nuvira-agent",
- "nuvira-capture",
  "nuvira-codec",
  "nuvira-i18n",
  "nuvira-input",
@@ -3470,6 +3469,7 @@ version = "0.15.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nuvira-capture",
  "nuvira-secret",
  "nuvira-transport",
  "nuvira-update",
