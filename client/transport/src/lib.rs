@@ -304,6 +304,28 @@ impl FramedRecv {
     }
 }
 
+/// Reads exactly one framed message and nothing after it: what follows on the stream
+/// is left to the caller (e.g. the raw bytes of a TCP tunnel). `None` at the end of the stream.
+pub async fn recv_one<M: Message + Default>(stream: &mut RecvStream) -> Result<Option<M>> {
+    let mut len = 0usize;
+    for i in 0..10 {
+        let mut byte = [0u8; 1];
+        match stream.read(&mut byte).await? {
+            Some(1) => {}
+            _ if i == 0 => return Ok(None),
+            _ => anyhow::bail!("stream ended inside a message"),
+        }
+        len |= ((byte[0] & 0x7f) as usize) << (7 * i);
+        if byte[0] & 0x80 == 0 {
+            break;
+        }
+    }
+    anyhow::ensure!(len <= nuvira_proto::framing::MAX_MESSAGE_LEN, "message too large: {len}");
+    let mut body = vec![0u8; len];
+    stream.read_exact(&mut body).await?;
+    Ok(Some(M::decode(body.as_slice())?))
+}
+
 /// Sends `data` on a new unidirectional stream: `header` (name, size, kind) then
 /// the data in 256 KB chunks, as for files (`FileChunk`).
 pub async fn send_stream(conn: &quinn::Connection, header: FileChunk, data: &[u8]) -> Result<()> {

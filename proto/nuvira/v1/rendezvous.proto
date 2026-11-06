@@ -113,6 +113,8 @@ message Policy {
   bool no_privacy = 4;
   // No remote terminal.
   bool no_terminal = 5;
+  // No TCP tunnels.
+  bool no_tunnel = 6;
 }
 
 // The viewer asks to connect to a device.

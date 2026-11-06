@@ -11,6 +11,7 @@ mod net;
 mod render;
 mod report;
 mod terminal;
+mod tunnels;
 mod toolbar;
 
 use std::collections::HashSet;
@@ -121,6 +122,12 @@ struct Args {
     /// ("\n" becomes Enter).
     #[arg(long, value_name = "TEXT", hide = true)]
     terminal_type: Option<String>,
+
+    /// TCP tunnel through the session (NuviraHub Pro): LOCAL:HOST:PORT, e.g.
+    /// 13389:192.168.1.20:3389 (LOCAL 0 = any free port); HOST must be in the
+    /// remote computer's local network. Repeatable; also from the toolbar.
+    #[arg(long, value_name = "LOCAL:HOST:PORT")]
+    tunnel: Vec<String>,
 
     /// Automated tests: writes the output of the terminals to this file.
     #[arg(long, value_name = "FILE", hide = true)]
@@ -366,6 +373,8 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         terminal_only: args.terminal,
         terminals: Default::default(),
         term_link: None,
+        tunnels: Default::default(),
+        tunnel_link: None,
         terminal_type: args.terminal_type.as_ref().map(|t| t.replace("\\n", "\r").into_bytes()),
         terminal_log: args.terminal_log.as_ref().and_then(|p| match std::fs::File::create(p) {
             Ok(f) => Some(f),
@@ -390,6 +399,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         exit_reason: None,
         closed_message: None,
     };
+    for spec in &args.tunnel {
+        app.tunnels.add_spec(spec).with_context(|| format!("--tunnel {spec}"))?;
+    }
     event_loop.run_app(&mut app)?;
     // Closing the input channel ends the session: wait (briefly) for the close to
     // reach the agent.
@@ -463,6 +475,9 @@ struct App {
     /// `--terminal`: no session window, only terminals.
     terminal_only: bool,
     terminals: terminal::Terminals,
+    tunnels: tunnels::Tunnels,
+    /// Towards the network for the tunnels.
+    tunnel_link: Option<UnboundedSender<net::TunnelCmd>>,
     /// Towards the network for the terminals, once connected to an agent that has them.
     term_link: Option<UnboundedSender<net::TermCmd>>,
     /// `--terminal-type`: still to type in the first terminal.
@@ -618,6 +633,12 @@ impl App {
                     window.set_fullscreen(full.then_some(winit::window::Fullscreen::Borderless(None)));
                 }
             }
+            Action::Tunnels => {
+                if let Err(e) = self.tunnels.open(event_loop, self.proxy.clone()) {
+                    error!("tunnels not available: {e:#}");
+                }
+                return;
+            }
             Action::Terminal => {
                 let title = tf("term.title", &[("agent", &self.agent)]);
                 if let Err(e) = self.terminals.open(event_loop, self.proxy.clone(), &title, "") {
@@ -758,6 +779,7 @@ impl ApplicationHandler<NetEvent> for App {
                 self.input = Some(session.input);
                 self.control = Some(session.control);
                 self.term_link = Some(session.terminals);
+                self.tunnel_link = Some(session.tunnels);
                 self.net_thread = Some(session.thread);
             }
             return;
@@ -815,6 +837,7 @@ impl ApplicationHandler<NetEvent> for App {
             self.input = Some(session.input);
             self.control = Some(session.control.clone());
             self.term_link = Some(session.terminals);
+            self.tunnel_link = Some(session.tunnels);
             self.fm.connect(filemanager::Link {
                 control: session.control,
                 files: session.files.clone(),
@@ -840,9 +863,14 @@ impl ApplicationHandler<NetEvent> for App {
                     notice.set_text(&t("viewer.pending"));
                 }
             }
-            NetEvent::Connected { agent, direct, width, height, file_manager, secure_attention, privacy, terminal } => {
+            NetEvent::Connected { agent, direct, width, height, file_manager, secure_attention, privacy, terminal, tunnel } => {
                 if terminal && let Some(link) = self.term_link.clone() {
                     self.terminals.connect(link);
+                }
+                match (tunnel, self.tunnel_link.clone()) {
+                    (true, Some(link)) => self.tunnels.connect(link),
+                    _ if self.tunnels.has_any() => warn!("tunnels not available on this agent"),
+                    _ => {}
                 }
                 if self.terminal_only {
                     // For the NuviraHub app, which reads the output: the session started (address book).
@@ -858,7 +886,7 @@ impl ApplicationHandler<NetEvent> for App {
                 self.send_view_size();
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.update(&format!(
-                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal}}}"
+                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal},tunnel:{tunnel}}}"
                     ));
                 }
                 if std::mem::take(&mut self.privacy_at_start) {
@@ -1010,6 +1038,9 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             NetEvent::TerminalPage { window, body } => self.terminals.message(window, &body),
+            NetEvent::TunnelPage(body) => self.tunnels.message(&body),
+            NetEvent::TunnelListening { id, local_port, error } => self.tunnels.listening(id, local_port, error),
+            NetEvent::TunnelConnection { id, error } => self.tunnels.connection_error(id, error),
             NetEvent::TerminalOutput { id, data } => {
                 if let Some(log) = self.terminal_log.as_mut() {
                     use std::io::Write;
@@ -1078,6 +1109,10 @@ impl ApplicationHandler<NetEvent> for App {
         }
         if self.fm.owns(id) {
             self.fm.window_event(&event);
+            return;
+        }
+        if self.tunnels.owns(id) {
+            self.tunnels.window_event(&event);
             return;
         }
         match event {

@@ -97,6 +97,15 @@ $("terminal-allowed").addEventListener("change", async (e) => {
   }
 });
 
+$("tunnel-allowed").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_tunnel_allowed", { allowed: e.target.checked });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !e.target.checked;
+  }
+});
+
 $("language").addEventListener("change", async (e) => {
   useStrings(await invoke("set_language", { language: e.target.value }));
 });
@@ -161,6 +170,7 @@ function render(state) {
   $("privacy-settings").classList.toggle("hidden", state.platform !== "windows");
   $("privacy-allowed").checked = state.privacy_allowed;
   $("terminal-allowed").checked = state.terminal_allowed;
+  $("tunnel-allowed").checked = state.tunnel_allowed;
   $("update-bar").classList.toggle("hidden", !state.update && !state.installed && !state.service_stopped);
   if (!$("update-button").disabled) {
     if (!state.service_stopped) repairError = null;

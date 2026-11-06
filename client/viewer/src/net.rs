@@ -35,7 +35,22 @@ pub enum NetEvent {
         privacy: bool,
         /// The agent opens remote terminals.
         terminal: bool,
+        /// The agent opens TCP tunnels (NuviraHub Pro).
+        tunnel: bool,
     },
+    /// A tunnel listens on `local_port` of this computer, or could not (`error`).
+    TunnelListening {
+        id: u32,
+        local_port: u16,
+        error: String,
+    },
+    /// A connection through a tunnel opened (`error` empty) or was refused by the agent.
+    TunnelConnection {
+        id: u32,
+        error: String,
+    },
+    /// Message of the tunnels window's page.
+    TunnelPage(String),
     /// Output of a remote terminal.
     TerminalOutput {
         id: u32,
@@ -182,6 +197,16 @@ pub enum Target {
     },
 }
 
+/// What the window sends to the session: input, control messages, files, where the
+/// downloads go, terminals and tunnels.
+type SessionChannels = (
+    mpsc::UnboundedReceiver<InputEvent>,
+    mpsc::UnboundedReceiver<Msg>,
+    mpsc::UnboundedReceiver<Outgoing>,
+    Downloads,
+    (mpsc::UnboundedReceiver<TermCmd>, mpsc::UnboundedReceiver<TunnelCmd>),
+);
+
 /// Commands for the remote terminals, from the windows to the network.
 pub enum TermCmd {
     Open { id: u32, cols: u16, rows: u16 },
@@ -189,6 +214,14 @@ pub enum TermCmd {
     Resize { id: u32, cols: u16, rows: u16 },
     /// Closing the stream ends the shell on the agent.
     Close { id: u32 },
+}
+
+/// TCP tunnels: a local port of this computer forwarded to `host`:`port` of the
+/// remote computer's network.
+pub enum TunnelCmd {
+    /// `local_port` 0: any free port.
+    Add { id: u32, local_port: u16, host: String, port: u16 },
+    Remove { id: u32 },
 }
 
 /// What travels from the network to one terminal's stream.
@@ -209,6 +242,8 @@ pub struct Session {
     pub downloads: Downloads,
     /// Remote terminals.
     pub terminals: mpsc::UnboundedSender<TermCmd>,
+    /// TCP tunnels.
+    pub tunnels: mpsc::UnboundedSender<TunnelCmd>,
     /// To be joined before exiting.
     pub thread: std::thread::JoinHandle<()>,
 }
@@ -223,6 +258,7 @@ pub fn start(
 ) -> Session {
     let (input_tx, input_rx) = mpsc::unbounded_channel();
     let (terminals_tx, terminals_rx) = mpsc::unbounded_channel();
+    let (tunnels_tx, tunnels_rx) = mpsc::unbounded_channel();
     let (control_tx, control_rx) = mpsc::unbounded_channel();
     let (files_tx, files_rx) = mpsc::unbounded_channel();
     let downloads = Downloads::default();
@@ -231,7 +267,7 @@ pub fn start(
         .name("network".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            let channels = (input_rx, control_rx, files_rx, session_downloads, terminals_rx);
+            let channels = (input_rx, control_rx, files_rx, session_downloads, (terminals_rx, tunnels_rx));
             let reason = match rt.block_on(session(target, password, proxy.clone(), slot, channels, terminal_only)) {
                 Ok(()) => "session ended".to_string(),
                 Err(e) => format!("{e:#}"),
@@ -239,7 +275,7 @@ pub fn start(
             let _ = proxy.send_event(NetEvent::Disconnected(reason));
         })
         .expect("network thread");
-    Session { input: input_tx, control: control_tx, files: files_tx, downloads, terminals: terminals_tx, thread }
+    Session { input: input_tx, control: control_tx, files: files_tx, downloads, terminals: terminals_tx, tunnels: tunnels_tx, thread }
 }
 
 fn control(msg: Msg) -> ControlMessage {
@@ -389,6 +425,7 @@ async fn handshake(
             secure_attention: false,
             privacy: false,
             terminal: true,
+            tunnel: agent.tunnel,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None));
     }
@@ -413,6 +450,7 @@ async fn handshake(
         secure_attention: agent.os.is_empty() || agent.os == "windows",
         privacy: agent.privacy_mode,
         terminal: agent.terminal,
+        tunnel: agent.tunnel,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -431,13 +469,7 @@ async fn session(
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
-    (mut input_rx, mut control_rx, mut files_rx, downloads, mut terminals_rx): (
-        mpsc::UnboundedReceiver<InputEvent>,
-        mpsc::UnboundedReceiver<Msg>,
-        mpsc::UnboundedReceiver<Outgoing>,
-        Downloads,
-        mpsc::UnboundedReceiver<TermCmd>,
-    ),
+    (mut input_rx, mut control_rx, mut files_rx, downloads, (mut terminals_rx, mut tunnels_rx)): SessionChannels,
     terminal_only: bool,
 ) -> Result<()> {
     // Until the session starts the viewer may close (window closed while connecting
@@ -535,6 +567,53 @@ async fn session(
                     }
                     TermCmd::Close { id } => {
                         open.remove(&id);
+                    }
+                }
+            }
+            std::future::pending::<anyhow::Result<()>>().await
+        }
+    };
+
+    // TCP tunnels: a listener on this computer for each one, a stream for each connection.
+    let tunnels = {
+        let conn = conn.clone();
+        let proxy = proxy.clone();
+        async move {
+            let mut open = std::collections::HashMap::<u32, tokio::task::JoinHandle<()>>::new();
+            while let Some(cmd) = tunnels_rx.recv().await {
+                match cmd {
+                    TunnelCmd::Add { id, local_port, host, port } => {
+                        let listener = match tokio::net::TcpListener::bind(("127.0.0.1", local_port)).await {
+                            Ok(listener) => listener,
+                            Err(e) => {
+                                warn!(id, local_port, "tunnel not opened: {e}");
+                                let error = format!("{e}");
+                                let _ = proxy.send_event(NetEvent::TunnelListening { id, local_port, error });
+                                continue;
+                            }
+                        };
+                        let local_port = listener.local_addr().map(|a| a.port()).unwrap_or(local_port);
+                        info!(id, local_port, host, port, "tunnel listening");
+                        let _ = proxy.send_event(NetEvent::TunnelListening { id, local_port, error: String::new() });
+                        let (conn, proxy) = (conn.clone(), proxy.clone());
+                        open.insert(id, tokio::spawn(async move {
+                            while let Ok((socket, _)) = listener.accept().await {
+                                let (conn, proxy, host) = (conn.clone(), proxy.clone(), host.clone());
+                                tokio::spawn(async move {
+                                    let error = match forward(&conn, socket, &host, port).await {
+                                        Ok(()) => return,
+                                        Err(e) => format!("{e:#}"),
+                                    };
+                                    let _ = proxy.send_event(NetEvent::TunnelConnection { id, error });
+                                });
+                            }
+                        }));
+                    }
+                    TunnelCmd::Remove { id } => {
+                        if let Some(task) = open.remove(&id) {
+                            info!(id, "tunnel closed");
+                            task.abort();
+                        }
                     }
                 }
             }
@@ -741,6 +820,7 @@ async fn session(
         r = control_loop => r.context("control channel"),
         r = streams => r.context("streams from the agent"),
         r = terminals => r,
+        r = tunnels => r,
     };
     close(&conn).await;
     // The decoder ends when its channel closes: it is waited for, so that on exit
@@ -763,12 +843,12 @@ async fn run_terminal(
     mut rx: mpsc::UnboundedReceiver<TermIn>,
     proxy: &EventLoopProxy<NetEvent>,
 ) -> Result<(i32, String)> {
-    use nuvira_proto::v1::{TerminalMessage, TerminalOpen, TerminalSize, terminal_message::Msg as T};
+    use nuvira_proto::v1::{StreamOpen, TerminalMessage, TerminalOpen, TerminalSize, stream_open::Kind, terminal_message::Msg as T};
 
     let (send, recv) = conn.open_bi().await?;
     let (mut tx, mut stream_rx) = (FramedSend::new(send), FramedRecv::new(recv));
     let size = |cols: u16, rows: u16| TerminalSize { cols: cols as u32, rows: rows as u32 };
-    tx.send(&TerminalMessage { msg: Some(T::Open(TerminalOpen { size: Some(size(cols, rows)) })) }).await?;
+    tx.send(&StreamOpen { kind: Some(Kind::Terminal(TerminalOpen { size: Some(size(cols, rows)) })) }).await?;
     info!(id, cols, rows, "terminal opened");
     loop {
         tokio::select! {
@@ -794,6 +874,35 @@ async fn run_terminal(
             },
         }
     }
+}
+
+/// One connection through a tunnel: a stream to the agent, which connects to
+/// `host`:`port` of its network; then the bytes are copied both ways. `Err` with the
+/// reason when the agent refused it (translated) or the connection broke.
+async fn forward(conn: &nuvira_transport::Connection, socket: tokio::net::TcpStream, host: &str, port: u16) -> Result<()> {
+    use nuvira_proto::v1::{StreamOpen, TunnelOpen, TunnelResult, stream_open::Kind};
+    use tokio::io::AsyncWriteExt;
+
+    let _ = socket.set_nodelay(true);
+    let (mut send, mut recv) = conn.open_bi().await?;
+    let open = StreamOpen { kind: Some(Kind::Tunnel(TunnelOpen { host: host.into(), port: port as u32 })) };
+    send.write_all(&nuvira_proto::framing::encode(&open)).await?;
+    match nuvira_transport::recv_one::<TunnelResult>(&mut recv).await? {
+        Some(TunnelResult { ok: true, .. }) => {}
+        Some(TunnelResult { error, .. }) => bail!("{}", nuvira_i18n::message(&error)),
+        None => bail!("the agent closed the tunnel"),
+    }
+    let (mut socket_rx, mut socket_tx) = socket.into_split();
+    let up = async {
+        let _ = tokio::io::copy(&mut socket_rx, &mut send).await;
+        let _ = send.finish();
+    };
+    let down = async {
+        let _ = tokio::io::copy(&mut recv, &mut socket_tx).await;
+        let _ = socket_tx.shutdown().await;
+    };
+    tokio::join!(up, down);
+    Ok(())
 }
 
 /// File manager upload: `local` from `offset` on, into `dir` on the remote PC.

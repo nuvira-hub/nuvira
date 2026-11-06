@@ -1,14 +1,14 @@
 //! Remote terminal: a bidirectional stream of the viewer for each terminal
 //! (`TerminalMessage`), connected to a shell in a pseudo-terminal (`pty`).
 //!
-//! The stream starts with `open` (size); then the keys go to the shell, its output
+//! The stream starts with `StreamOpen.terminal` (size, read by the caller); then the keys go to the shell, its output
 //! comes back as `data`, and `exit` closes it. If the viewer closes the stream the
 //! shell is ended with everything it started.
 
 use std::io::{Read, Write};
 
 use anyhow::Result;
-use nuvira_proto::v1::{TerminalExit, TerminalMessage, terminal_message::Msg};
+use nuvira_proto::v1::{TerminalExit, TerminalMessage, TerminalSize, terminal_message::Msg};
 use nuvira_transport::{FramedRecv, FramedSend};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{info, warn};
@@ -18,11 +18,12 @@ const CHUNK: usize = 16 * 1024;
 
 /// Serves a terminal stream. `refused` is the reason ("@key") when terminals are not
 /// allowed: the viewer gets it in `exit` without a shell starting.
-pub async fn serve(mut tx: FramedSend, mut rx: FramedRecv, refused: Option<&'static str>) -> Result<()> {
-    let size = match rx.recv::<TerminalMessage>().await? {
-        Some(TerminalMessage { msg: Some(Msg::Open(open)) }) => open.size.unwrap_or_default(),
-        _ => return Ok(()),
-    };
+pub async fn serve(
+    mut tx: FramedSend,
+    mut rx: FramedRecv,
+    size: TerminalSize,
+    refused: Option<&'static str>,
+) -> Result<()> {
     if let Some(reason) = refused {
         return exit(&mut tx, 0, reason).await;
     }

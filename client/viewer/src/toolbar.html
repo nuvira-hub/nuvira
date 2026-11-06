@@ -83,6 +83,9 @@
   <button id="terminal" data-i18n-title="tb.terminal" hidden>
     <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 9l3 3-3 3M12 15h5"/></svg>
   </button>
+  <button id="tunnels" data-i18n-title="tb.tunnels" hidden>
+    <svg viewBox="0 0 24 24"><path d="M3 12h4M17 12h4M7 8l-4 4 4 4M17 8l4 4-4 4M10 12h4"/></svg>
+  </button>
   <button id="chat" data-i18n-title="tb.chat">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
   </button>
@@ -121,7 +124,7 @@
   for (const node of document.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
 
   const send = (action) => window.ipc.postMessage(action);
-  for (const id of ["sendfile", "files", "terminal", "chat", "sas", "viewonly", "privacy", "actual", "fullscreen", "collapse", "expand", "close"]) {
+  for (const id of ["sendfile", "files", "terminal", "tunnels", "chat", "sas", "viewonly", "privacy", "actual", "fullscreen", "collapse", "expand", "close"]) {
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
@@ -165,6 +168,7 @@
       if ("fileManager" in state) document.getElementById("files").hidden = !state.fileManager;
       if ("secureAttention" in state) document.getElementById("sas").hidden = !state.secureAttention;
       if ("terminal" in state) document.getElementById("terminal").hidden = !state.terminal;
+      if ("tunnel" in state) document.getElementById("tunnels").hidden = !state.tunnel;
       if ("privacyAvailable" in state) document.getElementById("privacy").hidden = !state.privacyAvailable;
       if ("privacy" in state) document.getElementById("privacy").classList.toggle("on", state.privacy);
       if ("actualSize" in state) {

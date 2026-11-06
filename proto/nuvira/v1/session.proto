@@ -254,17 +254,42 @@ message Hello {
   // From the agent: it opens remote terminals (TerminalMessage).
   bool terminal = 9;
   // From the viewer: terminal only, no desktop. The agent does not capture the
-  // screen and sends no VideoFormat; the viewer opens terminals.
+  // screen and sends no VideoFormat; the viewer opens terminals (and tunnels).
   bool terminal_only = 10;
+  // From the agent: it opens TCP tunnels towards its local network (TunnelOpen).
+  bool tunnel = 11;
+}
+
+// First message of every bidirectional stream the viewer opens after the control
+// one: what the stream is.
+message StreamOpen {
+  oneof kind {
+    TerminalOpen terminal = 1;
+    TunnelOpen tunnel = 2;
+  }
+}
+
+// TCP tunnel: the agent connects to `host`:`port`, which must be in its local network
+// (loopback, private, link-local addresses), and answers TunnelResult; after it the
+// stream carries the raw bytes of the TCP connection in both directions.
+message TunnelOpen {
+  string host = 1;
+  uint32 port = 2;
+}
+
+message TunnelResult {
+  bool ok = 1;
+  // Why not ("@key" messages are translated).
+  string error = 2;
 }
 
 // `terminal` channel: a bidirectional stream opened by the viewer for each terminal,
-// after the control one. The first message is `open`; then `data` both ways and
-// `resize` from the viewer. The agent ends with `exit` (shell ended or not started);
-// closing the stream from the viewer ends the shell.
+// starting with StreamOpen.terminal; then `data` both ways and `resize` from the
+// viewer. The agent ends with `exit` (shell ended or not started); closing the
+// stream from the viewer ends the shell.
 message TerminalMessage {
+  reserved 1;
   oneof msg {
-    TerminalOpen open = 1;
     // Bytes of the terminal: keys typed (viewer -> agent), output (agent -> viewer).
     bytes data = 2;
     TerminalSize resize = 3;

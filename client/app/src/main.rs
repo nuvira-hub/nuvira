@@ -118,6 +118,8 @@ struct UiState {
     privacy_allowed: bool,
     /// Remote terminal allowed on this PC (settings).
     terminal_allowed: bool,
+    /// TCP tunnels allowed on this PC (settings).
+    tunnel_allowed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +184,9 @@ struct Settings {
     /// The person at this PC does not allow the remote terminal.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_terminal: bool,
+    /// The person at this PC does not allow TCP tunnels to its network.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    no_tunnel: bool,
 }
 
 /// Server written in the program's file name, e.g. `nuvira-host=nuvira.example.com.exe`
@@ -687,11 +692,23 @@ fn set_terminal_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) 
     Ok(())
 }
 
+/// Like [`set_privacy_allowed`], for the TCP tunnels.
+#[tauri::command]
+fn set_tunnel_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.no_tunnel = !allowed;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.send(AgentCommand::AllowTunnel { allow: allowed });
+    state.update(&app, |ui| ui.tunnel_allowed = allowed);
+    Ok(())
+}
+
 /// What the person at this PC allows, for the agent (the app's or the service's).
 fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
     let settings = load_settings();
     let _ = commands.send(AgentCommand::AllowPrivacy { allow: !settings.no_privacy });
     let _ = commands.send(AgentCommand::AllowTerminal { allow: !settings.no_terminal });
+    let _ = commands.send(AgentCommand::AllowTunnel { allow: !settings.no_tunnel });
 }
 
 #[tauri::command]
@@ -965,6 +982,7 @@ fn main() {
             password: password.clone(),
             privacy_allowed: !settings.no_privacy,
             terminal_allowed: !settings.no_terminal,
+            tunnel_allowed: !settings.no_tunnel,
             ..Default::default()
         }),
         password: Arc::new(Mutex::new(password)),
@@ -984,6 +1002,7 @@ fn main() {
             new_password,
             set_privacy_allowed,
             set_terminal_allowed,
+            set_tunnel_allowed,
             respond,
             send_chat,
             connect_entry,

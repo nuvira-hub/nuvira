@@ -15,6 +15,7 @@ mod inventory;
 mod pipeline;
 mod pty;
 mod terminal;
+mod tunnel;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -200,6 +201,10 @@ pub enum AgentCommand {
     AllowTerminal {
         allow: bool,
     },
+    /// The person at the PC allows TCP tunnels to the local network or not.
+    AllowTunnel {
+        allow: bool,
+    },
 }
 
 /// Choices of the person at the PC kept by the agent (`permissions.json` in its
@@ -210,6 +215,8 @@ struct Permissions {
     privacy: bool,
     #[serde(default = "yes")]
     terminal: bool,
+    #[serde(default = "yes")]
+    tunnel: bool,
 }
 
 fn yes() -> bool {
@@ -225,7 +232,7 @@ impl Permissions {
         std::fs::read_to_string(Self::path())
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(Self { privacy: true, terminal: true })
+            .unwrap_or(Self { privacy: true, terminal: true, tunnel: true })
     }
 
     fn save(self) {
@@ -332,6 +339,8 @@ pub async fn serve_via_server(
         support_ticket: Mutex::new(None),
         allow_privacy: AtomicBool::new(permissions.privacy),
         allow_terminal: AtomicBool::new(permissions.terminal),
+        allow_tunnel: AtomicBool::new(permissions.tunnel),
+        features: Mutex::new(Vec::new()),
     });
     let current = ctx.password.lock().expect("password").clone();
     let _ = ctx.events.send(AgentEvent::Password { password: current });
@@ -438,6 +447,10 @@ struct SessionContext {
     allow_privacy: AtomicBool,
     /// The person at the PC allows the remote terminal ([`AgentCommand::AllowTerminal`]).
     allow_terminal: AtomicBool,
+    /// The person at the PC allows TCP tunnels ([`AgentCommand::AllowTunnel`]).
+    allow_tunnel: AtomicBool,
+    /// Optional modules of the server (NuviraHub Pro), from the registration.
+    features: Mutex<Vec<String>>,
 }
 
 impl SessionContext {
@@ -445,6 +458,7 @@ impl SessionContext {
         Permissions {
             privacy: self.allow_privacy.load(Ordering::Relaxed),
             terminal: self.allow_terminal.load(Ordering::Relaxed),
+            tunnel: self.allow_tunnel.load(Ordering::Relaxed),
         }
         .save();
     }
@@ -457,6 +471,7 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
         no_clipboard = policy.no_clipboard,
         no_privacy = policy.no_privacy,
         no_terminal = policy.no_terminal,
+        no_tunnel = policy.no_tunnel,
         "rules of the server"
     );
     *ctx.policy.lock().expect("policy") = policy;
@@ -516,6 +531,7 @@ async fn signal_loop(
     let (report_tx, mut reports) = mpsc::unbounded_channel::<nuvira_proto::v1::SessionReport>();
     // Light RMM: the inventory goes only to a server that asks for it.
     let send_inventory = signal.features.iter().any(|f| f == "pro.inventory");
+    *ctx.features.lock().expect("features") = signal.features.clone();
     let mut inventory_tick = tokio::time::interval(inventory::INTERVAL);
 
     loop {
@@ -663,6 +679,13 @@ async fn signal_loop(
                 Some(AgentCommand::AllowPrivacy { allow }) => {
                     if ctx.allow_privacy.swap(allow, Ordering::Relaxed) != allow {
                         info!(allow, "privacy mode allowed by the person at the PC");
+                        ctx.save_permissions();
+                    }
+                    None
+                }
+                Some(AgentCommand::AllowTunnel { allow }) => {
+                    if ctx.allow_tunnel.swap(allow, Ordering::Relaxed) != allow {
+                        info!(allow, "tunnels allowed by the person at the PC");
                         ctx.save_permissions();
                     }
                     None
@@ -897,6 +920,20 @@ async fn session(
             None
         }
     };
+    // Tunnels: only with a Pro server that offers them (never in a LAN session).
+    let tunnel_refused = move || -> Option<&'static str> {
+        let Some(g) = gate else { return Some("@agent.tunnel_unavailable") };
+        let licensed = g.ctx.features.lock().expect("features").iter().any(|f| f == "pro.tunnel");
+        if config.view_only || config.synthetic.is_some() || !licensed {
+            Some("@agent.tunnel_unavailable")
+        } else if g.ctx.policy.lock().expect("policy").no_tunnel {
+            Some("@agent.tunnel_disabled")
+        } else if !g.ctx.allow_tunnel.load(Ordering::Relaxed) {
+            Some("@agent.tunnel_not_allowed")
+        } else {
+            None
+        }
+    };
     // Privacy mode allowed by the person at the PC (always without the app: LAN tests).
     let privacy_allowed = || gate.is_none_or(|g| g.ctx.allow_privacy.load(Ordering::Relaxed));
     // Video as datagrams with error correction, when the viewer asks for it.
@@ -911,6 +948,7 @@ async fn session(
             && privacy_allowed()
             && nuvira_input::privacy::available(),
         terminal: terminal_refused().is_none(),
+        tunnel: tunnel_refused().is_none(),
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -939,7 +977,7 @@ async fn session(
 
     // Terminal only: no capture, no video, nothing on the screen.
     if terminal_only {
-        return terminal_session(&conn, ctrl_tx, ctrl_rx, gate, &terminal_refused).await;
+        return terminal_session(&conn, ctrl_tx, ctrl_rx, gate, (&terminal_refused, &tunnel_refused)).await;
     }
 
     let keyframe = Arc::new(AtomicBool::new(true));
@@ -1423,7 +1461,7 @@ async fn session(
         r = video => r.context("sending video"),
         r = control_loop => r.context("control channel"),
         r = input => r.context("input channel"),
-        r = accept_terminals(&conn, &terminal_refused) => r,
+        r = accept_streams(&conn, (&terminal_refused, &tunnel_refused)) => r,
     };
     let last = pipeline.lock().expect("pipeline").take();
     let _ = tokio::task::spawn_blocking(move || drop(last)).await;
@@ -1441,7 +1479,7 @@ async fn terminal_session(
     mut ctrl_tx: FramedSend,
     mut ctrl_rx: FramedRecv,
     gate: Option<&Gate<'_>>,
-    refused: &impl Fn() -> Option<&'static str>,
+    refused: Refusals<'_, impl Fn() -> Option<&'static str>, impl Fn() -> Option<&'static str>>,
 ) -> Result<()> {
     info!("terminal session (no desktop)");
     let (chat_tx, mut chat_rx) = mpsc::unbounded_channel::<String>();
@@ -1473,7 +1511,7 @@ async fn terminal_session(
     };
     let result = tokio::select! {
         r = control => r.context("control channel"),
-        r = accept_terminals(conn, refused) => r,
+        r = accept_streams(conn, refused) => r,
     };
     if let Some(gate) = gate {
         *gate.ctx.chat.lock().expect("chat") = None;
@@ -1481,15 +1519,36 @@ async fn terminal_session(
     result
 }
 
-/// Every bidirectional stream of the viewer after the control one is a terminal,
-/// served by a task of its own. It never ends by itself: the end of the connection
-/// is seen by the other channels of the session.
-async fn accept_terminals(conn: &Connection, refused: &impl Fn() -> Option<&'static str>) -> Result<()> {
-    while let Ok((send, recv)) = conn.accept_bi().await {
-        let reason = refused();
+/// Why a terminal and a tunnel are refused, checked when each one opens.
+type Refusals<'a, T, U> = (&'a T, &'a U);
+
+/// Every bidirectional stream of the viewer after the control one is a terminal or a
+/// TCP tunnel (its first message, `StreamOpen`, says which), served by a task of its
+/// own. It never ends by itself: the end of the connection is seen by the other
+/// channels of the session.
+async fn accept_streams(
+    conn: &Connection,
+    (terminal_refused, tunnel_refused): Refusals<'_, impl Fn() -> Option<&'static str>, impl Fn() -> Option<&'static str>>,
+) -> Result<()> {
+    use nuvira_proto::v1::{StreamOpen, stream_open::Kind};
+    while let Ok((send, mut recv)) = conn.accept_bi().await {
+        let (terminal, tunnel) = (terminal_refused(), tunnel_refused());
         tokio::spawn(async move {
-            if let Err(e) = terminal::serve(FramedSend::new(send), FramedRecv::new(recv), reason).await {
-                warn!("terminal: {e:#}");
+            let open = match nuvira_transport::recv_one::<StreamOpen>(&mut recv).await {
+                Ok(Some(open)) => open,
+                Ok(None) => return,
+                Err(e) => return warn!("stream from the viewer: {e:#}"),
+            };
+            let result = match open.kind {
+                Some(Kind::Terminal(t)) => {
+                    let size = t.size.unwrap_or_default();
+                    terminal::serve(FramedSend::new(send), FramedRecv::new(recv), size, terminal).await
+                }
+                Some(Kind::Tunnel(t)) => tunnel::serve(send, recv, t, tunnel).await,
+                None => Ok(()),
+            };
+            if let Err(e) = result {
+                warn!("stream from the viewer: {e:#}");
             }
         });
     }
@@ -1650,6 +1709,7 @@ fn local_hello() -> Hello {
         privacy_mode: false,
         terminal: false,
         terminal_only: false,
+        tunnel: false,
     }
 }
 

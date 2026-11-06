@@ -37,7 +37,7 @@ png.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 nu-ansi-term.workspace = true
-windows = { workspace = true, features = ["Win32_UI_Shell"] }
+windows = { workspace = true, features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # The WebViews (toolbar, chat, file manager) are GTK widgets: GTK must be started
 # and its events handled in the winit loop.

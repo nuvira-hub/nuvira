@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #1f252b; --panel: #272e35; --line: #39424c; --text: #e6eaee; --muted: #9aa5b1; --accent: #2a9bc4; --danger: #f2b8b5; --ok: #7be39a; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 "Segoe UI", system-ui, sans-serif; }
+  main { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  h1 { font-size: 16px; margin: 0; }
+  .hint { color: var(--muted); margin: 0; }
+  form { display: grid; grid-template-columns: 1fr 90px 110px auto; gap: 8px; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+  input { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; font: inherit; min-width: 0; }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .error { color: var(--danger); min-height: 1em; margin: 0; }
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  li { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; gap: 8px; align-items: center; }
+  li .what { flex: 1; min-width: 0; }
+  li .addr { font-family: Consolas, "DejaVu Sans Mono", monospace; }
+  li .state { font-size: 12px; color: var(--muted); }
+  li .state.ok { color: var(--ok); }
+  li .state.bad { color: var(--danger); }
+</style>
+</head>
+<body>
+<main>
+  <h1 data-i18n="tn.title">Tunnels</h1>
+  <p class="hint" data-i18n="tn.hint">A port of this computer that leads to an address of the remote computer's network (e.g. a router's web panel or the Remote Desktop of a PC). Only addresses of the local network.</p>
+  <div class="presets">
+    <button type="button" data-preset="localhost:3389" data-i18n="tn.preset_rdp">Remote Desktop of the PC</button>
+    <button type="button" data-preset="localhost:80" data-i18n="tn.preset_web">Web panel of the PC</button>
+  </div>
+  <form id="add">
+    <label><span data-i18n="tn.host">Address in the remote network</span><input id="host" placeholder="192.168.1.1" required></label>
+    <label><span data-i18n="tn.port">Port</span><input id="port" type="number" min="1" max="65535" placeholder="80" required></label>
+    <label><span data-i18n="tn.local_port">Local port</span><input id="local" type="number" min="0" max="65535" data-i18n-placeholder="tn.auto" placeholder="automatic"></label>
+    <button class="primary" type="submit" data-i18n="tn.add">Add</button>
+  </form>
+  <p class="error" id="error"></p>
+  <ul id="list"></ul>
+</main>
+<script>
+  const STRINGS = window.I18N || {};
+  const t = (key, args = {}) => (STRINGS[key] || key).replace(/\{(\w+)\}/g, (_, k) => args[k] ?? "");
+  for (const node of document.querySelectorAll("[data-i18n]")) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll("[data-i18n-placeholder]")) node.placeholder = t(node.dataset.i18nPlaceholder);
+  const send = (msg) => window.ipc.postMessage(JSON.stringify(msg));
+  const $ = (id) => document.getElementById(id);
+
+  for (const b of document.querySelectorAll("[data-preset]")) {
+    b.addEventListener("click", () => {
+      const [host, port] = b.dataset.preset.split(":");
+      $("host").value = host;
+      $("port").value = port;
+      $("port").focus();
+    });
+  }
+  $("add").addEventListener("submit", (e) => {
+    e.preventDefault();
+    $("error").textContent = "";
+    send({ op: "add", host: $("host").value.trim(), port: Number($("port").value), local_port: Number($("local").value || 0) });
+  });
+
+  function button(label, action) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", action);
+    return b;
+  }
+
+  window.tn = {
+    update(state) {
+      const list = $("list");
+      list.replaceChildren();
+      for (const tunnel of state.tunnels) {
+        const li = document.createElement("li");
+        const what = document.createElement("div");
+        what.className = "what";
+        const addr = document.createElement("div");
+        addr.className = "addr";
+        addr.textContent = `localhost:${tunnel.listening ? tunnel.local_port : "…"}  →  ${tunnel.host}:${tunnel.port}`;
+        const st = document.createElement("div");
+        st.className = "state " + (tunnel.error ? "bad" : tunnel.listening ? "ok" : "");
+        st.textContent = tunnel.error || t(tunnel.listening ? "tn.ready" : state.connected ? "tn.opening" : "tn.waiting");
+        what.append(addr, st);
+        li.append(what);
+        if (tunnel.listening) {
+          li.append(button(t("tn.open_web"), () => send({ op: "launch", id: tunnel.id, kind: tunnel.port === 443 ? "https" : "web" })));
+          if (navigator.userAgent.includes("Windows")) {
+            li.append(button(t("tn.open_rdp"), () => send({ op: "launch", id: tunnel.id, kind: "rdp" })));
+          }
+        }
+        li.append(button(t("tn.remove"), () => send({ op: "remove", id: tunnel.id })));
+        list.append(li);
+      }
+    },
+    error(text) {
+      $("error").textContent = text;
+    },
+  };
+  send({ op: "ready" });
+</script>
+</body>
+</html>

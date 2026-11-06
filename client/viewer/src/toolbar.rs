@@ -40,6 +40,8 @@ pub enum Action {
     Privacy,
     /// Opens a remote terminal window.
     Terminal,
+    /// Opens the TCP tunnels window.
+    Tunnels,
     /// Real size (1:1) or fitted to the window.
     ActualSize,
     Fullscreen,
@@ -80,6 +82,7 @@ impl Action {
             "viewonly" => Self::ViewOnly,
             "privacy" => Self::Privacy,
             "terminal" => Self::Terminal,
+            "tunnels" => Self::Tunnels,
             "actual" => Self::ActualSize,
             "fullscreen" => Self::Fullscreen,
             "collapse" => Self::Collapse,
