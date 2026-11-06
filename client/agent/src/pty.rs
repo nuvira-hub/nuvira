@@ -306,9 +306,9 @@ mod imp {
 
     pub fn spawn(cols: u16, rows: u16) -> Result<(Shell, Box<dyn Read + Send>)> {
         let (mut master, mut slave) = (0, 0);
-        let mut size = winsize(cols, rows);
+        let size = winsize(cols, rows);
         if unsafe {
-            libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &mut size)
+            libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &size)
         } != 0
         {
             return Err(std::io::Error::last_os_error()).context("openpty");
