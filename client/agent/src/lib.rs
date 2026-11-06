@@ -186,6 +186,47 @@ pub enum AgentCommand {
         message: String,
     },
     CancelSupport,
+    /// The person at the PC allows privacy mode or not (app settings). Kept in the
+    /// agent's data folder, so that it holds also while the app is closed.
+    AllowPrivacy {
+        allow: bool,
+    },
+}
+
+/// Choices of the person at the PC kept by the agent (`permissions.json` in its
+/// data folder): with the service it is the service's protected folder.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct Permissions {
+    #[serde(default = "yes")]
+    privacy: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Permissions {
+    fn path() -> PathBuf {
+        nuvira_transport::identity::data_dir().join("permissions.json")
+    }
+
+    fn load() -> Self {
+        std::fs::read_to_string(Self::path())
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(Self { privacy: true })
+    }
+
+    fn save(self) {
+        let path = Self::path();
+        let result = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, serde_json::to_string(&self).unwrap_or_default()));
+        if let Err(e) = result {
+            warn!("{} not saved: {e}", path.display());
+        }
+    }
 }
 
 /// Ticket of a support request: 128 random bits in hex.
@@ -277,6 +318,7 @@ pub async fn serve_via_server(
         end_session: Notify::new(),
         policy: Default::default(),
         support_ticket: Mutex::new(None),
+        allow_privacy: AtomicBool::new(Permissions::load().privacy),
     });
     let current = ctx.password.lock().expect("password").clone();
     let _ = ctx.events.send(AgentEvent::Password { password: current });
@@ -379,6 +421,8 @@ struct SessionContext {
     /// Ticket of the open support request: whoever presents it in a session is
     /// treated as the technician who took it, and still has to be accepted.
     support_ticket: Mutex<Option<String>>,
+    /// The person at the PC allows privacy mode ([`AgentCommand::AllowPrivacy`]).
+    allow_privacy: AtomicBool,
 }
 
 fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
@@ -590,6 +634,13 @@ async fn signal_loop(
                         cancel: false,
                     }))
                 }
+                Some(AgentCommand::AllowPrivacy { allow }) => {
+                    if ctx.allow_privacy.swap(allow, Ordering::Relaxed) != allow {
+                        info!(allow, "privacy mode allowed by the person at the PC");
+                        Permissions { privacy: allow }.save();
+                    }
+                    None
+                }
                 Some(AgentCommand::CancelSupport) => {
                     *ctx.support_ticket.lock().expect("support") = None;
                     info!("support request withdrawn");
@@ -794,6 +845,8 @@ async fn session(
         bail!("viewer protocol version not supported: {}", hello.protocol_version);
     }
     let viewer_protocol = hello.protocol_version;
+    // Privacy mode allowed by the person at the PC (always without the app: LAN tests).
+    let privacy_allowed = || gate.is_none_or(|g| g.ctx.allow_privacy.load(Ordering::Relaxed));
     // Video as datagrams with error correction, when the viewer asks for it.
     let video_datagrams = hello.video_datagrams && conn.max_datagram_size().is_some();
     let hello = Hello {
@@ -803,6 +856,7 @@ async fn session(
         privacy_mode: !config.view_only
             && config.synthetic.is_none()
             && !policy.no_privacy
+            && privacy_allowed()
             && nuvira_input::privacy::available(),
         ..local_hello()
     };
@@ -1011,6 +1065,14 @@ async fn session(
                     while sent_samples.front().is_some_and(|(t, _)| now.duration_since(*t) > Duration::from_secs(2)) {
                         sent_samples.pop_front();
                     }
+                    // The person at the PC no longer allows it: it ends at once.
+                    if privacy.is_some() && !privacy_allowed() {
+                        if let Some(on) = privacy.take() {
+                            tokio::task::spawn_blocking(move || on.stop()).await?;
+                        }
+                        let state = nuvira_proto::v1::PrivacyState { on: false, error: "@agent.privacy_not_allowed".into() };
+                        ctrl_tx.send(&control(Msg::PrivacyState(state))).await?;
+                    }
                     // The encoder's share follows the overhead measured.
                     if video_datagrams && let Some(abr) = abr.as_ref() {
                         bitrate.store(encoder_bps(abr.bitrate()), Ordering::Relaxed);
@@ -1163,6 +1225,8 @@ async fn session(
                     if set.on && privacy.is_none() {
                         if policy.no_privacy {
                             error = "@agent.privacy_disabled".into();
+                        } else if !privacy_allowed() {
+                            error = "@agent.privacy_not_allowed".into();
                         } else if config.view_only || config.synthetic.is_some() {
                             error = "@agent.privacy_unsupported".into();
                         } else {
@@ -1469,6 +1533,12 @@ fn local_hello() -> Hello {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn privacy_allowed_unless_said_otherwise() {
+        assert!(serde_json::from_str::<Permissions>("{}").unwrap().privacy);
+        assert!(!serde_json::from_str::<Permissions>(r#"{"privacy":false}"#).unwrap().privacy);
+    }
 
     #[test]
     fn passwords_are_dictatable() {

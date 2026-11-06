@@ -6,6 +6,8 @@ During a session the technician can turn the screen of the controlled PC black a
 
 - **From the viewer.** The toolbar button with a slashed screen turns it on and off; it appears only when the agent has privacy mode. `nuvira-viewer --privacy` turns it on as soon as the session starts (automated tests). The viewer shows a notice when it turns on, off, or fails, with the reason.
 - **At the PC.** Every screen is black with a short message in the local language: remote support in progress, mouse and keyboard paused until the end of the session, Ctrl+Alt+Del to lock the PC.
+- **Not allowing it at the PC.** App settings → "This computer" → "Allow privacy mode" (Windows, on by default). The app saves the choice (`app.json`, `no_privacy`) and sends it to its agent, or to the service's one, at every start and at every change (`AgentCommand::AllowPrivacy`). The agent keeps its own copy in `permissions.json` in its data folder (with the service: `C:\ProgramData
+uvira`, writable only by administrators and SYSTEM), so the choice holds also while the app is closed. Not allowed: the agent does not announce privacy mode, refuses it with `@agent.privacy_not_allowed`, and turns it off at once if it was on.
 - **Forbidding it.** On a NuviraHub Pro server an administrator can forbid it for every device: rule "No privacy mode" in the web console (Rules) or in the app (Administration), `Policy.no_privacy`. The agents then do not announce it, the button does not appear, and a `SetPrivacy` is refused with `@agent.privacy_disabled`. Like the other rules it applies from the next session.
 - **End.** Privacy mode ends when the technician turns it off and always with the session (closed, connection lost, agent ended). Windows removes the windows and the input hooks by itself if the agent process dies.
 
@@ -44,4 +46,7 @@ Same day, from Linux: the viewer on the Ubuntu 26.04 VM (Wayland) with `--privac
 
 Rule "No privacy mode", same day, with the Pro test server on the Ubuntu VM and the agent on PC-LABORATORIO: turned on from the console API, the agent received it while connected (log "rules of the server … no_privacy=true"); the next session with `--privacy` found privacy mode not available and no black window was created. Turned off again: the following session turned it on.
 
-Not tested yet: turning it off from the button while the session goes on, two screens, an elevated window in front, the agent started by nuvira-service.
+Setting "Allow privacy mode", same day, on PC-LABORATORIO with this build installed as the service: unticked through UI Automation, the app saved `no_privacy`, the service's agent logged "privacy mode allowed by the person at the PC allow=false" and wrote `{"privacy":false}` in `C:\ProgramData
+uvira\permissions.json`; ticked again, `{"privacy":true}`. An agent started with a `permissions.json` that does not allow it (through the Pro test server) was reached with `--privacy`: privacy mode not available.
+
+Not tested yet: turning it off the setting unticked during a session with privacy mode on, from the button while the session goes on, two screens, an elevated window in front, the agent started by nuvira-service.

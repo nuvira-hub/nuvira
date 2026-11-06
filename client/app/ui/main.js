@@ -79,6 +79,15 @@ function useStrings(info) {
   if (current) render(current);
 }
 
+$("privacy-allowed").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_privacy_allowed", { allowed: e.target.checked });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !e.target.checked;
+  }
+});
+
 $("language").addEventListener("change", async (e) => {
   useStrings(await invoke("set_language", { language: e.target.value }));
 });
@@ -138,6 +147,9 @@ function render(state) {
   $("this-pc").classList.toggle("hidden", !state.controllable);
   $("viewer-only").classList.toggle("hidden", state.controllable);
   $("unattended").classList.toggle("hidden", !state.unattended);
+  // Privacy mode exists only on Windows for now.
+  $("privacy-settings").classList.toggle("hidden", !(state.controllable && state.platform === "windows"));
+  $("privacy-allowed").checked = state.privacy_allowed;
   $("update-bar").classList.toggle("hidden", !state.update && !state.installed && !state.service_stopped);
   if (!$("update-button").disabled) {
     if (!state.service_stopped) repairError = null;

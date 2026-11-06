@@ -114,6 +114,8 @@ struct UiState {
     /// Version of the stopped service's program, when older than this app (starting
     /// it again also updates it).
     service_old: Option<String>,
+    /// Privacy mode allowed on this PC (settings).
+    privacy_allowed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,6 +172,9 @@ struct Settings {
     /// Server certificate fingerprint, when it came with the server in the file name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     server_key: Option<String>,
+    /// The person at this PC does not allow privacy mode (black screen during sessions).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    no_privacy: bool,
 }
 
 /// Server written in the program's file name, e.g. `nuvira-host=nuvira.example.com.exe`
@@ -359,6 +364,7 @@ fn start_agent(app: &AppHandle) {
     let server =
         nuvira_transport::signal::server_or_public(&state.ui.lock().expect("state").server).to_string();
     let (commands_tx, commands_rx) = mpsc::unbounded_channel();
+    let _ = commands_tx.send(AgentCommand::AllowPrivacy { allow: !load_settings().no_privacy });
     *state.commands.lock().expect("commands") = Some(commands_tx);
     state.update(app, |ui| {
         ui.status = "connecting".into();
@@ -443,6 +449,7 @@ fn start_service_link(app: &AppHandle) {
                 Ok((mut messages, commands)) => {
                     info!("connected to the service's agent");
                     last_error = None;
+                    let _ = commands.send(AgentCommand::AllowPrivacy { allow: !load_settings().no_privacy });
                     *state.commands.lock().expect("commands") = Some(commands);
                     state.update(&app, |ui| {
                         ui.error = None;
@@ -649,6 +656,17 @@ async fn set_server(app: AppHandle, server: String) -> Result<(), String> {
 #[tauri::command]
 fn new_password(state: State<NuviraApp>) {
     state.send(AgentCommand::NewPassword);
+}
+
+/// The agent (the app's or the service's) keeps the choice also while the app is closed.
+#[tauri::command]
+fn set_privacy_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.no_privacy = !allowed;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.send(AgentCommand::AllowPrivacy { allow: allowed });
+    state.update(&app, |ui| ui.privacy_allowed = allowed);
+    Ok(())
 }
 
 #[tauri::command]
@@ -914,6 +932,7 @@ fn main() {
             unattended: UNATTENDED,
             platform: std::env::consts::OS.into(),
             password: password.clone(),
+            privacy_allowed: !settings.no_privacy,
             ..Default::default()
         }),
         password: Arc::new(Mutex::new(password)),
@@ -931,6 +950,7 @@ fn main() {
             get_state,
             set_server,
             new_password,
+            set_privacy_allowed,
             respond,
             send_chat,
             connect_entry,

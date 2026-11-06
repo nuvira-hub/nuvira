@@ -527,5 +527,7 @@ mod tests {
         let command: AgentCommand =
             serde_json::from_str(r#"{"command":"respond","session_id":"s","accept":true}"#).unwrap();
         assert!(matches!(command, AgentCommand::Respond { accept: true, .. }));
+        let command: AgentCommand = serde_json::from_str(r#"{"command":"allow_privacy","allow":false}"#).unwrap();
+        assert!(matches!(command, AgentCommand::AllowPrivacy { allow: false }));
     }
 }
