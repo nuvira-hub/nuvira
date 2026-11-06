@@ -105,7 +105,9 @@ services:
 
 ### 3.5 Ready for a future web client
 
-The web client is out of scope for now (D2), but the architecture is designed to add it without rewrites (D9). The web client will only be able to **control** other devices: a browser can neither be controlled remotely nor act as an unattended agent.
+> **Status.** The web client exists in NuviraHub Pro since 2026-11-06 ([28-web-client.md](28-web-client.md)). It took a shorter route than this plan: only the viewer's network side is compiled to WebAssembly (quinn and rustls, inside the WebSocket the server already has, so no WebTransport and no server change); the page itself is HTML and JavaScript, and draws the video on a 2D canvas after WebCodecs.
+
+The web client was out of scope at first (D2), but the architecture was designed to add it without rewrites (D9). The web client will only be able to **control** other devices: a browser can neither be controlled remotely nor act as an unattended agent.
 
 **What is reused**
 
