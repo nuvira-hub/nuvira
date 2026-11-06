@@ -19,6 +19,9 @@
       <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       <span class="badge-dot hidden" id="chat-unread"></span>
     </button>
+    <button class="nav hidden" data-section="queue" id="nav-queue" data-i18n-title="nav.queue">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/></svg>
+    </button>
     <button class="nav hidden" data-section="admin" id="nav-admin" data-i18n-title="nav.admin">
       <svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
     </button>
@@ -89,6 +92,20 @@
           </p>
         </div>
 
+        <div id="sq-card" class="this-pc sq-card hidden">
+          <form id="sq-form" class="stack">
+            <strong data-i18n="support.ask_title">Ask for support</strong>
+            <span class="hint" data-i18n="support.ask_hint">Your request goes to the support team: the first free technician connects, and you accept.</span>
+            <input id="sq-message" maxlength="500" data-i18n-placeholder="support.message" placeholder="What do you need? (optional)">
+            <div class="actions"><span class="spacer"></span><button type="submit" class="primary" data-i18n="support.ask">Ask for support</button></div>
+          </form>
+          <div id="sq-open" class="stack hidden">
+            <strong id="sq-status"></strong>
+            <div class="actions"><span class="spacer"></span><button type="button" id="sq-cancel" data-i18n="support.cancel">Cancel the request</button></div>
+          </div>
+          <p id="sq-error" class="message hidden"></p>
+        </div>
+
         <form id="connect-form" class="hero" autocomplete="off">
           <h1 data-i18n="connect.title">Control a computer</h1>
           <p class="hint" id="connect-hint">Type the ID of the computer to control.</p>
@@ -134,6 +151,15 @@
           <input id="chat-text" autocomplete="off" data-i18n-placeholder="chat.placeholder" placeholder="Write a message">
           <button type="submit" class="primary" data-i18n="chat.send">Send</button>
         </form>
+      </section>
+
+      <!-- Support queue -->
+      <section id="sec-queue" class="page hidden">
+        <header class="page-head"><h1 data-i18n="queue.title">Support queue</h1></header>
+        <p class="hint" data-i18n="queue.hint">Requests of the computers of this server. Take one to connect: the person at the PC accepts.</p>
+        <p id="queue-error" class="message hidden"></p>
+        <p id="queue-empty" class="hint hidden" data-i18n="queue.empty">Nobody is waiting.</p>
+        <div id="queue-list" class="stack"></div>
       </section>
 
       <!-- Administration -->
@@ -286,6 +312,7 @@
       <h2 id="incoming-title" data-i18n="incoming.title">Connection request</h2>
       <p><strong id="incoming-name"></strong> <span id="incoming-id" class="mono"></span><br>
         <span data-i18n="incoming.text">wants to see and control this computer.</span></p>
+      <p id="incoming-support" class="hint hidden" data-i18n="incoming.support">The technician who took your support request.</p>
       <p class="hint" data-i18n="incoming.warning">Accept only if you know who is helping you.</p>
       <p id="incoming-countdown" class="hint"></p>
       <div class="actions">
@@ -324,5 +351,6 @@
 
   <script src="main.js"></script>
   <script src="address-book.js"></script>
+  <script src="support.js"></script>
 </body>
 </html>

@@ -294,3 +294,9 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
   .tools input { width: 160px; }
   .grid { grid-template-columns: 1fr; }
 }
+
+/* Support queue */
+.sq-card { flex-direction: column; align-items: stretch; }
+.queue-item { justify-content: space-between; }
+.queue-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.queue-message { overflow-wrap: anywhere; }

@@ -182,6 +182,7 @@ function render(state) {
   renderIncoming(state.incoming);
   // Defined in address-book.js, loaded after this file.
   if (typeof renderAddressBook === "function") renderAddressBook(state);
+  if (typeof renderSupport === "function") renderSupport(state);
 }
 
 function renderChat(state) {
@@ -219,6 +220,7 @@ function renderIncoming(incoming) {
   clearInterval(countdownTimer);
   if (!incoming) return;
   $("incoming-name").textContent = incoming.viewer_name || t("incoming.unknown");
+  $("incoming-support").classList.toggle("hidden", !incoming.support);
   $("incoming-id").textContent = t("incoming.id", { id: formatId(incoming.viewer_id) });
   const tick = () => {
     const left = Math.max(0, Math.round((incoming.deadline_ms - Date.now()) / 1000));

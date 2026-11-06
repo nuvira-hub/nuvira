@@ -92,6 +92,7 @@ struct Snapshot {
     password: Option<AgentEvent>,
     session: Option<AgentEvent>,
     incoming: Option<AgentEvent>,
+    support: Option<AgentEvent>,
 }
 
 impl Snapshot {
@@ -103,6 +104,11 @@ impl Snapshot {
             AgentEvent::Password { .. } => &mut self.password,
             AgentEvent::SessionStarted { .. } => &mut self.session,
             AgentEvent::Incoming { .. } => &mut self.incoming,
+            AgentEvent::Support { closed: true, .. } => {
+                self.support = None;
+                return;
+            }
+            AgentEvent::Support { .. } => &mut self.support,
             AgentEvent::SessionEnded { .. } => {
                 self.session = None;
                 return;
@@ -118,7 +124,7 @@ impl Snapshot {
     }
 
     fn events(&self) -> impl Iterator<Item = &AgentEvent> {
-        [&self.status, &self.password, &self.session, &self.incoming].into_iter().flatten()
+        [&self.status, &self.password, &self.session, &self.incoming, &self.support].into_iter().flatten()
     }
 
     /// Nobody can confirm the pending request any more: it is rejected.

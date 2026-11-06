@@ -95,6 +95,8 @@ struct UiState {
     chat: Vec<ChatLine>,
     /// Account signed in to the server's address book.
     account: Option<address_book::AccountUi>,
+    /// This computer's support request, while it is open (support queue).
+    support: Option<SupportUi>,
     books: Vec<address_book::BookUi>,
     address_book_error: Option<String>,
     /// Optional modules of the server (NuviraHub Pro): the interface shows their
@@ -121,11 +123,21 @@ struct ChatLine {
     text: String,
 }
 
+/// State of this computer's support request: its place in the queue (0 until the
+/// server answers) and who took it.
+#[derive(Debug, Clone, Serialize)]
+struct SupportUi {
+    position: u32,
+    taken_by: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct IncomingUi {
     session_id: String,
     viewer_id: String,
     viewer_name: String,
+    /// The technician who took this computer's support request.
+    support: bool,
     /// Request deadline (ms since 1970): the interface shows the countdown.
     deadline_ms: u64,
 }
@@ -502,17 +514,21 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
             ui.error = Some(reason);
         }),
         AgentEvent::Password { password } => state.update(app, |ui| ui.password = password),
-        AgentEvent::Incoming { session_id, viewer_id, viewer_name } => {
+        AgentEvent::Incoming { session_id, viewer_id, viewer_name, support } => {
             state.update(app, |ui| {
                 ui.incoming = Some(IncomingUi {
                     session_id,
                     viewer_id,
                     viewer_name,
+                    support,
                     deadline_ms: now_ms() + nuvira_agent::CONFIRM_TIMEOUT.as_millis() as u64,
                 })
             });
             bring_to_front(app);
         }
+        AgentEvent::Support { position, taken_by, closed } => state.update(app, |ui| {
+            ui.support = (!closed).then_some(SupportUi { position, taken_by });
+        }),
         AgentEvent::IncomingClosed { session_id } => state.update(app, |ui| {
             if ui.incoming.as_ref().is_some_and(|i| i.session_id == session_id) {
                 ui.incoming = None;
@@ -674,7 +690,25 @@ fn connect_entry(app: AppHandle, state: State<NuviraApp>, id: i64) -> Result<(),
     launch_viewer(&app, &state, entry.device_id, entry.password)
 }
 
-fn launch_viewer(
+/// Asks the server's team for support (support queue, NuviraHub Pro).
+#[tauri::command]
+fn request_support(app: AppHandle, state: State<NuviraApp>, message: String) -> Result<(), String> {
+    let commands = state.commands.lock().expect("commands").clone();
+    let commands = commands.ok_or_else(|| t("support.not_online"))?;
+    commands.send(AgentCommand::RequestSupport { message }).map_err(|_| t("support.not_online"))?;
+    state.update(&app, |ui| ui.support = Some(SupportUi { position: 0, taken_by: String::new() }));
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_support(app: AppHandle, state: State<NuviraApp>) {
+    if let Some(commands) = state.commands.lock().expect("commands").as_ref() {
+        let _ = commands.send(AgentCommand::CancelSupport);
+    }
+    state.update(&app, |ui| ui.support = None);
+}
+
+pub(crate) fn launch_viewer(
     app: &AppHandle,
     state: &NuviraApp,
     device_id: String,
@@ -864,6 +898,10 @@ fn main() {
             connect_entry,
             install_service,
             repair_service,
+            request_support,
+            cancel_support,
+            address_book::support_queue,
+            address_book::support_take,
             uninstall_service,
             apply_update,
             restart_app,

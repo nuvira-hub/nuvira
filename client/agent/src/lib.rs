@@ -24,7 +24,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use nuvira_capture::{Capturer, SyntheticCapturer};
 use nuvira_codec::{EncoderPlan, EncoderSettings};
 use nuvira_proto::v1::{
-    AuthResult, Codec, ControlMessage, DisplayInfo, Displays, Hello, InputEvent, Pong, Quality, VideoFormat,
+    Auth, AuthResult, Codec, ControlMessage, DisplayInfo, Displays, Hello, InputEvent, Pong, Quality, VideoFormat,
     VideoFrame, control_message::Msg,
 };
 use nuvira_transport::signal::TransportMode;
@@ -131,6 +131,9 @@ pub enum AgentEvent {
         session_id: String,
         viewer_id: String,
         viewer_name: String,
+        /// A technician who took this device's support request (support queue).
+        #[serde(default)]
+        support: bool,
     },
     /// The request is no longer pending (expired or already answered).
     IncomingClosed {
@@ -153,6 +156,13 @@ pub enum AgentEvent {
         name: String,
         path: String,
     },
+    /// State of this device's support request (support queue, NuviraHub Pro):
+    /// its place in the queue, who took it, or closed.
+    Support {
+        position: u32,
+        taken_by: String,
+        closed: bool,
+    },
 }
 
 /// What the person at the PC asks for.
@@ -170,6 +180,18 @@ pub enum AgentCommand {
     Chat {
         text: String,
     },
+    /// Asks the server's team for support (support queue, NuviraHub Pro).
+    RequestSupport {
+        message: String,
+    },
+    CancelSupport,
+}
+
+/// Ticket of a support request: 128 random bits in hex.
+fn support_ticket() -> String {
+    let mut bytes = [0u8; 16];
+    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).expect("random generator");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Random 8-character password that is easy to dictate (no 0/O, 1/l/I).
@@ -253,6 +275,7 @@ pub async fn serve_via_server(
         waiting: Mutex::new(None),
         end_session: Notify::new(),
         policy: Default::default(),
+        support_ticket: Mutex::new(None),
     });
     let current = ctx.password.lock().expect("password").clone();
     let _ = ctx.events.send(AgentEvent::Password { password: current });
@@ -352,6 +375,9 @@ struct SessionContext {
     end_session: Notify,
     /// Rules of the server (confirmation always, no files, no clipboard).
     policy: Mutex<nuvira_proto::v1::Policy>,
+    /// Ticket of the open support request: whoever presents it in a session is
+    /// treated as the technician who took it, and still has to be accepted.
+    support_ticket: Mutex<Option<String>>,
 }
 
 fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
@@ -497,6 +523,17 @@ async fn signal_loop(
                     });
                     None
                 }
+                Some(server_message::Msg::SupportStatus(status)) => {
+                    if status.closed {
+                        *ctx.support_ticket.lock().expect("support") = None;
+                    }
+                    let _ = ctx.events.send(AgentEvent::Support {
+                        position: status.position,
+                        taken_by: status.taken_by,
+                        closed: status.closed,
+                    });
+                    None
+                }
                 Some(server_message::Msg::Error(e)) => {
                     warn!("nuvira-server: {}", e.message);
                     None
@@ -526,6 +563,25 @@ async fn signal_loop(
                 Some(AgentCommand::EndSession) => {
                     ctx.end_session.notify_waiters();
                     None
+                }
+                Some(AgentCommand::RequestSupport { message }) => {
+                    let ticket = support_ticket();
+                    *ctx.support_ticket.lock().expect("support") = Some(ticket.clone());
+                    info!("support requested");
+                    Some(client_message::Msg::SupportRequest(nuvira_proto::v1::SupportRequest {
+                        ticket,
+                        name: device_name.clone(),
+                        message,
+                        cancel: false,
+                    }))
+                }
+                Some(AgentCommand::CancelSupport) => {
+                    *ctx.support_ticket.lock().expect("support") = None;
+                    info!("support request withdrawn");
+                    Some(client_message::Msg::SupportRequest(nuvira_proto::v1::SupportRequest {
+                        cancel: true,
+                        ..Default::default()
+                    }))
                 }
                 None => return Ok(()),
             },
@@ -618,11 +674,28 @@ struct Gate<'a> {
 
 impl Gate<'_> {
     /// `Err` with the reason to show to the viewer.
-    async fn authorize(&self, given: &str, pending: Option<&mut FramedSend>) -> Result<(), String> {
+    async fn authorize(&self, auth: &Auth, pending: Option<&mut FramedSend>) -> Result<(), String> {
         let ctx = self.ctx;
+        let given = auth.password.as_str();
         let confirm_always = ctx.policy.lock().expect("policy").confirm_always;
         let set = |access: &'static str| *self.access.lock().expect("access") = access;
-        if ctx.permanent.as_deref().is_some_and(|hash| nuvira_secret::verify(given, hash)) {
+        // The ticket of this device's support request, used once: it replaces the
+        // password, never the consent of the person at the PC.
+        let support = !auth.support_ticket.is_empty() && {
+            let mut open = ctx.support_ticket.lock().expect("support");
+            let matches = open.as_deref().is_some_and(|t| same_secret(&auth.support_ticket, t));
+            if matches {
+                *open = None;
+            }
+            matches
+        };
+        if support {
+            info!("access with the support request's ticket: asking the person at the PC");
+            set("support");
+        } else if !auth.support_ticket.is_empty() {
+            set("wrong_password");
+            return Err("@agent.support_ticket_invalid".into());
+        } else if ctx.permanent.as_deref().is_some_and(|hash| nuvira_secret::verify(given, hash)) {
             info!("access with the permanent password");
             set("permanent");
             if !confirm_always {
@@ -651,6 +724,7 @@ impl Gate<'_> {
             session_id: self.session_id.to_string(),
             viewer_id: self.request.viewer_id.clone(),
             viewer_name: self.request.viewer_name.clone(),
+            support,
         });
         let answer = tokio::time::timeout(CONFIRM_TIMEOUT, rx).await;
         ctx.pending.lock().expect("requests").remove(self.session_id);
@@ -716,7 +790,7 @@ async fn session(
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
     if let Some(gate) = gate {
         let given = match ctrl_rx.recv::<ControlMessage>().await? {
-            Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth.password,
+            Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
             _ => bail!("the viewer did not send the password"),
         };
         // Viewers that know it are told when the person at the PC is being asked.

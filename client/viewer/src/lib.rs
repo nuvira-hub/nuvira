@@ -55,6 +55,10 @@ impl From<TransportArg> for nuvira_transport::signal::TransportMode {
     }
 }
 
+/// In place of a password, this prefix carries the ticket of a support request
+/// (support queue): the viewer sends it as `Auth.support_ticket`.
+pub const SUPPORT_TICKET: &str = "\u{1}support-ticket:";
+
 #[derive(Parser, Debug)]
 #[command(version, about = "NuviraHub viewer: controls a PC running NuviraHub", after_help = COPYRIGHT)]
 struct Args {
@@ -78,6 +82,10 @@ struct Args {
     #[arg(long, value_name = "URL")]
     server_ws: Option<String>,
 
+    /// Ticket of a support request taken from the queue (support queue), instead of
+    /// the password: the person at the PC is asked to accept.
+    #[arg(long, conflicts_with = "password")]
+    support_ticket: Option<String>,
     /// Session password shown by the agent (also from the NUVIRA_PASSWORD variable,
     /// which, unlike the command line, other programs cannot see).
     #[arg(long, env = "NUVIRA_PASSWORD", hide_env_values = true)]
@@ -313,7 +321,10 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         slot: Arc::new(FrameSlot::default()),
         started,
         report: Report::default(),
-        connect: Some((target, args.password.clone())),
+        connect: Some((
+            target,
+            args.support_ticket.as_ref().map(|t| format!("{SUPPORT_TICKET}{t}")).or_else(|| args.password.clone()),
+        )),
         proxy: event_loop.create_proxy(),
         input: None,
         net_thread: None,

@@ -661,3 +661,48 @@ mod tests {
         assert_eq!(base64url(digest.as_ref()), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
     }
 }
+
+/// A request of the support queue, for the "Queue" section.
+#[derive(Debug, Clone, Serialize)]
+pub struct QueueItemUi {
+    id: String,
+    device_id: String,
+    name: String,
+    message: String,
+    /// Seconds since 1970.
+    since: i64,
+    /// Empty while waiting.
+    taken_by: String,
+}
+
+/// The support queue of the server (any signed-in account sees it).
+#[tauri::command]
+pub async fn support_queue(app: AppHandle) -> Result<Vec<QueueItemUi>, String> {
+    let Some(ApiResult::Queue(queue)) = call(&app, Call::GetQueue(pb::GetQueue {})).await? else {
+        return Ok(Vec::new());
+    };
+    Ok(queue
+        .requests
+        .into_iter()
+        .map(|r| QueueItemUi {
+            id: r.id,
+            device_id: r.device_id,
+            name: r.name,
+            message: r.message,
+            since: r.since,
+            taken_by: r.taken_by,
+        })
+        .collect())
+}
+
+/// Takes a request of the queue (the first technician wins) and connects with its
+/// ticket: the person at the PC is asked to accept.
+#[tauri::command]
+pub async fn support_take(app: AppHandle, id: String) -> Result<(), String> {
+    let Some(ApiResult::Taken(taken)) = call(&app, Call::TakeRequest(pb::TakeRequest { id })).await? else {
+        return Err(t("err.server_too_old"));
+    };
+    info!("support request of {} taken", taken.device_id);
+    let password = format!("{}{}", nuvira_viewer::SUPPORT_TICKET, taken.ticket);
+    crate::launch_viewer(&app, &app.state::<NuviraApp>(), taken.device_id, password)
+}

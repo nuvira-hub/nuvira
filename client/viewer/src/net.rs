@@ -304,7 +304,11 @@ async fn handshake(
     };
     if agent.password_required {
         let password = password.with_context(|| nuvira_i18n::t("viewer.password_required"))?;
-        ctrl_tx.send(&control(Msg::Auth(nuvira_proto::v1::Auth { password }))).await?;
+        let auth = match password.strip_prefix(crate::SUPPORT_TICKET) {
+            Some(ticket) => nuvira_proto::v1::Auth { support_ticket: ticket.into(), ..Default::default() },
+            None => nuvira_proto::v1::Auth { password, ..Default::default() },
+        };
+        ctrl_tx.send(&control(Msg::Auth(auth))).await?;
         let mut answer = ctrl_rx.recv().await?;
         if let Some(ControlMessage { msg: Some(Msg::ConfirmationPending(_)) }) = answer {
             info!("waiting for the person at the remote computer to accept");
