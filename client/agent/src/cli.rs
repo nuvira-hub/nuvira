@@ -220,6 +220,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             .clone()
             .or_else(|| args.password.as_deref().map(nuvira_secret::hash)),
         info_file: args.fingerprint_file.clone(),
+        unattended: args.ipc,
     };
     let password = Arc::new(Mutex::new(crate::random_password()));
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();

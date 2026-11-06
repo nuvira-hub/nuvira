@@ -25,6 +25,7 @@ Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs`
 | Two arrows | TCP tunnels (Pro, see [26-tcp-tunnel.md](26-tcp-tunnel.md)); only when the agent offers them | agent: tunnel streams |
 | Prompt | Opens a remote terminal window (see [25-remote-terminal.md](25-remote-terminal.md)); only when the agent offers it | agent: terminal stream |
 | Chat, Send file | See [16-clipboard-chat-files.md](16-clipboard-chat-files.md) | viewer, agent |
+| Power | Restarts the remote computer after a confirmation, then waits for it and connects again (see [27-remote-restart.md](27-remote-restart.md)); only with unattended access | agent: `Restart` |
 | Real size | 1:1 instead of fitting the window; the image follows the mouse, so moving it from one edge of the window to the other crosses the whole remote screen. `--actual-size` starts in this mode | viewer |
 | Full screen | Enters and leaves | viewer |
 | Arrow | Shrinks the bar to a tab; a click opens it again | viewer |

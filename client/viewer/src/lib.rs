@@ -61,6 +61,12 @@ impl From<TransportArg> for nuvira_transport::signal::TransportMode {
 /// (support queue): the viewer sends it as `Auth.support_ticket`.
 pub const SUPPORT_TICKET: &str = "\u{1}support-ticket:";
 
+/// After a remote restart: the first attempt to reconnect (the computer takes a while
+/// to go down), the pause between the following ones and how long to keep trying.
+const RESTART_FIRST_TRY: Duration = Duration::from_secs(20);
+const RESTART_RETRY: Duration = Duration::from_secs(5);
+const RESTART_WAIT: Duration = Duration::from_secs(10 * 60);
+
 #[derive(Parser, Debug)]
 #[command(version, about = "NuviraHub viewer: controls a PC running NuviraHub", after_help = COPYRIGHT)]
 struct Args {
@@ -113,6 +119,11 @@ struct Args {
     /// Turns on privacy mode as soon as connected, when the agent has it (also from the toolbar).
     #[arg(long)]
     privacy: bool,
+
+    /// Tests: restarts the remote computer as soon as connected, without asking, then
+    /// waits for it and connects again (the toolbar button asks first).
+    #[arg(long, hide = true)]
+    restart: bool,
 
     /// Terminal only: a shell of the remote computer, without its desktop.
     #[arg(long)]
@@ -370,6 +381,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         view_only: args.view_only,
         privacy: false,
         privacy_at_start: args.privacy,
+        restart_at_start: args.restart,
         terminal_only: args.terminal,
         terminals: Default::default(),
         term_link: None,
@@ -398,6 +410,8 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         pressed_keys: HashSet::new(),
         exit_reason: None,
         closed_message: None,
+        restarting: None,
+        restarted: false,
     };
     for spec in &args.tunnel {
         app.tunnels.add_spec(spec).with_context(|| format!("--tunnel {spec}"))?;
@@ -472,6 +486,8 @@ struct App {
     privacy: bool,
     /// `--privacy`: to turn on as soon as connected.
     privacy_at_start: bool,
+    /// `--restart`: to ask as soon as connected.
+    restart_at_start: bool,
     /// `--terminal`: no session window, only terminals.
     terminal_only: bool,
     terminals: terminal::Terminals,
@@ -503,6 +519,10 @@ struct App {
     exit_reason: Option<String>,
     /// Why the session ended, for the user (translated); printed as `@closed` for the app.
     closed_message: Option<String>,
+    /// The remote computer is restarting since then: the viewer waits and reconnects.
+    restarting: Option<Instant>,
+    /// It restarted, but the viewer cannot connect again by itself (no permanent password).
+    restarted: bool,
 }
 
 impl App {
@@ -563,6 +583,56 @@ impl App {
             width: size.0,
             height: size.1,
         }));
+    }
+
+    /// Connects to the agent (again, after a restart) with the window already open.
+    fn start_session(&mut self) {
+        let Some((target, password)) = self.connect.clone() else { return };
+        let session = net::start(target, password, self.proxy.clone(), self.slot.clone(), false);
+        self.input = Some(session.input);
+        self.control = Some(session.control.clone());
+        self.term_link = Some(session.terminals);
+        self.tunnel_link = Some(session.tunnels);
+        self.fm.connect(filemanager::Link {
+            control: session.control,
+            files: session.files.clone(),
+            downloads: session.downloads.clone(),
+        });
+        self.files = Some(session.files);
+        self.net_thread = Some(session.thread);
+    }
+
+    /// The session ended while the remote computer restarts: the window stays open
+    /// with a message, and a new attempt starts after a pause.
+    fn wait_for_restart(&mut self, reason: &str, pause: Duration) {
+        info!("waiting for the remote computer to restart ({reason}); trying again in {} s", pause.as_secs());
+        self.release_keys();
+        self.input = None;
+        self.control = None;
+        self.files = None;
+        self.term_link = None;
+        self.tunnel_link = None;
+        self.net_thread = None;
+        let text = tf("viewer.waiting_restart", &[("agent", &self.agent)]);
+        match (&self.notice, &self.window) {
+            (Some(notice), _) => notice.set_text(&text),
+            (None, Some(window)) => match toolbar::Notice::new(window.clone(), self.proxy.clone(), &text) {
+                Ok(notice) => self.notice = Some(notice),
+                Err(e) => debug!("notice not available: {e:#}"),
+            },
+            _ => {}
+        }
+        if let Some(window) = &self.window {
+            window.set_title(&tf("viewer.title_restarting", &[("agent", &self.agent)]));
+        }
+        if let Some(toolbar) = &self.toolbar {
+            toolbar.update("{restart:false}");
+        }
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(pause);
+            let _ = proxy.send_event(NetEvent::Reconnect);
+        });
     }
 
     fn ctrl_alt_held(&self) -> bool {
@@ -646,6 +716,26 @@ impl App {
                 }
                 // The keyboard stays with the new window.
                 return;
+            }
+            Action::Restart => {
+                // The dialog blocks its own thread, not the session.
+                let proxy = self.proxy.clone();
+                let text = tf("viewer.restart_confirm", &[("agent", &self.agent)]);
+                std::thread::spawn(move || {
+                    let answer = rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Warning)
+                        .set_title(t("viewer.restart_title"))
+                        .set_description(text)
+                        .set_buttons(rfd::MessageButtons::YesNo)
+                        .show();
+                    if answer == rfd::MessageDialogResult::Yes {
+                        let _ = proxy.send_event(NetEvent::Toolbar(toolbar::Action::RestartConfirmed));
+                    }
+                });
+            }
+            Action::RestartConfirmed => {
+                info!("restart of the remote computer requested");
+                self.send_control(Msg::Restart(nuvira_proto::v1::Restart {}));
             }
             Action::Privacy => {
                 info!("privacy mode requested: {}", !self.privacy);
@@ -832,20 +922,8 @@ impl ApplicationHandler<NetEvent> for App {
         self.update_toolbar_state();
         // The connection starts only once window and rendering are ready: when the
         // network came first, the video channel was sometimes never accepted.
-        if let Some((target, password)) = self.connect.take() {
-            let session = net::start(target, password, self.proxy.clone(), self.slot.clone(), false);
-            self.input = Some(session.input);
-            self.control = Some(session.control.clone());
-            self.term_link = Some(session.terminals);
-            self.tunnel_link = Some(session.tunnels);
-            self.fm.connect(filemanager::Link {
-                control: session.control,
-                files: session.files.clone(),
-                downloads: session.downloads.clone(),
-            });
-            self.files = Some(session.files);
-            self.net_thread = Some(session.thread);
-        }
+        // `connect` is kept: after a remote restart the viewer connects again the same way.
+        self.start_session();
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
@@ -863,7 +941,22 @@ impl ApplicationHandler<NetEvent> for App {
                     notice.set_text(&t("viewer.pending"));
                 }
             }
-            NetEvent::Connected { agent, direct, width, height, file_manager, secure_attention, privacy, terminal, tunnel } => {
+            NetEvent::Connected {
+                agent,
+                direct,
+                width,
+                height,
+                file_manager,
+                secure_attention,
+                privacy,
+                terminal,
+                tunnel,
+                restart,
+            } => {
+                if self.restarting.take().is_some() {
+                    info!("connected again after the restart");
+                    self.notice(&t("viewer.restart_back"), false);
+                }
                 if terminal && let Some(link) = self.term_link.clone() {
                     self.terminals.connect(link);
                 }
@@ -886,8 +979,16 @@ impl ApplicationHandler<NetEvent> for App {
                 self.send_view_size();
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.update(&format!(
-                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal},tunnel:{tunnel}}}"
+                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal},tunnel:{tunnel},restart:{restart}}}"
                     ));
+                }
+                if std::mem::take(&mut self.restart_at_start) {
+                    match restart {
+                        true => self.send_control(nuvira_proto::v1::control_message::Msg::Restart(
+                            nuvira_proto::v1::Restart {},
+                        )),
+                        false => warn!("restart not available on this agent"),
+                    }
                 }
                 if std::mem::take(&mut self.privacy_at_start) {
                     match privacy {
@@ -1083,13 +1184,46 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             NetEvent::Toolbar(action) => self.handle_toolbar(event_loop, action),
-            NetEvent::Disconnected(reason) if self.terminal_only && !self.terminals.is_empty() => {
+            NetEvent::Restart { ok, error, reconnect } => {
+                info!(ok, error, reconnect, "restart");
+                if !ok {
+                    let reason = nuvira_i18n::message(&error);
+                    self.notice(&tf("viewer.restart_failed", &[("reason", &reason)]), false);
+                } else if reconnect {
+                    self.restarting = Some(Instant::now());
+                    self.notice(&t("viewer.restarting"), true);
+                } else {
+                    self.restarted = true;
+                }
+            }
+            NetEvent::Reconnect => {
+                if self.restarting.is_some() && self.input.is_none() {
+                    self.start_session();
+                }
+            }
+            NetEvent::Disconnected { reason, retry }
+                if retry && self.restarting.is_some_and(|since| since.elapsed() < RESTART_WAIT) =>
+            {
+                // The first time the computer has only just started going down.
+                let first = self.input.is_some() && self.notice.is_none();
+                self.wait_for_restart(&reason, if first { RESTART_FIRST_TRY } else { RESTART_RETRY });
+            }
+            NetEvent::Disconnected { reason, .. } if self.restarting.is_some() || self.restarted => {
+                info!("disconnected after the restart: {reason}");
+                self.exit_reason = Some(format!("disconnected after the restart: {reason}"));
+                self.closed_message = Some(match self.restarting {
+                    Some(_) => tf("viewer.restart_not_back", &[("agent", &self.agent), ("reason", &reason)]),
+                    None => tf("viewer.restarted", &[("agent", &self.agent)]),
+                });
+                event_loop.exit();
+            }
+            NetEvent::Disconnected { reason, .. } if self.terminal_only && !self.terminals.is_empty() => {
                 // The windows stay open with the reason; closing them exits.
                 info!("disconnected: {reason}");
                 self.exit_reason = Some(format!("disconnected: {reason}"));
                 self.terminals.status(&tf("viewer.session_closed", &[("reason", &reason)]));
             }
-            NetEvent::Disconnected(reason) => {
+            NetEvent::Disconnected { reason, .. } => {
                 info!("disconnected: {reason}");
                 self.exit_reason = Some(format!("disconnected: {reason}"));
                 self.closed_message = Some(tf("viewer.session_closed", &[("reason", &reason)]));

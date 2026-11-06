@@ -44,7 +44,23 @@ message ControlMessage {
     ViewSize view_size = 18;
     SetPrivacy set_privacy = 19;
     PrivacyState privacy_state = 20;
+    Restart restart = 21;
+    RestartState restart_state = 22;
   }
+}
+
+// From the viewer (only when Hello.restart): restart the controlled computer. The
+// agent answers RestartState; when it worked the session ends, and the viewer can
+// wait for the computer to come back and connect again by itself.
+message Restart {}
+
+message RestartState {
+  bool ok = 1;
+  // Why not ("@key" messages are translated).
+  string error = 2;
+  // The same password will work after the restart without anyone at the computer
+  // (permanent password, no confirmation required): the viewer can reconnect.
+  bool reconnect = 3;
 }
 
 // From the viewer: privacy mode on or off (only when Hello.privacy_mode). The screen
@@ -258,6 +274,9 @@ message Hello {
   bool terminal_only = 10;
   // From the agent: it opens TCP tunnels towards its local network (TunnelOpen).
   bool tunnel = 11;
+  // From the agent: it can restart the computer (Restart) and comes back by itself
+  // afterwards (unattended access).
+  bool restart = 12;
 }
 
 // First message of every bidirectional stream the viewer opens after the control

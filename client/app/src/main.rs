@@ -419,6 +419,7 @@ fn start_agent(app: &AppHandle) {
             confirm: true,
             permanent_password_hash: None,
             info_file: None,
+            unattended: false,
         };
         let (events_tx, mut events_rx) = mpsc::unbounded_channel();
         let pump_app = app.clone();

@@ -37,6 +37,8 @@ pub enum NetEvent {
         terminal: bool,
         /// The agent opens TCP tunnels (NuviraHub Pro).
         tunnel: bool,
+        /// The agent can restart the computer.
+        restart: bool,
     },
     /// A tunnel listens on `local_port` of this computer, or could not (`error`).
     TunnelListening {
@@ -72,13 +74,27 @@ pub enum NetEvent {
         on: bool,
         error: String,
     },
+    /// Answer of the agent to a restart request: with `ok` the computer is restarting,
+    /// with `reconnect` the viewer can connect again by itself once it is back.
+    Restart {
+        ok: bool,
+        error: String,
+        reconnect: bool,
+    },
     /// There is a new frame to show in the [`FrameSlot`].
     FrameReady,
     Clock {
         rtt_us: u64,
         offset_us: i64,
     },
-    Disconnected(String),
+    /// The session ended, with the reason; `retry` when the computer may only be
+    /// unreachable for now (e.g. restarting), not when the agent refused the access.
+    Disconnected {
+        reason: String,
+        retry: bool,
+    },
+    /// Time to try again to reach a computer that was restarting.
+    Reconnect,
     /// The duration set with `--duration` is over.
     TestFinished,
     /// Screens of the agent and the one being streamed.
@@ -268,15 +284,32 @@ pub fn start(
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             let channels = (input_rx, control_rx, files_rx, session_downloads, (terminals_rx, tunnels_rx));
-            let reason = match rt.block_on(session(target, password, proxy.clone(), slot, channels, terminal_only)) {
-                Ok(()) => "session ended".to_string(),
-                Err(e) => format!("{e:#}"),
+            let (reason, retry) = match rt.block_on(session(target, password, proxy.clone(), slot, channels, terminal_only)) {
+                Ok(()) => ("session ended".to_string(), true),
+                // A computer still restarting refuses with "@agent.restarting": it will be back.
+                Err(e) => {
+                    let retry = e.downcast_ref::<Denied>().is_none_or(|d| d.0 == "@agent.restarting");
+                    (format!("{e:#}"), retry)
+                }
             };
-            let _ = proxy.send_event(NetEvent::Disconnected(reason));
+            let _ = proxy.send_event(NetEvent::Disconnected { reason, retry });
         })
         .expect("network thread");
     Session { input: input_tx, control: control_tx, files: files_tx, downloads, terminals: terminals_tx, tunnels: tunnels_tx, thread }
 }
+
+/// The agent refused the access, with its reason ("@key" or text).
+#[derive(Debug)]
+struct Denied(String);
+
+impl std::fmt::Display for Denied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = nuvira_i18n::message(&self.0);
+        f.write_str(&nuvira_i18n::tf("viewer.access_denied", &[("reason", &reason)]))
+    }
+}
+
+impl std::error::Error for Denied {}
 
 fn control(msg: Msg) -> ControlMessage {
     ControlMessage { msg: Some(msg) }
@@ -401,12 +434,7 @@ async fn handshake(
         }
         match answer {
             Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) if r.ok => {}
-            Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) => {
-                bail!(
-                    "{}",
-                    nuvira_i18n::tf("viewer.access_denied", &[("reason", &nuvira_i18n::message(&r.message))])
-                )
-            }
+            Some(ControlMessage { msg: Some(Msg::AuthResult(r)) }) => return Err(Denied(r.message).into()),
             _ => bail!("no answer to the password"),
         }
     }
@@ -426,6 +454,7 @@ async fn handshake(
             privacy: false,
             terminal: true,
             tunnel: agent.tunnel,
+            restart: false,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None));
     }
@@ -451,6 +480,7 @@ async fn handshake(
         privacy: agent.privacy_mode,
         terminal: agent.terminal,
         tunnel: agent.tunnel,
+        restart: agent.restart,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -483,9 +513,10 @@ async fn session(
         r = handshake(&conn, direct, password, &proxy, terminal_only) => match r {
             Ok(channels) => channels,
             Err(e) => {
+                // The agent's own reason, unless it already gave it in its answer.
                 let e = match agent_reason(&conn).await {
-                    Some(reason) => anyhow::anyhow!(reason),
-                    None => e,
+                    Some(reason) if e.downcast_ref::<Denied>().is_none() => anyhow::anyhow!(reason),
+                    _ => e,
                 };
                 close(&conn).await;
                 return Err(e);
@@ -765,6 +796,9 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::PrivacyState(p)) }) => {
                         let _ = proxy.send_event(NetEvent::Privacy { on: p.on, error: p.error });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::RestartState(r)) }) => {
+                        let _ = proxy.send_event(NetEvent::Restart { ok: r.ok, error: r.error, reconnect: r.reconnect });
                     }
                     Some(ControlMessage { msg: Some(Msg::Clipboard(clip)) }) => {
                         if let Some(clipboard) = &clipboard {
@@ -1154,7 +1188,10 @@ fn decode_loop(
     let mut decoder = match nuvira_codec::best_decoder() {
         Ok(d) => d,
         Err(e) => {
-            let _ = proxy.send_event(NetEvent::Disconnected(format!("decoder not available: {e:#}")));
+            let _ = proxy.send_event(NetEvent::Disconnected {
+                reason: format!("decoder not available: {e:#}"),
+                retry: false,
+            });
             return;
         }
     };

@@ -14,6 +14,7 @@ pub mod ipc;
 mod inventory;
 mod pipeline;
 mod pty;
+mod restart;
 mod terminal;
 mod tunnel;
 
@@ -109,6 +110,9 @@ pub struct ServerOptions {
     pub permanent_password_hash: Option<String>,
     /// Automated tests: where to write "ID password" once registered.
     pub info_file: Option<PathBuf>,
+    /// Started for unattended access (by the service): it comes back by itself after
+    /// a restart of the computer, which the viewer may then ask for.
+    pub unattended: bool,
 }
 
 /// What happens, for whoever shows the state to the user (also through the local
@@ -341,6 +345,8 @@ pub async fn serve_via_server(
         allow_terminal: AtomicBool::new(permissions.terminal),
         allow_tunnel: AtomicBool::new(permissions.tunnel),
         features: Mutex::new(Vec::new()),
+        unattended: opts.unattended,
+        restarting: AtomicBool::new(false),
     });
     let current = ctx.password.lock().expect("password").clone();
     let _ = ctx.events.send(AgentEvent::Password { password: current });
@@ -451,6 +457,11 @@ struct SessionContext {
     allow_tunnel: AtomicBool,
     /// Optional modules of the server (NuviraHub Pro), from the registration.
     features: Mutex<Vec<String>>,
+    /// See [`ServerOptions::unattended`].
+    unattended: bool,
+    /// A restart of the computer is under way: new sessions are refused until the
+    /// agent ends, so that a viewer waiting to reconnect finds the computer restarted.
+    restarting: AtomicBool,
 }
 
 impl SessionContext {
@@ -800,6 +811,9 @@ impl Gate<'_> {
     /// `Err` with the reason to show to the viewer.
     async fn authorize(&self, auth: &Auth, pending: Option<&mut FramedSend>) -> Result<(), String> {
         let ctx = self.ctx;
+        if ctx.restarting.load(Ordering::Relaxed) {
+            return Err("@agent.restarting".into());
+        }
         let given = auth.password.as_str();
         let confirm_always = ctx.policy.lock().expect("policy").confirm_always;
         let set = |access: &'static str| *self.access.lock().expect("access") = access;
@@ -936,6 +950,11 @@ async fn session(
     };
     // Privacy mode allowed by the person at the PC (always without the app: LAN tests).
     let privacy_allowed = || gate.is_none_or(|g| g.ctx.allow_privacy.load(Ordering::Relaxed));
+    // Restart of the computer: only where the agent comes back by itself afterwards.
+    let restart_available = gate.is_some_and(|g| g.ctx.unattended)
+        && !config.view_only
+        && config.synthetic.is_none()
+        && restart::available();
     // Video as datagrams with error correction, when the viewer asks for it.
     let video_datagrams = hello.video_datagrams && conn.max_datagram_size().is_some();
     let hello = Hello {
@@ -949,6 +968,7 @@ async fn session(
             && nuvira_input::privacy::available(),
         terminal: terminal_refused().is_none(),
         tunnel: tunnel_refused().is_none(),
+        restart: restart_available && !terminal_only,
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -1342,6 +1362,38 @@ async fn session(
                     let state = nuvira_proto::v1::PrivacyState { on: privacy.is_some(), error };
                     ctrl_tx.send(&control(Msg::PrivacyState(state))).await?;
                 }
+                Some(Msg::Restart(_)) => {
+                    let mut state = nuvira_proto::v1::RestartState::default();
+                    if !restart_available {
+                        state.error = "@agent.restart_unavailable".into();
+                    } else {
+                        info!("restart of the computer asked by the viewer");
+                        match tokio::task::spawn_blocking(restart::restart).await? {
+                            Ok(()) => {
+                                state.ok = true;
+                                // Back without anyone at the computer: the permanent
+                                // password, with no confirmation asked.
+                                state.reconnect = gate.is_some_and(|g| *g.access.lock().expect("access") == "permanent");
+                                if let Some(g) = gate {
+                                    g.ctx.restarting.store(true, Ordering::Relaxed);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("restart refused by the system: {e:#}");
+                                state.error = e.chain().map(|c| c.to_string()).find(|m| m.starts_with('@'))
+                                    .unwrap_or_else(|| format!("{e:#}"));
+                            }
+                        }
+                    }
+                    let restarting = state.ok;
+                    ctrl_tx.send(&control(Msg::RestartState(state))).await?;
+                    if restarting {
+                        // The answer leaves, then the session ends before the system stops it.
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        info!("session ended: the computer is restarting");
+                        return anyhow::Ok(());
+                    }
+                }
                 Some(Msg::SetQuality(q)) => {
                     let (limit_bps, limit_fps) = quality_limits(config, q.quality());
                     fps.store(limit_fps, Ordering::Relaxed);
@@ -1710,6 +1762,7 @@ fn local_hello() -> Hello {
         terminal: false,
         terminal_only: false,
         tunnel: false,
+        restart: false,
     }
 }
 
