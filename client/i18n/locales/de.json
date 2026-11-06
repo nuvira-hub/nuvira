@@ -151,6 +151,9 @@
   "settings.install": "Auf diesem Computer installieren",
   "settings.installing": "Installation läuft: Bestätigen Sie die Administratorabfrage…",
   "settings.installed": "Installiert: Dieser Computer ist erreichbar, auch wenn niemand davor sitzt. Zum Entfernen von NuviraHub verwenden Sie die installierten Apps in den Windows-Einstellungen.",
+  "settings.unattended_hint_linux": "Diesen Computer auch erreichbar machen, wenn niemand davor sitzt, mit einem dauerhaften Passwort: NuviraHub startet dann bei jeder Anmeldung von selbst, ohne Fenster. Nach einem Neustart braucht der Computer die automatische Anmeldung, und unter GNOME mit Wayland darf sich der Bildschirm nicht sperren (GNOME gibt ihn im gesperrten Zustand nicht frei).",
+  "settings.installed_linux": "Unbeaufsichtigter Zugriff aktiv: NuviraHub startet bei jeder Anmeldung von selbst und ist mit dem dauerhaften Passwort erreichbar.",
+  "settings.uninstall": "Unbeaufsichtigten Zugriff entfernen",
 
   "about.version": "Version {v}",
   "about.description": "Open-Source-Fernsteuerung: eigener Server, Ende-zu-Ende-verschlüsselte Direktverbindungen, unbeaufsichtigter Zugriff.",
@@ -267,6 +270,7 @@
   "install.cancelled": "Installation abgebrochen: Die Administratorabfrage wurde abgelehnt.",
   "install.no_report": "Die Installation hat ihr Ergebnis nicht gemeldet.",
   "install.done": "NuviraHub ist installiert: Dieser Computer ist mit dem gewählten dauerhaften Passwort erreichbar.",
+  "install.removed": "Unbeaufsichtigter Zugriff entfernt: Dieser Computer ist nur bei geöffneter App erreichbar, mit dem temporären Passwort.",
   "install.done_password": "NuviraHub ist installiert. Dauerhaftes Passwort: {password} (notieren Sie es: Es wird nur jetzt angezeigt).",
   "install.windows_only": "Die Installation ist vorerst nur unter Windows verfügbar.",
 

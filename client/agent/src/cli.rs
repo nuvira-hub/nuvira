@@ -228,7 +228,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
 
     rt.block_on(async move {
         let (app_tx, app_rx) = mpsc::unbounded_channel::<AgentEvent>();
-        #[cfg(windows)]
+        #[cfg(any(windows, unix))]
         if ipc {
             let commands = commands_tx.clone();
             tokio::spawn(async move {
@@ -237,7 +237,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
                 }
             });
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, unix)))]
         drop((app_rx, server_name));
         let busy_file = args.busy_file.clone();
         if let Some(file) = &busy_file {

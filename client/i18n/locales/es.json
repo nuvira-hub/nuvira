@@ -151,6 +151,9 @@
   "settings.install": "Instalar en este equipo",
   "settings.installing": "Instalando: confirma la solicitud de administrador…",
   "settings.installed": "Instalado: se puede acceder a este equipo aunque no haya nadie delante. Para quitar NuviraHub usa las aplicaciones instaladas en la configuración de Windows.",
+  "settings.unattended_hint_linux": "Haz que este ordenador sea accesible aunque no haya nadie delante, con una contraseña permanente: NuviraHub se inicia solo en cada inicio de sesión, sin la ventana. Tras un reinicio, el ordenador necesita el inicio de sesión automático, y en GNOME con Wayland la pantalla no debe bloquearse (GNOME deja de compartirla cuando está bloqueada).",
+  "settings.installed_linux": "Acceso desatendido activo: NuviraHub se inicia solo en cada inicio de sesión y es accesible con la contraseña permanente.",
+  "settings.uninstall": "Quitar el acceso desatendido",
 
   "about.version": "Versión {v}",
   "about.description": "Control remoto de código abierto: servidor propio, conexiones directas cifradas de extremo a extremo, acceso desatendido.",
@@ -267,6 +270,7 @@
   "install.cancelled": "Instalación cancelada: se rechazó la solicitud de administrador.",
   "install.no_report": "La instalación no comunicó su resultado.",
   "install.done": "NuviraHub está instalado: se puede acceder a este equipo con la contraseña permanente que elegiste.",
+  "install.removed": "Acceso desatendido quitado: este ordenador solo es accesible con la app abierta, con la contraseña temporal.",
   "install.done_password": "NuviraHub está instalado. Contraseña permanente: {password} (anótala: solo se muestra ahora).",
   "install.windows_only": "Por ahora la instalación solo está disponible en Windows.",
 

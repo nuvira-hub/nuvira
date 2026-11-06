@@ -151,6 +151,9 @@
   "settings.install": "Install on this computer",
   "settings.installing": "Installing: confirm the administrator prompt…",
   "settings.installed": "Installed: this computer can be reached even when nobody is in front of it. To remove NuviraHub use the installed apps in Windows settings.",
+  "settings.unattended_hint_linux": "Make this computer reachable even when nobody is in front of it, with a permanent password: NuviraHub then starts by itself at every login, without the window. After a restart the computer needs automatic login, and on GNOME with Wayland the screen must not lock (GNOME stops sharing it while locked).",
+  "settings.installed_linux": "Unattended access is active: NuviraHub starts by itself at every login and can be reached with the permanent password.",
+  "settings.uninstall": "Remove unattended access",
 
   "about.version": "Version {v}",
   "about.description": "Open-source remote control: your own server, end-to-end encrypted direct connections, unattended access.",
@@ -267,6 +270,7 @@
   "install.cancelled": "Installation cancelled: the administrator prompt was declined.",
   "install.no_report": "The installation did not report its outcome.",
   "install.done": "NuviraHub is installed: this computer is reachable with the permanent password you chose.",
+  "install.removed": "Unattended access removed: this computer can be reached only while the app is open, with the temporary password.",
   "install.done_password": "NuviraHub is installed. Permanent password: {password} (write it down: it is shown only now).",
   "install.windows_only": "Installation is available only on Windows for now.",
 

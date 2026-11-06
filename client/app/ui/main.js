@@ -154,6 +154,11 @@ function render(state) {
     }
   }
   $("install-on").classList.toggle("hidden", !state.service);
+  // Linux: a user service, removed from here; Windows: from the system settings.
+  const linux = state.platform === "linux";
+  $("install-on").textContent = t(linux ? "settings.installed_linux" : "settings.installed");
+  $("unattended-hint").textContent = t(linux ? "settings.unattended_hint_linux" : "settings.unattended_hint");
+  $("uninstall-row").classList.toggle("hidden", !(linux && state.service));
   $("password-label").textContent = t(state.service ? "connect.temp_password" : "connect.password");
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password || "—";
@@ -302,6 +307,21 @@ $("update-button").addEventListener("click", async () => {
   } catch (err) {
     $("update-text").textContent = msg(String(err));
     $("update-button").disabled = false;
+  }
+});
+
+$("uninstall-button").addEventListener("click", async () => {
+  const message = $("install-message");
+  $("uninstall-button").disabled = true;
+  try {
+    message.textContent = msg(await invoke("uninstall_service"));
+    message.classList.add("ok");
+  } catch (err) {
+    message.textContent = msg(String(err));
+    message.classList.remove("ok");
+  } finally {
+    message.classList.remove("hidden");
+    $("uninstall-button").disabled = false;
   }
 });
 

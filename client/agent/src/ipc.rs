@@ -9,23 +9,33 @@
 //! - one app at a time, which receives the current state as soon as it connects;
 //! - with no app connected nobody can confirm: requests are rejected.
 
+#[cfg(windows)]
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+#[cfg(windows)]
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+#[cfg(windows)]
 use windows::Win32::Foundation::{HANDLE, HLOCAL, LocalFree};
+#[cfg(windows)]
 use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+#[cfg(windows)]
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+#[cfg(windows)]
 use windows::Win32::System::Pipes::GetNamedPipeClientSessionId;
+#[cfg(windows)]
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+#[cfg(windows)]
 use windows::Win32::System::Services::{
     CloseServiceHandle, OpenSCManagerW, OpenServiceW, SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS,
 };
+#[cfg(windows)]
 use windows::Win32::System::Threading::GetCurrentProcessId;
+#[cfg(windows)]
 use windows::core::{HSTRING, PCWSTR};
 
 use crate::{AgentCommand, AgentEvent};
@@ -47,17 +57,20 @@ pub enum ToApp {
 }
 
 /// Windows session of the current process.
+#[cfg(windows)]
 pub fn current_session() -> u32 {
     let mut session = 0;
     let _ = unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut session) };
     session
 }
 
+#[cfg(windows)]
 fn pipe_name(session: u32) -> String {
     format!(r"\\.\pipe\nuvira-agent-{session}")
 }
 
 /// The NuviraHub service is installed (a normal user can check this too).
+#[cfg(windows)]
 pub fn service_installed() -> bool {
     unsafe {
         let Ok(scm) = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_CONNECT) else {
@@ -117,6 +130,7 @@ impl Snapshot {
 }
 
 /// Agent side: forwards events and commands to the connected app. Ends when `events` closes.
+#[cfg(windows)]
 pub async fn serve(
     server: String,
     mut events: mpsc::UnboundedReceiver<AgentEvent>,
@@ -207,7 +221,7 @@ fn without_app(event: &AgentEvent, snapshot: &mut Snapshot, commands: &mpsc::Unb
 }
 
 async fn serve_app(
-    pipe: NamedPipeServer,
+    pipe: impl AsyncRead + AsyncWrite,
     server: &str,
     snapshot: &mut Snapshot,
     events: &mut mpsc::UnboundedReceiver<AgentEvent>,
@@ -245,6 +259,7 @@ async fn serve_app(
 
 /// Pipe accessible to SYSTEM and interactive users. With `first` creation fails
 /// if another process already has a pipe with the same name.
+#[cfg(windows)]
 fn create_pipe(name: &str, first: bool) -> Result<NamedPipeServer> {
     let sddl = HSTRING::from("D:P(A;;GA;;;SY)(A;;GRGW;;;IU)");
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
@@ -274,11 +289,19 @@ async fn send_line(write: &mut (impl AsyncWrite + Unpin), msg: &impl Serialize) 
 
 /// App side: connection to the service's agent in its own Windows session.
 /// The message channel closes when the agent disconnects.
+#[cfg(windows)]
 pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSender<AgentCommand>)> {
     let pipe =
         ClientOptions::new().open(pipe_name(current_session())).context("service agent not reachable")?;
     check_server(&pipe)?;
-    let (read, mut write) = tokio::io::split(pipe);
+    Ok(channel(pipe))
+}
+
+/// Message channel over a connected stream: lines from the agent, commands to it.
+fn channel(
+    stream: impl AsyncRead + AsyncWrite + Send + 'static,
+) -> (mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSender<AgentCommand>) {
+    let (read, mut write) = tokio::io::split(stream);
     let (to_app_tx, to_app_rx) = mpsc::unbounded_channel();
     let (commands_tx, mut commands_rx) = mpsc::unbounded_channel::<AgentCommand>();
     tokio::spawn(async move {
@@ -309,7 +332,7 @@ pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSende
             }
         }
     });
-    Ok((to_app_rx, commands_tx))
+    (to_app_rx, commands_tx)
 }
 
 /// The other end must be the service's agent, not a program that took the pipe name
@@ -319,6 +342,7 @@ pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSende
 /// user query it. So: not accessible means not the user's, and is accepted;
 /// accessible means it must be the installed program (in Program Files, where only
 /// administrators write) running as SYSTEM.
+#[cfg(windows)]
 fn check_server(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> Result<()> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED};
@@ -393,6 +417,91 @@ fn check_server(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> Resu
     })();
     let _ = unsafe { CloseHandle(process) };
     result
+}
+
+// Linux and macOS: the agent of the user service (`nuvira-agent.service` of
+// systemd, see nuvira-service) and the app run as the same user. The channel is
+// a Unix socket in the user's runtime folder, and each side accepts only a
+// process of that same user.
+
+#[cfg(unix)]
+fn socket_path() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(nuvira_transport::identity::data_dir);
+    base.join("nuvira").join("agent.sock")
+}
+
+/// The user service is installed.
+#[cfg(unix)]
+pub fn service_installed() -> bool {
+    std::env::var_os("HOME")
+        .is_some_and(|home| std::path::Path::new(&home).join(".config/systemd/user/nuvira-agent.service").exists())
+}
+
+#[cfg(unix)]
+fn same_user(stream: &tokio::net::UnixStream) -> bool {
+    // SAFETY: getuid has no preconditions.
+    let me = unsafe { libc::getuid() };
+    stream.peer_cred().is_ok_and(|cred| cred.uid() == me)
+}
+
+/// Agent side: forwards events and commands to the connected app. Ends when `events` closes.
+#[cfg(unix)]
+pub async fn serve(
+    server: String,
+    mut events: mpsc::UnboundedReceiver<AgentEvent>,
+    commands: mpsc::UnboundedSender<AgentCommand>,
+) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = socket_path();
+    let dir = path.parent().context("socket folder")?;
+    std::fs::create_dir_all(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    // A socket left by an agent that ended without removing it.
+    if tokio::net::UnixStream::connect(&path).await.is_err() {
+        let _ = std::fs::remove_file(&path);
+    }
+    let listener = tokio::net::UnixListener::bind(&path).with_context(|| path.display().to_string())?;
+    let mut snapshot = Snapshot::default();
+    loop {
+        let stream = loop {
+            tokio::select! {
+                r = listener.accept() => match r {
+                    Ok((stream, _)) => break stream,
+                    Err(e) => debug!("app connection failed: {e}"),
+                },
+                event = events.recv() => {
+                    let Some(event) = event else { return Ok(()) };
+                    without_app(&event, &mut snapshot, &commands);
+                }
+            }
+        };
+        if !same_user(&stream) {
+            warn!("app of another user rejected");
+            continue;
+        }
+        info!("app connected");
+        if let Err(e) = serve_app(stream, &server, &mut snapshot, &mut events, &commands).await {
+            debug!("channel with the app: {e:#}");
+        }
+        info!("app disconnected");
+        snapshot.reject_pending(&commands);
+    }
+}
+
+/// App side: connection to the agent of the user service.
+#[cfg(unix)]
+pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSender<AgentCommand>)> {
+    let stream =
+        std::os::unix::net::UnixStream::connect(socket_path()).context("service agent not reachable")?;
+    stream.set_nonblocking(true)?;
+    let stream = tokio::net::UnixStream::from_std(stream)?;
+    if !same_user(&stream) {
+        anyhow::bail!("the local channel is held by a program of another user");
+    }
+    Ok(channel(stream))
 }
 
 #[cfg(test)]

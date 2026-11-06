@@ -66,8 +66,8 @@ fn mac_permissions() {
     }
 }
 
-/// Unattended access (the system service) exists only on Windows for now.
-const UNATTENDED: bool = cfg!(windows);
+/// Unattended access: the system service on Windows, a user service on Linux.
+const UNATTENDED: bool = cfg!(windows) || cfg!(target_os = "linux");
 
 /// State shown by the interface (sent with the "state" event).
 #[derive(Debug, Default, Clone, Serialize)]
@@ -79,6 +79,8 @@ struct UiState {
     controllable: bool,
     /// See [`UNATTENDED`].
     unattended: bool,
+    /// "windows", "linux", "macos": some texts and buttons depend on it.
+    platform: String,
     device_id: Option<String>,
     websocket: bool,
     /// ID and password are the service's (unattended access).
@@ -283,7 +285,6 @@ struct NuviraApp {
     plan: Mutex<Option<EncoderPlan>>,
     address_book: address_book::Link,
     /// Server the service's agent is registered on (from its Info), if linked.
-    #[cfg_attr(not(windows), allow(dead_code))]
     service_server: Mutex<Option<String>>,
 }
 
@@ -330,7 +331,7 @@ fn start_agent(app: &AppHandle) {
     }
     #[cfg(target_os = "macos")]
     mac_permissions();
-    #[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
     if nuvira_agent::ipc::service_installed() {
         start_service_link(app);
         return;
@@ -403,7 +404,7 @@ fn start_agent(app: &AppHandle) {
 
 /// The NuviraHub service is installed: no agent in the app, the service's one is
 /// shown. If its agent does not answer (start-up, user switch) it is retried.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn start_service_link(app: &AppHandle) {
     use nuvira_agent::ipc::ToApp;
 
@@ -546,7 +547,7 @@ fn get_state(state: State<NuviraApp>) -> UiState {
 }
 
 /// Server as shown in the settings: empty for the public one.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn shown_server(server: &str) -> String {
     if server.trim().eq_ignore_ascii_case(nuvira_transport::signal::PUBLIC_SERVER) {
         String::new()
@@ -568,15 +569,26 @@ async fn set_server(app: AppHandle, server: String) -> Result<(), String> {
         nuvira_transport::resolve_addr(&server, nuvira_transport::signal::DEFAULT_PORT)
             .map_err(|e| tf("err.invalid_address", &[("e", &e.to_string())]))?;
     }
-    #[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
     if nuvira_agent::ipc::service_installed() {
         let current = app.state::<NuviraApp>().service_server.lock().expect("service server").clone();
         let wanted = nuvira_transport::signal::server_or_public(&server);
         if current.as_deref().is_none_or(|s| !s.eq_ignore_ascii_case(wanted)) {
-            let params = format!("service install --server \"{server}\"");
-            tauri::async_runtime::spawn_blocking(move || run_service_command(params))
-                .await
-                .map_err(|e| e.to_string())??;
+            #[cfg(windows)]
+            {
+                let params = format!("service install --server \"{server}\"");
+                tauri::async_runtime::spawn_blocking(move || run_service_command(params))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let opts = nuvira_service::user::InstallOptions { server: server.clone(), server_key: None, password: None };
+                tauri::async_runtime::spawn_blocking(move || nuvira_service::user::install(&opts))
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .map_err(|e| format!("{e:#}"))?;
+            }
             info!("service moved to {wanted}");
         }
     }
@@ -828,6 +840,7 @@ fn main() {
             status: if controllable() { "connecting" } else { "viewer_only" }.into(),
             controllable: controllable(),
             unattended: UNATTENDED,
+            platform: std::env::consts::OS.into(),
             password: password.clone(),
             ..Default::default()
         }),
@@ -851,6 +864,7 @@ fn main() {
             connect_entry,
             install_service,
             repair_service,
+            uninstall_service,
             apply_update,
             restart_app,
             address_book::address_book_login,
@@ -945,7 +959,34 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
     if branding::get().is_some_and(branding::Branding::quick) {
         return Err(t("err.locked"));
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let settings = load_settings();
+        let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+            // On Wayland the screen needs the person's permission: asked now, while
+            // they are here, and kept for the service (see nuvira-portal).
+            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                drop(nuvira_capture::open(None).map_err(|e| nuvira_i18n::message(&format!("{e:#}")))?);
+            }
+            let opts = nuvira_service::user::InstallOptions {
+                server: settings.server,
+                server_key: settings.server_key,
+                password: (!password.is_empty()).then_some(password),
+            };
+            let generated = nuvira_service::user::install(&opts).map_err(|e| format!("{e:#}"))?;
+            Ok(match generated {
+                Some(generated) => tf("install.done_password", &[("password", &generated)]),
+                None => t("install.done"),
+            })
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if result.is_ok() {
+            start_agent(&app);
+        }
+        result
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (app, password);
         Err(t("install.windows_only"))
@@ -988,7 +1029,14 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
 /// it up by itself.
 #[tauri::command]
 async fn repair_service() -> Result<(), String> {
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(nuvira_service::user::start)
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         Err(t("install.windows_only"))
     }
@@ -1006,6 +1054,30 @@ async fn repair_service() -> Result<(), String> {
                     tf("service.failed", &[("e", &e)])
                 }
             })
+    }
+}
+
+/// Removes the user service (Linux; on Windows NuviraHub is removed from the
+/// installed apps of the system settings). The app runs its own agent again.
+#[tauri::command]
+async fn uninstall_service(app: AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(nuvira_service::user::uninstall)
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))?;
+        app.state::<NuviraApp>().update(&app, |ui| {
+            ui.service = false;
+            ui.service_stopped = false;
+        });
+        start_agent(&app);
+        Ok(t("install.removed"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        Err(t("install.windows_only"))
     }
 }
 

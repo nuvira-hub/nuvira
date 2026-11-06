@@ -9,7 +9,7 @@ mod abr;
 pub mod cli;
 mod files;
 mod fsops;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub mod ipc;
 mod pipeline;
 

@@ -195,7 +195,7 @@
         <div id="unattended">
         <h2 data-i18n="settings.unattended">Unattended access</h2>
         <div id="install-off">
-          <p class="hint" data-i18n="settings.unattended_hint">Install NuviraHub on this computer to reach it even when nobody is in front of it, also after a restart, with a permanent password. An administrator account is needed.</p>
+          <p class="hint" id="unattended-hint" data-i18n="settings.unattended_hint">Install NuviraHub on this computer to reach it even when nobody is in front of it, also after a restart, with a permanent password. An administrator account is needed.</p>
           <form id="install-form" class="stack">
             <input id="install-pw" type="password" autocomplete="new-password" data-i18n-placeholder="settings.install_pw" placeholder="Permanent password (empty: one is generated)">
             <input id="install-pw2" type="password" autocomplete="new-password" data-i18n-placeholder="settings.pw_confirm" placeholder="Repeat the password">
@@ -206,6 +206,10 @@
           </form>
         </div>
         <p id="install-on" class="hint hidden" data-i18n="settings.installed">Installed: this computer can be reached even when nobody is in front of it. To remove NuviraHub use the installed apps in Windows settings.</p>
+        <div id="uninstall-row" class="actions hidden">
+          <span class="spacer"></span>
+          <button type="button" id="uninstall-button" data-i18n="settings.uninstall">Remove unattended access</button>
+        </div>
         <p id="install-message" class="message hidden"></p>
         </div>
 

@@ -20,6 +20,7 @@ nuvira-service = { path = "../service" }
 nuvira-update = { path = "../update" }
 nuvira-viewer = { path = "../viewer" }
 nuvira-codec.workspace = true
+nuvira-capture.workspace = true
 nuvira-i18n.workspace = true
 nuvira-input.workspace = true
 nuvira-proto.workspace = true

@@ -12,6 +12,10 @@
 //! ```
 
 pub mod branding;
+#[cfg(target_os = "linux")]
+pub mod user;
+#[cfg(target_os = "linux")]
+pub use user::{ServiceState, installed_version, service_state};
 #[cfg(windows)]
 mod config;
 #[cfg(windows)]
@@ -192,7 +196,51 @@ fn run_service() -> anyhow::Result<()> {
     result
 }
 
-#[cfg(not(windows))]
+/// Linux: `nuvira service install`, `start` (run at login by the autostart entry) and
+/// `uninstall`; the app's settings install it too.
+#[cfg(target_os = "linux")]
+pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<()> {
+    let args: Vec<String> = args.into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    match args.get(1).map(String::as_str) {
+        // For scripts: the same as "Install" in the app's settings, without the
+        // Wayland permission, which only the app can ask for.
+        Some("install") => {
+            let password = match value("--password-file") {
+                Some(file) => {
+                    let text = std::fs::read_to_string(&file)?;
+                    let _ = std::fs::remove_file(&file);
+                    Some(text.trim().to_string())
+                }
+                None => None,
+            };
+            let opts = user::InstallOptions {
+                server: value("--server").unwrap_or_default(),
+                server_key: value("--server-key"),
+                password,
+            };
+            if let Some(generated) = user::install(&opts)? {
+                println!("permanent password: {generated}");
+            }
+            Ok(())
+        }
+        Some("start") => user::start(),
+        Some("uninstall") => user::uninstall(),
+        _ => anyhow::bail!(
+            "{COPYRIGHT}\nusage: nuvira service install [--server HOST] [--server-key FP] [--password-file FILE] | start | uninstall"
+        ),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn run(_args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<()> {
-    anyhow::bail!("{COPYRIGHT}\nnuvira-service exists only for Windows for now")
+    anyhow::bail!("{COPYRIGHT}\nnuvira-service exists only for Windows and Linux for now")
+}
+
+/// Random 8-character password that is easy to dictate, like the agent's.
+pub fn random_password() -> String {
+    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+    let mut bytes = [0u8; 8];
+    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).expect("random generator");
+    bytes.iter().map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char).collect()
 }
