@@ -253,12 +253,17 @@ func (s *Server) setOnline(c *client) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if old := s.online[c.device.ID]; old != nil {
 		// Same device reconnected: the old connection is no longer needed.
 		_ = old.conn.CloseWithError(0, "replaced by a new connection")
 	}
 	s.online[c.device.ID] = c
+	s.mu.Unlock()
+	// A support request of an earlier connection carries a ticket the agent no
+	// longer knows (the app restarted): it leaves the queue.
+	for _, d := range s.supportDesks() {
+		d.DeviceOffline(c.device.ID)
+	}
 }
 
 func (s *Server) setOffline(c *client) {
