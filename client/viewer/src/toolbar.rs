@@ -36,6 +36,8 @@ const NOTICE: (f64, f64) = (520.0, 76.0);
 pub enum Action {
     SecureAttention,
     ViewOnly,
+    /// Privacy mode on or off at the agent.
+    Privacy,
     /// Real size (1:1) or fitted to the window.
     ActualSize,
     Fullscreen,
@@ -74,6 +76,7 @@ impl Action {
         Some(match s {
             "sas" => Self::SecureAttention,
             "viewonly" => Self::ViewOnly,
+            "privacy" => Self::Privacy,
             "actual" => Self::ActualSize,
             "fullscreen" => Self::Fullscreen,
             "collapse" => Self::Collapse,
@@ -367,6 +370,7 @@ mod tests {
     #[test]
     fn actions_and_escaping() {
         assert_eq!(Action::parse("sas"), Some(Action::SecureAttention));
+        assert_eq!(Action::parse("privacy"), Some(Action::Privacy));
         assert_eq!(Action::parse("altro"), None);
         assert_eq!(Action::parse("display:1"), Some(Action::Display(1)));
         assert_eq!(Action::parse("quality:sharp"), Some(Action::Quality(Quality::Sharp)));

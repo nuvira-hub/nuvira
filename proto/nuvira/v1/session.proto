@@ -42,7 +42,23 @@ message ControlMessage {
     FsRequest fs_request = 16;
     FsResponse fs_response = 17;
     ViewSize view_size = 18;
+    SetPrivacy set_privacy = 19;
+    PrivacyState privacy_state = 20;
   }
+}
+
+// From the viewer: privacy mode on or off (only when Hello.privacy_mode). The screen
+// of the controlled PC turns black and its own mouse and keyboard are blocked, while
+// the image streamed to the viewer stays the real one. It ends with the session.
+message SetPrivacy {
+  bool on = 1;
+}
+
+// From the agent, after every SetPrivacy: the state reached. With `on` false after a
+// request to turn it on, `error` says why ("@key" messages are translated).
+message PrivacyState {
+  bool on = 1;
+  string error = 2;
 }
 
 // File manager (viewer -> agent, on the control channel). On the agent the
@@ -233,6 +249,8 @@ message Hello {
   // correction (nuvira_transport::fec). From the agent: the video comes that way.
   // Otherwise (older devices) it goes on the video stream.
   bool video_datagrams = 7;
+  // From the agent: it can turn on privacy mode (SetPrivacy).
+  bool privacy_mode = 8;
 }
 
 // Sent by the agent when the video stream starts (or changes).

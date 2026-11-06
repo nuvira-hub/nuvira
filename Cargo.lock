@@ -3343,6 +3343,7 @@ dependencies = [
  "nuvira-capture",
  "nuvira-clipboard",
  "nuvira-codec",
+ "nuvira-i18n",
  "nuvira-input",
  "nuvira-proto",
  "nuvira-secret",

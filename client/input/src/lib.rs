@@ -7,6 +7,7 @@
 use nuvira_proto::v1::InputEvent;
 
 pub mod keys;
+pub mod privacy;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]

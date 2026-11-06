@@ -44,7 +44,7 @@ Technician (A)           Server                      Remote (B)
 
 | Channel | Type | Content |
 |---|---|---|
-| `control` | reliable stream | hello, authentication, video format, screens, quality, feedback for the adaptive bitrate, clipboard, chat, file outcome, close |
+| `control` | reliable stream | hello, authentication, video format, screens, quality, feedback for the adaptive bitrate, clipboard, chat, file outcome, privacy mode, close |
 | `input` | reliable stream | mouse, keyboard, wheel, Ctrl+Alt+Del |
 | `video` | reliable stream (planned: datagrams) | encoded frames, keyframe requests on the control channel |
 | `file` | one stream per file | name and size, then data |

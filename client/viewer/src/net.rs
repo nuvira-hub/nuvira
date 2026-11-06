@@ -31,6 +31,13 @@ pub enum NetEvent {
         file_manager: bool,
         /// Ctrl+Alt+Del means something there: only on Windows.
         secure_attention: bool,
+        /// The agent can turn on privacy mode.
+        privacy: bool,
+    },
+    /// Privacy mode reached by the agent; `error` ("@key" or text) when it did not turn on.
+    Privacy {
+        on: bool,
+        error: String,
     },
     /// There is a new frame to show in the [`FrameSlot`].
     FrameReady,
@@ -347,6 +354,7 @@ async fn handshake(
         file_manager: agent.file_manager,
         // Older agents send no system: they are all Windows.
         secure_attention: agent.os.is_empty() || agent.os == "windows",
+        privacy: agent.privacy_mode,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -567,6 +575,9 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::Chat(chat)) }) => {
                         let _ = proxy.send_event(NetEvent::Chat(chat.text));
+                    }
+                    Some(ControlMessage { msg: Some(Msg::PrivacyState(p)) }) => {
+                        let _ = proxy.send_event(NetEvent::Privacy { on: p.on, error: p.error });
                     }
                     Some(ControlMessage { msg: Some(Msg::Clipboard(clip)) }) => {
                         if let Some(clipboard) = &clipboard {

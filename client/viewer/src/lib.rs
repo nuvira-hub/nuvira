@@ -24,7 +24,7 @@ use nuvira_proto::v1::{
     Button, InputEvent, Key, MouseButton, MouseMove, MouseWheel, SecureAttention, input_event::Event,
 };
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
@@ -107,6 +107,10 @@ struct Args {
     /// Starts at real size (1:1) instead of fitting the window (also from the toolbar).
     #[arg(long)]
     actual_size: bool,
+
+    /// Turns on privacy mode as soon as connected, when the agent has it (also from the toolbar).
+    #[arg(long)]
+    privacy: bool,
 
     /// Closes the session after this many seconds (automated tests).
     #[arg(long, value_name = "SECONDS")]
@@ -343,6 +347,8 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         cli_started: false,
         feedback_window: (Instant::now(), Vec::new(), Vec::new()),
         view_only: args.view_only,
+        privacy: false,
+        privacy_at_start: args.privacy,
         view: render::View { actual: args.actual_size, ..Default::default() },
         window: None,
         renderer: None,
@@ -425,6 +431,10 @@ struct App {
     /// latencies (ms) of the frames shown since then.
     feedback_window: (Instant, Vec<u32>, Vec<u32>),
     view_only: bool,
+    /// Privacy mode on at the agent (as it last said).
+    privacy: bool,
+    /// `--privacy`: to turn on as soon as connected.
+    privacy_at_start: bool,
     /// Fit or real size, and the pan at real size.
     view: render::View,
     window: Option<Arc<Window>>,
@@ -574,6 +584,10 @@ impl App {
                     window.set_fullscreen(full.then_some(winit::window::Fullscreen::Borderless(None)));
                 }
             }
+            Action::Privacy => {
+                info!("privacy mode requested: {}", !self.privacy);
+                self.send_control(Msg::SetPrivacy(nuvira_proto::v1::SetPrivacy { on: !self.privacy }));
+            }
             Action::Display(index) => {
                 self.send_control(Msg::SelectDisplay(nuvira_proto::v1::SelectDisplay { index }));
             }
@@ -658,8 +672,9 @@ impl App {
     fn update_toolbar_state(&self) {
         let (Some(toolbar), Some(window)) = (&self.toolbar, &self.window) else { return };
         toolbar.update(&format!(
-            "{{viewOnly:{},actualSize:{},fullscreen:{},quality:{}}}",
+            "{{viewOnly:{},privacy:{},actualSize:{},fullscreen:{},quality:{}}}",
             self.view_only,
+            self.privacy,
             self.view.actual,
             window.fullscreen().is_some(),
             toolbar::js_string(toolbar::quality_name(self.quality))
@@ -762,12 +777,22 @@ impl ApplicationHandler<NetEvent> for App {
                     notice.set_text(&t("viewer.pending"));
                 }
             }
-            NetEvent::Connected { agent, direct, width, height, file_manager, secure_attention } => {
+            NetEvent::Connected { agent, direct, width, height, file_manager, secure_attention, privacy } => {
                 info!("remote screen {width}x{height}");
                 self.sent_view_size = None;
                 self.send_view_size();
                 if let Some(toolbar) = &self.toolbar {
-                    toolbar.update(&format!("{{fileManager:{file_manager},secureAttention:{secure_attention}}}"));
+                    toolbar.update(&format!(
+                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy}}}"
+                    ));
+                }
+                if std::mem::take(&mut self.privacy_at_start) {
+                    match privacy {
+                        true => self.send_control(nuvira_proto::v1::control_message::Msg::SetPrivacy(
+                            nuvira_proto::v1::SetPrivacy { on: true },
+                        )),
+                        false => warn!("privacy mode not available on this agent"),
+                    }
                 }
                 let (downloads, download_dir, uploads, upload_dir, resume) =
                     std::mem::take(&mut self.cli_transfers);
@@ -908,6 +933,18 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Some(chat) = &self.chat {
                     chat.notice(&text);
                 }
+            }
+            NetEvent::Privacy { on, error } => {
+                info!(on, error, "privacy mode");
+                let changed = on != self.privacy;
+                self.privacy = on;
+                if !error.is_empty() {
+                    let reason = nuvira_i18n::message(&error);
+                    self.notice(&tf("viewer.privacy_failed", &[("reason", &reason)]), false);
+                } else if changed {
+                    self.notice(&t(if on { "viewer.privacy_on" } else { "viewer.privacy_off" }), false);
+                }
+                self.update_toolbar_state();
             }
             NetEvent::Chat(text) => {
                 info!("chat message received");

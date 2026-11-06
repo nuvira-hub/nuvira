@@ -799,6 +799,7 @@ async fn session(
         password_required: gate.is_some(),
         file_manager: !config.view_only && config.synthetic.is_none() && !policy.no_files,
         video_datagrams,
+        privacy_mode: !config.view_only && config.synthetic.is_none() && nuvira_input::privacy::available(),
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -962,6 +963,8 @@ async fn session(
         // with double parity, and they caused more losses: 2 Mbit/s went out while the
         // bitrate had come down to 0.5 (2026-11-01).
         let mut last_requested_key: Option<Instant> = None;
+        // Privacy mode: on while this lives, at most until the end of the session.
+        let mut privacy: Option<nuvira_input::privacy::Privacy> = None;
         loop {
             let msg = tokio::select! {
                 msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
@@ -1150,6 +1153,28 @@ async fn session(
                     if view.swap(packed, Ordering::Relaxed) != packed {
                         tracing::debug!("viewer area {}x{}", size.width, size.height);
                     }
+                }
+                Some(Msg::SetPrivacy(set)) => {
+                    let mut error = String::new();
+                    if set.on && privacy.is_none() {
+                        if config.view_only || config.synthetic.is_some() {
+                            error = "@agent.privacy_unsupported".into();
+                        } else {
+                            let message = nuvira_i18n::t("agent.privacy_screen");
+                            match tokio::task::spawn_blocking(move || nuvira_input::privacy::start(&message)).await? {
+                                Ok(on) => privacy = Some(on),
+                                Err(e) => {
+                                    warn!("privacy mode not turned on: {e:#}");
+                                    error = e.chain().map(|c| c.to_string()).find(|m| m.starts_with('@'))
+                                        .unwrap_or_else(|| "@agent.privacy_failed".into());
+                                }
+                            }
+                        }
+                    } else if !set.on && let Some(on) = privacy.take() {
+                        tokio::task::spawn_blocking(move || on.stop()).await?;
+                    }
+                    let state = nuvira_proto::v1::PrivacyState { on: privacy.is_some(), error };
+                    ctrl_tx.send(&control(Msg::PrivacyState(state))).await?;
                 }
                 Some(Msg::SetQuality(q)) => {
                     let (limit_bps, limit_fps) = quality_limits(config, q.quality());
@@ -1431,6 +1456,7 @@ fn local_hello() -> Hello {
         password_required: false,
         file_manager: false,
         video_datagrams: false,
+        privacy_mode: false,
     }
 }
 

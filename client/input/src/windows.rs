@@ -21,6 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::HSTRING;
 
+use crate::privacy::INJECTED_TAG;
 use crate::{InputInjector, ScreenRect, keys};
 
 pub fn set_dpi_awareness() {
@@ -51,7 +52,7 @@ impl SendInputInjector {
         send(INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
-                mi: MOUSEINPUT { dx, dy, mouseData: data as u32, dwFlags: flags, time: 0, dwExtraInfo: 0 },
+                mi: MOUSEINPUT { dx, dy, mouseData: data as u32, dwFlags: flags, time: 0, dwExtraInfo: INJECTED_TAG },
             },
         });
     }
@@ -127,7 +128,7 @@ fn keyboard(vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
-            ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 },
+            ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: INJECTED_TAG },
         },
     }
 }

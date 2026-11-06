@@ -28,7 +28,7 @@ Priority legend: **M** = MVP, **1** = version 1.0, **2** = later versions.
 | Scaling, fit to window, full screen, remote resolution | M |
 | Adjustable quality/codec/fps, live statistics | M |
 | View only | M |
-| Privacy mode (remote screen blanked, local input blocked) | 1 |
+| Privacy mode (remote screen blanked, local input blocked) — ✅ Windows, see [24](24-privacy-mode.md) | 1 |
 | Remote restart with reconnection, restart in safe mode | 1 |
 | Remote audio | 1 |
 | Technician's microphone towards the remote PC (voice call) | 2 |
