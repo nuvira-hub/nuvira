@@ -166,6 +166,8 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 			s.api(c, m.Api)
 		case *pb.ClientMessage_SessionReport:
 			s.report(c, m.SessionReport)
+		case *pb.ClientMessage_SupportRequest:
+			s.supportRequest(c, m.SupportRequest)
 		default:
 			_ = c.send(errorMsg("unexpected message", ""))
 		}
@@ -261,11 +263,51 @@ func (s *Server) setOnline(c *client) {
 
 func (s *Server) setOffline(c *client) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.online[c.device.ID] == c {
+	gone := s.online[c.device.ID] == c
+	if gone {
 		delete(s.online, c.device.ID)
 	}
 	_ = s.store.Touch(c.device.ID)
+	s.mu.Unlock()
+	if gone {
+		for _, d := range s.supportDesks() {
+			d.DeviceOffline(c.device.ID)
+		}
+	}
+}
+
+func (s *Server) supportDesks() []ext.SupportDesk {
+	var desks []ext.SupportDesk
+	for _, m := range s.modules {
+		if d, ok := m.(ext.SupportDesk); ok {
+			desks = append(desks, d)
+		}
+	}
+	return desks
+}
+
+// supportRequest passes a device's support request to the support queue module;
+// without it the server has no queue.
+func (s *Server) supportRequest(c *client, req *pb.SupportRequest) {
+	desks := s.supportDesks()
+	if len(desks) == 0 {
+		_ = c.send(errorMsg(ext.ErrNotAvailable.Error(), ""))
+		return
+	}
+	for _, d := range desks {
+		d.SupportRequest(c.device.ID, c.device.Name, req)
+	}
+}
+
+// SendSupportStatus tells a connected device the state of its support request.
+func (s *Server) SendSupportStatus(deviceID string, status *pb.SupportStatus) bool {
+	s.mu.Lock()
+	c := s.online[deviceID]
+	s.mu.Unlock()
+	if c == nil {
+		return false
+	}
+	return c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_SupportStatus{SupportStatus: status}}) == nil
 }
 
 func randomHex(n int) string {

@@ -36,6 +36,9 @@ type Host interface {
 	Presence(books *pb.Books)
 	// BroadcastPolicy sends new rules to every connected device.
 	BroadcastPolicy(policy *pb.Policy)
+	// SendSupportStatus tells a device the state of its support request; false if
+	// the device is not connected.
+	SendSupportStatus(deviceID string, status *pb.SupportStatus) bool
 }
 
 // Conn is the app connection an API request came on; the sign-in stays bound to it.
@@ -117,6 +120,14 @@ type SessionEvent struct {
 	AgentName  string
 	Reason     string
 	Report     *pb.SessionReport
+}
+
+// SupportDesk is implemented by the support queue module (NuviraHub Pro): it gets
+// the devices' requests and learns when a device disconnects. The calls are
+// synchronous: keep them short.
+type SupportDesk interface {
+	SupportRequest(deviceID, deviceName string, req *pb.SupportRequest)
+	DeviceOffline(deviceID string)
 }
 
 // SessionObserver is implemented by modules that want the steps of the sessions

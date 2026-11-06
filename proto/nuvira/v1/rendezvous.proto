@@ -22,6 +22,8 @@ message ClientMessage {
     ApiRequest api = 6;
     // From the agent at the end of a session the server routed.
     SessionReport session_report = 7;
+    // Support queue (NuviraHub Pro, feature "pro.support_queue").
+    SupportRequest support_request = 8;
   }
 }
 
@@ -35,6 +37,8 @@ message ServerMessage {
     ApiResponse api = 6;
     // The rules changed (to every device connected).
     Policy policy = 7;
+    // Support queue: state of this device's request.
+    SupportStatus support_status = 8;
   }
 }
 
@@ -190,7 +194,57 @@ message ApiRequest {
     // other than "@server.sso_pending").
     SsoBegin sso_begin = 22;
     SsoFinish sso_finish = 23;
+    // Support queue (NuviraHub Pro): every signed-in account sees it and takes requests.
+    GetQueue get_queue = 24;
+    TakeRequest take_request = 25;
   }
+}
+
+// A device asks for support: it waits in the queue until a technician takes it.
+// The ticket is a random secret of the device's agent: the technician who takes
+// the request gets it and presents it in the session (Auth.support_ticket), where
+// the person at the PC still has to accept. cancel withdraws the request.
+message SupportRequest {
+  string ticket = 1;
+  string name = 2;
+  string message = 3;
+  bool cancel = 4;
+}
+
+// To the device that asked: its place in the queue (1 = next), who took it, or
+// closed when the request is no longer in the queue.
+message SupportStatus {
+  uint32 position = 1;
+  string taken_by = 2;
+  bool closed = 3;
+}
+
+message GetQueue {}
+
+message QueuedRequest {
+  string id = 1;
+  string device_id = 2;
+  string name = 3;
+  string message = 4;
+  // Unix seconds.
+  int64 since = 5;
+  // Empty while waiting.
+  string taken_by = 6;
+  bool online = 7;
+}
+
+message Queue {
+  repeated QueuedRequest requests = 1;
+}
+
+message TakeRequest {
+  string id = 1;
+}
+
+message TakenRequest {
+  string device_id = 1;
+  string ticket = 2;
+  string name = 3;
 }
 
 message GetPolicy {}
@@ -227,6 +281,8 @@ message ApiResponse {
     TwoFactorSecret two_factor_secret = 11;
     RecoveryCodes recovery_codes = 12;
     SsoUrl sso_url = 13;
+    Queue queue = 14;
+    TakenRequest taken = 15;
   }
 }
 

@@ -210,6 +210,9 @@ message Feedback {
 // it. It travels only in the end-to-end encrypted channel: the server never sees it.
 message Auth {
   string password = 1;
+  // Instead of a password: the ticket of a support request this device made
+  // (support queue). The person at the PC is always asked to accept.
+  string support_ticket = 2;
 }
 
 message AuthResult {
