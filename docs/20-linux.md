@@ -72,4 +72,4 @@ On Windows the saved passwords are protected with DPAPI. On Linux they are encry
 - **Performance**: DMA-BUF capture, the cursor as metadata, hardware encoding (VAAPI, NVENC).
 - **Ubuntu 22.04 and Mint 21**: dropped in 0.14.0 (PipeWire too old); possible by loading PipeWire at run time.
 
-**Unattended access** (2026-11-06): the user service on Ubuntu 26.04 (Wayland) and Mint 22.3 (X11) starts at login and is reached with the permanent password with no app open; after a restart with automatic login both came back by themselves, and on Wayland the saved permission was accepted without a dialog. The app links to the service's agent and shows its ID.
+**Unattended access** (2026-11-06): the user service on Ubuntu 26.04 and Fedora 44 (Wayland) and Mint 22.3 (X11) starts at login and is reached with the permanent password with no app open; after a restart with automatic login both came back by themselves, and on Wayland the saved permission was accepted without a dialog. The app links to the service's agent and shows its ID.
