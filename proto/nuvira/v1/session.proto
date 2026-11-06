@@ -251,6 +251,43 @@ message Hello {
   bool video_datagrams = 7;
   // From the agent: it can turn on privacy mode (SetPrivacy).
   bool privacy_mode = 8;
+  // From the agent: it opens remote terminals (TerminalMessage).
+  bool terminal = 9;
+  // From the viewer: terminal only, no desktop. The agent does not capture the
+  // screen and sends no VideoFormat; the viewer opens terminals.
+  bool terminal_only = 10;
+}
+
+// `terminal` channel: a bidirectional stream opened by the viewer for each terminal,
+// after the control one. The first message is `open`; then `data` both ways and
+// `resize` from the viewer. The agent ends with `exit` (shell ended or not started);
+// closing the stream from the viewer ends the shell.
+message TerminalMessage {
+  oneof msg {
+    TerminalOpen open = 1;
+    // Bytes of the terminal: keys typed (viewer -> agent), output (agent -> viewer).
+    bytes data = 2;
+    TerminalSize resize = 3;
+    TerminalExit exit = 4;
+  }
+}
+
+// The shell runs as the user signed in on the PC (also when the agent is SYSTEM):
+// PowerShell on Windows, the user's shell on Linux and macOS.
+message TerminalOpen {
+  TerminalSize size = 1;
+}
+
+message TerminalSize {
+  uint32 cols = 1;
+  uint32 rows = 2;
+}
+
+message TerminalExit {
+  // Exit code of the shell, when it ran.
+  int32 code = 1;
+  // Why it did not start or was ended ("@key" messages are translated); "" = it ended by itself.
+  string error = 2;
 }
 
 // Sent by the agent when the video stream starts (or changes).

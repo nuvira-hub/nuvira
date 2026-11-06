@@ -10,6 +10,7 @@ mod filemanager;
 mod net;
 mod render;
 mod report;
+mod terminal;
 mod toolbar;
 
 use std::collections::HashSet;
@@ -111,6 +112,19 @@ struct Args {
     /// Turns on privacy mode as soon as connected, when the agent has it (also from the toolbar).
     #[arg(long)]
     privacy: bool,
+
+    /// Terminal only: a shell of the remote computer, without its desktop.
+    #[arg(long)]
+    terminal: bool,
+
+    /// Automated tests: text typed in the first terminal as soon as its shell starts
+    /// ("\n" becomes Enter).
+    #[arg(long, value_name = "TEXT", hide = true)]
+    terminal_type: Option<String>,
+
+    /// Automated tests: writes the output of the terminals to this file.
+    #[arg(long, value_name = "FILE", hide = true)]
+    terminal_log: Option<PathBuf>,
 
     /// Closes the session after this many seconds (automated tests).
     #[arg(long, value_name = "SECONDS")]
@@ -349,6 +363,17 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         view_only: args.view_only,
         privacy: false,
         privacy_at_start: args.privacy,
+        terminal_only: args.terminal,
+        terminals: Default::default(),
+        term_link: None,
+        terminal_type: args.terminal_type.as_ref().map(|t| t.replace("\\n", "\r").into_bytes()),
+        terminal_log: args.terminal_log.as_ref().and_then(|p| match std::fs::File::create(p) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                error!("{}: {e}", p.display());
+                None
+            }
+        }),
         view: render::View { actual: args.actual_size, ..Default::default() },
         window: None,
         renderer: None,
@@ -435,6 +460,15 @@ struct App {
     privacy: bool,
     /// `--privacy`: to turn on as soon as connected.
     privacy_at_start: bool,
+    /// `--terminal`: no session window, only terminals.
+    terminal_only: bool,
+    terminals: terminal::Terminals,
+    /// Towards the network for the terminals, once connected to an agent that has them.
+    term_link: Option<UnboundedSender<net::TermCmd>>,
+    /// `--terminal-type`: still to type in the first terminal.
+    terminal_type: Option<Vec<u8>>,
+    /// `--terminal-log`.
+    terminal_log: Option<std::fs::File>,
     /// Fit or real size, and the pan at real size.
     view: render::View,
     window: Option<Arc<Window>>,
@@ -584,6 +618,14 @@ impl App {
                     window.set_fullscreen(full.then_some(winit::window::Fullscreen::Borderless(None)));
                 }
             }
+            Action::Terminal => {
+                let title = tf("term.title", &[("agent", &self.agent)]);
+                if let Err(e) = self.terminals.open(event_loop, self.proxy.clone(), &title, "") {
+                    error!("terminal not available: {e:#}");
+                }
+                // The keyboard stays with the new window.
+                return;
+            }
             Action::Privacy => {
                 info!("privacy mode requested: {}", !self.privacy);
                 self.send_control(Msg::SetPrivacy(nuvira_proto::v1::SetPrivacy { on: !self.privacy }));
@@ -697,7 +739,27 @@ impl ApplicationHandler<NetEvent> for App {
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if self.window.is_some() || !self.terminals.is_empty() {
+            return;
+        }
+        if self.terminal_only {
+            #[cfg(target_os = "macos")]
+            dock_icon();
+            let title = tf("term.title", &[("agent", &self.agent)]);
+            let connecting = tf("viewer.connecting", &[("agent", &self.agent)]);
+            if let Err(e) = self.terminals.open(event_loop, self.proxy.clone(), &title, &connecting) {
+                error!("terminal not available: {e:#}");
+                self.exit_reason = Some(format!("terminal not available: {e:#}"));
+                event_loop.exit();
+                return;
+            }
+            if let Some((target, password)) = self.connect.take() {
+                let session = net::start(target, password, self.proxy.clone(), self.slot.clone(), true);
+                self.input = Some(session.input);
+                self.control = Some(session.control);
+                self.term_link = Some(session.terminals);
+                self.net_thread = Some(session.thread);
+            }
             return;
         }
         #[cfg(target_os = "macos")]
@@ -749,9 +811,10 @@ impl ApplicationHandler<NetEvent> for App {
         // The connection starts only once window and rendering are ready: when the
         // network came first, the video channel was sometimes never accepted.
         if let Some((target, password)) = self.connect.take() {
-            let session = net::start(target, password, self.proxy.clone(), self.slot.clone());
+            let session = net::start(target, password, self.proxy.clone(), self.slot.clone(), false);
             self.input = Some(session.input);
             self.control = Some(session.control.clone());
+            self.term_link = Some(session.terminals);
             self.fm.connect(filemanager::Link {
                 control: session.control,
                 files: session.files.clone(),
@@ -777,13 +840,24 @@ impl ApplicationHandler<NetEvent> for App {
                     notice.set_text(&t("viewer.pending"));
                 }
             }
-            NetEvent::Connected { agent, direct, width, height, file_manager, secure_attention, privacy } => {
+            NetEvent::Connected { agent, direct, width, height, file_manager, secure_attention, privacy, terminal } => {
+                if terminal && let Some(link) = self.term_link.clone() {
+                    self.terminals.connect(link);
+                }
+                if self.terminal_only {
+                    // For the NuviraHub app, which reads the output: the session started (address book).
+                    println!("@connected\t{agent}");
+                    if !agent.is_empty() {
+                        self.agent = agent;
+                    }
+                    return;
+                }
                 info!("remote screen {width}x{height}");
                 self.sent_view_size = None;
                 self.send_view_size();
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.update(&format!(
-                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy}}}"
+                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal}}}"
                     ));
                 }
                 if std::mem::take(&mut self.privacy_at_start) {
@@ -934,6 +1008,27 @@ impl ApplicationHandler<NetEvent> for App {
                     chat.notice(&text);
                 }
             }
+            NetEvent::TerminalPage { window, body } => self.terminals.message(window, &body),
+            NetEvent::TerminalOutput { id, data } => {
+                if let Some(log) = self.terminal_log.as_mut() {
+                    use std::io::Write;
+                    let _ = log.write_all(&data);
+                }
+                self.terminals.output(id, &data);
+                // `--terminal-type`: after the first output (the prompt) of the first terminal.
+                if id == 1
+                    && let (Some(text), Some(link)) = (self.terminal_type.take(), &self.term_link)
+                {
+                    let _ = link.send(net::TermCmd::Input { id, data: text });
+                }
+            }
+            NetEvent::TerminalExit { id, code, error } => {
+                self.terminals.exited(id, code, &error);
+                if let Some(log) = self.terminal_log.as_mut() {
+                    use std::io::Write;
+                    let _ = writeln!(log, "\n@exit {code} {error}");
+                }
+            }
             NetEvent::Privacy { on, error } => {
                 info!(on, error, "privacy mode");
                 let changed = on != self.privacy;
@@ -956,6 +1051,12 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             NetEvent::Toolbar(action) => self.handle_toolbar(event_loop, action),
+            NetEvent::Disconnected(reason) if self.terminal_only && !self.terminals.is_empty() => {
+                // The windows stay open with the reason; closing them exits.
+                info!("disconnected: {reason}");
+                self.exit_reason = Some(format!("disconnected: {reason}"));
+                self.terminals.status(&tf("viewer.session_closed", &[("reason", &reason)]));
+            }
             NetEvent::Disconnected(reason) => {
                 info!("disconnected: {reason}");
                 self.exit_reason = Some(format!("disconnected: {reason}"));
@@ -966,6 +1067,14 @@ impl ApplicationHandler<NetEvent> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if self.terminals.owns(id) {
+            self.terminals.window_event(id, &event);
+            if self.terminal_only && self.terminals.is_empty() {
+                self.exit_reason.get_or_insert_with(|| "session closed by the user".into());
+                event_loop.exit();
+            }
+            return;
+        }
         if self.fm.owns(id) {
             self.fm.window_event(&event);
             return;

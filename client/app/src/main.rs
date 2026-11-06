@@ -116,6 +116,8 @@ struct UiState {
     service_old: Option<String>,
     /// Privacy mode allowed on this PC (settings).
     privacy_allowed: bool,
+    /// Remote terminal allowed on this PC (settings).
+    terminal_allowed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -157,6 +159,8 @@ struct SessionUi {
     viewer_id: String,
     viewer_name: String,
     direct: bool,
+    /// Terminal only: nothing shows on the screen, the strip says it.
+    terminal: bool,
 }
 
 /// Settings saved in `app.json` in the data folder.
@@ -175,6 +179,9 @@ struct Settings {
     /// The person at this PC does not allow privacy mode (black screen during sessions).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_privacy: bool,
+    /// The person at this PC does not allow the remote terminal.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    no_terminal: bool,
 }
 
 /// Server written in the program's file name, e.g. `nuvira-host=nuvira.example.com.exe`
@@ -364,7 +371,7 @@ fn start_agent(app: &AppHandle) {
     let server =
         nuvira_transport::signal::server_or_public(&state.ui.lock().expect("state").server).to_string();
     let (commands_tx, commands_rx) = mpsc::unbounded_channel();
-    let _ = commands_tx.send(AgentCommand::AllowPrivacy { allow: !load_settings().no_privacy });
+    send_permissions(&commands_tx);
     *state.commands.lock().expect("commands") = Some(commands_tx);
     state.update(app, |ui| {
         ui.status = "connecting".into();
@@ -449,7 +456,7 @@ fn start_service_link(app: &AppHandle) {
                 Ok((mut messages, commands)) => {
                     info!("connected to the service's agent");
                     last_error = None;
-                    let _ = commands.send(AgentCommand::AllowPrivacy { allow: !load_settings().no_privacy });
+                    send_permissions(&commands);
                     *state.commands.lock().expect("commands") = Some(commands);
                     state.update(&app, |ui| {
                         ui.error = None;
@@ -549,8 +556,8 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                 ui.incoming = None;
             }
         }),
-        AgentEvent::SessionStarted { viewer_id, viewer_name, direct } => state.update(app, |ui| {
-            ui.session = Some(SessionUi { viewer_id, viewer_name, direct });
+        AgentEvent::SessionStarted { viewer_id, viewer_name, direct, terminal } => state.update(app, |ui| {
+            ui.session = Some(SessionUi { viewer_id, viewer_name, direct, terminal });
             ui.chat.clear();
         }),
         AgentEvent::FileReceived { name, path } => {
@@ -669,6 +676,24 @@ fn set_privacy_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -
     Ok(())
 }
 
+/// Like [`set_privacy_allowed`], for the remote terminal.
+#[tauri::command]
+fn set_terminal_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.no_terminal = !allowed;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.send(AgentCommand::AllowTerminal { allow: allowed });
+    state.update(&app, |ui| ui.terminal_allowed = allowed);
+    Ok(())
+}
+
+/// What the person at this PC allows, for the agent (the app's or the service's).
+fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
+    let settings = load_settings();
+    let _ = commands.send(AgentCommand::AllowPrivacy { allow: !settings.no_privacy });
+    let _ = commands.send(AgentCommand::AllowTerminal { allow: !settings.no_terminal });
+}
+
 #[tauri::command]
 fn respond(state: State<NuviraApp>, session_id: String, accept: bool) {
     state.send(AgentCommand::Respond { session_id, accept });
@@ -696,13 +721,14 @@ fn connect(
     state: State<NuviraApp>,
     device_id: String,
     password: String,
+    terminal: Option<bool>,
 ) -> Result<(), String> {
-    launch_viewer(&app, &state, device_id, password)
+    launch_viewer(&app, &state, device_id, password, terminal.unwrap_or_default())
 }
 
 /// Connection from the address book, with the password saved in the entry.
 #[tauri::command]
-fn connect_entry(app: AppHandle, state: State<NuviraApp>, id: i64) -> Result<(), String> {
+fn connect_entry(app: AppHandle, state: State<NuviraApp>, id: i64, terminal: Option<bool>) -> Result<(), String> {
     let entry = state
         .ui
         .lock()
@@ -713,7 +739,7 @@ fn connect_entry(app: AppHandle, state: State<NuviraApp>, id: i64) -> Result<(),
         .find(|e| e.id == id)
         .cloned()
         .ok_or_else(|| t("err.entry_not_found"))?;
-    launch_viewer(&app, &state, entry.device_id, entry.password)
+    launch_viewer(&app, &state, entry.device_id, entry.password, terminal.unwrap_or_default())
 }
 
 /// Asks the server's team for support (support queue, NuviraHub Pro).
@@ -739,6 +765,7 @@ pub(crate) fn launch_viewer(
     state: &NuviraApp,
     device_id: String,
     password: String,
+    terminal: bool,
 ) -> Result<(), String> {
     let device_id: String = device_id.chars().filter(|c| c.is_ascii_digit()).collect();
     if device_id.len() != 9 {
@@ -752,6 +779,10 @@ pub(crate) fn launch_viewer(
     // (which other programs on the same PC can read).
     let mut command = std::process::Command::new(&exe);
     command.args(["viewer", "--server", &server, &device_id]);
+    // A shell of the remote computer, without its desktop.
+    if terminal {
+        command.arg("--terminal");
+    }
     if let Some(key) = load_settings().server_key {
         command.args(["--server-key", &key]);
     }
@@ -933,6 +964,7 @@ fn main() {
             platform: std::env::consts::OS.into(),
             password: password.clone(),
             privacy_allowed: !settings.no_privacy,
+            terminal_allowed: !settings.no_terminal,
             ..Default::default()
         }),
         password: Arc::new(Mutex::new(password)),
@@ -951,6 +983,7 @@ fn main() {
             set_server,
             new_password,
             set_privacy_allowed,
+            set_terminal_allowed,
             respond,
             send_chat,
             connect_entry,

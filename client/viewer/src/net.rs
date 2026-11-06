@@ -33,6 +33,24 @@ pub enum NetEvent {
         secure_attention: bool,
         /// The agent can turn on privacy mode.
         privacy: bool,
+        /// The agent opens remote terminals.
+        terminal: bool,
+    },
+    /// Output of a remote terminal.
+    TerminalOutput {
+        id: u32,
+        data: Vec<u8>,
+    },
+    /// A remote terminal ended; `error` (translated) when it did not start or broke.
+    TerminalExit {
+        id: u32,
+        code: i32,
+        error: String,
+    },
+    /// Message of a terminal window's page.
+    TerminalPage {
+        window: winit::window::WindowId,
+        body: String,
     },
     /// Privacy mode reached by the agent; `error` ("@key" or text) when it did not turn on.
     Privacy {
@@ -164,6 +182,21 @@ pub enum Target {
     },
 }
 
+/// Commands for the remote terminals, from the windows to the network.
+pub enum TermCmd {
+    Open { id: u32, cols: u16, rows: u16 },
+    Input { id: u32, data: Vec<u8> },
+    Resize { id: u32, cols: u16, rows: u16 },
+    /// Closing the stream ends the shell on the agent.
+    Close { id: u32 },
+}
+
+/// What travels from the network to one terminal's stream.
+enum TermIn {
+    Data(Vec<u8>),
+    Resize(u16, u16),
+}
+
 /// Channels towards the session started by [`start`].
 pub struct Session {
     /// Closing it ends the session.
@@ -174,6 +207,8 @@ pub struct Session {
     pub files: mpsc::UnboundedSender<Outgoing>,
     /// Where the downloads requested from the file manager go.
     pub downloads: Downloads,
+    /// Remote terminals.
+    pub terminals: mpsc::UnboundedSender<TermCmd>,
     /// To be joined before exiting.
     pub thread: std::thread::JoinHandle<()>,
 }
@@ -184,8 +219,10 @@ pub fn start(
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
+    terminal_only: bool,
 ) -> Session {
     let (input_tx, input_rx) = mpsc::unbounded_channel();
+    let (terminals_tx, terminals_rx) = mpsc::unbounded_channel();
     let (control_tx, control_rx) = mpsc::unbounded_channel();
     let (files_tx, files_rx) = mpsc::unbounded_channel();
     let downloads = Downloads::default();
@@ -194,15 +231,15 @@ pub fn start(
         .name("network".into())
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-            let channels = (input_rx, control_rx, files_rx, session_downloads);
-            let reason = match rt.block_on(session(target, password, proxy.clone(), slot, channels)) {
+            let channels = (input_rx, control_rx, files_rx, session_downloads, terminals_rx);
+            let reason = match rt.block_on(session(target, password, proxy.clone(), slot, channels, terminal_only)) {
                 Ok(()) => "session ended".to_string(),
                 Err(e) => format!("{e:#}"),
             };
             let _ = proxy.send_event(NetEvent::Disconnected(reason));
         })
         .expect("network thread");
-    Session { input: input_tx, control: control_tx, files: files_tx, downloads, thread }
+    Session { input: input_tx, control: control_tx, files: files_tx, downloads, terminals: terminals_tx, thread }
 }
 
 fn control(msg: Msg) -> ControlMessage {
@@ -291,7 +328,8 @@ async fn handshake(
     direct: bool,
     password: Option<String>,
     proxy: &EventLoopProxy<NetEvent>,
-) -> Result<(FramedSend, FramedRecv, FramedSend, Option<FramedRecv>)> {
+    terminal_only: bool,
+) -> Result<(FramedSend, FramedRecv, Option<FramedSend>, Option<FramedRecv>)> {
     let (send, recv) = conn.open_bi().await?;
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -305,6 +343,7 @@ async fn handshake(
             // Prototype: video as datagrams with error correction (nuvira_transport::fec).
             video_datagrams: std::env::var_os("NUVIRA_VIDEO_FEC").is_some()
                 && conn.max_datagram_size().is_some(),
+            terminal_only,
             ..Default::default()
         })))
         .await?;
@@ -335,6 +374,24 @@ async fn handshake(
             _ => bail!("no answer to the password"),
         }
     }
+    // Terminal only: no video and no input channel.
+    if terminal_only {
+        if !agent.terminal {
+            bail!("{}", nuvira_i18n::t("viewer.terminal_unavailable"));
+        }
+        info!(agent = agent.device_name, "connected (terminal)");
+        let _ = proxy.send_event(NetEvent::Connected {
+            agent: agent.device_name,
+            direct,
+            width: 0,
+            height: 0,
+            file_manager: false,
+            secure_attention: false,
+            privacy: false,
+            terminal: true,
+        });
+        return Ok((ctrl_tx, ctrl_rx, None, None));
+    }
     let Some(ControlMessage { msg: Some(Msg::VideoFormat(format)) }) = ctrl_rx.recv().await? else {
         bail!("missing video format");
     };
@@ -355,6 +412,7 @@ async fn handshake(
         // Older agents send no system: they are all Windows.
         secure_attention: agent.os.is_empty() || agent.os == "windows",
         privacy: agent.privacy_mode,
+        terminal: agent.terminal,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -365,7 +423,7 @@ async fn handshake(
         false => Some(FramedRecv::new(conn.accept_uni().await?)),
     };
     tracing::debug!("video channel accepted");
-    Ok((ctrl_tx, ctrl_rx, input_tx, video_rx))
+    Ok((ctrl_tx, ctrl_rx, Some(input_tx), video_rx))
 }
 
 async fn session(
@@ -373,12 +431,14 @@ async fn session(
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
-    (mut input_rx, mut control_rx, mut files_rx, downloads): (
+    (mut input_rx, mut control_rx, mut files_rx, downloads, mut terminals_rx): (
         mpsc::UnboundedReceiver<InputEvent>,
         mpsc::UnboundedReceiver<Msg>,
         mpsc::UnboundedReceiver<Outgoing>,
         Downloads,
+        mpsc::UnboundedReceiver<TermCmd>,
     ),
+    terminal_only: bool,
 ) -> Result<()> {
     // Until the session starts the viewer may close (window closed while connecting
     // or waiting for the confirmation): then nothing more is done, and a connection
@@ -388,7 +448,7 @@ async fn session(
         () = viewer_gone(&mut input_rx) => return Ok(()),
     };
     let (mut ctrl_tx, mut ctrl_rx, mut input_tx, video_rx) = tokio::select! {
-        r = handshake(&conn, direct, password, &proxy) => match r {
+        r = handshake(&conn, direct, password, &proxy, terminal_only) => match r {
             Ok(channels) => channels,
             Err(e) => {
                 let e = match agent_reason(&conn).await {
@@ -410,7 +470,7 @@ async fn session(
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<()>();
     let key_tx_for_datagrams = key_tx.clone();
     // Losses of the video as datagrams, reported to the agent with the feedback.
-    let datagrams = video_rx.is_none();
+    let datagrams = video_rx.is_none() && !terminal_only;
     let loss = Arc::new(VideoLoss::default());
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<(VideoFrame, u64)>(4);
     let decoder_proxy = proxy.clone();
@@ -419,6 +479,9 @@ async fn session(
         .spawn(move || decode_loop(frame_rx, decoder_proxy, slot, key_tx))?;
 
     let video = async {
+        if terminal_only {
+            return std::future::pending().await;
+        }
         let Some(mut video_rx) = video_rx else {
             return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams, &loss).await;
         };
@@ -430,21 +493,66 @@ async fn session(
         anyhow::Ok(())
     };
 
+    // Closing the input channel (the viewer exits) ends the session, also terminal only.
     let input = async {
         while let Some(event) = input_rx.recv().await {
-            input_tx.send(&event).await?;
+            if let Some(tx) = input_tx.as_mut() {
+                tx.send(&event).await?;
+            }
         }
         anyhow::Ok(())
     };
 
+    // Each terminal on a stream of its own, served by a task.
+    let terminals = {
+        let conn = conn.clone();
+        let proxy = proxy.clone();
+        async move {
+            let mut open = std::collections::HashMap::<u32, mpsc::UnboundedSender<TermIn>>::new();
+            while let Some(cmd) = terminals_rx.recv().await {
+                match cmd {
+                    TermCmd::Open { id, cols, rows } => {
+                        let (tx, rx) = mpsc::unbounded_channel();
+                        open.insert(id, tx);
+                        let (conn, proxy) = (conn.clone(), proxy.clone());
+                        tokio::spawn(async move {
+                            let (code, error) = match run_terminal(&conn, id, cols, rows, rx, &proxy).await {
+                                Ok(exit) => exit,
+                                Err(e) => (0, format!("{e:#}")),
+                            };
+                            let _ = proxy.send_event(NetEvent::TerminalExit { id, code, error });
+                        });
+                    }
+                    TermCmd::Input { id, data } => {
+                        if let Some(tx) = open.get(&id) {
+                            let _ = tx.send(TermIn::Data(data));
+                        }
+                    }
+                    TermCmd::Resize { id, cols, rows } => {
+                        if let Some(tx) = open.get(&id) {
+                            let _ = tx.send(TermIn::Resize(cols, rows));
+                        }
+                    }
+                    TermCmd::Close { id } => {
+                        open.remove(&id);
+                    }
+                }
+            }
+            std::future::pending::<anyhow::Result<()>>().await
+        }
+    };
+
     // Shared clipboard: what is copied here goes to the agent, what is copied there arrives here.
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nuvira_clipboard::Content>();
-    let clipboard = match nuvira_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
-        Ok(tx) => Some(tx),
-        Err(e) => {
-            warn!("clipboard not shared: {e:#}");
-            None
-        }
+    let clipboard = match terminal_only {
+        true => None,
+        false => match nuvira_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
+            Ok(tx) => Some(tx),
+            Err(e) => {
+                warn!("clipboard not shared: {e:#}");
+                None
+            }
+        },
     };
 
     // After the video one, the agent's unidirectional streams carry images copied to
@@ -632,6 +740,7 @@ async fn session(
         r = input => r.context("sending input"),
         r = control_loop => r.context("control channel"),
         r = streams => r.context("streams from the agent"),
+        r = terminals => r,
     };
     close(&conn).await;
     // The decoder ends when its channel closes: it is waited for, so that on exit
@@ -640,6 +749,51 @@ async fn session(
     let _ = tokio::time::timeout(Duration::from_secs(1), tokio::task::spawn_blocking(move || decoder.join()))
         .await;
     result
+}
+
+/// One remote terminal: opens its stream, then keys and size go out and the output
+/// comes back, until the agent says the shell ended or the window closes (`rx`
+/// closed: the stream is finished and the agent ends the shell). Returns the exit
+/// code and the reason ("" when the shell ended by itself or the window closed).
+async fn run_terminal(
+    conn: &nuvira_transport::Connection,
+    id: u32,
+    cols: u16,
+    rows: u16,
+    mut rx: mpsc::UnboundedReceiver<TermIn>,
+    proxy: &EventLoopProxy<NetEvent>,
+) -> Result<(i32, String)> {
+    use nuvira_proto::v1::{TerminalMessage, TerminalOpen, TerminalSize, terminal_message::Msg as T};
+
+    let (send, recv) = conn.open_bi().await?;
+    let (mut tx, mut stream_rx) = (FramedSend::new(send), FramedRecv::new(recv));
+    let size = |cols: u16, rows: u16| TerminalSize { cols: cols as u32, rows: rows as u32 };
+    tx.send(&TerminalMessage { msg: Some(T::Open(TerminalOpen { size: Some(size(cols, rows)) })) }).await?;
+    info!(id, cols, rows, "terminal opened");
+    loop {
+        tokio::select! {
+            input = rx.recv() => match input {
+                Some(TermIn::Data(data)) => tx.send(&TerminalMessage { msg: Some(T::Data(data)) }).await?,
+                Some(TermIn::Resize(cols, rows)) => {
+                    tx.send(&TerminalMessage { msg: Some(T::Resize(size(cols, rows))) }).await?;
+                }
+                None => {
+                    let _ = tx.finish();
+                    return Ok((0, String::new()));
+                }
+            },
+            msg = stream_rx.recv::<TerminalMessage>() => match msg? {
+                Some(TerminalMessage { msg: Some(T::Data(data)) }) => {
+                    let _ = proxy.send_event(NetEvent::TerminalOutput { id, data });
+                }
+                Some(TerminalMessage { msg: Some(T::Exit(exit)) }) => {
+                    return Ok((exit.code, nuvira_i18n::message(&exit.error)));
+                }
+                Some(_) => {}
+                None => return Ok((0, String::new())),
+            },
+        }
+    }
 }
 
 /// File manager upload: `local` from `offset` on, into `dir` on the remote PC.

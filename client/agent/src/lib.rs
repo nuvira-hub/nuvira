@@ -13,6 +13,8 @@ mod fsops;
 pub mod ipc;
 mod inventory;
 mod pipeline;
+mod pty;
+mod terminal;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -144,6 +146,9 @@ pub enum AgentEvent {
         viewer_id: String,
         viewer_name: String,
         direct: bool,
+        /// Terminal only, no desktop: nothing shows on the screen.
+        #[serde(default)]
+        terminal: bool,
     },
     SessionEnded {
         error: Option<String>,
@@ -191,6 +196,10 @@ pub enum AgentCommand {
     AllowPrivacy {
         allow: bool,
     },
+    /// The person at the PC allows the remote terminal or not (kept like `AllowPrivacy`).
+    AllowTerminal {
+        allow: bool,
+    },
 }
 
 /// Choices of the person at the PC kept by the agent (`permissions.json` in its
@@ -199,6 +208,8 @@ pub enum AgentCommand {
 struct Permissions {
     #[serde(default = "yes")]
     privacy: bool,
+    #[serde(default = "yes")]
+    terminal: bool,
 }
 
 fn yes() -> bool {
@@ -214,7 +225,7 @@ impl Permissions {
         std::fs::read_to_string(Self::path())
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(Self { privacy: true })
+            .unwrap_or(Self { privacy: true, terminal: true })
     }
 
     fn save(self) {
@@ -305,6 +316,7 @@ pub async fn serve_via_server(
 ) -> Result<()> {
     let server = nuvira_transport::resolve_addr(&opts.server_name, nuvira_transport::signal::DEFAULT_PORT)?;
     let identity = Arc::new(nuvira_transport::identity::Identity::load_or_create(&opts.identity_path)?);
+    let permissions = Permissions::load();
     let ctx = Arc::new(SessionContext {
         config,
         password,
@@ -318,7 +330,8 @@ pub async fn serve_via_server(
         end_session: Notify::new(),
         policy: Default::default(),
         support_ticket: Mutex::new(None),
-        allow_privacy: AtomicBool::new(Permissions::load().privacy),
+        allow_privacy: AtomicBool::new(permissions.privacy),
+        allow_terminal: AtomicBool::new(permissions.terminal),
     });
     let current = ctx.password.lock().expect("password").clone();
     let _ = ctx.events.send(AgentEvent::Password { password: current });
@@ -423,6 +436,18 @@ struct SessionContext {
     support_ticket: Mutex<Option<String>>,
     /// The person at the PC allows privacy mode ([`AgentCommand::AllowPrivacy`]).
     allow_privacy: AtomicBool,
+    /// The person at the PC allows the remote terminal ([`AgentCommand::AllowTerminal`]).
+    allow_terminal: AtomicBool,
+}
+
+impl SessionContext {
+    fn save_permissions(&self) {
+        Permissions {
+            privacy: self.allow_privacy.load(Ordering::Relaxed),
+            terminal: self.allow_terminal.load(Ordering::Relaxed),
+        }
+        .save();
+    }
 }
 
 fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
@@ -431,6 +456,7 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
         no_files = policy.no_files,
         no_clipboard = policy.no_clipboard,
         no_privacy = policy.no_privacy,
+        no_terminal = policy.no_terminal,
         "rules of the server"
     );
     *ctx.policy.lock().expect("policy") = policy;
@@ -637,7 +663,14 @@ async fn signal_loop(
                 Some(AgentCommand::AllowPrivacy { allow }) => {
                     if ctx.allow_privacy.swap(allow, Ordering::Relaxed) != allow {
                         info!(allow, "privacy mode allowed by the person at the PC");
-                        Permissions { privacy: allow }.save();
+                        ctx.save_permissions();
+                    }
+                    None
+                }
+                Some(AgentCommand::AllowTerminal { allow }) => {
+                    if ctx.allow_terminal.swap(allow, Ordering::Relaxed) != allow {
+                        info!(allow, "remote terminal allowed by the person at the PC");
+                        ctx.save_permissions();
                     }
                     None
                 }
@@ -708,7 +741,7 @@ async fn relayed_session(
         if direct { "directly" } else { "through the relay" },
         conn.remote_address()
     );
-    let gate = Gate { ctx, session_id, request, direct, access: &outcome.access };
+    let gate = Gate { ctx, session_id, request, direct, access: &outcome.access, terminal_only: AtomicBool::new(false) };
     let result = tokio::select! {
         r = session(conn.clone(), streams, &ctx.config, Some(&gate)) => r,
         _ = ctx.end_session.notified() => {
@@ -736,6 +769,8 @@ struct Gate<'a> {
     direct: bool,
     /// How access went, for the report to the server.
     access: &'a std::sync::Mutex<&'static str>,
+    /// The viewer asked for a terminal only (set from its Hello).
+    terminal_only: AtomicBool,
 }
 
 impl Gate<'_> {
@@ -819,6 +854,7 @@ impl Gate<'_> {
             viewer_id: self.request.viewer_id.clone(),
             viewer_name: self.request.viewer_name.clone(),
             direct: self.direct,
+            terminal: self.terminal_only.load(Ordering::Relaxed),
         });
         Ok(())
     }
@@ -845,6 +881,22 @@ async fn session(
         bail!("viewer protocol version not supported: {}", hello.protocol_version);
     }
     let viewer_protocol = hello.protocol_version;
+    let terminal_only = hello.terminal_only;
+    if let Some(gate) = gate {
+        gate.terminal_only.store(terminal_only, Ordering::Relaxed);
+    }
+    // Why a terminal is refused, if it is: checked at every terminal opened.
+    let terminal_refused = move || -> Option<&'static str> {
+        if config.view_only || config.synthetic.is_some() {
+            Some("@agent.terminal_unavailable")
+        } else if gate.is_some_and(|g| g.ctx.policy.lock().expect("policy").no_terminal) {
+            Some("@agent.terminal_disabled")
+        } else if gate.is_some_and(|g| !g.ctx.allow_terminal.load(Ordering::Relaxed)) {
+            Some("@agent.terminal_not_allowed")
+        } else {
+            None
+        }
+    };
     // Privacy mode allowed by the person at the PC (always without the app: LAN tests).
     let privacy_allowed = || gate.is_none_or(|g| g.ctx.allow_privacy.load(Ordering::Relaxed));
     // Video as datagrams with error correction, when the viewer asks for it.
@@ -858,6 +910,7 @@ async fn session(
             && !policy.no_privacy
             && privacy_allowed()
             && nuvira_input::privacy::available(),
+        terminal: terminal_refused().is_none(),
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -882,6 +935,11 @@ async fn session(
             tokio::time::sleep(Duration::from_millis(pause)).await;
             bail!("{reason}");
         }
+    }
+
+    // Terminal only: no capture, no video, nothing on the screen.
+    if terminal_only {
+        return terminal_session(&conn, ctrl_tx, ctrl_rx, gate, &terminal_refused).await;
     }
 
     let keyframe = Arc::new(AtomicBool::new(true));
@@ -1365,6 +1423,7 @@ async fn session(
         r = video => r.context("sending video"),
         r = control_loop => r.context("control channel"),
         r = input => r.context("input channel"),
+        r = accept_terminals(&conn, &terminal_refused) => r,
     };
     let last = pipeline.lock().expect("pipeline").take();
     let _ = tokio::task::spawn_blocking(move || drop(last)).await;
@@ -1373,6 +1432,68 @@ async fn session(
     }
     drop(chat_tx);
     result
+}
+
+/// A session with terminals only: the control channel carries ping and chat, every
+/// other bidirectional stream of the viewer is a terminal.
+async fn terminal_session(
+    conn: &Connection,
+    mut ctrl_tx: FramedSend,
+    mut ctrl_rx: FramedRecv,
+    gate: Option<&Gate<'_>>,
+    refused: &impl Fn() -> Option<&'static str>,
+) -> Result<()> {
+    info!("terminal session (no desktop)");
+    let (chat_tx, mut chat_rx) = mpsc::unbounded_channel::<String>();
+    let events = gate.map(|g| {
+        *g.ctx.chat.lock().expect("chat") = Some(chat_tx.clone());
+        g.ctx.events.clone()
+    });
+    let control = async {
+        loop {
+            tokio::select! {
+                msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
+                    None => return anyhow::Ok(()),
+                    Some(ControlMessage { msg: Some(Msg::Ping(ping)) }) => {
+                        let pong = Pong { ping_sent_us: ping.sent_us, agent_us: nuvira_proto::now_us() };
+                        ctrl_tx.send(&control(Msg::Pong(pong))).await?;
+                    }
+                    Some(ControlMessage { msg: Some(Msg::Chat(chat)) }) => {
+                        if let Some(events) = &events {
+                            let _ = events.send(AgentEvent::Chat { text: chat.text });
+                        }
+                    }
+                    Some(_) => {}
+                },
+                Some(text) = chat_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::Chat(nuvira_proto::v1::Chat { text }))).await?;
+                }
+            }
+        }
+    };
+    let result = tokio::select! {
+        r = control => r.context("control channel"),
+        r = accept_terminals(conn, refused) => r,
+    };
+    if let Some(gate) = gate {
+        *gate.ctx.chat.lock().expect("chat") = None;
+    }
+    result
+}
+
+/// Every bidirectional stream of the viewer after the control one is a terminal,
+/// served by a task of its own. It never ends by itself: the end of the connection
+/// is seen by the other channels of the session.
+async fn accept_terminals(conn: &Connection, refused: &impl Fn() -> Option<&'static str>) -> Result<()> {
+    while let Ok((send, recv)) = conn.accept_bi().await {
+        let reason = refused();
+        tokio::spawn(async move {
+            if let Err(e) = terminal::serve(FramedSend::new(send), FramedRecv::new(recv), reason).await {
+                warn!("terminal: {e:#}");
+            }
+        });
+    }
+    std::future::pending().await
 }
 
 /// What the viewer reads when the connection closes: the "@key" message of the
@@ -1527,6 +1648,8 @@ fn local_hello() -> Hello {
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,
+        terminal: false,
+        terminal_only: false,
     }
 }
 

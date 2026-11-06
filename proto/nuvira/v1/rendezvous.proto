@@ -111,6 +111,8 @@ message Policy {
   bool no_clipboard = 3;
   // No privacy mode (black screen and blocked input at the PC).
   bool no_privacy = 4;
+  // No remote terminal.
+  bool no_terminal = 5;
 }
 
 // The viewer asks to connect to a device.

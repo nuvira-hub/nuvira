@@ -553,6 +553,8 @@ pub struct PolicyUi {
     pub no_clipboard: bool,
     #[serde(default)]
     pub no_privacy: bool,
+    #[serde(default)]
+    pub no_terminal: bool,
 }
 
 impl From<pb::Policy> for PolicyUi {
@@ -562,6 +564,7 @@ impl From<pb::Policy> for PolicyUi {
             no_files: p.no_files,
             no_clipboard: p.no_clipboard,
             no_privacy: p.no_privacy,
+            no_terminal: p.no_terminal,
         }
     }
 }
@@ -582,6 +585,7 @@ pub async fn address_book_save_policy(app: AppHandle, policy: PolicyUi) -> Resul
         no_files: policy.no_files,
         no_clipboard: policy.no_clipboard,
         no_privacy: policy.no_privacy,
+        no_terminal: policy.no_terminal,
     };
     match call(&app, Call::PutPolicy(policy)).await? {
         Some(ApiResult::Policy(policy)) => Ok(policy.into()),
@@ -712,7 +716,7 @@ pub async fn support_take(app: AppHandle, id: String) -> Result<(), String> {
     };
     info!("support request of {} taken", taken.device_id);
     let password = format!("{}{}", nuvira_viewer::SUPPORT_TICKET, taken.ticket);
-    crate::launch_viewer(&app, &app.state::<NuviraApp>(), taken.device_id, password)
+    crate::launch_viewer(&app, &app.state::<NuviraApp>(), taken.device_id, password, false)
 }
 
 /// Writes the note of the account's latest session with the device.

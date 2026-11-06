@@ -88,6 +88,15 @@ $("privacy-allowed").addEventListener("change", async (e) => {
   }
 });
 
+$("terminal-allowed").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_terminal_allowed", { allowed: e.target.checked });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !e.target.checked;
+  }
+});
+
 $("language").addEventListener("change", async (e) => {
   useStrings(await invoke("set_language", { language: e.target.value }));
 });
@@ -147,9 +156,11 @@ function render(state) {
   $("this-pc").classList.toggle("hidden", !state.controllable);
   $("viewer-only").classList.toggle("hidden", state.controllable);
   $("unattended").classList.toggle("hidden", !state.unattended);
+  $("this-pc-settings").classList.toggle("hidden", !state.controllable);
   // Privacy mode exists only on Windows for now.
-  $("privacy-settings").classList.toggle("hidden", !(state.controllable && state.platform === "windows"));
+  $("privacy-settings").classList.toggle("hidden", state.platform !== "windows");
   $("privacy-allowed").checked = state.privacy_allowed;
+  $("terminal-allowed").checked = state.terminal_allowed;
   $("update-bar").classList.toggle("hidden", !state.update && !state.installed && !state.service_stopped);
   if (!$("update-button").disabled) {
     if (!state.service_stopped) repairError = null;
@@ -181,7 +192,7 @@ function render(state) {
   if (session) {
     const who = session.viewer_name || formatId(session.viewer_id);
     const path = t(session.direct ? "session.direct" : "session.relay");
-    $("session-text").textContent = t("session.strip", { who, path });
+    $("session-text").textContent = t(session.terminal ? "session.strip_terminal" : "session.strip", { who, path });
   }
 
   const message = state.viewer_message;
@@ -362,8 +373,8 @@ $("install-form").addEventListener("submit", async (e) => {
   }
 });
 
-$("connect-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
+// Connect (desktop) or Terminal only.
+async function connectNow(terminal) {
   const message = $("connect-message");
   message.classList.add("hidden");
   const password = $("remote-password").value;
@@ -371,16 +382,22 @@ $("connect-form").addEventListener("submit", async (e) => {
   const entry = typeof chosenEntry === "function" ? chosenEntry() : null;
   try {
     if (entry && !password) {
-      await invoke("connect_entry", { id: entry.id });
+      await invoke("connect_entry", { id: entry.id, terminal });
     } else {
-      await invoke("connect", { deviceId: $("remote-id").value, password });
+      await invoke("connect", { deviceId: $("remote-id").value, password, terminal });
     }
     $("remote-password").value = "";
   } catch (err) {
     message.textContent = msg(String(err));
     message.classList.remove("hidden");
   }
+}
+
+$("connect-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  connectNow(false);
 });
+$("terminal-button").addEventListener("click", () => connectNow(true));
 
 $("chat-form").addEventListener("submit", async (e) => {
   e.preventDefault();

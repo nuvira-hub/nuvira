@@ -842,7 +842,9 @@ type Policy struct {
 	// No shared clipboard.
 	NoClipboard bool `protobuf:"varint,3,opt,name=no_clipboard,json=noClipboard,proto3" json:"no_clipboard,omitempty"`
 	// No privacy mode (black screen and blocked input at the PC).
-	NoPrivacy     bool `protobuf:"varint,4,opt,name=no_privacy,json=noPrivacy,proto3" json:"no_privacy,omitempty"`
+	NoPrivacy bool `protobuf:"varint,4,opt,name=no_privacy,json=noPrivacy,proto3" json:"no_privacy,omitempty"`
+	// No remote terminal.
+	NoTerminal    bool `protobuf:"varint,5,opt,name=no_terminal,json=noTerminal,proto3" json:"no_terminal,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -901,6 +903,13 @@ func (x *Policy) GetNoClipboard() bool {
 func (x *Policy) GetNoPrivacy() bool {
 	if x != nil {
 		return x.NoPrivacy
+	}
+	return false
+}
+
+func (x *Policy) GetNoTerminal() bool {
+	if x != nil {
+		return x.NoTerminal
 	}
 	return false
 }
@@ -4757,13 +4766,15 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"Registered\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12)\n" +
 	"\x06policy\x18\x02 \x01(\v2\x11.nuvira.v1.PolicyR\x06policy\x12\x1a\n" +
-	"\bfeatures\x18\x03 \x03(\tR\bfeatures\"\x8c\x01\n" +
+	"\bfeatures\x18\x03 \x03(\tR\bfeatures\"\xad\x01\n" +
 	"\x06Policy\x12%\n" +
 	"\x0econfirm_always\x18\x01 \x01(\bR\rconfirmAlways\x12\x19\n" +
 	"\bno_files\x18\x02 \x01(\bR\anoFiles\x12!\n" +
 	"\fno_clipboard\x18\x03 \x01(\bR\vnoClipboard\x12\x1d\n" +
 	"\n" +
-	"no_privacy\x18\x04 \x01(\bR\tnoPrivacy\"K\n" +
+	"no_privacy\x18\x04 \x01(\bR\tnoPrivacy\x12\x1f\n" +
+	"\vno_terminal\x18\x05 \x01(\bR\n" +
+	"noTerminal\"K\n" +
 	"\aConnect\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12#\n" +
 	"\raccount_token\x18\x02 \x01(\tR\faccountToken\"\x93\x01\n" +

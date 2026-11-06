@@ -185,11 +185,14 @@ function entryRow(entry) {
     info.addEventListener("click", () => openInventory(entry));
     row.append(info);
   }
-  row.append(connect);
+  const terminal = el("button", "", t("address_book.terminal"));
+  terminal.title = t("address_book.terminal_hint");
+  terminal.addEventListener("click", () => connectEntry(entry, true));
+  row.append(terminal, connect);
   return row;
 }
 
-async function connectEntry(entry) {
+async function connectEntry(entry, terminal = false) {
   if (!entry.password) {
     // Without a saved password it is asked for in the Connection section.
     choose(entry);
@@ -199,7 +202,7 @@ async function connectEntry(entry) {
     return;
   }
   try {
-    await call("connect_entry", { id: entry.id }, "address-book-message");
+    await call("connect_entry", { id: entry.id, terminal }, "address-book-message");
   } catch {
     // Message already shown.
   }
@@ -477,6 +480,7 @@ function showPolicy(policy) {
   $("policy-files").checked = policy.no_files;
   $("policy-clipboard").checked = policy.no_clipboard;
   $("policy-privacy").checked = policy.no_privacy;
+  $("policy-terminal").checked = policy.no_terminal;
 }
 
 $("policy-form").addEventListener("submit", async (e) => {
@@ -486,6 +490,7 @@ $("policy-form").addEventListener("submit", async (e) => {
     no_files: $("policy-files").checked,
     no_clipboard: $("policy-clipboard").checked,
     no_privacy: $("policy-privacy").checked,
+    no_terminal: $("policy-terminal").checked,
   };
   try {
     showPolicy(await call("address_book_save_policy", { policy }, "policy-message"));

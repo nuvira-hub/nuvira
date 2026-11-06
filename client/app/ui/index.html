@@ -115,6 +115,7 @@
           </div>
           <input id="remote-password" class="hero-password" type="password" data-i18n-placeholder="connect.password_placeholder" placeholder="Password">
           <button type="submit" class="primary hero-button" data-i18n="connect.button">Connect</button>
+          <button type="button" id="terminal-button" class="hero-button" data-i18n="connect.terminal">Terminal only</button>
           <p id="connect-message" class="message hidden"></p>
         </form>
       </section>
@@ -172,6 +173,7 @@
           <label class="check"><input id="policy-files" type="checkbox"> <span data-i18n="admin.policy_files">No file transfers</span></label>
           <label class="check"><input id="policy-clipboard" type="checkbox"> <span data-i18n="admin.policy_clipboard">No shared clipboard</span></label>
           <label class="check"><input id="policy-privacy" type="checkbox"> <span data-i18n="admin.policy_privacy">No privacy mode</span></label>
+          <label class="check"><input id="policy-terminal" type="checkbox"> <span data-i18n="admin.policy_terminal">No remote terminal</span></label>
           <div class="actions"><span class="spacer"></span><button type="submit" class="primary" data-i18n="admin.policy_save">Apply to all</button></div>
         </form>
         <p id="policy-message" class="message hidden"></p>
@@ -240,10 +242,14 @@
         <p id="install-message" class="message hidden"></p>
         </div>
 
-        <div id="privacy-settings" class="hidden">
+        <div id="this-pc-settings" class="hidden">
         <h2 data-i18n="settings.this_pc">This computer</h2>
+        <div id="privacy-settings" class="hidden">
         <label class="check"><input id="privacy-allowed" type="checkbox"> <span data-i18n="settings.privacy_allowed">Allow privacy mode</span></label>
         <p class="hint" data-i18n="settings.privacy_hint">Whoever controls this computer can turn its screen black and block its mouse and keyboard while working. Ctrl+Alt+Del always locks the computer.</p>
+        </div>
+        <label class="check"><input id="terminal-allowed" type="checkbox"> <span data-i18n="settings.terminal_allowed">Allow the remote terminal</span></label>
+        <p class="hint" data-i18n="settings.terminal_hint">Whoever connects to this computer can open a command prompt with the rights of the user signed in, without seeing the desktop. The strip at the top says when a terminal is open.</p>
         </div>
 
         <h2 data-i18n="settings.language">Language</h2>

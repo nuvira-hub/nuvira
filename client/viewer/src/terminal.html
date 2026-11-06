@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+/*XTERM_CSS*/
+</style>
+<style>
+  html, body { margin: 0; height: 100%; background: #161a1f; overflow: hidden; }
+  #term { position: absolute; inset: 6px 4px 4px 8px; }
+  .xterm .xterm-viewport { scrollbar-color: #4a525c #161a1f; }
+</style>
+</head>
+<body>
+<div id="term"></div>
+<script>
+/*XTERM_JS*/
+</script>
+<script>
+/*FIT_JS*/
+</script>
+<script>
+  const send = (msg) => window.ipc.postMessage(JSON.stringify(msg));
+  const xterm = new Terminal({
+    cursorBlink: true,
+    fontFamily: '"Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", Menlo, monospace',
+    fontSize: 14,
+    scrollback: 5000,
+    theme: { background: "#161a1f", foreground: "#d8dee4", cursor: "#7fd4f0", selectionBackground: "#2f5d6e" },
+  });
+  const fit = new FitAddon.FitAddon();
+  xterm.loadAddon(fit);
+  xterm.open(document.getElementById("term"));
+  let ended = false;
+
+  // Ctrl+Shift+C copies the selection, Ctrl+Shift+V pastes (Ctrl+C stays the interrupt).
+  xterm.attachCustomKeyEventHandler((e) => {
+    if (e.type !== "keydown" || !e.ctrlKey || !e.shiftKey) return true;
+    if (e.code === "KeyC") {
+      const text = xterm.getSelection();
+      if (text) navigator.clipboard.writeText(text).catch(() => {});
+      return false;
+    }
+    if (e.code === "KeyV") {
+      navigator.clipboard.readText().then((text) => { if (text) xterm.paste(text); }).catch(() => {});
+      return false;
+    }
+    return true;
+  });
+  xterm.onData((data) => { if (!ended) send({ op: "input", data }); });
+
+  let last = "";
+  function measure() {
+    fit.fit();
+    const size = `${xterm.cols}x${xterm.rows}`;
+    if (size !== last) {
+      last = size;
+      send({ op: "size", cols: xterm.cols, rows: xterm.rows });
+    }
+  }
+  new ResizeObserver(measure).observe(document.getElementById("term"));
+  measure();
+  xterm.focus();
+
+  const grey = (text) => `\x1b[90m${text}\x1b[0m`;
+  // Called by the viewer.
+  window.term = {
+    output(base64) {
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      xterm.write(bytes);
+    },
+    status(text) {
+      xterm.write(grey(text) + "\r\n");
+    },
+    ended(text) {
+      ended = true;
+      xterm.write("\r\n" + grey(text) + "\r\n");
+    },
+  };
+  const initial = "/*STATUS*/";
+  if (initial) window.term.status(initial);
+</script>
+</body>
+</html>
