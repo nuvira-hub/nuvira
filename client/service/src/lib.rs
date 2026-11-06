@@ -203,8 +203,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
     let args: Vec<String> = args.into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
     let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     match args.get(1).map(String::as_str) {
-        // For scripts: the same as "Install" in the app's settings, without the
-        // Wayland permission, which only the app can ask for.
+        // For scripts: the same as "Install" in the app's settings.
         Some("install") => {
             let password = match value("--password-file") {
                 Some(file) => {
@@ -219,12 +218,14 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
                 server_key: value("--server-key"),
                 password,
             };
+            user::ask_screen_permission()?;
             if let Some(generated) = user::install(&opts)? {
                 println!("permanent password: {generated}");
             }
             Ok(())
         }
         Some("start") => user::start(),
+        Some("portal") => user::portal(),
         Some("uninstall") => user::uninstall(),
         _ => anyhow::bail!(
             "{COPYRIGHT}\nusage: nuvira service install [--server HOST] [--server-key FP] [--password-file FILE] | start | uninstall"

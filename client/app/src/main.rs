@@ -964,10 +964,8 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
         let settings = load_settings();
         let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
             // On Wayland the screen needs the person's permission: asked now, while
-            // they are here, and kept for the service (see nuvira-portal).
-            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                drop(nuvira_capture::open(None).map_err(|e| nuvira_i18n::message(&format!("{e:#}")))?);
-            }
+            // they are here, and kept for the service.
+            nuvira_service::user::ask_screen_permission().map_err(|e| nuvira_i18n::message(&format!("{e:#}")))?;
             let opts = nuvira_service::user::InstallOptions {
                 server: settings.server,
                 server_key: settings.server_key,

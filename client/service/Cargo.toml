@@ -19,6 +19,9 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nuvira-capture.workspace = true
+
 [target.'cfg(windows)'.dependencies.windows]
 workspace = true
 features = [

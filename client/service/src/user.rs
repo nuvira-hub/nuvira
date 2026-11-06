@@ -142,6 +142,38 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
+/// Wayland: asks GNOME's permission to share the screen, while the person is at
+/// the computer, and keeps it for the service. GNOME ties a saved permission to
+/// the program that asked for it, telling programs apart by their systemd unit:
+/// asked from the app (a unit of the desktop) it is refused to the service. So
+/// it is asked from a unit started by the user's systemd, as the service is:
+/// `nuvira service portal` through `systemd-run`.
+pub fn ask_screen_permission() -> Result<()> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return Ok(());
+    }
+    let exe = std::env::current_exe().context("program path")?;
+    let mut command = Command::new("systemd-run");
+    command.args(["--user", "--wait", "--collect", "--quiet"]);
+    for var in SESSION_VARS {
+        if let Some(value) = std::env::var_os(var) {
+            command.arg(format!("--setenv={var}={}", value.to_string_lossy()));
+        }
+    }
+    let status = command.arg(exe).args(["service", "portal"]).status().context("systemd-run")?;
+    if !status.success() {
+        bail!("@agent.screen_denied");
+    }
+    Ok(())
+}
+
+/// `nuvira service portal`: opens the screen sharing once and closes it, so the
+/// permission is saved (see [`ask_screen_permission`]).
+pub fn portal() -> Result<()> {
+    drop(nuvira_capture::open(None)?);
+    Ok(())
+}
+
 /// Hands the variables of the current desktop session to systemd and (re)starts
 /// the agent: run at login by the autostart entry, and after installing.
 pub fn start() -> Result<()> {
