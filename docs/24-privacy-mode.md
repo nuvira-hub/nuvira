@@ -49,4 +49,4 @@ Rule "No privacy mode", same day, with the Pro test server on the Ubuntu VM and 
 Setting "Allow privacy mode", same day, on PC-LABORATORIO with this build installed as the service: unticked through UI Automation, the app saved `no_privacy`, the service's agent logged "privacy mode allowed by the person at the PC allow=false" and wrote `{"privacy":false}` in `C:\ProgramData
 uvira\permissions.json`; ticked again, `{"privacy":true}`. An agent started with a `permissions.json` that does not allow it (through the Pro test server) was reached with `--privacy`: privacy mode not available.
 
-Not tested yet: turning it off the setting unticked during a session with privacy mode on, from the button while the session goes on, two screens, an elevated window in front, the agent started by nuvira-service.
+Not tested yet: turning it off from the button or unticking the setting while privacy mode is on, two screens, an elevated window in front, privacy mode in a session of the service's agent.
