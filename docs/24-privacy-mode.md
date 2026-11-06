@@ -6,6 +6,7 @@ During a session the technician can turn the screen of the controlled PC black a
 
 - **From the viewer.** The toolbar button with a slashed screen turns it on and off; it appears only when the agent has privacy mode. `nuvira-viewer --privacy` turns it on as soon as the session starts (automated tests). The viewer shows a notice when it turns on, off, or fails, with the reason.
 - **At the PC.** Every screen is black with a short message in the local language: remote support in progress, mouse and keyboard paused until the end of the session, Ctrl+Alt+Del to lock the PC.
+- **Forbidding it.** On a NuviraHub Pro server an administrator can forbid it for every device: rule "No privacy mode" in the web console (Rules) or in the app (Administration), `Policy.no_privacy`. The agents then do not announce it, the button does not appear, and a `SetPrivacy` is refused with `@agent.privacy_disabled`. Like the other rules it applies from the next session.
 - **End.** Privacy mode ends when the technician turns it off and always with the session (closed, connection lost, agent ended). Windows removes the windows and the input hooks by itself if the agent process dies.
 
 ## How it works (Windows 10 version 2004 or later)

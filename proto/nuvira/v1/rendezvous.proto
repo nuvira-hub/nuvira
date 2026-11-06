@@ -109,6 +109,8 @@ message Policy {
   bool no_files = 2;
   // No shared clipboard.
   bool no_clipboard = 3;
+  // No privacy mode (black screen and blocked input at the PC).
+  bool no_privacy = 4;
 }
 
 // The viewer asks to connect to a device.

@@ -476,6 +476,7 @@ function showPolicy(policy) {
   $("policy-confirm").checked = policy.confirm_always;
   $("policy-files").checked = policy.no_files;
   $("policy-clipboard").checked = policy.no_clipboard;
+  $("policy-privacy").checked = policy.no_privacy;
 }
 
 $("policy-form").addEventListener("submit", async (e) => {
@@ -484,6 +485,7 @@ $("policy-form").addEventListener("submit", async (e) => {
     confirm_always: $("policy-confirm").checked,
     no_files: $("policy-files").checked,
     no_clipboard: $("policy-clipboard").checked,
+    no_privacy: $("policy-privacy").checked,
   };
   try {
     showPolicy(await call("address_book_save_policy", { policy }, "policy-message"));

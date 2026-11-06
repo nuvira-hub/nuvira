@@ -386,6 +386,7 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
         confirm_always = policy.confirm_always,
         no_files = policy.no_files,
         no_clipboard = policy.no_clipboard,
+        no_privacy = policy.no_privacy,
         "rules of the server"
     );
     *ctx.policy.lock().expect("policy") = policy;
@@ -799,7 +800,10 @@ async fn session(
         password_required: gate.is_some(),
         file_manager: !config.view_only && config.synthetic.is_none() && !policy.no_files,
         video_datagrams,
-        privacy_mode: !config.view_only && config.synthetic.is_none() && nuvira_input::privacy::available(),
+        privacy_mode: !config.view_only
+            && config.synthetic.is_none()
+            && !policy.no_privacy
+            && nuvira_input::privacy::available(),
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -1157,7 +1161,9 @@ async fn session(
                 Some(Msg::SetPrivacy(set)) => {
                     let mut error = String::new();
                     if set.on && privacy.is_none() {
-                        if config.view_only || config.synthetic.is_some() {
+                        if policy.no_privacy {
+                            error = "@agent.privacy_disabled".into();
+                        } else if config.view_only || config.synthetic.is_some() {
                             error = "@agent.privacy_unsupported".into();
                         } else {
                             let message = nuvira_i18n::t("agent.privacy_screen");

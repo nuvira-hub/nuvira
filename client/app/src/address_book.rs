@@ -551,11 +551,18 @@ pub struct PolicyUi {
     pub confirm_always: bool,
     pub no_files: bool,
     pub no_clipboard: bool,
+    #[serde(default)]
+    pub no_privacy: bool,
 }
 
 impl From<pb::Policy> for PolicyUi {
     fn from(p: pb::Policy) -> Self {
-        Self { confirm_always: p.confirm_always, no_files: p.no_files, no_clipboard: p.no_clipboard }
+        Self {
+            confirm_always: p.confirm_always,
+            no_files: p.no_files,
+            no_clipboard: p.no_clipboard,
+            no_privacy: p.no_privacy,
+        }
     }
 }
 
@@ -574,6 +581,7 @@ pub async fn address_book_save_policy(app: AppHandle, policy: PolicyUi) -> Resul
         confirm_always: policy.confirm_always,
         no_files: policy.no_files,
         no_clipboard: policy.no_clipboard,
+        no_privacy: policy.no_privacy,
     };
     match call(&app, Call::PutPolicy(policy)).await? {
         Some(ApiResult::Policy(policy)) => Ok(policy.into()),
