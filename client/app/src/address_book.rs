@@ -193,7 +193,7 @@ async fn open(app: &AppHandle) -> Result<ApiClient, String> {
     let identity =
         nuvira_transport::identity::Identity::load_or_create(&identity_path).map_err(|e| format!("{e:#}"))?;
     let ws_url = nuvira_transport::ws::default_url(&server_name, server);
-    let name = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let name = nuvira_transport::device_name();
     ApiClient::connect(&server_name, server, &ws_url, Default::default(), &identity, &name)
         .await
         .map_err(|e| tf("err.server_connect", &[("e", &nuvira_i18n::message(&format!("{e:#}")))]))

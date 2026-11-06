@@ -30,6 +30,25 @@ pub mod ws;
 
 pub use quinn::{Connection, Endpoint};
 
+/// Name of this computer, as the other side and the server show it: the Windows
+/// computer name, the host name elsewhere (COMPUTERNAME exists only on Windows).
+pub fn device_name() -> String {
+    #[cfg(windows)]
+    return std::env::var("COMPUTERNAME").unwrap_or_default();
+    #[cfg(unix)]
+    {
+        let mut buf = [0u8; 256];
+        // SAFETY: the buffer is valid for its whole length.
+        if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
+            return String::new();
+        }
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        let name = String::from_utf8_lossy(&buf[..len]);
+        // The short name, without the domain ("pc.example.lan" -> "pc").
+        name.split('.').next().unwrap_or_default().to_string()
+    }
+}
+
 /// Protocol identifier negotiated in TLS (ALPN).
 pub(crate) const ALPN: &[u8] = b"nuvira/0";
 

@@ -405,7 +405,7 @@ async fn signal_loop(
     commands: &mut mpsc::UnboundedReceiver<AgentCommand>,
 ) -> Result<()> {
     use nuvira_proto::v1::{Accept, Reject, client_message, server_message};
-    let device_name = std::env::var("COMPUTERNAME").unwrap_or_default();
+    let device_name = nuvira_transport::device_name();
     let ws_url = opts
         .server_ws
         .clone()
@@ -1411,7 +1411,7 @@ fn control(msg: Msg) -> ControlMessage {
 fn local_hello() -> Hello {
     Hello {
         protocol_version: nuvira_proto::PROTOCOL_VERSION,
-        device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
+        device_name: nuvira_transport::device_name(),
         os: std::env::consts::OS.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
         password_required: false,

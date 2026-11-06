@@ -214,7 +214,7 @@ async fn open_connection(target: Target) -> Result<(nuvira_transport::Connection
         Target::Server { server, server_name, server_key, transport, server_ws, device_id, identity } => {
             let identity = Identity::load_or_create(&identity)?;
             let expected = server_key.or_else(|| signal::known_server::get(&server_name));
-            let name = std::env::var("COMPUTERNAME").unwrap_or_default();
+            let name = nuvira_transport::device_name();
             // The viewer receives no connections: several session windows can coexist.
             let device = signal::DeviceInfo { name: &name, reachable: false };
             let ws_url = server_ws.unwrap_or_else(|| nuvira_transport::ws::default_url(&server_name, server));
@@ -290,7 +290,7 @@ async fn handshake(
     ctrl_tx
         .send(&control(Msg::Hello(Hello {
             protocol_version: nuvira_proto::PROTOCOL_VERSION,
-            device_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
+            device_name: nuvira_transport::device_name(),
             os: std::env::consts::OS.into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
             // Prototype: video as datagrams with error correction (nuvira_transport::fec).
