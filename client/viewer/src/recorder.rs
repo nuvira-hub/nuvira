@@ -80,6 +80,21 @@ impl Recorder {
         if self.part.as_ref().is_some_and(|p| p.size == size) {
             return Ok(());
         }
+        // A recording started during the session begins with the keyframe asked for,
+        // still at the reduced size of the window, and the full-size one follows a
+        // moment later: that first bit is dropped instead of becoming a file of its own.
+        let first_moment = self.parts == 1
+            && self
+                .part
+                .as_ref()
+                .is_some_and(|p| p.writer.duration() < u64::from(crate::mp4::TIMESCALE) * 3 / 2);
+        if first_moment && let Some(part) = self.part.take() {
+            drop(part.writer);
+            let _ = std::fs::remove_file(&part.path);
+            self.files.retain(|f| *f != part.path);
+            self.parts = 0;
+            info!("first {}x{} frames dropped: the full size follows", part.size.0, part.size.1);
+        }
         self.close_part()?;
         std::fs::create_dir_all(&self.dir).with_context(|| format!("creating {}", self.dir.display()))?;
         self.parts += 1;
@@ -98,7 +113,7 @@ impl Recorder {
             part.writer.finish().with_context(|| format!("closing {}", part.path.display()))?;
             info!(seconds, "recording saved: {}", part.path.display());
             // For the NuviraHub app, which reads the output (also while the window closes).
-            println!("@recorded	{}", part.path.display());
+            println!("@recorded\t{}", part.path.display());
             if let Some(target) = &self.upload {
                 crate::upload::spawn(target, &part.path);
             }
@@ -276,13 +291,14 @@ mod tests {
         // It starts at a keyframe: the frames before are skipped.
         let mut first = frames(320, 240, 20, 1, 0);
         first.remove(0);
-        let mut later = frames(320, 240, 20, 100, 1_000_000);
-        let other = frames(640, 360, 20, 120, 2_000_000);
+        // 2 s, then another size.
+        let mut later = frames(320, 240, 60, 100, 1_000_000);
+        let other = frames(640, 360, 20, 160, 3_100_000);
         for f in first.iter().chain(&later).chain(&other) {
             rec.push(f).unwrap();
         }
         // A lost frame (datagrams): nothing until the next keyframe.
-        later = frames(640, 360, 5, 150, 3_000_000);
+        later = frames(640, 360, 5, 250, 4_000_000);
         for f in &later[1..] {
             rec.push(f).unwrap();
         }
@@ -292,6 +308,19 @@ mod tests {
             let data = std::fs::read(f).unwrap();
             assert!(data.windows(4).any(|w| w == b"mfra"), "{} not closed", f.display());
         }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn first_moment_at_another_size_is_dropped() {
+        let dir = std::env::temp_dir().join(format!("nuvira-rec-test-first-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut rec = Recorder::new(dir.clone(), "test".into(), None);
+        // 0.3 s at the window's size, then the full size.
+        for f in frames(320, 240, 10, 1, 0).iter().chain(&frames(640, 480, 20, 11, 333_330)) {
+            rec.push(f).unwrap();
+        }
+        assert_eq!(rec.finish().unwrap(), [dir.join("test.mp4")]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
