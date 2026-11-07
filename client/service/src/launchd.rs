@@ -174,8 +174,15 @@ pub fn ask_screen_permission() -> Result<()> {
     if unsafe { CGPreflightScreenCaptureAccess() } {
         return Ok(());
     }
-    unsafe { CGRequestScreenCaptureAccess() };
-    bail!("@agent.screen_permission_mac")
+    if unsafe { CGRequestScreenCaptureAccess() } {
+        return Ok(());
+    }
+    // macOS 27 adds NuviraHub to the list without showing any window: the person is
+    // taken to the page where the switch is.
+    let _ = Command::new("/usr/bin/open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        .status();
+    bail!("@install.screen_permission_mac")
 }
 
 pub fn service_state() -> Result<ServiceState> {

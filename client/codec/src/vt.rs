@@ -285,6 +285,10 @@ struct Session {
 
 impl Session {
     fn new(width: u32, height: u32, settings: EncoderSettings, require_hardware: bool) -> Result<Self> {
+        // Tests: NUVIRA_VT_LOW_LATENCY=0 leaves the low-latency rate control out.
+        if std::env::var("NUVIRA_VT_LOW_LATENCY").is_ok_and(|v| v == "0") {
+            return Self::create(width, height, settings, require_hardware, false);
+        }
         match Self::create(width, height, settings, require_hardware, true) {
             Ok(s) => Ok(s),
             Err(e) => {

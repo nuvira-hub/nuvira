@@ -190,6 +190,7 @@
   "settings.server_hint": "Leer lassen, um den öffentlichen NuviraHub-Server zu verwenden, oder einen eigenen Server angeben (nötig für geteilte Adressbücher und die Pro-Module).",
   "settings.server_managed": "Der Server wird durch die Richtlinien Ihrer Organisation festgelegt (Gruppenrichtlinien oder Intune).",
   "settings.server_service": "Mit installiertem unbeaufsichtigtem Zugriff ist dies auch der Server des Dienstes: Das Speichern eines neuen erfordert die Bestätigung eines Administrators, und die ID kann sich ändern.",
+  "settings.server_service_unix": "Mit installiertem unbeaufsichtigtem Zugriff ist dies auch der Server des Dienstes: Beim Speichern eines neuen wird der Dienst mit diesem Server neu installiert, und die ID kann sich ändern.",
   "settings.public_terms": "Nutzungsbedingungen des öffentlichen Servers",
   "settings.account": "Konto",
   "settings.signed_out": "Sie sind nicht beim Adressbuch angemeldet.",
@@ -397,6 +398,7 @@
   "install.done_password": "NuviraHub ist installiert. Dauerhaftes Passwort: {password} (notieren Sie es: Es wird nur jetzt angezeigt).",
   "install.no_printer_cancelled": "Der NuviraHub-Drucker (Remote-Druck) wurde nicht installiert: Das Administratorpasswort wurde nicht eingegeben. Installieren Sie den unbeaufsichtigten Zugriff erneut, um ihn hinzuzufügen.",
   "install.no_printer": "Der NuviraHub-Drucker (Remote-Druck) wurde nicht installiert: {e}",
+  "install.screen_permission_mac": "Die Systemeinstellungen sind bei Bildschirmaufnahme geöffnet: Aktivieren Sie NuviraHub (wählen Sie „Beenden & erneut öffnen“, wenn macOS fragt) und installieren Sie dann erneut.",
   "install.windows_only": "Die Installation ist vorerst nur unter Windows verfügbar.",
   "install.move_to_applications": "Bewegen Sie NuviraHub zuerst in den Ordner „Programme“ und öffnen Sie es dort: Aus dem Disk-Image gestartet, lässt macOS es nicht von selbst starten.",
 

@@ -190,6 +190,7 @@
   "settings.server_hint": "Laissez vide pour utiliser le serveur public NuviraHub, ou indiquez votre propre serveur (nécessaire pour les carnets d'adresses partagés et les modules Pro).",
   "settings.server_managed": "Le serveur est défini par les stratégies de votre organisation (stratégies de groupe ou Intune).",
   "settings.server_service": "Avec l'accès sans surveillance installé, c'est aussi le serveur du service : en enregistrer un nouveau demande la confirmation d'un administrateur, et l'ID peut changer.",
+  "settings.server_service_unix": "Avec l'accès sans surveillance installé, c'est aussi le serveur du service : en enregistrer un nouveau réinstalle le service avec ce serveur, et l'ID peut changer.",
   "settings.public_terms": "Conditions d'utilisation du serveur public",
   "settings.account": "Compte",
   "settings.signed_out": "Vous n'êtes pas connecté au carnet d'adresses.",
@@ -397,6 +398,7 @@
   "install.done_password": "NuviraHub est installé. Mot de passe permanent : {password} (notez-le : il n'est affiché que maintenant).",
   "install.no_printer_cancelled": "L'imprimante NuviraHub (impression à distance) n'a pas été installée : le mot de passe administrateur n'a pas été saisi. Installez à nouveau l'accès sans surveillance pour l'ajouter.",
   "install.no_printer": "L'imprimante NuviraHub (impression à distance) n'a pas été installée : {e}",
+  "install.screen_permission_mac": "Les Réglages Système sont ouverts sur Enregistrement de l'écran : activez NuviraHub (choisissez « Quitter et rouvrir » si macOS le demande), puis installez à nouveau.",
   "install.windows_only": "L'installation n'est disponible que sous Windows pour le moment.",
   "install.move_to_applications": "Déplacez d'abord NuviraHub dans le dossier Applications et ouvrez-le depuis là : lancé depuis l'image disque, macOS ne le laisse pas démarrer tout seul.",
 

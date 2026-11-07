@@ -190,6 +190,7 @@
   "settings.server_hint": "Déjelo vacío para usar el servidor público de NuviraHub, o indique su propio servidor (necesario para las libretas compartidas y los módulos Pro).",
   "settings.server_managed": "El servidor lo fijan las directivas de tu organización (directivas de grupo o Intune).",
   "settings.server_service": "Con el acceso desatendido instalado, también es el servidor del servicio: guardar uno nuevo pide la confirmación de un administrador, y el ID puede cambiar.",
+  "settings.server_service_unix": "Con el acceso desatendido instalado, también es el servidor del servicio: guardar uno nuevo reinstala el servicio con ese servidor, y el ID puede cambiar.",
   "settings.public_terms": "Condiciones de uso del servidor público",
   "settings.account": "Cuenta",
   "settings.signed_out": "No ha iniciado sesión en la libreta de direcciones.",
@@ -397,6 +398,7 @@
   "install.done_password": "NuviraHub está instalado. Contraseña permanente: {password} (anótala: solo se muestra ahora).",
   "install.no_printer_cancelled": "La impresora NuviraHub (impresión remota) no se instaló: no se introdujo la contraseña de administrador. Vuelve a instalar el acceso desatendido para añadirla.",
   "install.no_printer": "La impresora NuviraHub (impresión remota) no se instaló: {e}",
+  "install.screen_permission_mac": "Los Ajustes del Sistema están abiertos en Grabación de pantalla: activa NuviraHub (elige «Salir y volver a abrir» si macOS lo pide) y vuelve a instalar.",
   "install.windows_only": "Por ahora la instalación solo está disponible en Windows.",
   "install.move_to_applications": "Primero mueve NuviraHub a la carpeta Aplicaciones y ábrelo desde allí: iniciado desde la imagen de disco, macOS no deja que se inicie solo.",
 

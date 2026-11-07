@@ -1340,21 +1340,25 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
                 password: (!password.is_empty()).then_some(password),
             };
             let generated = nuvira_service::user::install(&opts).map_err(|e| format!("{e:#}"))?;
-            let done = match generated {
+            Ok(match generated {
                 Some(generated) => tf("install.done_password", &[("password", &generated)]),
                 None => t("install.done"),
-            };
-            Ok(match install_printer() {
-                Some(note) => format!("{done} {note}"),
-                None => done,
             })
         })
         .await
         .map_err(|e| e.to_string())?;
+        // The service's agent is running with the same ID: the app's own stops now,
+        // not after the printer's administrator prompt (meanwhile the two would take
+        // the registration on the server from each other).
         if result.is_ok() {
             start_agent(&app);
         }
-        result
+        let done = result?;
+        let note = tauri::async_runtime::spawn_blocking(install_printer).await.ok().flatten();
+        Ok(match note {
+            Some(note) => format!("{done} {note}"),
+            None => done,
+        })
     }
     #[cfg(not(any(windows, unix)))]
     {

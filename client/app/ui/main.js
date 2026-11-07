@@ -200,6 +200,10 @@ function render(state) {
   for (const node of document.querySelectorAll(".public-only")) node.classList.toggle("hidden", Boolean(state.server.trim()));
   $("service-note").classList.toggle("hidden", !state.service);
   $("server-service").classList.toggle("hidden", !state.service);
+  // Linux and macOS: a user service, installed again without an administrator.
+  const serverKey = state.platform === "windows" ? "settings.server_service" : "settings.server_service_unix";
+  $("server-service").dataset.i18n = serverKey;
+  $("server-service").textContent = t(serverKey);
   $("install-off").classList.toggle("hidden", state.service);
   // Linux for now: only controls other computers.
   $("this-pc").classList.toggle("hidden", !state.controllable);
