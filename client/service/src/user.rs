@@ -139,6 +139,9 @@ pub fn portal() -> Result<()> {
     Ok(())
 }
 
+/// macOS asks for some folders (see the macOS module); Linux does not.
+pub fn ask_folder_access() {}
+
 /// Hands the variables of the current desktop session to systemd and (re)starts
 /// the agent: run at login by the autostart entry, and after installing.
 pub fn start() -> Result<()> {

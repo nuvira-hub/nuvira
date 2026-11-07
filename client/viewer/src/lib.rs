@@ -358,7 +358,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     let args = Args::parse_from(args);
     // Language passed by the app (NUVIRA_LANG), else the system one.
     nuvira_i18n::init(None);
-    let target = match &args.server {
+    // Empty: NuviraHub's public server, as for the agent.
+    let server = args.server.as_deref().map(|s| nuvira_transport::signal::server_or_public(s).to_string());
+    let target = match &server {
         Some(server_name) => net::Target::Server {
             server: nuvira_transport::resolve_addr(server_name, nuvira_transport::signal::DEFAULT_PORT)?,
             server_name: server_name.clone(),

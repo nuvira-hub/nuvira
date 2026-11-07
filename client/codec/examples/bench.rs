@@ -37,7 +37,12 @@ fn run(label: &str, mut enc: Box<dyn VideoEncoder>, w: usize, h: usize) {
     let mut dec = nuvira_codec::OpenH264Decoder::new().unwrap();
     let (mut total, mut bytes, mut decoded, mut encoded) = (0u128, 0usize, 0, 0);
     let mut worst = 0u128;
+    // NUVIRA_BENCH_PACE_MS: a pause between frames (not timed), as on a quiet screen.
+    let pace = std::env::var("NUVIRA_BENCH_PACE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0u64);
     for i in 0..FRAMES {
+        if pace > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(pace));
+        }
         let data = &frames[i % frames.len()];
         let img = BgraImage { width: w as u32, height: h as u32, stride: w * 4, data };
         let t = Instant::now();

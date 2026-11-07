@@ -398,6 +398,8 @@
   "install.done_password": "NuviraHub is installed. Permanent password: {password} (write it down: it is shown only now).",
   "install.no_printer_cancelled": "The NuviraHub printer (remote printing) was not installed: the administrator password was not given. Install unattended access again to add it.",
   "install.no_printer": "The NuviraHub printer (remote printing) was not installed: {e}",
+  "install.printer_remove_reason": "NuviraHub removes its printer, installed with unattended access. Enter your password to allow it.",
+  "install.printer_reason": "NuviraHub installs its printer: during a session, what is printed on it comes out of the printer of whoever controls this Mac. Enter your password to allow it.",
   "install.screen_permission_mac": "System Settings is open at Screen Recording: turn on NuviraHub (choose \"Quit & Reopen\" if macOS asks), then install again.",
   "install.windows_only": "Installation is available only on Windows for now.",
   "install.move_to_applications": "First move NuviraHub to the Applications folder and open it from there: started from the disk image, macOS does not let it start by itself.",

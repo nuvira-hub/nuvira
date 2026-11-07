@@ -185,6 +185,19 @@ pub fn ask_screen_permission() -> Result<()> {
     bail!("@install.screen_permission_mac")
 }
 
+/// Desktop, Documents and Downloads have permissions of their own on macOS, asked
+/// the first time a program opens them: opened now, while the person is at the Mac,
+/// so that the file manager of an unattended session finds them allowed (the
+/// permission is the app's, the agent is the same app).
+pub fn ask_folder_access() {
+    let Ok(home) = home() else { return };
+    for folder in ["Desktop", "Documents", "Downloads"] {
+        // Waits for the person's answer; refused, the folder stays closed to sessions.
+        let allowed = std::fs::read_dir(home.join(folder)).is_ok();
+        info!(folder, allowed, "access to the folder");
+    }
+}
+
 pub fn service_state() -> Result<ServiceState> {
     if !plist_path()?.exists() {
         return Ok(ServiceState::NotInstalled);

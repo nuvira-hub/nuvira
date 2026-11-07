@@ -1334,6 +1334,7 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
             // On Wayland the screen needs the person's permission: asked now, while
             // they are here, and kept for the service.
             nuvira_service::user::ask_screen_permission().map_err(|e| nuvira_i18n::message(&format!("{e:#}")))?;
+            nuvira_service::user::ask_folder_access();
             let opts = nuvira_service::user::InstallOptions {
                 server: settings.server,
                 server_key: settings.server_key,
@@ -1413,7 +1414,7 @@ fn install_printer() -> Option<String> {
     if !cups::available() || cups::installed() {
         return None;
     }
-    match cups::run_as_admin(false) {
+    match cups::run_as_admin(false, &t("install.printer_reason")) {
         Ok(true) => {
             info!("NuviraHub printer installed");
             None
@@ -1471,7 +1472,7 @@ async fn uninstall_service(app: AppHandle) -> Result<String, String> {
             // packages keep theirs until they are removed).
             use nuvira_service::cups;
             if cups::installed() && !cups::packaged() {
-                match cups::run_as_admin(true) {
+                match cups::run_as_admin(true, &t("install.printer_remove_reason")) {
                     Ok(true) => info!("NuviraHub printer removed"),
                     Ok(false) => info!("NuviraHub printer kept: administrator prompt declined"),
                     Err(e) => warn!("NuviraHub printer not removed: {e:#}"),

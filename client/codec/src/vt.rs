@@ -280,7 +280,8 @@ struct Session {
     width: u32,
     height: u32,
     low_latency: bool,
-    hardware: bool,
+    /// `None`: not said by the session (the low-latency one does not).
+    hardware: Option<bool>,
 }
 
 impl Session {
@@ -351,7 +352,7 @@ impl Session {
             drop(unsafe { Box::from_raw(refcon) });
             bail!("VTCompressionSessionCreate: {status}");
         }
-        let mut this = Self { session, outputs, refcon, width, height, low_latency, hardware: false };
+        let mut this = Self { session, outputs, refcon, width, height, low_latency, hardware: None };
         this.configure(settings)?;
         Ok(this)
     }
@@ -421,7 +422,7 @@ impl Session {
         }
     }
 
-    fn using_hardware(&self) -> bool {
+    fn using_hardware(&self) -> Option<bool> {
         let mut value: CFTypeRef = ptr::null();
         let status = unsafe {
             VTSessionCopyProperty(
@@ -432,10 +433,10 @@ impl Session {
             )
         };
         if status != 0 || value.is_null() {
-            return false;
+            return None;
         }
         let value = unsafe { CFType::wrap_under_create_rule(value) };
-        value.downcast::<CFBoolean>().is_some_and(bool::from)
+        value.downcast::<CFBoolean>().map(bool::from)
     }
 
     /// Copies the image into a buffer of the session's pool.
@@ -558,7 +559,7 @@ impl VtEncoder {
     pub fn new(settings: EncoderSettings, require_hardware: bool) -> Result<Self> {
         // A small session right away, to fail now if VideoToolbox cannot encode H.264.
         let probe = Session::new(640, 360, settings, require_hardware).context("VideoToolbox H.264")?;
-        info!(hardware = probe.hardware, low_latency = probe.low_latency, "VideoToolbox encoder");
+        info!(hardware = ?probe.hardware, low_latency = probe.low_latency, "VideoToolbox encoder");
         Ok(Self { settings, require_hardware, session: None, start: Instant::now(), force_key: true })
     }
 }
@@ -584,7 +585,7 @@ impl VideoEncoder for VtEncoder {
         if self.session.as_ref().is_none_or(|s| (s.width, s.height) != (w, h)) {
             self.session = None;
             let session = Session::new(w, h, self.settings, self.require_hardware)?;
-            debug!(w, h, hardware = session.hardware, "VideoToolbox session");
+            debug!(w, h, hardware = ?session.hardware, "VideoToolbox session");
             self.session = Some(session);
             self.force_key = true;
         }

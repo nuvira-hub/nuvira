@@ -22,6 +22,9 @@ pub fn collect() -> Inventory {
     let disks = Disks::new_with_refreshed_list()
         .iter()
         .filter(|d| !d.is_removable() && d.total_space() > 0)
+        // macOS: the volumes of /System/Volumes share the container of / (the
+        // same space, counted twice otherwise).
+        .filter(|d| !(cfg!(target_os = "macos") && d.mount_point().starts_with("/System/Volumes")))
         .map(|d| Disk {
             mount: d.mount_point().to_string_lossy().into_owned(),
             total: d.total_space(),
@@ -63,15 +66,35 @@ pub fn collect() -> Inventory {
 }
 
 /// Name and version of the system, shown together: "Fedora Linux" "44",
-/// "Windows 10 Pro" "19045" (the build), "macOS 26.1 Tahoe" "". The long name
-/// already has the version on Windows and macOS, and repeats "Linux" on Linux.
+/// "Windows 10 Pro" "19045" (the build), "macOS 26.1 Tahoe" "25B78" (the build). The
+/// long name already has the version on Windows and macOS, and repeats "Linux" on Linux.
 fn os() -> (String, String) {
     if cfg!(target_os = "linux") {
         return (System::name().unwrap_or_default(), System::os_version().unwrap_or_default());
     }
     let name = System::long_os_version().or_else(System::name).unwrap_or_default();
-    let build = if cfg!(windows) { System::kernel_version().unwrap_or_default() } else { String::new() };
+    #[cfg(windows)]
+    let build = System::kernel_version().unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    let build = mac_build();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let build = String::new();
     (name, build)
+}
+
+/// The build of macOS (`kern.osversion`, as `sw_vers -buildVersion`).
+#[cfg(target_os = "macos")]
+fn mac_build() -> String {
+    let mut buffer = [0u8; 64];
+    let mut len = buffer.len();
+    // SAFETY: a NUL-terminated name and a buffer of `len` bytes.
+    let status = unsafe {
+        libc::sysctlbyname(c"kern.osversion".as_ptr(), buffer.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0)
+    };
+    if status != 0 {
+        return String::new();
+    }
+    String::from_utf8_lossy(&buffer[..len]).trim_end_matches(char::from(0)).to_string()
 }
 
 /// The user of the desktop, when the agent runs as that user (not as the

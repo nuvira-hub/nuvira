@@ -398,6 +398,8 @@
   "install.done_password": "NuviraHub est installé. Mot de passe permanent : {password} (notez-le : il n'est affiché que maintenant).",
   "install.no_printer_cancelled": "L'imprimante NuviraHub (impression à distance) n'a pas été installée : le mot de passe administrateur n'a pas été saisi. Installez à nouveau l'accès sans surveillance pour l'ajouter.",
   "install.no_printer": "L'imprimante NuviraHub (impression à distance) n'a pas été installée : {e}",
+  "install.printer_remove_reason": "NuviraHub supprime son imprimante, installée avec l'accès sans surveillance. Saisissez votre mot de passe pour l'autoriser.",
+  "install.printer_reason": "NuviraHub installe son imprimante : pendant une session, ce qui y est imprimé sort de l'imprimante de la personne qui contrôle ce Mac. Saisissez votre mot de passe pour l'autoriser.",
   "install.screen_permission_mac": "Les Réglages Système sont ouverts sur Enregistrement de l'écran : activez NuviraHub (choisissez « Quitter et rouvrir » si macOS le demande), puis installez à nouveau.",
   "install.windows_only": "L'installation n'est disponible que sous Windows pour le moment.",
   "install.move_to_applications": "Déplacez d'abord NuviraHub dans le dossier Applications et ouvrez-le depuis là : lancé depuis l'image disque, macOS ne le laisse pas démarrer tout seul.",

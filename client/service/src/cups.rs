@@ -135,8 +135,10 @@ pub fn uninstall() -> Result<()> {
 }
 
 /// `nuvira service printer [--remove]` of this program as root, after the system's
-/// administrator prompt. `Ok(false)`: the person did not give the password.
-pub fn run_as_admin(remove: bool) -> Result<bool> {
+/// administrator prompt, which shows `reason` on macOS (what is installed and why:
+/// macOS adds a warning of its own to every script asking for these rights).
+/// `Ok(false)`: the person did not give the password.
+pub fn run_as_admin(remove: bool, reason: &str) -> Result<bool> {
     let exe = std::env::current_exe().context("program path")?;
     let mut args = vec!["service", "printer"];
     if remove {
@@ -144,6 +146,8 @@ pub fn run_as_admin(remove: bool) -> Result<bool> {
     }
     #[cfg(target_os = "linux")]
     {
+        // pkexec shows the text of its own policy.
+        let _ = reason;
         let output = Command::new("pkexec").arg(&exe).args(&args).output().context("pkexec")?;
         match output.status.code() {
             Some(0) => Ok(true),
@@ -156,14 +160,14 @@ pub fn run_as_admin(remove: bool) -> Result<bool> {
     {
         let script = [
             "on run argv",
-            "do shell script (quoted form of item 1 of argv) & \" \" & (item 2 of argv) with administrator privileges",
+            "do shell script (quoted form of item 1 of argv) & \" \" & (item 2 of argv) with prompt (item 3 of argv) with administrator privileges",
             "end run",
         ];
         let mut command = Command::new("/usr/bin/osascript");
         for line in script {
             command.args(["-e", line]);
         }
-        let output = command.arg(&exe).arg(args.join(" ")).output().context("osascript")?;
+        let output = command.arg(&exe).arg(args.join(" ")).arg(reason).output().context("osascript")?;
         if output.status.success() {
             return Ok(true);
         }
