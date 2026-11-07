@@ -28,6 +28,8 @@ In the NuviraHub app, enter this server's address in Settings → Server. A sing
   <PostArgs/>
   <Requires>Forward port 21116 UDP (and TCP for the WebSocket fallback) from the router to Unraid, to reach the server from outside your network. Back up the Data folder: it holds the server's identity, which the apps pin.</Requires>
   <Changes>
+### 0.16.0 (2026-11-07)
+- Apps: remote terminal, remote printing, remote restart with reconnection, privacy mode (Windows), unattended access on Linux. Server: messages for the support queue and inventory of the Pro edition. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.15.0 (2026-11-03)
 - The apps for Linux can be controlled too (Wayland and X11 sessions); the server is unchanged. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.12.1 (2026-10-31)
