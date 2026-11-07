@@ -51,4 +51,6 @@ PC-LABORATORIO (Windows 10, the service installed earlier with the app's install
 
 - Profile: on the Pro test server (Ubuntu VM) a profile "Rossi Assistenza" (colour, support text and phone, locked server, pinned fingerprint); the console showed the command line; `msiexec /i … SERVER=… KEY=… PROFILE=<code>` on PC-LABORATORIO: within a second the service saved the customisation, the app started in the user's session showed name, colour and support box. Removed with `msiexec /x`, the program folder went with the customisation; a later installation on the earlier server dropped the profile.
 
-Not tried yet: Intune and a real domain GPO (the template loaded in the Group Policy editor), the app's read-only server field on a PC with the policy.
+- App with the Server policy (PC-LABORATORIO, user session): Settings showed the policy's server in a field that cannot be changed (field and Save dimmed, also the server of a customised installer) with "The server is set by your organisation's policies"; a reinstallation with another `--server` ended up on the policy's server as soon as the service started.
+
+Not tried yet: Intune and a real domain GPO (the template loaded in the Group Policy editor).

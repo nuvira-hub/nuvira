@@ -157,6 +157,8 @@ button:hover { background: var(--hover); }
 button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
 button.primary:hover { filter: brightness(1.08); }
 button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+/* Fixed by the organisation's policies or by a customised installer, or busy. */
+input:disabled, select:disabled, textarea:disabled, button:disabled { opacity: .5; pointer-events: none; }
 .icon-btn { width: 34px; height: 34px; padding: 0; display: inline-grid; place-items: center; border-color: transparent; background: transparent; color: var(--muted); }
 .icon-btn:hover { color: var(--text); }
 .icon-btn.done { color: var(--ok); }
