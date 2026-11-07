@@ -1347,6 +1347,12 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
         })
         .await
         .map_err(|e| e.to_string())?;
+        // macOS opened System Settings at Screen Recording but cannot bring it in
+        // front of this window (apps no longer activate others): out of the way.
+        #[cfg(target_os = "macos")]
+        if result.as_ref().is_err_and(|e| *e == t("install.screen_permission_mac")) {
+            let _ = app.hide();
+        }
         // The service's agent is running with the same ID: the app's own stops now,
         // not after the printer's administrator prompt (meanwhile the two would take
         // the registration on the server from each other).
