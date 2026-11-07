@@ -369,35 +369,70 @@ fn entries_json(entries: &[FsEntry]) -> Value {
     )
 }
 
+/// Linux and macOS: the home folder, its Desktop, Documents and Downloads, the
+/// disks of /Volumes (macOS) and /.
+#[cfg(not(windows))]
+fn unix_roots() -> Vec<FsEntry> {
+    let folder = |name: String, path: PathBuf| FsEntry {
+        name,
+        path: path.to_string_lossy().into(),
+        dir: true,
+        ..Default::default()
+    };
+    let mut entries = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        if let Some(name) = home.file_name() {
+            entries.push(folder(name.to_string_lossy().into(), home.clone()));
+        }
+        for name in ["Desktop", "Documents", "Downloads"] {
+            let p = home.join(name);
+            if p.is_dir() {
+                entries.push(folder(name.into(), p));
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    for volume in std::fs::read_dir("/Volumes").into_iter().flatten().flatten() {
+        entries.push(folder(volume.file_name().to_string_lossy().into(), volume.path()));
+    }
+    entries.push(folder("/".into(), PathBuf::from("/")));
+    entries
+}
+
 /// This PC: "" = known folders and drives, otherwise the folder, folders first.
 fn list_local(path: &str) -> Result<Value> {
     let mut entries = Vec::new();
     if path.is_empty() {
-        if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
-            for name in ["Desktop", "Documents", "Downloads"] {
-                let p = home.join(name);
-                if p.is_dir() {
+        #[cfg(not(windows))]
+        return Ok(entries_json(&unix_roots()));
+        #[cfg(windows)]
+        {
+            if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+                for name in ["Desktop", "Documents", "Downloads"] {
+                    let p = home.join(name);
+                    if p.is_dir() {
+                        entries.push(FsEntry {
+                            name: name.into(),
+                            path: p.to_string_lossy().into(),
+                            dir: true,
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            for letter in b'A'..=b'Z' {
+                let drive = format!("{}:\\", letter as char);
+                if Path::new(&drive).exists() {
                     entries.push(FsEntry {
-                        name: name.into(),
-                        path: p.to_string_lossy().into(),
+                        name: drive.trim_end_matches('\\').into(),
+                        path: drive,
                         dir: true,
                         ..Default::default()
                     });
                 }
             }
+            return Ok(entries_json(&entries));
         }
-        for letter in b'A'..=b'Z' {
-            let drive = format!("{}:\\", letter as char);
-            if Path::new(&drive).exists() {
-                entries.push(FsEntry {
-                    name: drive.trim_end_matches('\\').into(),
-                    path: drive,
-                    dir: true,
-                    ..Default::default()
-                });
-            }
-        }
-        return Ok(entries_json(&entries));
     }
     for item in std::fs::read_dir(path).with_context(|| format!("reading {path}"))?.flatten() {
         let Ok(meta) = item.metadata() else { continue };
