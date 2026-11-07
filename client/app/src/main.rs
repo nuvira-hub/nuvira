@@ -180,6 +180,10 @@ struct SessionUi {
     terminal: bool,
     /// Whoever controls this PC is recording the session: the strip says it.
     recording: bool,
+    /// What the session has ("input", "clipboard", "files", "terminal", "tunnel",
+    /// "print") and what the person here switched off of it, from the strip.
+    offered: Vec<String>,
+    off: Vec<String>,
 }
 
 /// Settings saved in `app.json` in the data folder.
@@ -621,7 +625,15 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
             }
         }),
         AgentEvent::SessionStarted { viewer_id, viewer_name, direct, terminal } => state.update(app, |ui| {
-            ui.session = Some(SessionUi { viewer_id, viewer_name, direct, terminal, recording: false });
+            ui.session = Some(SessionUi {
+                viewer_id,
+                viewer_name,
+                direct,
+                terminal,
+                recording: false,
+                offered: Vec::new(),
+                off: Vec::new(),
+            });
             ui.chat.clear();
         }),
         AgentEvent::FileReceived { name, path } => {
@@ -646,6 +658,12 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                 bring_to_front(app);
             }
         }
+        AgentEvent::Permissions { offered, off } => state.update(app, |ui| {
+            if let Some(session) = ui.session.as_mut() {
+                session.offered = offered;
+                session.off = off;
+            }
+        }),
         AgentEvent::Rules { recording_required } => state.update(app, |ui| ui.recording_required = recording_required),
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
             ui.session = None;
@@ -893,6 +911,13 @@ fn send_chat(app: AppHandle, state: State<NuviraApp>, text: String) {
 #[tauri::command]
 fn end_session(state: State<NuviraApp>) {
     state.send(AgentCommand::EndSession);
+}
+
+/// Switches something off (or back on) for the session in progress, from the strip.
+#[tauri::command]
+fn switch_permission(state: State<NuviraApp>, name: String, on: bool) {
+    info!(name, on, "switched from the strip");
+    state.send(AgentCommand::Switch { name, on });
 }
 
 /// Opens the session window towards another device (`nuvira-viewer` process).
@@ -1220,7 +1245,10 @@ fn main() {
             address_book::address_book_two_factor_reset,
             address_book::address_book_policy,
             address_book::address_book_save_policy,
+            address_book::address_book_anonymous_limits,
+            address_book::address_book_save_anonymous_limits,
             end_session,
+            switch_permission,
             connect,
             open_source,
             open_terms,

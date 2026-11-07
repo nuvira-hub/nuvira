@@ -17,12 +17,14 @@ use tracing::{info, warn};
 const CHUNK: usize = 16 * 1024;
 
 /// Serves a terminal stream. `refused` is the reason ("@key") when terminals are not
-/// allowed: the viewer gets it in `exit` without a shell starting.
+/// allowed: the viewer gets it in `exit` without a shell starting. When `stop` ends
+/// (the person at the PC switched terminals off) the shell is ended.
 pub async fn serve(
     mut tx: FramedSend,
     mut rx: FramedRecv,
     size: TerminalSize,
     refused: Option<&'static str>,
+    stop: impl std::future::Future<Output = ()>,
 ) -> Result<()> {
     if let Some(reason) = refused {
         return exit(&mut tx, 0, reason).await;
@@ -77,9 +79,15 @@ pub async fn serve(
         })?;
     }
 
+    tokio::pin!(stop);
     let result = async {
         loop {
             tokio::select! {
+                () = &mut stop => {
+                    info!("terminal ended: switched off by the person at the PC");
+                    process.kill();
+                    return exit(&mut tx, 0, "@agent.terminal_switched_off").await;
+                }
                 msg = rx.recv::<TerminalMessage>() => match msg {
                     Ok(Some(TerminalMessage { msg: Some(Msg::Data(data)) })) => {
                         let _ = in_tx.send(data);

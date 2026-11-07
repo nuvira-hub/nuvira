@@ -28,6 +28,8 @@ pub struct AccountUi {
     pub role: String,
     /// Two-factor authentication on (NuviraHub Pro).
     pub two_factor: bool,
+    /// What the account's sessions may not do (NuviraHub Pro, "pro.limits").
+    pub limits: PolicyUi,
 }
 
 impl From<pb::Account> for AccountUi {
@@ -40,15 +42,19 @@ impl From<pb::Account> for AccountUi {
         } else {
             "technician".into()
         };
-        Self { id: a.id, username: a.username, admin: a.admin, role, two_factor: a.two_factor }
+        let limits = a.limits.unwrap_or_default().into();
+        Self { id: a.id, username: a.username, admin: a.admin, role, two_factor: a.two_factor, limits }
     }
 }
 
-/// Member of a shared book with its level ("view", "edit", "manage").
+/// Member of a shared book with its level ("view", "edit", "manage") and what its
+/// sessions with the book's computers may not do (absent: unchanged when saving).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberUi {
     pub account_id: i64,
     pub level: String,
+    #[serde(default)]
+    pub limits: Option<PolicyUi>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -304,7 +310,7 @@ fn book_ui(b: pb::Book) -> BookUi {
         members: b
             .members
             .into_iter()
-            .map(|m| MemberUi { account_id: m.account_id, level: m.level })
+            .map(|m| MemberUi { account_id: m.account_id, level: m.level, limits: m.limits.map(Into::into) })
             .collect(),
         entries: b.entries.into_iter().map(Into::into).collect(),
     }
@@ -519,9 +525,11 @@ pub async fn address_book_save_account(
     username: String,
     password: String,
     role: String,
+    limits: Option<PolicyUi>,
 ) -> Result<(), String> {
     let admin = role == "admin";
-    call(&app, Call::PutAccount(pb::PutAccount { id, username, password, admin, role })).await?;
+    let limits = limits.map(Into::into);
+    call(&app, Call::PutAccount(pb::PutAccount { id, username, password, admin, role, limits })).await?;
     Ok(())
 }
 
@@ -539,28 +547,30 @@ pub async fn address_book_save_book(
     members: Vec<MemberUi>,
 ) -> Result<(), String> {
     let member_ids = members.iter().map(|m| m.account_id).collect();
-    let members =
-        members.into_iter().map(|m| pb::BookMember { account_id: m.account_id, level: m.level }).collect();
+    let members = members
+        .into_iter()
+        .map(|m| pb::BookMember { account_id: m.account_id, level: m.level, limits: m.limits.map(Into::into) })
+        .collect();
     call(&app, Call::PutBook(pb::PutBook { id, name, member_ids, members })).await?;
     refresh(&app).await
 }
 
-/// Rules of the server for all its devices.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Rules of the server for all its devices, and limits of single sessions (of an
+/// account, of a member of a book, without an account): same fields.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PolicyUi {
     pub confirm_always: bool,
     pub no_files: bool,
     pub no_clipboard: bool,
-    #[serde(default)]
     pub no_privacy: bool,
-    #[serde(default)]
     pub no_terminal: bool,
-    #[serde(default)]
     pub no_tunnel: bool,
-    #[serde(default)]
     pub no_print: bool,
-    #[serde(default)]
     pub record_always: bool,
+    pub no_input: bool,
+    pub no_restart: bool,
+    pub no_record: bool,
 }
 
 impl From<pb::Policy> for PolicyUi {
@@ -574,6 +584,27 @@ impl From<pb::Policy> for PolicyUi {
             no_tunnel: p.no_tunnel,
             no_print: p.no_print,
             record_always: p.record_always,
+            no_input: p.no_input,
+            no_restart: p.no_restart,
+            no_record: p.no_record,
+        }
+    }
+}
+
+impl From<PolicyUi> for pb::Policy {
+    fn from(p: PolicyUi) -> Self {
+        Self {
+            confirm_always: p.confirm_always,
+            no_files: p.no_files,
+            no_clipboard: p.no_clipboard,
+            no_privacy: p.no_privacy,
+            no_terminal: p.no_terminal,
+            no_tunnel: p.no_tunnel,
+            no_print: p.no_print,
+            record_always: p.record_always,
+            no_input: p.no_input,
+            no_restart: p.no_restart,
+            no_record: p.no_record,
         }
     }
 }
@@ -589,17 +620,25 @@ pub async fn address_book_policy(app: AppHandle) -> Result<PolicyUi, String> {
 /// Administrators only; the server sends the new rules to every device connected.
 #[tauri::command]
 pub async fn address_book_save_policy(app: AppHandle, policy: PolicyUi) -> Result<PolicyUi, String> {
-    let policy = pb::Policy {
-        confirm_always: policy.confirm_always,
-        no_files: policy.no_files,
-        no_clipboard: policy.no_clipboard,
-        no_privacy: policy.no_privacy,
-        no_terminal: policy.no_terminal,
-        no_tunnel: policy.no_tunnel,
-        no_print: policy.no_print,
-        record_always: policy.record_always,
-    };
-    match call(&app, Call::PutPolicy(policy)).await? {
+    match call(&app, Call::PutPolicy(policy.into())).await? {
+        Some(ApiResult::Policy(policy)) => Ok(policy.into()),
+        _ => Err(t("err.unexpected")),
+    }
+}
+
+/// Limits of the sessions started without a signed-in account (NuviraHub Pro).
+#[tauri::command]
+pub async fn address_book_anonymous_limits(app: AppHandle) -> Result<PolicyUi, String> {
+    match call(&app, Call::GetAnonymousLimits(pb::GetAnonymousLimits {})).await? {
+        Some(ApiResult::Policy(policy)) => Ok(policy.into()),
+        _ => Err(t("err.unexpected")),
+    }
+}
+
+/// Administrators only.
+#[tauri::command]
+pub async fn address_book_save_anonymous_limits(app: AppHandle, limits: PolicyUi) -> Result<PolicyUi, String> {
+    match call(&app, Call::PutAnonymousLimits(limits.into())).await? {
         Some(ApiResult::Policy(policy)) => Ok(policy.into()),
         _ => Err(t("err.unexpected")),
     }

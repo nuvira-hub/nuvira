@@ -48,6 +48,7 @@ message ControlMessage {
     RestartState restart_state = 22;
     SetRecording set_recording = 23;
     RecordingState recording_state = 24;
+    Permissions permissions = 25;
   }
 }
 
@@ -308,6 +309,22 @@ message Hello {
   // The viewer records from the start and cannot stop; a viewer that does not
   // record is refused, and the session ends if the recording stops.
   bool recording_required = 15;
+}
+
+// From the agent, after AuthResult and whenever it changes: what the viewer may do
+// now, after the server's rules, the limits of this session and what the person at
+// the PC switched off (and back on) during it. Older agents never send it.
+message Permissions {
+  // Keyboard and mouse (off: the session only shows the screen).
+  bool input = 1;
+  bool clipboard = 2;
+  // Sending files and the file manager.
+  bool files = 3;
+  bool terminal = 4;
+  bool tunnel = 5;
+  bool print = 6;
+  // What the person at the PC switched off themselves (the rest is by the rules).
+  repeated string switched_off = 7;
 }
 
 // First message of every bidirectional stream the viewer opens after the control

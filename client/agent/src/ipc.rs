@@ -94,6 +94,7 @@ struct Snapshot {
     incoming: Option<AgentEvent>,
     support: Option<AgentEvent>,
     recording: Option<AgentEvent>,
+    permissions: Option<AgentEvent>,
     rules: Option<AgentEvent>,
 }
 
@@ -114,6 +115,7 @@ impl Snapshot {
             AgentEvent::SessionEnded { .. } => {
                 self.session = None;
                 self.recording = None;
+                self.permissions = None;
                 return;
             }
             AgentEvent::IncomingClosed { .. } => {
@@ -124,13 +126,23 @@ impl Snapshot {
             AgentEvent::Chat { .. } | AgentEvent::FileReceived { .. } => return,
             // Repeated with the session (an app opened during it still shows the notice).
             AgentEvent::Recording { .. } => &mut self.recording,
+            AgentEvent::Permissions { .. } => &mut self.permissions,
             AgentEvent::Rules { .. } => &mut self.rules,
         };
         *slot = Some(event.clone());
     }
 
     fn events(&self) -> impl Iterator<Item = &AgentEvent> {
-        [&self.status, &self.rules, &self.password, &self.session, &self.recording, &self.incoming, &self.support].into_iter().flatten()
+        [
+            &self.status,
+            &self.rules,
+            &self.password,
+            &self.session,
+            &self.recording,
+            &self.permissions,
+            &self.incoming,
+            &self.support,
+        ].into_iter().flatten()
     }
 
     /// Nobody can confirm the pending request any more: it is rejected.

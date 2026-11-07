@@ -16,6 +16,7 @@ mod pipeline;
 mod printer;
 mod pty;
 mod restart;
+mod switches;
 mod terminal;
 mod tunnel;
 
@@ -174,6 +175,13 @@ pub enum AgentEvent {
     Recording {
         on: bool,
     },
+    /// What the session in progress has (`offered`) and what the person at the PC
+    /// switched off of it (`off`), by name: "input", "clipboard", "files",
+    /// "terminal", "tunnel", "print". At the start and at every change.
+    Permissions {
+        offered: Vec<String>,
+        off: Vec<String>,
+    },
     /// Rules of the server that the app shows (at the registration and when they change).
     Rules {
         recording_required: bool,
@@ -229,6 +237,12 @@ pub enum AgentCommand {
     /// (the app shows a notice while it happens).
     AllowRecording {
         allow: bool,
+    },
+    /// Switches something off (or back on) for the session in progress only, from the
+    /// strip of the app: `name` as in [`AgentEvent::Permissions`].
+    Switch {
+        name: String,
+        on: bool,
     },
 }
 
@@ -374,6 +388,7 @@ pub async fn serve_via_server(
         features: Mutex::new(Vec::new()),
         unattended: opts.unattended,
         restarting: AtomicBool::new(false),
+        switches: Mutex::new(None),
     });
     let current = ctx.password.lock().expect("password").clone();
     let _ = ctx.events.send(AgentEvent::Password { password: current });
@@ -493,6 +508,8 @@ struct SessionContext {
     /// A restart of the computer is under way: new sessions are refused until the
     /// agent ends, so that a viewer waiting to reconnect finds the computer restarted.
     restarting: AtomicBool,
+    /// Switches of the session in progress ([`AgentCommand::Switch`]).
+    switches: Mutex<Option<Arc<switches::Switches>>>,
 }
 
 impl SessionContext {
@@ -529,6 +546,25 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
 struct Request {
     viewer_id: String,
     viewer_name: String,
+    /// What this session may not do on top of the server's rules (Incoming.limits).
+    limits: nuvira_proto::v1::Policy,
+}
+
+/// The rules and the limits of a session together: every limit of either holds.
+fn merge_limits(a: nuvira_proto::v1::Policy, b: &nuvira_proto::v1::Policy) -> nuvira_proto::v1::Policy {
+    nuvira_proto::v1::Policy {
+        confirm_always: a.confirm_always || b.confirm_always,
+        no_files: a.no_files || b.no_files,
+        no_clipboard: a.no_clipboard || b.no_clipboard,
+        no_privacy: a.no_privacy || b.no_privacy,
+        no_terminal: a.no_terminal || b.no_terminal,
+        no_tunnel: a.no_tunnel || b.no_tunnel,
+        no_print: a.no_print || b.no_print,
+        record_always: a.record_always || b.record_always,
+        no_input: a.no_input || b.no_input,
+        no_restart: a.no_restart || b.no_restart,
+        no_record: a.no_record || b.no_record,
+    }
 }
 
 async fn signal_loop(
@@ -597,8 +633,15 @@ async fn signal_loop(
                     None
                 }
                 Some(server_message::Msg::Incoming(inc)) => {
-                    let request = Request { viewer_id: inc.viewer_id, viewer_name: inc.viewer_name };
+                    let request = Request {
+                        viewer_id: inc.viewer_id,
+                        viewer_name: inc.viewer_name,
+                        limits: inc.limits.unwrap_or_default(),
+                    };
                     info!("connection request from {} ({})", request.viewer_name, request.viewer_id);
+                    if request.limits != Default::default() {
+                        info!(limits = ?request.limits, "limits of this session");
+                    }
                     let retry = ctx
                         .waiting
                         .lock()
@@ -635,7 +678,11 @@ async fn signal_loop(
                             .context("invalid viewer key")?,
                         role: nuvira_transport::p2p::Role::Agent,
                     };
-                    let request = request.unwrap_or(Request { viewer_id: route.peer_id, viewer_name: String::new() });
+                    let Some(request) = request else {
+                        // Only routes of requests accepted here: their limits are known.
+                        warn!("route of a session not accepted here: ignored");
+                        continue;
+                    };
                     ctx.busy.fetch_add(1, Ordering::Relaxed);
                     let (ctx, identity) = (ctx.clone(), identity.clone());
                     let session_id = route.session_id.clone();
@@ -759,6 +806,16 @@ async fn signal_loop(
                     }
                     None
                 }
+                Some(AgentCommand::Switch { name, on }) => {
+                    let switches = ctx.switches.lock().expect("switches").clone();
+                    match (switches, switches::bit(&name)) {
+                        (Some(switches), Some(bit)) if switches.set(bit, on) => {
+                            info!(name, on, "switched by the person at the PC for this session");
+                        }
+                        _ => warn!(name, "nothing to switch in this session"),
+                    }
+                    None
+                }
                 Some(AgentCommand::CancelSupport) => {
                     *ctx.support_ticket.lock().expect("support") = None;
                     info!("support request withdrawn");
@@ -866,7 +923,7 @@ impl Gate<'_> {
             return Err("@agent.restarting".into());
         }
         let given = auth.password.as_str();
-        let confirm_always = ctx.policy.lock().expect("policy").confirm_always;
+        let confirm_always = self.policy().confirm_always;
         let set = |access: &'static str| *self.access.lock().expect("access") = access;
         // The ticket of this device's support request, used once: it replaces the
         // password, never the consent of the person at the PC.
@@ -937,6 +994,11 @@ impl Gate<'_> {
         }
     }
 
+    /// Rules of the server now, with the limits of this session.
+    fn policy(&self) -> nuvira_proto::v1::Policy {
+        merge_limits(*self.ctx.policy.lock().expect("policy"), &self.request.limits)
+    }
+
     fn started(&self) -> Result<(), String> {
         let _ = self.ctx.events.send(AgentEvent::SessionStarted {
             viewer_id: self.request.viewer_id.clone(),
@@ -958,8 +1020,10 @@ async fn session(
 ) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
-    // Rules of the server at the start of the session (none without a server).
-    let policy = gate.map(|g| *g.ctx.policy.lock().expect("policy")).unwrap_or_default();
+    // Rules of the server at the start of the session, with its limits (none without a server).
+    let policy = gate.map(Gate::policy).unwrap_or_default();
+    // What the person at the PC switches off during the session.
+    let (switches, off) = switches::channel();
 
     let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = ctrl_rx.recv().await? else {
         bail!("the viewer did not introduce itself");
@@ -977,27 +1041,33 @@ async fn session(
         gate.terminal_only.store(terminal_only, Ordering::Relaxed);
     }
     // Why a terminal is refused, if it is: checked at every terminal opened.
+    let terminal_off = off.clone();
     let terminal_refused = move || -> Option<&'static str> {
         if config.view_only || config.synthetic.is_some() {
             Some("@agent.terminal_unavailable")
-        } else if gate.is_some_and(|g| g.ctx.policy.lock().expect("policy").no_terminal) {
+        } else if gate.is_some_and(|g| g.policy().no_terminal) {
             Some("@agent.terminal_disabled")
         } else if gate.is_some_and(|g| !g.ctx.allow_terminal.load(Ordering::Relaxed)) {
             Some("@agent.terminal_not_allowed")
+        } else if !terminal_off.is_on(switches::TERMINAL) {
+            Some("@agent.terminal_switched_off")
         } else {
             None
         }
     };
     // Tunnels: only with a Pro server that offers them (never in a LAN session).
+    let tunnel_off = off.clone();
     let tunnel_refused = move || -> Option<&'static str> {
         let Some(g) = gate else { return Some("@agent.tunnel_unavailable") };
         let licensed = g.ctx.features.lock().expect("features").iter().any(|f| f == "pro.tunnel");
         if config.view_only || config.synthetic.is_some() || !licensed {
             Some("@agent.tunnel_unavailable")
-        } else if g.ctx.policy.lock().expect("policy").no_tunnel {
+        } else if g.policy().no_tunnel {
             Some("@agent.tunnel_disabled")
         } else if !g.ctx.allow_tunnel.load(Ordering::Relaxed) {
             Some("@agent.tunnel_not_allowed")
+        } else if !tunnel_off.is_on(switches::TUNNEL) {
+            Some("@agent.tunnel_switched_off")
         } else {
             None
         }
@@ -1006,23 +1076,29 @@ async fn session(
     let privacy_allowed = || gate.is_none_or(|g| g.ctx.allow_privacy.load(Ordering::Relaxed));
     // Restart of the computer: only where the agent comes back by itself afterwards.
     let restart_available = gate.is_some_and(|g| g.ctx.unattended)
+        && !policy.no_restart
         && !config.view_only
         && config.synthetic.is_none()
         && restart::available();
     // Remote printing, to a viewer that prints: allowed by the person at the PC (always
     // without the app: LAN tests) and by the server's rules, during the session only.
-    let print_allowed = || gate.is_none_or(|g| g.ctx.allow_print.load(Ordering::Relaxed));
+    let print_off = off.clone();
+    let print_allowed = move || {
+        print_off.is_on(switches::PRINT) && gate.is_none_or(|g| g.ctx.allow_print.load(Ordering::Relaxed))
+    };
     // Recording of the session by the viewer, allowed by the person at the PC (always
     // without the app: LAN tests), who is told when it starts.
     // The server's rules come first (every session recorded, the person is told anyway).
-    let recording_allowed =
-        || recording_required || gate.is_none_or(|g| g.ctx.allow_recording.load(Ordering::Relaxed));
+    let recording_allowed = || {
+        recording_required
+            || (!policy.no_record && gate.is_none_or(|g| g.ctx.allow_recording.load(Ordering::Relaxed)))
+    };
     let printer = match hello.print
         && !terminal_only
         && !config.view_only
         && config.synthetic.is_none()
         && !policy.no_print
-        && print_allowed()
+        && gate.is_none_or(|g| g.ctx.allow_print.load(Ordering::Relaxed))
     {
         true => printer::listen(),
         false => None,
@@ -1046,6 +1122,21 @@ async fn session(
         recording_required,
         ..local_hello()
     };
+    // What the person at the PC can switch off: what this session has.
+    let mut offered = 0;
+    for (bit, has) in [
+        (switches::INPUT, !terminal_only && !config.view_only && config.synthetic.is_none() && !policy.no_input),
+        (switches::CLIPBOARD, !terminal_only && !config.view_only && config.synthetic.is_none() && !policy.no_clipboard),
+        (switches::FILES, !terminal_only && hello.file_manager),
+        (switches::TERMINAL, hello.terminal),
+        (switches::TUNNEL, hello.tunnel),
+        (switches::PRINT, hello.print),
+    ] {
+        if has {
+            offered |= bit;
+        }
+    }
+    switches.set_offered(offered);
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
     if let Some(gate) = gate {
         let given = match ctrl_rx.recv::<ControlMessage>().await? {
@@ -1075,11 +1166,25 @@ async fn session(
             tokio::time::sleep(Duration::from_millis(pause)).await;
             bail!("{reason}");
         }
+        *gate.ctx.switches.lock().expect("switches") = Some(switches.clone());
     }
+    // Cleared at the end, however the session ends.
+    let _clear = ClearSwitches(gate.map(|g| g.ctx));
+    let tell_permissions = |off: u8| {
+        if let Some(g) = gate {
+            let _ = g.ctx.events.send(AgentEvent::Permissions {
+                offered: switches::names(offered),
+                off: switches::names(off & offered),
+            });
+        }
+        control(Msg::Permissions(permissions(offered, off)))
+    };
 
     // Terminal only: no capture, no video, nothing on the screen.
     if terminal_only {
-        return terminal_session(&conn, ctrl_tx, ctrl_rx, gate, (&terminal_refused, &tunnel_refused)).await;
+        ctrl_tx.send(&tell_permissions(0)).await?;
+        let refused = (&terminal_refused, &tunnel_refused);
+        return terminal_session(&conn, ctrl_tx, ctrl_rx, gate, refused, off, &tell_permissions).await;
     }
 
     let keyframe = Arc::new(AtomicBool::new(true));
@@ -1130,6 +1235,8 @@ async fn session(
     if let Some(msg) = displays_message(config, &display) {
         ctrl_tx.send(&msg).await?;
     }
+    // After the video format: older viewers want it right after AuthResult.
+    ctrl_tx.send(&tell_permissions(off.mask())).await?;
     // Capture in progress: the control channel replaces it when the screen changes.
     let pipeline = std::sync::Mutex::new(Some(first));
     let (screen_tx, mut screen_rx) = tokio::sync::watch::channel(screen_rect(&display));
@@ -1146,7 +1253,7 @@ async fn session(
     let (fs_tx, mut fs_rx) = mpsc::unbounded_channel::<nuvira_proto::v1::FsResponse>();
     // Shared clipboard: what is copied here goes to the viewer, what is copied there arrives here.
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nuvira_clipboard::Content>();
-    let clipboard = if config.view_only || config.synthetic.is_some() || policy.no_clipboard {
+    let clipboard = if offered & switches::CLIPBOARD == 0 {
         None
     } else {
         match nuvira_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
@@ -1228,13 +1335,21 @@ async fn session(
                 let _ = g.ctx.events.send(AgentEvent::Recording { on });
             }
         };
+        let mut changes = off.clone();
         loop {
             let msg = tokio::select! {
                 msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
                     Some(msg) => msg,
                     None => return anyhow::Ok(()),
                 },
+                now = changes.changed() => {
+                    ctrl_tx.send(&tell_permissions(now)).await?;
+                    continue;
+                }
                 Some(content) = clip_rx.recv() => {
+                    if !off.is_on(switches::CLIPBOARD) {
+                        continue;
+                    }
                     match content {
                         nuvira_clipboard::Content::Text(text) => {
                             ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text }))).await?;
@@ -1323,9 +1438,14 @@ async fn session(
                 }
                 Some(Msg::FsRequest(request)) => {
                     let fs_tx = fs_tx.clone();
-                    if config.view_only || config.synthetic.is_some() || policy.no_files {
-                        let key =
-                            if policy.no_files { "@agent.files_disabled" } else { "@agent.files_view_only" };
+                    if config.view_only || config.synthetic.is_some() || policy.no_files || !off.is_on(switches::FILES) {
+                        let key = if policy.no_files {
+                            "@agent.files_disabled"
+                        } else if !off.is_on(switches::FILES) {
+                            "@agent.files_switched_off"
+                        } else {
+                            "@agent.files_view_only"
+                        };
                         let error = key.to_string();
                         let _ = fs_tx.send(nuvira_proto::v1::FsResponse {
                             id: request.id,
@@ -1334,9 +1454,17 @@ async fn session(
                         });
                         continue;
                     }
-                    let conn = conn.clone();
+                    let (conn, off) = (conn.clone(), off.clone());
                     tokio::spawn(async move {
-                        let _ = fs_tx.send(fsops::handle(request.id, request.op, conn).await);
+                        let id = request.id;
+                        let answer = switches::until_off(off, switches::FILES, fsops::handle(id, request.op, conn))
+                            .await
+                            .unwrap_or_else(|| nuvira_proto::v1::FsResponse {
+                                id,
+                                error: "@agent.files_switched_off".into(),
+                                ..Default::default()
+                            });
+                        let _ = fs_tx.send(answer);
                     });
                 }
                 Some(Msg::Feedback(fb)) => {
@@ -1423,7 +1551,7 @@ async fn session(
                     let _ = screen_tx.send(screen_rect(&display));
                 }
                 Some(Msg::Clipboard(clip)) => {
-                    if let Some(clipboard) = &clipboard {
+                    if let Some(clipboard) = clipboard.as_ref().filter(|_| off.is_on(switches::CLIPBOARD)) {
                         let _ = clipboard.send(nuvira_clipboard::Content::Text(clip.text));
                     }
                 }
@@ -1535,12 +1663,14 @@ async fn session(
 
     let input = async {
         let mut rx = FramedRecv::new(conn.accept_uni().await?);
-        let injector = if config.view_only || config.synthetic.is_some() {
-            None
-        } else {
-            let screen = *screen_rx.borrow_and_update();
-            Some(input_thread(nuvira_input::open(screen)?)?)
+        // Keyboard and mouse: while the session has them and they are not switched off.
+        let open_injector = |screen| -> Result<_> { input_thread(nuvira_input::open(screen)?) };
+        // Switched off before the viewer's first event (the stream shows only then): none.
+        let mut injector = match offered & switches::INPUT != 0 && off.is_on(switches::INPUT) {
+            true => Some(open_injector(*screen_rx.borrow_and_update())?),
+            false => None,
         };
+        let mut input_changes = off.clone();
         let closed = || anyhow!("input thread ended");
         loop {
             tokio::select! {
@@ -1550,6 +1680,20 @@ async fn session(
                     },
                     None => break,
                 },
+                now = input_changes.changed(), if offered & switches::INPUT != 0 => {
+                    match (now & switches::INPUT == 0, injector.is_some()) {
+                        // Ending the thread releases the keys still pressed.
+                        (false, true) => {
+                            injector = None;
+                            info!("keyboard and mouse switched off by the person at the PC");
+                        }
+                        (true, false) => {
+                            injector = Some(open_injector(*screen_rx.borrow_and_update())?);
+                            info!("keyboard and mouse switched on again by the person at the PC");
+                        }
+                        _ => {}
+                    }
+                }
                 Ok(()) = screen_rx.changed() => if let Some(injector) = &injector {
                     let screen = *screen_rx.borrow_and_update();
                     injector.send(InputCmd::Screen(screen)).map_err(|_| closed())?;
@@ -1558,13 +1702,14 @@ async fn session(
                 // or an image copied to the clipboard.
                 stream = conn.accept_uni() => {
                     let mut stream = stream?;
-                    if injector.is_none() {
+                    if config.view_only || config.synthetic.is_some() {
                         // View only: no files.
                         let _ = stream.stop(0u32.into());
                         continue;
                     }
                     let (file_tx, events, clipboard) = (file_tx.clone(), events.clone(), clipboard_in.clone());
                     let no_files = policy.no_files;
+                    let off = off.clone();
                     tokio::spawn(async move {
                         let mut rx = FramedRecv::new(stream);
                         let first = match rx.recv::<nuvira_proto::v1::FileChunk>().await {
@@ -1573,19 +1718,35 @@ async fn session(
                         };
                         // Rules of the server: no files (images of the clipboard are refused
                         // by having no clipboard, see above).
-                        if no_files && !first.clipboard_image {
+                        let switched_off = !off.is_on(switches::FILES);
+                        if (no_files || switched_off) && !first.clipboard_image {
+                            let message = if no_files { "@agent.files_disabled" } else { "@agent.files_switched_off" };
                             let _ = file_tx.send(nuvira_proto::v1::FileReceived {
                                 name: first.name,
                                 transfer_id: first.transfer_id,
-                                message: "@agent.files_disabled".into(),
+                                message: message.into(),
                                 ..Default::default()
                             });
                             return;
                         }
+                        if first.clipboard_image && !off.is_on(switches::CLIPBOARD) {
+                            return;
+                        }
+                        // Switched off during the transfer: it stops there.
+                        let stopped = |name: String, transfer_id: u32| nuvira_proto::v1::FileReceived {
+                            name,
+                            transfer_id,
+                            message: "@agent.files_switched_off".into(),
+                            ..Default::default()
+                        };
                         // File manager: into the chosen folder, with resume.
                         if first.transfer_id != 0 {
                             let (name, transfer_id) = (first.name.clone(), first.transfer_id);
-                            let done = match fsops::receive(first, rx).await {
+                            let Some(received) = switches::until_off(off, switches::FILES, fsops::receive(first, rx)).await else {
+                                let _ = file_tx.send(stopped(name, transfer_id));
+                                return;
+                            };
+                            let done = match received {
                                 Ok(path) => nuvira_proto::v1::FileReceived {
                                     name,
                                     ok: true,
@@ -1610,7 +1771,12 @@ async fn session(
                             }
                             return;
                         }
-                        let done = match files::receive(first, rx).await {
+                        let name = first.name.clone();
+                        let Some(received) = switches::until_off(off, switches::FILES, files::receive(first, rx)).await else {
+                            let _ = file_tx.send(stopped(name, 0));
+                            return;
+                        };
+                        let done = match received {
                             Ok((name, path)) => {
                                 if let Some(events) = &events {
                                     let path = path.display().to_string();
@@ -1645,7 +1811,7 @@ async fn session(
         r = video => r.context("sending video"),
         r = control_loop => r.context("control channel"),
         r = input => r.context("input channel"),
-        r = accept_streams(&conn, (&terminal_refused, &tunnel_refused)) => r,
+        r = accept_streams(&conn, (&terminal_refused, &tunnel_refused), &off) => r,
         r = printing => r,
     };
     let last = pipeline.lock().expect("pipeline").take();
@@ -1665,8 +1831,11 @@ async fn terminal_session(
     mut ctrl_rx: FramedRecv,
     gate: Option<&Gate<'_>>,
     refused: Refusals<'_, impl Fn() -> Option<&'static str>, impl Fn() -> Option<&'static str>>,
+    off: switches::Off,
+    tell_permissions: &impl Fn(u8) -> ControlMessage,
 ) -> Result<()> {
     info!("terminal session (no desktop)");
+    let mut changes = off.clone();
     let (chat_tx, mut chat_rx) = mpsc::unbounded_channel::<String>();
     let events = gate.map(|g| {
         *g.ctx.chat.lock().expect("chat") = Some(chat_tx.clone());
@@ -1691,12 +1860,15 @@ async fn terminal_session(
                 Some(text) = chat_rx.recv() => {
                     ctrl_tx.send(&control(Msg::Chat(nuvira_proto::v1::Chat { text }))).await?;
                 }
+                now = changes.changed() => {
+                    ctrl_tx.send(&tell_permissions(now)).await?;
+                }
             }
         }
     };
     let result = tokio::select! {
         r = control => r.context("control channel"),
-        r = accept_streams(conn, refused) => r,
+        r = accept_streams(conn, refused, &off) => r,
     };
     if let Some(gate) = gate {
         *gate.ctx.chat.lock().expect("chat") = None;
@@ -1714,10 +1886,12 @@ type Refusals<'a, T, U> = (&'a T, &'a U);
 async fn accept_streams(
     conn: &Connection,
     (terminal_refused, tunnel_refused): Refusals<'_, impl Fn() -> Option<&'static str>, impl Fn() -> Option<&'static str>>,
+    off: &switches::Off,
 ) -> Result<()> {
     use nuvira_proto::v1::{StreamOpen, stream_open::Kind};
     while let Ok((send, mut recv)) = conn.accept_bi().await {
         let (terminal, tunnel) = (terminal_refused(), tunnel_refused());
+        let off = off.clone();
         tokio::spawn(async move {
             let open = match nuvira_transport::recv_one::<StreamOpen>(&mut recv).await {
                 Ok(Some(open)) => open,
@@ -1727,9 +1901,13 @@ async fn accept_streams(
             let result = match open.kind {
                 Some(Kind::Terminal(t)) => {
                     let size = t.size.unwrap_or_default();
-                    terminal::serve(FramedSend::new(send), FramedRecv::new(recv), size, terminal).await
+                    let stop = off.switched_off(switches::TERMINAL);
+                    terminal::serve(FramedSend::new(send), FramedRecv::new(recv), size, terminal, stop).await
                 }
-                Some(Kind::Tunnel(t)) => tunnel::serve(send, recv, t, tunnel).await,
+                // Switched off: the connection is cut.
+                Some(Kind::Tunnel(t)) => {
+                    switches::until_off(off, switches::TUNNEL, tunnel::serve(send, recv, t, tunnel)).await.unwrap_or(Ok(()))
+                }
                 None => Ok(()),
             };
             if let Err(e) = result {
@@ -1880,6 +2058,31 @@ fn input_thread(
 
 fn control(msg: Msg) -> ControlMessage {
     ControlMessage { msg: Some(msg) }
+}
+
+/// What the viewer may do: what the session has, less what is switched off.
+fn permissions(offered: u8, off: u8) -> nuvira_proto::v1::Permissions {
+    let on = |bit: u8| offered & bit != 0 && off & bit == 0;
+    nuvira_proto::v1::Permissions {
+        input: on(switches::INPUT),
+        clipboard: on(switches::CLIPBOARD),
+        files: on(switches::FILES),
+        terminal: on(switches::TERMINAL),
+        tunnel: on(switches::TUNNEL),
+        print: on(switches::PRINT),
+        switched_off: switches::names(off & offered),
+    }
+}
+
+/// At the end of a session its switches are gone: the app's commands find nothing.
+struct ClearSwitches<'a>(Option<&'a SessionContext>);
+
+impl Drop for ClearSwitches<'_> {
+    fn drop(&mut self) {
+        if let Some(ctx) = self.0 {
+            *ctx.switches.lock().expect("switches") = None;
+        }
+    }
 }
 
 fn local_hello() -> Hello {

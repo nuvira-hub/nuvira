@@ -147,6 +147,11 @@ struct Args {
     #[arg(long, value_name = "TEXT", hide = true)]
     terminal_type: Option<String>,
 
+    /// Automated tests: moves the remote mouse every second, between a quarter and three
+    /// quarters of the width of the screen, as the mouse over the window would.
+    #[arg(long, hide = true)]
+    input_test: bool,
+
     /// TCP tunnel through the session (NuviraHub Pro): LOCAL:HOST:PORT, e.g.
     /// 13389:192.168.1.20:3389 (LOCAL 0 = any free port); HOST must be in the
     /// remote computer's local network. Repeatable; also from the toolbar.
@@ -438,6 +443,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             args.agent.clone(),
         ),
         terminal_type: args.terminal_type.as_ref().map(|t| t.replace("\\n", "\r").into_bytes()),
+        input_test: args.input_test.then_some(0),
         terminal_log: args.terminal_log.as_ref().and_then(|p| match std::fs::File::create(p) {
             Ok(f) => Some(f),
             Err(e) => {
@@ -458,6 +464,8 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         best_rtt_us: u64::MAX,
         rtt_us: 0,
         pressed_keys: HashSet::new(),
+        input_blocked: false,
+        switched_off: Vec::new(),
         exit_reason: None,
         closed_message: None,
         restarting: None,
@@ -549,6 +557,11 @@ struct App {
     /// latencies (ms) of the frames shown since then.
     feedback_window: (Instant, Vec<u32>, Vec<u32>),
     view_only: bool,
+    /// Keyboard and mouse not allowed in this session (limits, or switched off by the
+    /// person at the remote computer): nothing is sent, whatever view_only says.
+    input_blocked: bool,
+    /// What the person at the remote computer switched off, as the agent last said.
+    switched_off: Vec<String>,
     /// Privacy mode on at the agent (as it last said).
     privacy: bool,
     /// `--privacy`: to turn on as soon as connected.
@@ -568,6 +581,8 @@ struct App {
     term_link: Option<UnboundedSender<net::TermCmd>>,
     /// `--terminal-type`: still to type in the first terminal.
     terminal_type: Option<Vec<u8>>,
+    /// `--input-test`: moves sent so far.
+    input_test: Option<u32>,
     /// `--terminal-log`.
     terminal_log: Option<std::fs::File>,
     /// Fit or real size, and the pan at real size.
@@ -597,7 +612,7 @@ struct App {
 
 impl App {
     fn send(&self, event: Event) {
-        if let (false, Some(input)) = (self.view_only, &self.input) {
+        if let (false, false, Some(input)) = (self.view_only, self.input_blocked, &self.input) {
             let _ = input.send(InputEvent { event: Some(event) });
         }
     }
@@ -906,8 +921,9 @@ impl App {
     fn update_toolbar_state(&self) {
         let (Some(toolbar), Some(window)) = (&self.toolbar, &self.window) else { return };
         toolbar.update(&format!(
-            "{{viewOnly:{},privacy:{},recording:{},recordingRequired:{},actualSize:{},fullscreen:{},quality:{}}}",
-            self.view_only,
+            "{{viewOnly:{},inputBlocked:{},privacy:{},recording:{},recordingRequired:{},actualSize:{},fullscreen:{},quality:{}}}",
+            self.view_only || self.input_blocked,
+            self.input_blocked,
             self.privacy,
             self.recording.on,
             self.recording.required,
@@ -1200,6 +1216,11 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::Clock { rtt_us, offset_us } => {
                 self.send_feedback();
+                if let Some(n) = self.input_test.as_mut() {
+                    *n += 1;
+                    let x = if *n % 2 == 0 { 0.25 } else { 0.75 };
+                    self.send(Event::MouseMove(MouseMove { x, y: 0.5 }));
+                }
                 self.rtt_us = rtt_us;
                 self.report.rtt_us.push(rtt_us.min(u32::MAX as u64) as u32);
                 // The measurement with the lowest RTT is the least disturbed by network queues.
@@ -1339,6 +1360,39 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                     None => {}
                 }
+            }
+            NetEvent::Permissions { input, files, terminal, tunnel, switched_off } => {
+                if !input && !self.input_blocked {
+                    // Whatever is pressed is released before sending stops.
+                    self.release_keys();
+                }
+                self.input_blocked = !input;
+                let names = |list: Vec<&String>| {
+                    list.iter().map(|n| t(&format!("perm.{n}"))).collect::<Vec<_>>().join(", ")
+                };
+                let off: Vec<&String> = switched_off.iter().filter(|n| !self.switched_off.contains(n)).collect();
+                let on: Vec<&String> = self.switched_off.iter().filter(|n| !switched_off.contains(n)).collect();
+                // What went off stays on screen; what came back only for a while.
+                let sticky = !off.is_empty();
+                let mut said = Vec::new();
+                if !off.is_empty() {
+                    let what = names(off);
+                    info!("switched off at the remote computer: {what}");
+                    said.push(tf("viewer.switched_off", &[("what", &what)]));
+                }
+                if !on.is_empty() {
+                    let what = names(on);
+                    info!("switched on again at the remote computer: {what}");
+                    said.push(tf("viewer.switched_on", &[("what", &what)]));
+                }
+                if !said.is_empty() {
+                    self.notice(&said.join(" · "), sticky);
+                }
+                self.switched_off = switched_off;
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&format!("{{fileManager:{files},terminal:{terminal},tunnel:{tunnel}}}"));
+                }
+                self.update_toolbar_state();
             }
             NetEvent::Privacy { on, error } => {
                 info!(on, error, "privacy mode");

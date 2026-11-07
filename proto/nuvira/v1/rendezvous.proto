@@ -72,6 +72,7 @@ message Register {
   string device_name = 2;
   string os = 3;
   string app_version = 4;
+  // 1; 2: as an agent it applies Incoming.limits.
   uint32 protocol_version = 5;
   // The device is not reachable: it receives no connection requests (viewer,
   // app using the address book). Several connections with the same key can
@@ -120,6 +121,12 @@ message Policy {
   // Every session is recorded by the viewer (NuviraHub Pro, recordings uploaded to
   // the server): the person at the PC is always told, and cannot refuse it.
   bool record_always = 8;
+  // No keyboard and mouse: the session only shows the screen.
+  bool no_input = 9;
+  // No restart of the computer from the session.
+  bool no_restart = 10;
+  // The viewer may not record the session (record_always wins over it).
+  bool no_record = 11;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +173,12 @@ message Incoming {
   string viewer_id = 2;
   string viewer_name = 3;
   bytes viewer_public_key = 4;
+  // What this session may not do, on top of the server's rules (NuviraHub Pro:
+  // permissions of the technician's account, of its membership in the books that
+  // hold the device, or of sessions without an account). Same meaning as Policy.
+  // Only agents registered with protocol_version 2 or later apply it: when there
+  // are limits, the server refuses the session to older ones.
+  Policy limits = 5;
 }
 
 message Accept {
@@ -253,8 +266,15 @@ message ApiRequest {
     // Customised installers (NuviraHub Pro): the customisation of a profile, by its
     // code; needs no sign-in (the services of the PCs installed with it ask).
     GetBranding get_branding = 29;
+    // Session permissions (NuviraHub Pro, feature "pro.limits"): the limits of the
+    // sessions started without a signed-in account; administrators change them.
+    // Answered with a Policy.
+    GetAnonymousLimits get_anonymous_limits = 30;
+    Policy put_anonymous_limits = 31;
   }
 }
+
+message GetAnonymousLimits {}
 
 // A device asks for support: it waits in the queue until a technician takes it.
 // The ticket is a random secret of the device's agent: the technician who takes
@@ -495,6 +515,9 @@ message Account {
   // "admin", "technician" (connects and works on the books it is a member of)
   // or "readonly" (connects only); admin is true for "admin".
   string role = 5;
+  // What the sessions of this account may not do (NuviraHub Pro, feature
+  // "pro.limits"; same meaning as Policy). Answered to administrators only.
+  Policy limits = 6;
 }
 
 message ChangePassword {
@@ -528,6 +551,9 @@ message Book {
 message BookMember {
   int64 account_id = 1;
   string level = 2;
+  // What the member's sessions with the devices of this book may not do (feature
+  // "pro.limits"). In PutBook: absent = unchanged; only administrators change it.
+  Policy limits = 3;
 }
 
 // Entry of a device. With id 0 PutEntry creates a new one.
@@ -572,6 +598,8 @@ message PutAccount {
   bool admin = 4;
   // "admin", "technician" or "readonly"; empty: from admin (admin or technician).
   string role = 5;
+  // Session permissions (feature "pro.limits"); absent = unchanged.
+  Policy limits = 6;
 }
 
 message DeleteAccount {

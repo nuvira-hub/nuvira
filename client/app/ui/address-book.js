@@ -10,8 +10,25 @@ let adminAccounts = [];
 let adminLoaded = false;
 let editingAccount = null;
 let editingBook = null;
+// Limits a session can have: field of the Policy and its label.
+const LIMITS = [
+  ["confirm_always", "admin.policy_confirm"],
+  ["no_input", "admin.policy_input"],
+  ["no_files", "admin.policy_files"],
+  ["no_clipboard", "admin.policy_clipboard"],
+  ["no_privacy", "admin.policy_privacy"],
+  ["no_terminal", "admin.policy_terminal"],
+  ["no_tunnel", "admin.policy_tunnel"],
+  ["no_print", "admin.policy_print"],
+  ["no_restart", "admin.policy_restart"],
+  ["no_record", "admin.policy_no_record"],
+  ["record_always", "admin.policy_record"],
+];
+// Whose permissions the panel shows: {kind: "account" | "member" | "anonymous", account, book}.
+let limitsTarget = null;
 
 function showMessage(id, text) {
+  $(id).classList.remove("ok");
   $(id).textContent = msg(text) ?? "";
   $(id).classList.toggle("hidden", !text);
 }
@@ -84,6 +101,8 @@ function renderAddressBook(state) {
   const pro = (state.features ?? []).includes("pro.address_book");
   // The rule "record every session" only with the recordings on the server.
   $("policy-record-row").classList.toggle("hidden", !(state.features ?? []).includes("pro.recording"));
+  // Permissions per account and per session (Pro).
+  $("limits-admin").classList.toggle("hidden", !limitsAvailable());
   // Single sign-on: "pro.sso=<provider name>".
   const sso = (state.features ?? []).find((f) => f.startsWith("pro.sso="))?.slice(8);
   $("login-sso").classList.toggle("hidden", !sso || Boolean(account));
@@ -485,6 +504,9 @@ function showPolicy(policy) {
   $("policy-terminal").checked = policy.no_terminal;
   $("policy-tunnel").checked = policy.no_tunnel;
   $("policy-print").checked = policy.no_print;
+  $("policy-input").checked = policy.no_input;
+  $("policy-restart").checked = policy.no_restart;
+  $("policy-no-record").checked = policy.no_record;
   $("policy-record").checked = policy.record_always;
 }
 
@@ -498,6 +520,9 @@ $("policy-form").addEventListener("submit", async (e) => {
     no_terminal: $("policy-terminal").checked,
     no_tunnel: $("policy-tunnel").checked,
     no_print: $("policy-print").checked,
+    no_input: $("policy-input").checked,
+    no_restart: $("policy-restart").checked,
+    no_record: $("policy-no-record").checked,
     record_always: $("policy-record").checked,
   };
   try {
@@ -530,9 +555,17 @@ function renderAdmin() {
       name.append(el("span", "badge", t(`role.${account.role}`)));
       if (account.id === myId) name.append(el("span", "badge", t("admin.badge_you")));
       if (account.two_factor) name.append(el("span", "badge", t("admin.badge_two_factor")));
+      if (hasLimits(account.limits)) name.append(el("span", "badge", t("limits.badge")));
       const edit = el("button", "", t("admin.edit"));
       edit.addEventListener("click", () => editAccount(account));
       row.append(name);
+      if (limitsAvailable()) {
+        const perms = el("button", "", t("limits.button"));
+        perms.addEventListener("click", () =>
+          openLimits({ kind: "account", account }, account.limits, t("limits.of_account", { name: account.username })),
+        );
+        row.append(perms);
+      }
       if (account.two_factor) {
         const reset = el("button", "", t("admin.reset_two_factor"));
         reset.addEventListener("click", () =>
@@ -604,6 +637,18 @@ function renderMembers() {
       }
       select.addEventListener("change", () => ($("book-members").dataset.touched = "1"));
       row.append(el("span", "", `${account.username} · ${t(`role.${account.role}`)}`), select);
+      // Limits of a member already saved in this book (administrators).
+      const member = editingBook?.members?.find((m) => m.account_id === account.id);
+      if (member && limitsAvailable() && addressBook?.account?.admin) {
+        const perms = el("button", hasLimits(member.limits) ? "limited" : "", t("limits.button"));
+        perms.type = "button";
+        perms.addEventListener("click", (e) => {
+          e.preventDefault();
+          const title = t("limits.of_member", { name: account.username, book: editingBook.name });
+          openLimits({ kind: "member", account, book: editingBook }, member.limits, title);
+        });
+        row.append(perms);
+      }
       return row;
     });
   $("book-members").replaceChildren(...rows);
@@ -674,6 +719,82 @@ $("book-form").addEventListener("submit", async (e) => {
   try {
     await call("address_book_save_book", { id: editingBook?.id ?? 0, name: $("book-name").value, members }, "admin-message");
     resetBookForm();
+  } catch {
+    // Message already shown.
+  }
+});
+
+// --- permissions of the sessions (Pro) ---
+
+function limitsAvailable() {
+  return Boolean(addressBook?.account?.admin) && (addressBook?.features ?? []).includes("pro.limits");
+}
+
+function hasLimits(limits) {
+  return Boolean(limits) && LIMITS.some(([field]) => limits[field]);
+}
+
+function openLimits(target, limits, title) {
+  limitsTarget = target;
+  const recordings = (addressBook?.features ?? []).includes("pro.recording");
+  $("limits-title").textContent = title;
+  $("limits-checks").replaceChildren(
+    ...LIMITS.filter(([field]) => field !== "record_always" || recordings).map(([field, label]) => {
+      const row = el("label", "check");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.dataset.field = field;
+      box.checked = Boolean(limits?.[field]);
+      row.append(box, " ", el("span", "", t(label)));
+      return row;
+    }),
+  );
+  showMessage("limits-message", null);
+  $("limits-panel").classList.remove("hidden");
+  $("limits-panel").scrollIntoView({ block: "nearest" });
+}
+
+function closeLimits() {
+  limitsTarget = null;
+  $("limits-panel").classList.add("hidden");
+}
+
+$("limits-cancel").addEventListener("click", closeLimits);
+$("limits-anonymous").addEventListener("click", async () => {
+  try {
+    const limits = await call("address_book_anonymous_limits", {}, "policy-message");
+    openLimits({ kind: "anonymous" }, limits, t("limits.of_anonymous"));
+  } catch {
+    // Message already shown.
+  }
+});
+$("limits-panel").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const target = limitsTarget;
+  if (!target) return;
+  const limits = Object.fromEntries(LIMITS.map(([field]) => [field, false]));
+  for (const box of $("limits-checks").querySelectorAll("input")) limits[box.dataset.field] = box.checked;
+  try {
+    if (target.kind === "anonymous") {
+      await call("address_book_save_anonymous_limits", { limits }, "limits-message");
+    } else if (target.kind === "account") {
+      const a = target.account;
+      await call("address_book_save_account", { id: a.id, username: a.username, password: "", role: a.role, limits }, "limits-message");
+      await loadAccounts();
+    } else {
+      // The members stay as they are; only this one's limits change.
+      const book = target.book;
+      const members = book.members.map((m) => ({
+        account_id: m.account_id,
+        level: m.level,
+        limits: m.account_id === target.account.id ? limits : null,
+      }));
+      await call("address_book_save_book", { id: book.id, name: book.name, members }, "limits-message");
+      resetBookForm();
+    }
+    closeLimits();
+    showMessage("admin-message", t("limits.saved"));
+    $("admin-message").classList.add("ok");
   } catch {
     // Message already shown.
   }

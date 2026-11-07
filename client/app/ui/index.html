@@ -42,6 +42,9 @@
       <span id="session-rec" class="rec hidden" data-i18n="session.recording">Recorded</span>
       <button id="strip-chat" class="on-accent" data-i18n="session.chat">Chat</button>
       <button id="end-session" class="on-accent strong" data-i18n="session.end">End</button>
+      <div id="session-switches" class="switches hidden" role="group" data-i18n-title="session.switch_hint">
+        <span data-i18n="session.allowed">Allowed in this session:</span>
+      </div>
     </div>
 
     <main>
@@ -180,10 +183,29 @@
           <label class="check"><input id="policy-terminal" type="checkbox"> <span data-i18n="admin.policy_terminal">No remote terminal</span></label>
           <label class="check"><input id="policy-tunnel" type="checkbox"> <span data-i18n="admin.policy_tunnel">No TCP tunnels</span></label>
           <label class="check"><input id="policy-print" type="checkbox"> <span data-i18n="admin.policy_print">No remote printing</span></label>
+          <label class="check"><input id="policy-input" type="checkbox"> <span data-i18n="admin.policy_input">No keyboard and mouse (view only)</span></label>
+          <label class="check"><input id="policy-restart" type="checkbox"> <span data-i18n="admin.policy_restart">No restart of the computer</span></label>
+          <label class="check"><input id="policy-no-record" type="checkbox"> <span data-i18n="admin.policy_no_record">No recordings by whoever connects</span></label>
           <label class="check hidden" id="policy-record-row"><input id="policy-record" type="checkbox"> <span data-i18n="admin.policy_record">Record every session (sent to the server)</span></label>
           <div class="actions"><span class="spacer"></span><button type="submit" class="primary" data-i18n="admin.policy_save">Apply to all</button></div>
         </form>
         <p id="policy-message" class="message hidden"></p>
+
+        <div id="limits-admin" class="hidden">
+          <h2 data-i18n="limits.title">Permissions of the sessions</h2>
+          <p class="hint" data-i18n="limits.hint">On top of the rules above, each account can have its own limits (Permissions next to the account), also only for the computers of a shared address book (Permissions next to the member). Whoever connects without signing in gets the limits of the sessions without an account.</p>
+          <div class="actions"><button type="button" id="limits-anonymous" data-i18n="limits.anonymous">Sessions without an account…</button></div>
+        </div>
+        <form id="limits-panel" class="stack limits-panel hidden">
+          <h3 id="limits-title"></h3>
+          <div id="limits-checks" class="stack"></div>
+          <div class="actions">
+            <span class="spacer"></span>
+            <button type="button" id="limits-cancel" data-i18n="admin.cancel">Cancel</button>
+            <button type="submit" class="primary" data-i18n="limits.save">Save permissions</button>
+          </div>
+          <p id="limits-message" class="message hidden"></p>
+        </form>
 
         <h2 data-i18n="admin.accounts">Accounts</h2>
         <div id="admin-accounts" class="list"></div>

@@ -28,3 +28,4 @@
 | 29 | [Remote printing](29-remote-printing.md) | Documents printed on the controlled computer's NuviraHub printer come out of the technician's printer |
 | 30 | [MSI package and policies](30-msi-deployment.md) | Silent installation for Intune, Group Policy and RMM tools; ADMX template for server and permanent password |
 | 31 | [Session recording](31-session-recording.md) | MP4 video of the session on the technician's computer, with a notice at the controlled one, which can refuse it |
+| 32 | [Session permissions](32-session-permissions.md) | What a session may do: settings of the computer, limits per technician (Pro), switches of the person at the computer during the session |

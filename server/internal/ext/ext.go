@@ -150,6 +150,43 @@ type SessionObserver interface {
 	SessionEvent(ev SessionEvent)
 }
 
+// SessionLimiter is implemented by modules that restrict single sessions (NuviraHub
+// Pro: permissions per account, per membership of a book, without an account).
+// viewerToken is the address book sign-in the viewer presented, possibly empty or
+// no longer valid; the result (nil: no limits) goes to the agent with the request.
+// The call is synchronous: keep it short.
+type SessionLimiter interface {
+	SessionLimits(viewerToken, agentID string) *pb.Policy
+}
+
+// MergeLimits adds the limits of b to a (each one that is on in either stays on).
+func MergeLimits(a, b *pb.Policy) *pb.Policy {
+	if b == nil {
+		return a
+	}
+	if a == nil {
+		a = &pb.Policy{}
+	}
+	a.ConfirmAlways = a.ConfirmAlways || b.ConfirmAlways
+	a.NoFiles = a.NoFiles || b.NoFiles
+	a.NoClipboard = a.NoClipboard || b.NoClipboard
+	a.NoPrivacy = a.NoPrivacy || b.NoPrivacy
+	a.NoTerminal = a.NoTerminal || b.NoTerminal
+	a.NoTunnel = a.NoTunnel || b.NoTunnel
+	a.NoPrint = a.NoPrint || b.NoPrint
+	a.RecordAlways = a.RecordAlways || b.RecordAlways
+	a.NoInput = a.NoInput || b.NoInput
+	a.NoRestart = a.NoRestart || b.NoRestart
+	a.NoRecord = a.NoRecord || b.NoRecord
+	return a
+}
+
+// AnyLimit tells whether at least one limit is on.
+func AnyLimit(p *pb.Policy) bool {
+	return p != nil && (p.ConfirmAlways || p.NoFiles || p.NoClipboard || p.NoPrivacy || p.NoTerminal ||
+		p.NoTunnel || p.NoPrint || p.RecordAlways || p.NoInput || p.NoRestart || p.NoRecord)
+}
+
 // UploadDesk is implemented by modules that take files from the devices (session
 // recordings, NuviraHub Pro), sent on a stream of their signalling connection: the
 // device is the one that proved its key at the registration. Upload checks the

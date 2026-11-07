@@ -174,7 +174,17 @@
         document.getElementById("info").title = t(state.path === "direct" ? "tb.direct" : "tb.relay");
       }
       if ("viewOnly" in state) document.getElementById("viewonly").classList.toggle("on", state.viewOnly);
-      if ("fileManager" in state) document.getElementById("files").hidden = !state.fileManager;
+      if ("fileManager" in state) {
+        document.getElementById("files").hidden = !state.fileManager;
+        document.getElementById("sendfile").hidden = !state.fileManager;
+      }
+      if ("inputBlocked" in state) {
+        // Not allowed in this session: view only, and nothing to switch.
+        const b = document.getElementById("viewonly");
+        b.disabled = state.inputBlocked;
+        b.title = t(state.inputBlocked ? "tb.input_blocked" : "tb.view_only");
+        document.getElementById("sas").disabled = state.inputBlocked;
+      }
       if ("secureAttention" in state) document.getElementById("sas").hidden = !state.secureAttention;
       if ("terminal" in state) document.getElementById("terminal").hidden = !state.terminal;
       if ("tunnel" in state) document.getElementById("tunnels").hidden = !state.tunnel;

@@ -28,6 +28,10 @@ import (
 // ProtocolVersion is the version of the signalling protocol spoken by the server.
 const ProtocolVersion = 1
 
+// limitsProtocol is the first signalling protocol version whose agents apply
+// Incoming.limits.
+const limitsProtocol = 2
+
 // Prefix signed together with the nonce: prevents reusing the signature elsewhere.
 const registerContext = "nuvira-register-v1"
 
@@ -48,6 +52,9 @@ type client struct {
 	session *pb.Session
 	// Last GetPresence, to limit how often it is asked.
 	lastPresence time.Time
+	// Signalling protocol version of the device (Register): from 2 an agent
+	// applies the limits of each session.
+	protocol uint32
 }
 
 func (c *client) send(msg *pb.ServerMessage) error {
@@ -193,7 +200,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	if reg == nil || len(reg.PublicKey) != ed25519.PublicKeySize {
 		return nil, errors.New("missing Register or invalid key")
 	}
-	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly}
+	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly, protocol: reg.ProtocolVersion}
 	if ip, ok := relay.HostOf(conn.RemoteAddr()); ok {
 		if s.blocked.address(ip) {
 			_ = c.send(errorMsg("@server.blocked", ""))
@@ -371,12 +378,33 @@ func (s *Server) connect(viewer *client, target, accountToken string) {
 		_ = viewer.send(errorMsg("@server.self_connect", ""))
 		return
 	}
-	s.log.Info("connection request", "session", p.id, "from", viewer.device.ID, "to", target)
+	// What this session may not do, from the modules (permissions of the account).
+	var limits *pb.Policy
+	for _, m := range s.modules {
+		if l, ok := m.(ext.SessionLimiter); ok {
+			limits = ext.MergeLimits(limits, l.SessionLimits(accountToken, target))
+		}
+	}
+	if !ext.AnyLimit(limits) {
+		limits = nil
+	} else if agent.protocol < limitsProtocol {
+		// It would not apply them: better no session than one with every permission.
+		s.dropSession(p.id)
+		s.log.Info("connection request refused: the agent is too old for the session limits", "from", viewer.device.ID, "to", target)
+		_ = viewer.send(errorMsg("@server.agent_too_old", ""))
+		s.event(ext.SessionEvent{ID: p.id, Kind: ext.SessionRequested, ViewerID: viewer.device.ID, ViewerName: viewer.device.Name,
+			AgentID: agent.device.ID, AgentName: agent.device.Name, ViewerToken: accountToken})
+		s.event(ext.SessionEvent{ID: p.id, Kind: ext.SessionRejected, ViewerID: viewer.device.ID, ViewerName: viewer.device.Name,
+			AgentID: agent.device.ID, AgentName: agent.device.Name, Reason: "@server.agent_too_old", ViewerToken: accountToken})
+		return
+	}
+	s.log.Info("connection request", "session", p.id, "from", viewer.device.ID, "to", target, "limited", limits != nil)
 	err := agent.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Incoming{Incoming: &pb.Incoming{
 		SessionId:       p.id,
 		ViewerId:        viewer.device.ID,
 		ViewerName:      viewer.device.Name,
 		ViewerPublicKey: viewer.device.PublicKey,
+		Limits:          limits,
 	}}})
 	if err != nil {
 		s.dropSession(p.id)

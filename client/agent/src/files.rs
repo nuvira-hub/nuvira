@@ -24,6 +24,8 @@ pub async fn receive(
         let dir = downloads_dir()?;
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         let part = dir.join(format!("{name}.part"));
+        // Also when the transfer is stopped half way (files switched off at the PC).
+        let mut leftover = RemoveOnDrop(Some(part.clone()));
         let written = write(&part, first.data, &mut rx).await;
         let size = match written {
             Ok(size) => size,
@@ -37,6 +39,7 @@ pub async fn receive(
             bail!("incomplete file: received {size} bytes out of {}", first.size);
         }
         let target = unique_path(&dir, &name);
+        leftover.0 = None;
         std::fs::rename(&part, &target).with_context(|| format!("saving {}", target.display()))?;
         info!("file received: {} ({size} bytes)", target.display());
         crate::stats::file_in(size);
@@ -180,5 +183,16 @@ XDG_DOWNLOAD_DIR=\"$HOME/Scaricati\"
         assert_eq!(unique_path(&dir, "a.txt"), dir.join("a (2).txt"));
         assert_eq!(unique_path(&dir, "b.txt"), dir.join("b.txt"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+/// Removes the partial file of a transfer that did not end (dropped half way).
+struct RemoveOnDrop(Option<PathBuf>);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }

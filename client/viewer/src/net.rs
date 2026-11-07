@@ -88,6 +88,16 @@ pub enum NetEvent {
         window: winit::window::WindowId,
         body: String,
     },
+    /// What the session may do now (Permissions from the agent): at the start and
+    /// whenever the person at the remote computer switches something off or on.
+    Permissions {
+        input: bool,
+        files: bool,
+        terminal: bool,
+        tunnel: bool,
+        /// Switched off by the person there ("input", "clipboard", "files", …).
+        switched_off: Vec<String>,
+    },
     /// Privacy mode reached by the agent; `error` ("@key" or text) when it did not turn on.
     Privacy {
         on: bool,
@@ -782,6 +792,9 @@ async fn session(
         // are then reported on their own, which is when the agent needs them most.
         let mut loss_tick = tokio::time::interval(Duration::from_millis(250));
         let mut last_feedback = Instant::now();
+        // What is copied here goes to the agent while the session allows it (older
+        // agents send no Permissions: always).
+        let mut clipboard_allowed = true;
         loop {
             tokio::select! {
                 _ = ping.tick() => {
@@ -809,7 +822,7 @@ async fn session(
                     }
                     ctrl_tx.send(&control(msg)).await?;
                 }
-                Some(content) = clip_rx.recv() => match content {
+                Some(content) = clip_rx.recv(), if clipboard_allowed => match content {
                     nuvira_clipboard::Content::Text(text) => {
                         ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text }))).await?;
                     }
@@ -858,6 +871,17 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::PrivacyState(p)) }) => {
                         let _ = proxy.send_event(NetEvent::Privacy { on: p.on, error: p.error });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::Permissions(p)) }) => {
+                        info!(?p, "permissions of the session");
+                        clipboard_allowed = p.clipboard;
+                        let _ = proxy.send_event(NetEvent::Permissions {
+                            input: p.input,
+                            files: p.files,
+                            terminal: p.terminal,
+                            tunnel: p.tunnel,
+                            switched_off: p.switched_off,
+                        });
                     }
                     Some(ControlMessage { msg: Some(Msg::RecordingState(r)) }) => {
                         let _ = proxy.send_event(NetEvent::Recording { on: r.on, error: r.error });

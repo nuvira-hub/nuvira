@@ -259,6 +259,7 @@ function render(state) {
     $("session-text").textContent = t(session.terminal ? "session.strip_terminal" : "session.strip", { who, path });
   }
   $("session-rec").classList.toggle("hidden", !session?.recording);
+  renderSwitches(session);
 
   const message = state.viewer_message;
   $("connect-message").classList.toggle("hidden", !message);
@@ -271,6 +272,27 @@ function render(state) {
   // Defined in address-book.js, loaded after this file.
   if (typeof renderAddressBook === "function") renderAddressBook(state);
   if (typeof renderSupport === "function") renderSupport(state);
+}
+
+// What the session may do, one switch each: off for this session only.
+function renderSwitches(session) {
+  const offered = session?.offered ?? [];
+  const box = $("session-switches");
+  box.classList.toggle("hidden", offered.length === 0);
+  const key = JSON.stringify([offered, session?.off ?? []]);
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  const buttons = offered.map((name) => {
+    const on = !session.off.includes(name);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = t(`perm.${name}`);
+    button.setAttribute("aria-pressed", String(on));
+    button.title = t(on ? "session.switch_off" : "session.switch_on");
+    button.addEventListener("click", () => invoke("switch_permission", { name, on: !on }));
+    return button;
+  });
+  box.replaceChildren(box.firstElementChild, ...buttons);
 }
 
 function renderChat(state) {

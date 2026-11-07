@@ -14,8 +14,9 @@ use crate::{Fingerprint, FramedRecv, FramedSend, PinnedCert, ServerTransport, pr
 
 /// Signalling ALPN (must match the server's).
 const ALPN: &[u8] = b"nuvira-signal/1";
-/// Signalling protocol version.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Signalling protocol version: 2 = the agent applies the limits of each session
+/// (`Incoming.limits`).
+pub const PROTOCOL_VERSION: u32 = 2;
 /// Prefix signed together with the nonce (as in the server).
 const REGISTER_CONTEXT: &[u8] = b"nuvira-register-v1";
 /// Default UDP port of nuvira-server.
