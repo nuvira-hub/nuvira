@@ -1,0 +1,11 @@
+# Checks the NuviraHub server for a newer package every hour (outside sessions).
+[Unit]
+Description=NuviraHub automatic update check
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

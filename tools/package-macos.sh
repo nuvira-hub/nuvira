@@ -69,6 +69,10 @@ if [ -n "$identity" ]; then
     codesign --verify --strict --verbose=2 "$app"
 fi
 
+# The signed app alone, for the automatic updates (channel "macos", signed by
+# tools/sign-unix-updates.sh); ditto keeps the bundle's signature intact.
+ditto -c -k --keepParent "$app" "$out/nuvira-macos-app.zip"
+
 ln -s /Applications "$stage/dmg/Applications"
 dmg="$out/nuvira-macos.dmg"
 rm -f "$dmg"

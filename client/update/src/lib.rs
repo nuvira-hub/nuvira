@@ -8,6 +8,10 @@
 //! GET /nuvira/update/windows-x64/nuvira-0.1.0.exe   the program
 //! ```
 //!
+//! Channels: `windows-x64` (nuvira.exe), `linux-x64` (the `nuvira` program, for
+//! copies the user can replace), `linux-x64-deb` and `linux-x64-rpm` (the packages,
+//! installed by root's timer) and `macos` (the NuviraHub.app bundle in a zip).
+//!
 //! The manifest is signed with the NuviraHub release key (Ed25519, kept by whoever
 //! builds the releases; `nuvira-release` makes and uses it) and the program is
 //! checked against the size and SHA-256 in it. The public key is built into the
@@ -36,19 +40,38 @@ pub const DEFAULT_PORT: u16 = 21116;
 /// Version of this program.
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
+#[cfg(unix)]
+pub mod unix;
+
 /// Largest program accepted (the Windows one is ~28 MB).
 const MAX_PROGRAM: u64 = 256 << 20;
 const MAX_MANIFEST: u64 = 64 << 10;
 const TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Name of this platform in the update paths.
+/// Name of this platform in the update paths (the program alone; the Linux
+/// packages have channels of their own, see [`unix::PackageKind`]).
 pub fn platform() -> &'static str {
     if cfg!(all(windows, target_arch = "x86_64")) {
         "windows-x64"
     } else if cfg!(all(windows, target_arch = "aarch64")) {
         "windows-arm64"
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "linux-x64"
+    } else if cfg!(target_os = "macos") {
+        "macos"
     } else {
         "unsupported"
+    }
+}
+
+/// Extension of the published file of a channel.
+pub fn extension(platform: &str) -> &'static str {
+    match platform {
+        p if p.starts_with("windows-") => ".exe",
+        p if p.ends_with("-deb") => ".deb",
+        p if p.ends_with("-rpm") => ".rpm",
+        "macos" => ".zip",
+        _ => "",
     }
 }
 
@@ -67,7 +90,7 @@ pub struct Manifest {
 impl Manifest {
     /// Path of the program under the update URL.
     pub fn program_path(&self) -> String {
-        format!("{}/nuvira-{}.exe", self.platform, self.version)
+        format!("{}/nuvira-{}{}", self.platform, self.version, extension(&self.platform))
     }
 
     fn signed_message(&self) -> Vec<u8> {
@@ -133,10 +156,15 @@ pub fn base_url(server: &str, server_ws: Option<&str>, default_port: u16) -> Str
 /// The version offered by the server, if newer than this program and correctly
 /// signed with `public_key`. `Ok(None)`: nothing to install.
 pub async fn check(base: &str, public_key: &[u8]) -> Result<Option<Manifest>> {
-    let url = format!("{base}/{}.json", platform());
+    check_channel(base, public_key, platform()).await
+}
+
+/// Like [`check`], for the channel `platform` (e.g. a Linux package's).
+pub async fn check_channel(base: &str, public_key: &[u8], platform: &str) -> Result<Option<Manifest>> {
+    let url = format!("{base}/{platform}.json");
     let Some(body) = get(&url, MAX_MANIFEST, None).await? else { return Ok(None) };
     let manifest: Manifest = serde_json::from_slice(&body).with_context(|| format!("{url} is not valid"))?;
-    if manifest.platform != platform() {
+    if manifest.platform != platform {
         bail!("{url} is for {}", manifest.platform);
     }
     manifest.verify(public_key)?;
@@ -332,6 +360,11 @@ mod tests {
             assert!(t.verify(key.public_key().as_ref()).is_err());
         }
         assert_eq!(m.program_path(), "windows-x64/nuvira-0.2.0.exe");
+        let path = |platform: &str| Manifest::sign(&key, "0.17.0", platform, b"p").program_path();
+        assert_eq!(path("linux-x64"), "linux-x64/nuvira-0.17.0");
+        assert_eq!(path("linux-x64-deb"), "linux-x64-deb/nuvira-0.17.0.deb");
+        assert_eq!(path("linux-x64-rpm"), "linux-x64-rpm/nuvira-0.17.0.rpm");
+        assert_eq!(path("macos"), "macos/nuvira-0.17.0.zip");
     }
 
     #[test]

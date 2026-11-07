@@ -19,6 +19,10 @@ func TestHandler(t *testing.T) {
 	must(os.MkdirAll(filepath.Join(dir, "windows-x64"), 0o755))
 	must(os.WriteFile(filepath.Join(dir, "windows-x64.json"), []byte(`{"version":"0.1.0"}`), 0o644))
 	must(os.WriteFile(filepath.Join(dir, "windows-x64", "nuvira-0.1.0.exe"), []byte("program"), 0o644))
+	for _, f := range []string{"linux-x64/nuvira-0.1.0", "linux-x64-deb/nuvira-0.1.0.deb", "linux-x64-rpm/nuvira-0.1.0.rpm", "macos/nuvira-0.1.0.zip"} {
+		must(os.MkdirAll(filepath.Join(dir, filepath.Dir(f)), 0o755))
+		must(os.WriteFile(filepath.Join(dir, filepath.FromSlash(f)), []byte("p"), 0o644))
+	}
 	// Next to the updates folder, as in the server's data.
 	must(os.WriteFile(filepath.Join(dir, "address-book.key"), []byte("secret"), 0o600))
 
@@ -33,6 +37,12 @@ func TestHandler(t *testing.T) {
 		Prefix + "windows-x64/nuvira-0.1.0.exe":             http.StatusOK,
 		Prefix + "windows-x64/nuvira-0.2.0.exe":             http.StatusNotFound,
 		Prefix + "macos.json":                               http.StatusNotFound,
+		Prefix + "linux-x64/nuvira-0.1.0":                   http.StatusOK,
+		Prefix + "linux-x64-deb/nuvira-0.1.0.deb":           http.StatusOK,
+		Prefix + "linux-x64-rpm/nuvira-0.1.0.rpm":           http.StatusOK,
+		Prefix + "macos/nuvira-0.1.0.zip":                   http.StatusOK,
+		Prefix + "macos/nuvira-0.1.0.sh":                    http.StatusNotFound,
+		Prefix + "linux-x64/nuvira-0.1.":                    http.StatusNotFound,
 		Prefix + "address-book.key":                         http.StatusNotFound,
 		Prefix + "../address-book.key":                      http.StatusNotFound,
 		Prefix + "windows-x64/../../address-book.key":       http.StatusNotFound,

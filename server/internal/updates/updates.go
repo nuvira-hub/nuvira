@@ -3,6 +3,9 @@
 //
 //	updates/windows-x64.json               signed manifest
 //	updates/windows-x64/nuvira-0.1.0.exe   the program
+//	updates/linux-x64/nuvira-0.1.0         the Linux program (no extension)
+//	updates/linux-x64-deb/nuvira-0.1.0.deb the Linux packages (.deb, .rpm)
+//	updates/macos/nuvira-0.1.0.zip         the macOS app
 //
 // The server only hands the files out: the devices check the manifest signature
 // (NuviraHub release key, built into the program) and the program's size and SHA-256.
@@ -20,7 +23,7 @@ import (
 const Prefix = "/nuvira/update/"
 
 // Only these names are served: nothing else in the data folder can be reached.
-var allowed = regexp.MustCompile(`^(?:[a-z0-9-]+\.json|[a-z0-9-]+/nuvira-[0-9][0-9.]*\.exe)$`)
+var allowed = regexp.MustCompile(`^(?:[a-z0-9-]+\.json|[a-z0-9-]+/nuvira-[0-9][0-9.]*[0-9](?:\.exe|\.deb|\.rpm|\.zip)?)$`)
 
 // Handler serves the files of dir.
 func Handler(dir string) http.Handler {

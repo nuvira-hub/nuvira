@@ -1,0 +1,11 @@
+# Automatic updates of NuviraHub installed from the .deb or .rpm (root's: the
+# users' agents cannot replace /usr/bin/nuvira). Started by nuvira-update.timer.
+[Unit]
+Description=NuviraHub automatic update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nuvira service update-package
+TimeoutStartSec=30min

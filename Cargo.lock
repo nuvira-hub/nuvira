@@ -3355,6 +3355,7 @@ dependencies = [
  "nuvira-proto",
  "nuvira-secret",
  "nuvira-transport",
+ "nuvira-update",
  "prost",
  "quinn",
  "ring",
@@ -3558,6 +3559,7 @@ version = "0.16.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "ring",
  "rustls",
  "serde",

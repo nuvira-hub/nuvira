@@ -52,7 +52,8 @@ controlled with a Wayland session.
 EOF
 
 tar -C "$(dirname "$stage")" -czf "$out/nuvira-linux-x64.tar.gz" "nuvira-$version"
-cp client/app/linux/nfpm.yaml client/app/linux/postinstall.sh client/app/linux/preremove.sh "$stage/"
+cp client/app/linux/nfpm.yaml client/app/linux/postinstall.sh client/app/linux/preremove.sh \
+    client/app/linux/nuvira-update.service client/app/linux/nuvira-update.timer "$stage/"
 for packager in deb rpm; do
     (cd "$stage" && VERSION=$version nfpm package -f nfpm.yaml -p $packager -t "$out/nuvira-linux-x64.$packager")
 done

@@ -14,6 +14,7 @@ nuvira-release sign  ──copy──►  data/updates/windows-x64.json   ◄─
 ```
 
 - **Manifest** (`windows-x64.json`): version, platform, size, SHA-256 of the program and an Ed25519 signature over all of them.
+- **Channels**: `windows-x64` (`nuvira-<v>.exe`), `linux-x64` (`nuvira-<v>`, the program alone), `linux-x64-deb` and `linux-x64-rpm` (`nuvira-<v>.deb`/`.rpm`), `macos` (`nuvira-<v>.zip`, the signed NuviraHub.app). The server serves only these names; servers older than 0.17.0 serve only the Windows one.
 - **Release key**: made once with `nuvira-release keygen`, kept in `%USERPROFILE%\.nuvira\release-signing.pk8` on the machine that builds the releases, never in the repository. Its public half is built into the program (`client/update/src/lib.rs`): a tampered server, file or download cannot get anything installed, whatever the transport. Whoever has the private key can get any program installed on every device: it must be backed up offline and kept private. Losing it means no further update can be published (devices would need a program with a new public key, installed by hand).
 - **Server** (`server/internal/updates`): serves only `<platform>.json` and `<platform>/nuvira-<version>.exe` from `updates` in its data, on the TCP port of the WebSocket fallback (`/nuvira/update/`). Whoever runs a server decides when its devices update by copying the files. With `NUVIRA_WS_LISTEN=off` there are no updates.
 - **Client** (`client/update`): a minimal HTTP/HTTPS GET (behind a reverse proxy the URL follows `--server-ws`), at most 256 MB, written to a `.part` file, checked against size and SHA-256, then renamed.
@@ -34,6 +35,22 @@ The Start menu shortcut is made by the program itself (no PowerShell: a script s
 
 The app open at the PC keeps running the old program (moved aside as `nuvira.old.exe`). When its link with the service's agent comes back after the update, the agent tells it its version: if newer, a bar shows "NuviraHub X has been installed" with "Restart", which starts the installed program in place of the app. It works from the update after 0.11.0 on: the open app must already have this check.
 
+## Linux and macOS (2026-11-07)
+
+There is no separate service process: the user service (systemd user unit on Linux, LaunchAgent on macOS) runs `nuvira agent --ipc`, and that agent updates (`client/update/src/unix.rs`). What it replaces depends on how NuviraHub was installed:
+
+| Installed | Who updates | Channel | How |
+|---|---|---|---|
+| Linux, `install.sh` of the tar.gz (`~/.local/share/nuvira`) or any copy the user can write | the user's agent, or the app without unattended access | `linux-x64` | the program is copied beside the old one, started once (`agent --version`), then renamed into place; the old one is kept as `nuvira.old` until the next start |
+| Linux, .deb or .rpm (`/usr/bin/nuvira`) | root's `nuvira-update.timer` of the package | `linux-x64-deb` / `-rpm` | `nuvira service update-package`: `apt-get install` / `dnf install` of the downloaded package |
+| macOS, NuviraHub.app in a folder the user can write (/Applications for an administrator) | the user's agent, or the app without unattended access | `macos` | the zip is unpacked with `ditto` beside the app (`.NuviraHub-update`), its signature checked (`codesign --verify --deep --strict`, same designated requirement as the running app: macOS keeps the Screen Recording and Accessibility permissions only for that), started once, then the bundles are swapped |
+| macOS for a standard user, a program in a folder of root's | nobody (logged once by the agent) | — | updated by hand |
+
+- **The agent** (user service only) checks 2 minutes after starting and every 6 hours (1 hour after an error). During a session it keeps `busy` in the data folder (`~/.config/nuvira`, `~/Library/Application Support/nuvira`): an update found then is downloaded and installed 5 minutes after the session ends. Every 15 s it looks whether its program file was replaced (by itself, by root's timer or by hand): if so and no session is in progress it ends, and systemd (`Restart=always`) or launchd (`KeepAlive`) starts the new program.
+- **Root's timer** (`/usr/lib/systemd/system/nuvira-update.{timer,service}`, enabled by the package's postinstall, disabled when it is removed): 5 minutes after boot and then every hour. The server is the `--server` of a user's unattended access (`~/.config/systemd/user/nuvira-agent.service` of the users with uid ≥ 1000), otherwise NuviraHub's public server. Downloads go to `/var/cache/nuvira` (root only). If a user's `busy` file exists it waits for the next hour. Output in the journal (`journalctl -u nuvira-update`).
+- **The open app** behaves as on Windows: with unattended access the bar "NuviraHub X has been installed" with "Restart" appears when the agent comes back with a newer version; without it, "NuviraHub X is available" with "Update", if this user can replace the program. "Restart" starts the program at the path it was started from (on Linux `current_exe` would follow the file to its old copy).
+- **Not updated**: the CUPS backend of the NuviraHub printer in `/usr/lib/cups/backend` (root's), except by the packages, whose postinstall copies it again. Its protocol carries a version (`NUVIRA-PRINT 1`).
+
 ## Portable copies (app without the service)
 
 The app checks at start-up and every 6 hours. A bar shows "NuviraHub X is available" with "Update": the new version is downloaded and checked like above, the running program is renamed aside (a running program cannot be overwritten), the new one takes its file name (so the server in `nuvira-host=....exe` stays) and is started; the old copy is deleted at the next start. With the service installed the app does not check: the service updates the installed program.
@@ -42,6 +59,7 @@ The app checks at start-up and every 6 hours. A bar shows "NuviraHub X is availa
 
 1. Raise the version in `Cargo.toml` (`[workspace.package]`) as in "Version numbers" below: devices already on it do not update.
 2. `tools/publish-update.sh`: builds and signs into `dist/update/`.
+   For Linux and macOS: download the artifacts of the CI runs of the same commit (`gh run download … -D dist/ci`) and run `tools/sign-unix-updates.sh dist/ci`: it signs `linux-x64`, `linux-x64-deb`, `linux-x64-rpm` and `macos` into `dist/update/` and makes `dist/nuvira-update-VERSION.zip` again with every channel.
 3. Copy the contents of `dist/update/` into `updates` in the server's data (on Unraid `/mnt/user/appdata/nuvira-server/updates`).
 
 ## Version numbers
@@ -62,6 +80,16 @@ One version for the whole workspace (`Cargo.toml`), raised when a release is pub
 - PC-LABORATORIO with 0.0.1 and the server on the NUC publishing 0.0.2: "version 0.0.2 available" 2 minutes after start, downloaded and checked in 4 s, service stopped, program replaced and service started again in 2 s, same ID and password.
 - Portable 0.0.1 on the NUC: the bar appeared, "Update" replaced the program (same SHA-256 as 0.0.2, same file name) and restarted it.
 - Not yet tested on a real device: waiting for a session in progress to end.
+
+## Tests of 2026-11-07 (Linux)
+
+nuvira-server of this branch on the Ubuntu VM (port 21316), test version 0.16.0.1 signed with the release key (any real release is newer; the files were deleted after the test).
+- Mint, agent `--ipc` run from `~/nuvira-upd` by a systemd user unit with `Restart=always` (as the user service): 2 minutes after start "version 0.16.0.1 available", downloaded and checked in 0.5 s, tried and swapped (new inode); 15 s later the agent ended, systemd started the new program, back online with the same ID; `nuvira.old` gone at that start.
+- The same with a session open from the Fedora viewer: downloaded, "session in progress: the update waits for it to end"; installed at the next try 5 minutes later, after the session.
+- Root's timer with the .deb on Mint: enabled and started by the postinstall; the server taken from the user's unattended access; with a `busy` file downloaded into `/var/cache/nuvira` and "session in progress: next time"; without, `apt-get` installed 0.16.0.1 (a repackaged .deb), the timer stayed active, the NuviraHub printer stayed, the download was removed.
+- Unit tests: channels and file names, program replaced only if the new one starts (a broken one leaves the old in place), bundle path, /etc/passwd and unit parsing; server: the new names served, others refused.
+
+Not tested yet: macOS (the bundle swap, signature and designated requirement check, the Screen Recording and Accessibility permissions after the swap, a standard user), the .rpm with dnf, the app's "Update" and "Restart" bars on Linux and macOS, an agent of a package install restarting after root's update.
 
 ## To do
 

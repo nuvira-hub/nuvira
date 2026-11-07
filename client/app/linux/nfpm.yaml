@@ -40,8 +40,13 @@ contents:
   - src: nuvira-cups
     dst: /usr/lib/nuvira/nuvira-cups
     file_info: { mode: 0755 }
+  # Root's automatic updates of the package.
+  - src: nuvira-update.service
+    dst: /usr/lib/systemd/system/nuvira-update.service
+  - src: nuvira-update.timer
+    dst: /usr/lib/systemd/system/nuvira-update.timer
 
-# The NuviraHub printer (remote printing), when CUPS is there.
+# The NuviraHub printer (remote printing), when CUPS is there, and the update timer.
 scripts:
   postinstall: postinstall.sh
   preremove: preremove.sh

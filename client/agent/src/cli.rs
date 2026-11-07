@@ -241,6 +241,22 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         #[cfg(not(any(windows, unix)))]
         drop((app_rx, server_name));
         let busy_file = args.busy_file.clone();
+        // Linux and macOS: the user service runs this agent with --ipc; it updates
+        // itself (nuvira_update::unix), outside sessions.
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let busy_file = match (ipc, busy_file) {
+            (true, None) => {
+                let data = nuvira_transport::identity::data_dir();
+                let base = nuvira_update::base_url(
+                    &opts.server_name,
+                    opts.server_ws.as_deref(),
+                    nuvira_update::DEFAULT_PORT,
+                );
+                nuvira_update::unix::spawn_agent_updates(base, data.join("busy"), data.join("update"));
+                Some(data.join("busy"))
+            }
+            (_, given) => given,
+        };
         if let Some(file) = &busy_file {
             // Left over by an agent that did not end cleanly.
             let _ = std::fs::remove_file(file);

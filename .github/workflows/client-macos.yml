@@ -78,5 +78,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: nuvira-macos
-          path: dist/nuvira-macos.dmg
+          path: |
+            dist/nuvira-macos.dmg
+            dist/nuvira-macos-app.zip
           if-no-files-found: error

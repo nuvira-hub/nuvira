@@ -1160,6 +1160,8 @@ const SUBCOMMANDS: [&str; 3] = ["agent", "viewer", "service"];
 fn main() {
     // macOS: the black screens of privacy mode are this program started again.
     nuvira_input::privacy::overlay_if_asked();
+    // Before anything can replace the file (an update).
+    started_as();
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     if let Some(sub) = args.get(1).and_then(|a| a.to_str()).filter(|a| SUBCOMMANDS.contains(a)) {
         std::process::exit(run_subcommand(sub, &args[2..]));
@@ -1509,26 +1511,50 @@ fn run_service_command(mut params: String) -> Result<serde_json::Value, String> 
 }
 
 /// The app's own copy before the last update (see `apply_update`).
+#[cfg(not(unix))]
 fn previous_copy() -> Option<PathBuf> {
     std::env::current_exe().ok().map(|exe| exe.with_extension("old.exe"))
 }
 
+/// This program's path at start-up: on Linux `current_exe` follows the file, so
+/// after an update it would name the old copy put aside.
+fn started_as() -> PathBuf {
+    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| std::env::current_exe().unwrap_or_default()).clone()
+}
+
+/// How this copy is updated by the app (Linux and macOS): `None` when the user
+/// service or root's timer does it, or when this user cannot replace it.
+#[cfg(unix)]
+fn app_updates() -> Option<nuvira_update::unix::Install> {
+    let installed = nuvira_service::service_state().is_ok_and(|s| s != nuvira_service::ServiceState::NotInstalled);
+    let install = nuvira_update::unix::this_install(&started_as());
+    (!installed && install.channel().is_some()).then_some(install)
+}
+
 /// Without the service (which updates an installed NuviraHub by itself) the app asks
 /// its server for a newer version at start-up and every 6 hours, and offers it.
-/// Updates exist only for Windows for now.
 fn start_update_checks(app: &AppHandle) {
     if nuvira_update::platform() == "unsupported" {
         return;
     }
+    started_as();
+    #[cfg(not(unix))]
     if let Some(old) = previous_copy() {
         let _ = std::fs::remove_file(old);
+    }
+    #[cfg(unix)]
+    if let Some(install) = app_updates() {
+        nuvira_update::unix::clean(&install);
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
             #[cfg(windows)]
             let installed = nuvira_agent::ipc::service_installed();
-            #[cfg(not(windows))]
+            #[cfg(unix)]
+            let installed = app_updates().is_none();
+            #[cfg(not(any(windows, unix)))]
             let installed = false;
             let settings = load_settings();
             if !installed {
@@ -1561,22 +1587,44 @@ async fn apply_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(error)?
         .ok_or_else(|| t("update.none"))?;
-    let download = std::env::temp_dir().join(format!("nuvira-{}.exe", manifest.version));
+    let download = std::env::temp_dir()
+        .join(format!("nuvira-{}{}", manifest.version, nuvira_update::extension(&manifest.platform)));
     nuvira_update::download(&base, &manifest, &download).await.map_err(error)?;
 
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let aside = previous_copy().ok_or("program path")?;
-    let _ = std::fs::remove_file(&aside);
-    std::fs::rename(&exe, &aside).map_err(|e| error(e.into()))?;
-    if let Err(e) = std::fs::copy(&download, &exe) {
-        let _ = std::fs::rename(&aside, &exe);
-        return Err(error(e.into()));
+    // Linux: the program; macOS: the whole app.
+    #[cfg(unix)]
+    {
+        let install = app_updates().ok_or_else(|| t("update.none"))?;
+        let applied = tauri::async_runtime::spawn_blocking({
+            let download = download.clone();
+            move || nuvira_update::unix::apply(&install, &download)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(&download);
+        applied.map_err(error)?;
+        info!("updated to {}: restarting", manifest.version);
+        std::process::Command::new(started_as()).spawn().map_err(|e| error(e.into()))?;
+        app.exit(0);
+        Ok(())
     }
-    let _ = std::fs::remove_file(&download);
-    info!("updated to {}: restarting", manifest.version);
-    std::process::Command::new(&exe).spawn().map_err(|e| error(e.into()))?;
-    app.exit(0);
-    Ok(())
+
+    #[cfg(not(unix))]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let aside = previous_copy().ok_or("program path")?;
+        let _ = std::fs::remove_file(&aside);
+        std::fs::rename(&exe, &aside).map_err(|e| error(e.into()))?;
+        if let Err(e) = std::fs::copy(&download, &exe) {
+            let _ = std::fs::rename(&aside, &exe);
+            return Err(error(e.into()));
+        }
+        let _ = std::fs::remove_file(&download);
+        info!("updated to {}: restarting", manifest.version);
+        std::process::Command::new(&exe).spawn().map_err(|e| error(e.into()))?;
+        app.exit(0);
+        Ok(())
+    }
 }
 
 /// Starts the program installed by the service (updated while this app was open)
@@ -1586,7 +1634,7 @@ fn restart_app(app: AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     let program = nuvira_service::installed_program();
     #[cfg(not(windows))]
-    let program = std::env::current_exe().map_err(|e| e.to_string())?;
+    let program = started_as();
     info!("restarting with the installed program {}", program.display());
     std::process::Command::new(&program)
         .spawn()
