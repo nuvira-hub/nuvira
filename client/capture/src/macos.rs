@@ -5,9 +5,13 @@
 //! The frames arrive on a queue of ScreenCaptureKit: the handler copies them
 //! into a channel of one image (a newer one replaces what the capture did not
 //! take yet).
+//!
+//! Privacy mode: the windows of the black-screen process are left out of the
+//! stream ([`hide_process`]); the filter is changed by the capture itself,
+//! between two frames.
 
-use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -18,6 +22,51 @@ use screencapturekit::prelude::*;
 use tracing::info;
 
 use crate::{Capturer, Display, Frame};
+
+/// Processes whose windows the capture leaves out, with a change counter.
+struct Hidden {
+    generation: u64,
+    pids: Vec<i32>,
+    /// Last generation a capture applied.
+    applied: u64,
+}
+
+static HIDDEN: Mutex<Hidden> = Mutex::new(Hidden { generation: 0, pids: Vec::new(), applied: 0 });
+static HIDDEN_APPLIED: Condvar = Condvar::new();
+/// How long [`hide_process`] waits for the capture.
+const HIDE_WAIT: Duration = Duration::from_millis(1500);
+
+pub fn hide_process(pid: u32) {
+    let Ok(mut hidden) = HIDDEN.lock() else { return };
+    // Processes that ended are dropped: only the last black screens are alive.
+    hidden.pids.retain(|&p| unsafe { libc::kill(p, 0) } == 0);
+    hidden.pids.push(pid as i32);
+    hidden.generation += 1;
+    let wanted = hidden.generation;
+    let (hidden, timeout) = HIDDEN_APPLIED
+        .wait_timeout_while(hidden, HIDE_WAIT, |h| h.applied < wanted)
+        .unwrap_or_else(|e| e.into_inner());
+    if timeout.timed_out() {
+        info!(applied = hidden.applied, wanted, "capture did not confirm the hidden windows in time");
+    }
+}
+
+/// Filter of `display`, without the windows of the hidden processes.
+fn filter_for(content: &SCShareableContent, display: &SCDisplay, pids: &[i32]) -> Result<SCContentFilter> {
+    let apps: Vec<_> =
+        content.applications().into_iter().filter(|a| pids.contains(&a.process_id())).collect();
+    let builder = SCContentFilter::create().with_display(display);
+    let builder = if apps.is_empty() {
+        if !pids.is_empty() {
+            info!(?pids, "hidden processes not among the applications of ScreenCaptureKit");
+        }
+        builder.with_excluding_windows(&[])
+    } else {
+        let apps: Vec<&_> = apps.iter().collect();
+        builder.with_excluding_applications(&apps, &[])
+    };
+    Ok(builder.build()?)
+}
 
 /// Pixels per point of a display (2 on a Retina screen).
 fn scale(display_id: u32) -> f64 {
@@ -94,6 +143,10 @@ impl SCStreamOutputTrait for Handler {
 
 pub struct ScreenCaptureKitCapturer {
     display: Display,
+    /// CoreGraphics id of the display, to build the filter again.
+    display_id: u32,
+    /// Generation of [`HIDDEN`] in the stream's filter.
+    hidden_generation: u64,
     stream: SCStream,
     images: Receiver<Image>,
     frame: Option<Frame>,
@@ -110,7 +163,9 @@ impl ScreenCaptureKitCapturer {
         .filter(|&i| i < list.len())
         .context("screen not found")?;
         let (sc_display, screen) = list.swap_remove(pick);
-        let filter = SCContentFilter::create().with_display(&sc_display).with_excluding_windows(&[]).build()?;
+        let (hidden_generation, pids) =
+            HIDDEN.lock().map(|h| (h.generation, h.pids.clone())).unwrap_or_default();
+        let filter = filter_for(&content, &sc_display, &pids)?;
         let config = SCStreamConfiguration::new()
             .with_width(screen.width)
             .with_height(screen.height)
@@ -123,7 +178,38 @@ impl ScreenCaptureKitCapturer {
         stream.add_output_handler(Handler { images: Mutex::new(tx) }, SCStreamOutputType::Screen)?;
         stream.start_capture().map_err(|e| anyhow!("{e:?}")).context("@agent.screen_permission_mac")?;
         info!(name = screen.name, width = screen.width, height = screen.height, "ScreenCaptureKit capture");
-        Ok(Self { display: screen, stream, images, frame: None })
+        let display_id = sc_display.display_id();
+        Ok(Self { display: screen, display_id, hidden_generation, stream, images, frame: None })
+    }
+
+    /// Leaves out the windows of the processes hidden since the last frame.
+    fn apply_hidden(&mut self) {
+        let Some((generation, pids)) = HIDDEN
+            .lock()
+            .ok()
+            .filter(|h| h.generation != self.hidden_generation)
+            .map(|h| (h.generation, h.pids.clone()))
+        else {
+            return;
+        };
+        let result = content().and_then(|content| {
+            let display = content
+                .displays()
+                .into_iter()
+                .find(|d| d.display_id() == self.display_id)
+                .context("screen not found")?;
+            let filter = filter_for(&content, &display, &pids)?;
+            self.stream.update_content_filter(&filter).map_err(|e| anyhow!("{e:?}"))
+        });
+        match result {
+            Ok(()) => info!(?pids, "capture filter updated"),
+            Err(e) => info!("capture filter not updated: {e:#}"),
+        }
+        self.hidden_generation = generation;
+        if let Ok(mut hidden) = HIDDEN.lock() {
+            hidden.applied = hidden.applied.max(generation);
+            HIDDEN_APPLIED.notify_all();
+        }
     }
 }
 
@@ -133,6 +219,7 @@ impl Capturer for ScreenCaptureKitCapturer {
     }
 
     fn next_frame(&mut self, timeout: Duration) -> Result<Option<&Frame>> {
+        self.apply_hidden();
         let image = match self.images.recv_timeout(timeout) {
             Ok(image) => image,
             Err(RecvTimeoutError::Timeout) => return Ok(None),

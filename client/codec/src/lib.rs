@@ -3,8 +3,9 @@
 //! The rest of the client sees only the [`VideoEncoder`] and [`VideoDecoder`] traits:
 //! - `mf`: H.264 with the graphics card's encoder through Media Foundation (Windows);
 //! - `mfdec`: H.264 decoding on the graphics card through Media Foundation (Windows, opt-in);
+//! - `vt`: H.264 with VideoToolbox (macOS);
 //! - `openh264`: software H.264, available everywhere (fallback);
-//! - VideoToolbox (macOS), VAAPI (Linux): next steps.
+//! - VAAPI (Linux): next step.
 //!
 //! Intermediate format: YUV 4:2:0 BT.601 limited range (I420 for OpenH264,
 //! NV12 for hardware encoders), see [`convert`].
@@ -18,12 +19,16 @@ mod mf;
 mod mfdec;
 mod openh264;
 mod select;
+#[cfg(target_os = "macos")]
+mod vt;
 
 #[cfg(windows)]
 pub use crate::mf::{MfEncoder, hardware_encoders};
 #[cfg(windows)]
 pub use crate::mfdec::MfDecoder;
 pub use crate::openh264::{OpenH264Decoder, OpenH264Encoder};
+#[cfg(target_os = "macos")]
+pub use crate::vt::VtEncoder;
 
 /// BGRA image to encode (as it comes from capture).
 pub struct BgraImage<'a> {
@@ -183,7 +188,12 @@ pub fn create_encoder(
             tracing::info!("hardware encoder: {}", enc.device_name());
             Ok(Box::new(enc))
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        EncoderPlan::Hardware | EncoderPlan::HardwareGpu => {
+            let _ = gpu;
+            Ok(Box::new(VtEncoder::new(settings, true)?))
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         EncoderPlan::Hardware | EncoderPlan::HardwareGpu => {
             let _ = gpu;
             anyhow::bail!("hardware encoder not available on this system yet")

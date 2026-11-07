@@ -3399,6 +3399,7 @@ version = "0.16.0"
 dependencies = [
  "anyhow",
  "core-graphics 0.25.0",
+ "libc",
  "nuvira-portal",
  "nuvira-proto",
  "nuvira-transport",
@@ -3425,6 +3426,7 @@ name = "nuvira-codec"
 version = "0.16.0"
 dependencies = [
  "anyhow",
+ "core-foundation 0.10.1",
  "openh264",
  "openh264-sys2",
  "tracing",
@@ -3445,9 +3447,14 @@ name = "nuvira-input"
 version = "0.16.0"
 dependencies = [
  "anyhow",
+ "core-foundation 0.10.1",
  "core-graphics 0.25.0",
+ "dispatch2",
  "nuvira-portal",
  "nuvira-proto",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "tracing",
  "windows",
  "x11rb",

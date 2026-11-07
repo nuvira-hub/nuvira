@@ -346,6 +346,7 @@
   "agent.files_disabled": "die Regeln des Servers erlauben keine Dateiübertragungen",
   "agent.privacy_unsupported": "der Datenschutzmodus benötigt Windows 10 Version 2004 oder neuer",
   "agent.privacy_failed": "der Datenschutzmodus konnte auf dem entfernten PC nicht starten",
+  "agent.privacy_permission_mac": "der Datenschutzmodus benötigt am Mac die Berechtigung Bedienungshilfen: Öffnen Sie am Mac Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen und aktivieren Sie NuviraHub",
   "agent.privacy_disabled": "die Regeln des Servers erlauben den Datenschutzmodus nicht",
   "agent.restarting": "der Computer startet neu",
   "agent.restart_unavailable": "dieser Computer kann von hier aus nicht neu gestartet werden",

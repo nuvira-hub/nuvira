@@ -346,6 +346,7 @@
   "agent.files_disabled": "the rules of the server do not allow file transfers",
   "agent.privacy_unsupported": "privacy mode needs Windows 10 version 2004 or later",
   "agent.privacy_failed": "privacy mode could not start on the remote PC",
+  "agent.privacy_permission_mac": "privacy mode needs the Accessibility permission on the Mac: at the Mac, open System Settings → Privacy & Security → Accessibility and turn on NuviraHub",
   "agent.privacy_disabled": "the rules of the server do not allow privacy mode",
   "agent.restarting": "the computer is restarting",
   "agent.restart_unavailable": "this computer cannot be restarted from here",

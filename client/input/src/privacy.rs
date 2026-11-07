@@ -7,7 +7,9 @@
 //! the mouse and keyboard events that do not come from our own injection
 //! ([`INJECTED_TAG`]). Ctrl+Alt+Del cannot be blocked: the person at the PC can
 //! always lock it. The secure desktop (UAC, lock screen) is not covered.
-//! Other systems: not available yet.
+//! macOS: see `privacy_mac.rs` (black windows in a child process left out of
+//! ScreenCaptureKit, event tap for the local input).
+//! Linux: not available yet.
 
 use anyhow::Result;
 
@@ -15,29 +17,55 @@ use anyhow::Result;
 #[cfg(windows)]
 pub(crate) const INJECTED_TAG: usize = 0x4e55_5652; // "NUVR"
 
+#[cfg(target_os = "macos")]
+#[path = "privacy_mac.rs"]
+mod mac;
+#[cfg(target_os = "macos")]
+pub(crate) use mac::{INJECTED_TAG, USER_DATA};
+
 /// Privacy mode is on as long as this value lives.
 pub struct Privacy {
     #[cfg(windows)]
     inner: imp::Overlay,
+    #[cfg(target_os = "macos")]
+    inner: mac::Overlay,
 }
 
 /// The system can turn on privacy mode.
 pub fn available() -> bool {
     #[cfg(windows)]
     return imp::available();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    return mac::available();
+    #[cfg(not(any(windows, target_os = "macos")))]
     false
 }
 
 /// Turns privacy mode on; `message` is shown on the black screen to the person at the PC.
-pub fn start(message: &str) -> Result<Privacy> {
+/// `hide_from_capture` gets the process whose windows the screen capture must leave
+/// out (macOS: the black screens are another process), before they turn black.
+pub fn start(message: &str, hide_from_capture: &dyn Fn(u32)) -> Result<Privacy> {
     #[cfg(windows)]
-    return Ok(Privacy { inner: imp::Overlay::start(message)? });
-    #[cfg(not(windows))]
-    {
-        let _ = message;
-        anyhow::bail!("@agent.privacy_unsupported");
-    }
+    let privacy = {
+        let _ = hide_from_capture;
+        Privacy { inner: imp::Overlay::start(message)? }
+    };
+    #[cfg(target_os = "macos")]
+    let privacy = Privacy { inner: mac::Overlay::start(message, hide_from_capture)? };
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let privacy = {
+        let _ = (message, hide_from_capture);
+        anyhow::bail!("@agent.privacy_unsupported")
+    };
+    #[allow(unreachable_code)]
+    Ok(privacy)
+}
+
+/// macOS: runs the black screens when the program was started as their child
+/// process (and never returns then). Call it first thing in `main`.
+pub fn overlay_if_asked() {
+    #[cfg(target_os = "macos")]
+    mac::overlay_if_asked();
 }
 
 impl Privacy {
@@ -45,7 +73,7 @@ impl Privacy {
     pub fn stop(self) {}
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 impl Drop for Privacy {
     fn drop(&mut self) {
         self.inner.stop();

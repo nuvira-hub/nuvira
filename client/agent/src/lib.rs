@@ -1583,7 +1583,9 @@ async fn session(
                             error = "@agent.privacy_unsupported".into();
                         } else {
                             let message = nuvira_i18n::t("agent.privacy_screen");
-                            match tokio::task::spawn_blocking(move || nuvira_input::privacy::start(&message)).await? {
+                            match tokio::task::spawn_blocking(move || {
+                                nuvira_input::privacy::start(&message, &nuvira_capture::hide_process)
+                            }).await? {
                                 Ok(on) => privacy = Some(on),
                                 Err(e) => {
                                     warn!("privacy mode not turned on: {e:#}");

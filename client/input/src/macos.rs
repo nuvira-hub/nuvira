@@ -61,6 +61,8 @@ impl QuartzInjector {
         match event {
             Ok(event) => {
                 event.set_flags(modifier_flags(&self.keys));
+                // Marked as ours: privacy mode lets only these through.
+                event.set_integer_value_field(crate::privacy::USER_DATA, crate::privacy::INJECTED_TAG);
                 event.post(CGEventTapLocation::HID);
             }
             Err(()) => debug!("Quartz event not created"),

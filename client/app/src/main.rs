@@ -1158,6 +1158,8 @@ fn init_logging() {
 const SUBCOMMANDS: [&str; 3] = ["agent", "viewer", "service"];
 
 fn main() {
+    // macOS: the black screens of privacy mode are this program started again.
+    nuvira_input::privacy::overlay_if_asked();
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     if let Some(sub) = args.get(1).and_then(|a| a.to_str()).filter(|a| SUBCOMMANDS.contains(a)) {
         std::process::exit(run_subcommand(sub, &args[2..]));

@@ -346,6 +346,7 @@
   "agent.files_disabled": "las reglas del servidor no permiten transferir archivos",
   "agent.privacy_unsupported": "el modo privacidad requiere Windows 10 versión 2004 o posterior",
   "agent.privacy_failed": "no se pudo iniciar el modo privacidad en el PC remoto",
+  "agent.privacy_permission_mac": "el modo privacidad requiere el permiso de Accesibilidad en el Mac: en el Mac, abre Ajustes del Sistema → Privacidad y seguridad → Accesibilidad y activa NuviraHub",
   "agent.privacy_disabled": "las reglas del servidor no permiten el modo privacidad",
   "agent.restarting": "el equipo se está reiniciando",
   "agent.restart_unavailable": "este equipo no se puede reiniciar desde aquí",

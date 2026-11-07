@@ -15,13 +15,13 @@ pub mod desktop;
 mod gdi;
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(target_os = "linux")]
-mod x11;
 #[cfg(target_os = "macos")]
 mod macos;
 mod synthetic;
 #[cfg(windows)]
 mod windows;
+#[cfg(target_os = "linux")]
+mod x11;
 
 pub use all::{ALL_DISPLAYS, AllCapturer};
 pub use synthetic::SyntheticCapturer;
@@ -112,6 +112,16 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
 }
 
 /// A Wayland session (capture through the portal); otherwise X11.
+/// The windows of process `pid` are left out of the capture from now on (privacy
+/// mode on macOS: the black screens are another process). Waits a little for
+/// the running capture to apply it. Other systems: nothing to do.
+pub fn hide_process(pid: u32) {
+    #[cfg(target_os = "macos")]
+    macos::hide_process(pid);
+    #[cfg(not(target_os = "macos"))]
+    let _ = pid;
+}
+
 #[cfg(target_os = "linux")]
 pub fn wayland() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some()

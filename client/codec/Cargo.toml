@@ -28,5 +28,8 @@ features = [
     "Win32_System_Variant",
 ]
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
 [dev-dependencies]
 tracing-subscriber.workspace = true
