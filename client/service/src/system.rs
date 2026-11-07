@@ -1,6 +1,6 @@
 //! The system's part of unattended access on Linux and macOS, installed as root
 //! after a single administrator prompt: the NuviraHub printer (remote printing)
-//! and, on macOS, the sign-in screen's agent. Without the password the user's
+//! and the sign-in screen's agent. Without the password the user's
 //! part works the same.
 //!
 //! ```text
@@ -18,20 +18,13 @@ use crate::cups;
 
 /// Something of the system's part is installed.
 pub fn installed() -> bool {
-    #[cfg(target_os = "macos")]
-    if crate::signin::installed() {
-        return true;
-    }
-    cups::installed() && !cups::packaged()
+    crate::signin::installed() || (cups::installed() && !cups::packaged())
 }
 
-/// Something of the system's part is missing or must be brought up to date (the
-/// sign-in screen's agent keeps a copy of the password and of the server).
+/// Something of the system's part is missing or must be brought up to date: always,
+/// since the sign-in screen's agent keeps a copy of the password and of the server.
 pub fn wanted() -> bool {
-    #[cfg(target_os = "macos")]
-    return true;
-    #[cfg(not(target_os = "macos"))]
-    (cups::available() && !cups::installed())
+    true
 }
 
 /// As root: installs what is missing. Each part is tried even if the other fails.
@@ -43,15 +36,10 @@ pub fn install(user_data: &Path, server: &str, server_key: Option<&str>) -> Resu
             Err(e) => errors.push(format!("printer: {e:#}")),
         }
     }
-    #[cfg(target_os = "macos")]
-    {
-        let exe = std::env::current_exe().context("program path")?;
-        if let Err(e) = crate::signin::install(&exe, user_data, server, server_key) {
-            errors.push(format!("sign-in screen: {e:#}"));
-        }
+    let exe = std::env::current_exe().context("program path")?;
+    if let Err(e) = crate::signin::install(&exe, user_data, server, server_key) {
+        errors.push(format!("sign-in screen: {e:#}"));
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = (user_data, server, server_key);
     if !errors.is_empty() {
         bail!("{}", errors.join("; "));
     }
@@ -66,7 +54,6 @@ pub fn uninstall() -> Result<()> {
     {
         errors.push(format!("printer: {e:#}"));
     }
-    #[cfg(target_os = "macos")]
     if let Err(e) = crate::signin::uninstall() {
         errors.push(format!("sign-in screen: {e:#}"));
     }

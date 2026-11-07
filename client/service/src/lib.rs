@@ -19,9 +19,12 @@ pub mod cups;
 /// Root's updates of the .deb and .rpm packages.
 #[cfg(target_os = "linux")]
 mod package_update;
-/// The sign-in screen's agent (macOS LoginWindow).
+/// The sign-in screen's agent (macOS LoginWindow, Linux greeter).
 #[cfg(target_os = "macos")]
 #[path = "signin_mac.rs"]
+pub mod signin;
+#[cfg(target_os = "linux")]
+#[path = "signin_linux.rs"]
 pub mod signin;
 /// The root part of unattended access: printer, sign-in screen.
 #[cfg(unix)]
@@ -307,8 +310,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         Some("printer") => cups::install().map(|done| println!("{done}")),
         // As root, through the administrator prompt of the app: printer and sign-in screen.
         Some("system") => system::command(&args),
-        // launchd at the sign-in screen.
-        #[cfg(target_os = "macos")]
+        // launchd at the sign-in screen, systemd on Linux.
         Some("signin-run") => signin::run(),
         // Root's nuvira-update.timer of the packages.
         #[cfg(target_os = "linux")]
