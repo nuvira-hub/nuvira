@@ -218,6 +218,7 @@
   "settings.install_pw_short": "Das dauerhafte Passwort muss mindestens 8 Zeichen haben.",
   "settings.install": "Auf diesem Computer installieren",
   "settings.installing": "Installation läuft: Bestätigen Sie die Administratorabfrage…",
+  "settings.installing_mac": "Installation läuft. Danach fragt macOS nach Ihrem Passwort, um den NuviraHub-Drucker (Remote-Druck) hinzuzufügen: Sein Fenster meldet, dass Apple das Skript nicht überprüfen konnte, wie bei jedem Programm, das so fragt. Ohne das Passwort wird alles andere genauso installiert.",
   "settings.installed": "Installiert: Dieser Computer ist erreichbar, auch wenn niemand davor sitzt. Zum Entfernen von NuviraHub verwenden Sie die installierten Apps in den Windows-Einstellungen.",
   "settings.unattended_hint_linux": "Diesen Computer auch erreichbar machen, wenn niemand davor sitzt, mit einem dauerhaften Passwort: NuviraHub startet dann bei jeder Anmeldung von selbst, ohne Fenster. Nach einem Neustart braucht der Computer die automatische Anmeldung, und unter GNOME mit Wayland darf sich der Bildschirm nicht sperren (GNOME gibt ihn im gesperrten Zustand nicht frei).",
   "settings.installed_linux": "Unbeaufsichtigter Zugriff aktiv: NuviraHub startet bei jeder Anmeldung von selbst und ist mit dem dauerhaften Passwort erreichbar.",

@@ -218,6 +218,7 @@
   "settings.install_pw_short": "Le mot de passe permanent doit comporter au moins 8 caractères.",
   "settings.install": "Installer sur cet ordinateur",
   "settings.installing": "Installation en cours : confirmez la demande d'administrateur…",
+  "settings.installing_mac": "Installation en cours. macOS demande ensuite votre mot de passe pour ajouter l'imprimante NuviraHub (impression à distance) : sa fenêtre indique qu'Apple n'a pas pu vérifier le script, comme pour tout programme qui le demande ainsi. Sans le mot de passe, tout le reste est installé de la même façon.",
   "settings.installed": "Installé : cet ordinateur est accessible même lorsque personne n'est devant. Pour supprimer NuviraHub, utilisez les applications installées dans les paramètres de Windows.",
   "settings.unattended_hint_linux": "Rendez cet ordinateur accessible même quand personne n'est devant, avec un mot de passe permanent : NuviraHub démarre alors tout seul à chaque connexion, sans la fenêtre. Après un redémarrage, l'ordinateur a besoin de la connexion automatique, et sur GNOME avec Wayland l'écran ne doit pas se verrouiller (GNOME arrête de le partager quand il est verrouillé).",
   "settings.installed_linux": "Accès sans surveillance actif : NuviraHub démarre tout seul à chaque connexion et est accessible avec le mot de passe permanent.",

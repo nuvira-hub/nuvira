@@ -218,6 +218,7 @@
   "settings.install_pw_short": "La password permanente deve avere almeno 8 caratteri.",
   "settings.install": "Installa su questo computer",
   "settings.installing": "Installazione in corso: conferma la richiesta di amministratore…",
+  "settings.installing_mac": "Installazione in corso. Poi macOS chiede la tua password per aggiungere la stampante NuviraHub (stampa remota): la sua finestra dice che Apple non ha potuto verificare lo script, come fa per ogni programma che lo chiede in questo modo. Senza la password il resto si installa lo stesso.",
   "settings.installed": "Installato: questo computer è raggiungibile anche quando non c'è nessuno davanti. Per rimuovere NuviraHub usa le app installate nelle impostazioni di Windows.",
   "settings.unattended_hint_linux": "Rendi raggiungibile questo computer anche quando non c'è nessuno davanti, con una password permanente: NuviraHub parte da solo a ogni accesso, senza la finestra. Dopo un riavvio serve l'accesso automatico, e su GNOME con Wayland lo schermo non deve bloccarsi (GNOME smette di condividerlo quando è bloccato).",
   "settings.installed_linux": "Accesso non presidiato attivo: NuviraHub parte da solo a ogni accesso ed è raggiungibile con la password permanente.",

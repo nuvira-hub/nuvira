@@ -457,7 +457,9 @@ $("install-form").addEventListener("submit", async (e) => {
   if (password !== $("install-pw2").value) return show(t("settings.pw_mismatch"), false);
   if (password && password.length < 8) return show(t("settings.install_pw_short"), false);
   $("install-button").disabled = true;
-  show(t("settings.installing"), true);
+  // macOS: its prompt for the printer warns that Apple cannot verify the script and
+  // shows no text of ours, so the app says what it is for.
+  show(t(current?.platform === "macos" ? "settings.installing_mac" : "settings.installing"), true);
   try {
     show(await invoke("install_service", { password }), true);
     $("install-form").reset();

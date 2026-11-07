@@ -218,6 +218,7 @@
   "settings.install_pw_short": "The permanent password must have at least 8 characters.",
   "settings.install": "Install on this computer",
   "settings.installing": "Installing: confirm the administrator prompt…",
+  "settings.installing_mac": "Installing. macOS then asks for your password to add the NuviraHub printer (remote printing): its window says that Apple could not verify the script, as it does for every program that asks this way. Without the password everything else is installed the same.",
   "settings.installed": "Installed: this computer can be reached even when nobody is in front of it. To remove NuviraHub use the installed apps in Windows settings.",
   "settings.unattended_hint_linux": "Make this computer reachable even when nobody is in front of it, with a permanent password: NuviraHub then starts by itself at every login, without the window. After a restart the computer needs automatic login, and on GNOME with Wayland the screen must not lock (GNOME stops sharing it while locked).",
   "settings.installed_linux": "Unattended access is active: NuviraHub starts by itself at every login and can be reached with the permanent password.",
