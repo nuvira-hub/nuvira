@@ -44,6 +44,20 @@ Limits: the Mac is reachable only while someone is logged in and the screen is n
 
 See [27-remote-restart.md](27-remote-restart.md): the Apple event "restart" to loginwindow, no administrator needed.
 
+## Tests of 2026-11-07 on a Mac mini M4
+
+Scaleway Mac mini M4, macOS 27.2, SIP on, FileVault off, a 1920×1080 virtual display; driven over SSH (`cliclick`, re-signed ad hoc because macOS 27 kills the unsigned release binary; `screencapture`), viewer on the Fedora VM through NuviraHub's public server. The app from the disk image of the CI (`spctl`: "Notarized Developer ID").
+
+- **Permissions**: at its first start the app opened Accessibility with NuviraHub in the list. Screen Recording: macOS 27 adds NuviraHub to the list without any window, so the installation now opens that page itself, moves the app out of the way (apps can no longer bring another app in front) and says what to do (`@install.screen_permission_mac`); after "Quit & Reopen" the installation goes through.
+- **Unattended access** from the app's settings: LaunchAgent running from the bundle, "App Background Activity" notification of macOS, same ID; the app switches to the service's agent at once (before the printer's administrator prompt, see below). Agent killed: launchd started it again within 1 s.
+- **Remote restart** (`--restart` from the viewer): back online after about 50 s, automatic login, same ID, screen captured at once.
+- **Session** with the permanent password: ScreenCaptureKit 1920×1080, VideoToolbox.
+- **Printer**: the administrator prompt (macOS 27 adds "Apple could not verify this script is free of malware"); with SIP on the backend goes into `/usr/libexec/cups/backend` (root:wheel 0700). A text and a PDF printed with `lp` reached the viewer as PDF with their titles. "Don't Allow": unattended access installed, the app says the printer was not.
+- **Privacy mode**: a black window of the child process at the shielding level, full screen, alpha 1, sharing none (so no capture shows it, `screencapture` and VNC included: checked in the window list); keys and clicks of the Mac's own input did not reach TextEdit during it, did after.
+- **VideoToolbox**: with the low-latency rate control the session does not report `UsingHardwareAcceleratedVideoEncoder` (logged as hardware=false), without it hardware=true, same speed: about 4.5 ms per frame at 720p and 8 ms at 1080p in the bench (peaks 35–45 ms), where OpenH264 takes 1–2 ms on that nearly still image; 15–16 ms per frame in a session at 720p, to be looked at (scaling on the CPU?).
+- **Automatic update** (channel `macos`, test server on the Mac, version 0.16.0.1): bundle swapped 2 minutes after start, the agent ended and launchd started the new one, same ID; Screen Recording and Accessibility still granted (capture and privacy mode in the next session).
+- On a CI runner (no screen, SIP off): the same printer checks with a listener on the socket, and the swap refusing a changed and an ad-hoc signed app (`.github/workflows/macos-live-checks.yml`).
+
 ## Not tested yet
 
-Everything in this section on a real Mac: the LaunchAgent (install, remove, after a restart with automatic login, Login Items switch), the remote restart, the keyboard flags and the ISO swap, privacy mode, the VideoToolbox encoder (speed on a Retina/5K screen, colours, bitrate changes). Also clipboard, files, terminal, tunnels and printing in both roles (as the controlled computer: the "NuviraHub" CUPS queue, docs/29-remote-printing.md). The list is kept in the internal parity document.
+The keyboard flags and the ISO swap from a Windows viewer, a Retina/5K screen, colours, bitrate changes; clipboard, files, terminal, tunnels, several displays; the Mac as the viewer (recording, printing, windows); IPv6.
