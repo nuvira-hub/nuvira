@@ -58,6 +58,15 @@ Scaleway Mac mini M4, macOS 27.2, SIP on, FileVault off, a 1920×1080 virtual di
 - **Automatic update** (channel `macos`, test server on the Mac, version 0.16.0.1): bundle swapped 2 minutes after start, the agent ended and launchd started the new one, same ID; Screen Recording and Accessibility still granted (capture and privacy mode in the next session).
 - On a CI runner (no screen, SIP off): the same printer checks with a listener on the socket, and the swap refusing a changed and an ad-hoc signed app (`.github/workflows/macos-live-checks.yml`).
 
+- **Terminal-only session**: login zsh as the user, commands and output both ways.
+- **File manager** (agent): 3 MB from the Mac and 2 MB to its Desktop, same SHA-256. macOS asked at the Mac "NuviraHub would like to access files in your Desktop folder": Desktop, Documents and Downloads have permissions of their own, which nobody can give in an unattended session (to do: say so at the installation, or ask for Full Disk Access).
+- **Clipboard** both ways (text, Fedora's Wayland clipboard).
+- **Recording**: the strip shows "Recorded"; the MP4 was saved by the viewer.
+- **Session permissions**: "Keyboard and mouse" switched off in the strip reached the viewer at once (`switched_off: ["input"]`), the remote mouse stopped; on again afterwards. **Chat** from the Mac reached the viewer.
+- **Keyboard** from the Mint viewer (real key events through XTest, Italian pc105 keyboard) into TextEdit: with the Mac on "US" by position "Ab1[;'\§±" (a Mac without a keyboard reports ANSI: no swap); with "Italian – Pro" and `NUVIRA_MAC_KEYBOARD=iso` in the LaunchAgent "Ab1èòàù<>". (`launchctl setenv` does not reach the job: the variable goes into the property list.)
+- **The Mac as the viewer** towards Mint: window, toolbar, Dock icon; recording into `~/Movies/NuviraHub` (H.264 1280×800, read by Spotlight); a document printed on Mint opened the "Print" window with the Mac's printers (its own NuviraHub left out) and went into the chosen CUPS queue; terminal window; file manager window: its own side was empty (Windows folders only), fixed, then a file sent from the Mac's Desktop to Mint with the same SHA-256.
+- `nuvira viewer --server ""` does not mean the public server (the agent's does): to align.
+
 ## Not tested yet
 
-The keyboard flags and the ISO swap from a Windows viewer, a Retina/5K screen, colours, bitrate changes; clipboard, files, terminal, tunnels, several displays; the Mac as the viewer (recording, printing, windows); IPv6.
+Tunnels, RMM inventory and address book sign-in with 2FA/SSO (they need a NuviraHub Pro server the Mac can reach); a session towards Windows (Ctrl+Alt+Del button); Mac to Mac (Cmd kept); several displays, a Retina/5K screen; IPv6.
