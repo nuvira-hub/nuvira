@@ -5,7 +5,7 @@
 //! - `mfdec`: H.264 decoding on the graphics card through Media Foundation (Windows, opt-in);
 //! - `vt`: H.264 with VideoToolbox (macOS);
 //! - `openh264`: software H.264, available everywhere (fallback);
-//! - VAAPI (Linux): next step.
+//! - `vaapi`: H.264 with VA-API, Intel and AMD graphics cards (Linux);
 //!
 //! Intermediate format: YUV 4:2:0 BT.601 limited range (I420 for OpenH264,
 //! NV12 for hardware encoders), see [`convert`].
@@ -19,6 +19,8 @@ mod mf;
 mod mfdec;
 mod openh264;
 mod select;
+#[cfg(target_os = "linux")]
+mod vaapi;
 #[cfg(target_os = "macos")]
 mod vt;
 
@@ -27,6 +29,8 @@ pub use crate::mf::{MfEncoder, hardware_encoders};
 #[cfg(windows)]
 pub use crate::mfdec::MfDecoder;
 pub use crate::openh264::{OpenH264Decoder, OpenH264Encoder};
+#[cfg(target_os = "linux")]
+pub use crate::vaapi::VaapiEncoder;
 #[cfg(target_os = "macos")]
 pub use crate::vt::VtEncoder;
 
@@ -193,7 +197,12 @@ pub fn create_encoder(
             let _ = gpu;
             Ok(Box::new(VtEncoder::new(settings, true)?))
         }
-        #[cfg(not(any(windows, target_os = "macos")))]
+        #[cfg(target_os = "linux")]
+        EncoderPlan::Hardware | EncoderPlan::HardwareGpu => {
+            let _ = gpu;
+            Ok(Box::new(VaapiEncoder::new(settings)?))
+        }
+        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         EncoderPlan::Hardware | EncoderPlan::HardwareGpu => {
             let _ = gpu;
             anyhow::bail!("hardware encoder not available on this system yet")

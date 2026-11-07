@@ -41,6 +41,19 @@ On Wayland a program cannot read the screen or inject input by itself: it asks t
 
 First version, tested on Linux Mint 22.3 Cinnamon. `client/capture/src/x11.rs` reads the root window with `GetImage` (no shared memory yet) and draws the cursor from XFixes on top; a still screen is detected by comparing the image and the pointer position with the previous ones. `client/input/src/x11.rs` injects with XTest: X key codes are the Linux ones plus 8, the wheel is clicks of buttons 4–7. The backend follows the session: `WAYLAND_DISPLAY` → portal, otherwise X11. No permission dialog on X11.
 
+## Hardware encoder (VA-API)
+
+`client/codec/src/vaapi.rs`, branch `linux-privacy-vaapi`: H.264 on Intel (iHD, i965) and AMD (Mesa) graphics cards through VA-API, with libva loaded at run time (`libva.so.2`, `libva-drm.so.2`, present on every desktop distribution): no other package needed, and without it the agent uses OpenH264.
+
+- **Device:** the first render node (`/dev/dri/renderD128`…) whose driver encodes H.264; `NUVIRA_VAAPI_DEVICE` picks one. The user needs access to it (group `render`, normal for the desktop user).
+- **Encoding:** profile Main (CABAC), else High, else Constrained Baseline; slice encoding, else low-power (newer Intel). P frames referring only to the previous frame, keyframes when asked, one frame out for every frame in. CBR (VBR where missing); the adaptive bitrate sends a new rate-control parameter with the next frame.
+- **Headers:** written by the driver (no packed headers). At start a test frame must carry SPS, PPS and an IDR slice, otherwise the encoder is refused and OpenH264 is used.
+- **Input:** BGRA → NV12 BT.601 limited on the CPU (as for the other hardware encoders), copied into the surface with `vaDeriveImage`, or `vaPutImage` where surfaces cannot be mapped.
+- **Failure during a session** (screen larger than the driver allows, GPU reset): the encoder carries on with OpenH264 for the rest of the session.
+- **Choice:** with `--encoder auto` it is measured against OpenH264 at start, as on Windows.
+- **Structures** written by hand and checked against the C headers of libva 2.17 (sizes and offsets in compile-time asserts).
+- **Tested:** on the VMs (no GPU) the driver refuses and OpenH264 is used. Not yet on a real graphics card: the WSL of the NUC (Intel UHD, Comet Lake) has no D3D12 video encoding, so Mesa's d3d12 VA driver does not start. NVENC: not done.
+
 ## Unattended access
 
 A systemd **user** service, `nuvira-agent.service`, runs the agent as the person's own user (not root), with the permanent password (its hash in `~/.config/nuvira/service.env`, mode 0600). The app installs and removes it from Settings → Unattended access, or `nuvira service install [--server HOST] [--password-file FILE]` and `nuvira service uninstall` (`client/service/src/user.rs`).
@@ -69,7 +82,7 @@ On Windows the saved passwords are protected with DPAPI. On Linux they are encry
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
 - **Other desktops**: tested with GNOME only; KDE Plasma to be tested; Sway and Hyprland have no remote desktop portal (screen without input).
-- **Performance**: DMA-BUF capture, the cursor as metadata, hardware encoding (VAAPI, NVENC).
+- **Performance**: DMA-BUF capture, the cursor as metadata, NVENC; VA-API to be tested on real graphics cards.
 - **Ubuntu 22.04 and Mint 21**: dropped in 0.14.0 (PipeWire too old); possible by loading PipeWire at run time.
 
 **Unattended access** (2026-11-06): the user service on Ubuntu 26.04 and Fedora 44 (Wayland) and Mint 22.3 (X11) starts at login and is reached with the permanent password with no app open; after a restart with automatic login both came back by themselves, and on Wayland the saved permission was accepted without a dialog. The app links to the service's agent and shows its ID.

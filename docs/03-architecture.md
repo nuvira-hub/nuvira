@@ -82,7 +82,7 @@ services:
 |---|---|---|---|
 | Screen capture | Windows.Graphics.Capture / DXGI Desktop Duplication | ScreenCaptureKit | PipeWire (ScreenCast portal) on Wayland, XShm/XDamage on X11 |
 | Input | SendInput (+ service for the secure desktop) | CGEvent (Accessibility permission) | RemoteDesktop portal / libei on Wayland, XTest on X11, uinput as a fallback |
-| Hardware encoder | NVENC, Intel QSV, AMD AMF, Media Foundation | VideoToolbox | VAAPI, NVENC |
+| Hardware encoder | NVENC, Intel QSV, AMD AMF, Media Foundation | VideoToolbox | VA-API (NVENC planned) |
 | Audio | WASAPI loopback | ScreenCaptureKit audio | PipeWire |
 | Virtual monitor | IddCx driver | CGVirtualDisplay | compositor virtual output / xrandr |
 

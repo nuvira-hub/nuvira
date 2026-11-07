@@ -3427,6 +3427,7 @@ version = "0.16.0"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
+ "libloading 0.8.9",
  "openh264",
  "openh264-sys2",
  "tracing",
@@ -3450,6 +3451,7 @@ dependencies = [
  "core-foundation 0.10.1",
  "core-graphics 0.25.0",
  "dispatch2",
+ "libc",
  "nuvira-portal",
  "nuvira-proto",
  "objc2 0.6.5",
