@@ -23,8 +23,8 @@ permissions:
   actions: read
 
 env:
-  # client-macos run of commit e09b668 (branch auto-update).
-  APP_RUN: ${{ inputs.run_id || '42396555040' }}
+  # client-macos run of commit 75f1f43 (branch auto-update).
+  APP_RUN: ${{ inputs.run_id || '42399469928' }}
 
 jobs:
   checks:
