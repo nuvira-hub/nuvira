@@ -220,6 +220,7 @@
   "settings.installed": "Instalado: se puede acceder a este equipo aunque no haya nadie delante. Para quitar NuviraHub usa las aplicaciones instaladas en la configuración de Windows.",
   "settings.unattended_hint_linux": "Haz que este ordenador sea accesible aunque no haya nadie delante, con una contraseña permanente: NuviraHub se inicia solo en cada inicio de sesión, sin la ventana. Tras un reinicio, el ordenador necesita el inicio de sesión automático, y en GNOME con Wayland la pantalla no debe bloquearse (GNOME deja de compartirla cuando está bloqueada).",
   "settings.installed_linux": "Acceso desatendido activo: NuviraHub se inicia solo en cada inicio de sesión y es accesible con la contraseña permanente.",
+  "settings.unattended_hint_mac": "Haz que este Mac sea accesible aunque no haya nadie delante, con una contraseña permanente: NuviraHub se inicia solo en cada inicio de sesión, sin la ventana. Tras un reinicio, el Mac necesita el inicio de sesión automático (Ajustes del Sistema → Usuarios y grupos; no disponible con FileVault activado), y con la pantalla bloqueada no se puede controlar.",
   "settings.uninstall": "Quitar el acceso desatendido",
 
   "about.version": "Versión {v}",
@@ -393,6 +394,7 @@
   "install.removed": "Acceso desatendido quitado: este ordenador solo es accesible con la app abierta, con la contraseña temporal.",
   "install.done_password": "NuviraHub está instalado. Contraseña permanente: {password} (anótala: solo se muestra ahora).",
   "install.windows_only": "Por ahora la instalación solo está disponible en Windows.",
+  "install.move_to_applications": "Primero mueve NuviraHub a la carpeta Aplicaciones y ábrelo desde allí: iniciado desde la imagen de disco, macOS no deja que se inicie solo.",
 
   "update.available": "NuviraHub {version} está disponible.",
   "update.button": "Actualizar",

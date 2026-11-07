@@ -10,26 +10,16 @@
 //! the computer needs automatic login; on GNOME with Wayland the screen must not
 //! lock either, since GNOME stops sharing it while locked.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use tracing::info;
 
+pub use crate::unix_shared::{InstallOptions, ServiceState, installed_version};
+use crate::unix_shared::{env_path, home, store_password};
+
 const UNIT: &str = "nuvira-agent.service";
-
-/// The same states as the Windows service, for the app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServiceState {
-    NotInstalled,
-    Stopped,
-    Running,
-    Changing,
-}
-
-fn home() -> Result<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from).context("HOME not set")
-}
 
 fn unit_path() -> Result<PathBuf> {
     Ok(home()?.join(".config/systemd/user").join(UNIT))
@@ -37,10 +27,6 @@ fn unit_path() -> Result<PathBuf> {
 
 fn autostart_path() -> Result<PathBuf> {
     Ok(home()?.join(".config/autostart/nuvira-agent.desktop"))
-}
-
-fn env_path() -> PathBuf {
-    nuvira_transport::identity::data_dir().join("service.env")
 }
 
 /// The variables of the desktop session the agent needs.
@@ -62,32 +48,11 @@ fn systemctl(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-pub struct InstallOptions {
-    pub server: String,
-    pub server_key: Option<String>,
-    /// `None`: the current one is kept, or one is generated the first time.
-    pub password: Option<String>,
-}
-
 /// Installs or updates the user service. Returns the permanent password when it
 /// was generated, to show it once.
 pub fn install(opts: &InstallOptions) -> Result<Option<String>> {
     let exe = std::env::current_exe().context("program path")?;
-    let store = |password: &str| {
-        write_private(&env_path(), &format!("NUVIRA_PASSWORD_HASH={}\n", nuvira_secret::hash(password)))
-    };
-    let generated = match (&opts.password, env_path().exists()) {
-        (Some(password), _) => {
-            store(password)?;
-            None
-        }
-        (None, true) => None,
-        (None, false) => {
-            let password = crate::random_password();
-            store(&password)?;
-            Some(password)
-        }
-    };
+    let generated = store_password(opts)?;
 
     // Always with --server: empty is the public server (without it the agent
     // would wait for viewers on the local network only).
@@ -194,21 +159,4 @@ pub fn service_state() -> Result<ServiceState> {
         "activating" | "deactivating" | "reloading" => ServiceState::Changing,
         _ => ServiceState::Stopped,
     })
-}
-
-/// The service runs this same program: there is never an older installed one.
-pub fn installed_version() -> Option<String> {
-    None
-}
-
-fn write_private(path: &Path, text: &str) -> Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let mut file =
-        std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
-    file.write_all(text.as_bytes())?;
-    Ok(())
 }

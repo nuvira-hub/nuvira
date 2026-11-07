@@ -387,7 +387,7 @@ pub async fn serve_via_server(
         allow_recording: AtomicBool::new(permissions.recording),
         features: Mutex::new(Vec::new()),
         unattended: opts.unattended,
-        restarting: AtomicBool::new(false),
+        restarting: Mutex::new(None),
         switches: Mutex::new(None),
     });
     let current = ctx.password.lock().expect("password").clone();
@@ -505,9 +505,11 @@ struct SessionContext {
     features: Mutex<Vec<String>>,
     /// See [`ServerOptions::unattended`].
     unattended: bool,
-    /// A restart of the computer is under way: new sessions are refused until the
-    /// agent ends, so that a viewer waiting to reconnect finds the computer restarted.
-    restarting: AtomicBool,
+    /// A restart of the computer is under way (since then): new sessions are
+    /// refused until the agent ends, so that a viewer waiting to reconnect finds the
+    /// computer restarted. After [`RESTART_GIVEN_UP`] the restart did not happen
+    /// (on macOS an app with unsaved work can stop it) and sessions are accepted again.
+    restarting: Mutex<Option<Instant>>,
     /// Switches of the session in progress ([`AgentCommand::Switch`]).
     switches: Mutex<Option<Arc<switches::Switches>>>,
 }
@@ -901,6 +903,9 @@ async fn relayed_session(
     result
 }
 
+/// See [`SessionContext::restarting`].
+const RESTART_GIVEN_UP: Duration = Duration::from_secs(180);
+
 /// Access control of a session arriving from the server: permanent password
 /// (unattended access) or temporary password, with confirmation by the person
 /// at the PC if required.
@@ -919,7 +924,7 @@ impl Gate<'_> {
     /// `Err` with the reason to show to the viewer.
     async fn authorize(&self, auth: &Auth, pending: Option<&mut FramedSend>) -> Result<(), String> {
         let ctx = self.ctx;
-        if ctx.restarting.load(Ordering::Relaxed) {
+        if ctx.restarting.lock().expect("restarting").is_some_and(|t| t.elapsed() < RESTART_GIVEN_UP) {
             return Err("@agent.restarting".into());
         }
         let given = auth.password.as_str();
@@ -1625,7 +1630,7 @@ async fn session(
                                 // password, with no confirmation asked.
                                 state.reconnect = gate.is_some_and(|g| *g.access.lock().expect("access") == "permanent");
                                 if let Some(g) = gate {
-                                    g.ctx.restarting.store(true, Ordering::Relaxed);
+                                    *g.ctx.restarting.lock().expect("restarting") = Some(Instant::now());
                                 }
                             }
                             Err(e) => {

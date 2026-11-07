@@ -464,6 +464,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         best_rtt_us: u64::MAX,
         rtt_us: 0,
         pressed_keys: HashSet::new(),
+        remote_mac: false,
         input_blocked: false,
         switched_off: Vec::new(),
         exit_reason: None,
@@ -601,6 +602,8 @@ struct App {
     best_rtt_us: u64,
     rtt_us: u64,
     pressed_keys: HashSet<String>,
+    /// The controlled computer is a Mac (see [`w3c_code`]).
+    remote_mac: bool,
     exit_reason: Option<String>,
     /// Why the session ended, for the user (translated); printed as `@closed` for the app.
     closed_message: Option<String>,
@@ -1054,6 +1057,7 @@ impl ApplicationHandler<NetEvent> for App {
                 height,
                 file_manager,
                 secure_attention,
+                remote_mac,
                 privacy,
                 terminal,
                 tunnel,
@@ -1062,6 +1066,7 @@ impl ApplicationHandler<NetEvent> for App {
                 recording,
                 recording_required,
             } => {
+                self.remote_mac = remote_mac;
                 if self.restarting.take().is_some() {
                     info!("connected again after the restart");
                     self.notice(&t("viewer.restart_back"), false);
@@ -1568,7 +1573,7 @@ impl ApplicationHandler<NetEvent> for App {
             }
             WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
                 let PhysicalKey::Code(code) = event.physical_key else { return };
-                let code = w3c_code(code);
+                let code = w3c_code(code, self.remote_mac);
                 let down = event.state == ElementState::Pressed;
                 // Ctrl+Alt+End (as in Remote Desktop) = Ctrl+Alt+Del on the controlled
                 // device: the real Ctrl+Alt+Del is caught by the local system.
@@ -1592,14 +1597,16 @@ impl ApplicationHandler<NetEvent> for App {
 }
 
 /// W3C name (`KeyboardEvent.code`) of a winit key. The names are the same except
-/// for the Windows/Cmd key, which winit calls "Super".
-fn w3c_code(code: winit::keyboard::KeyCode) -> String {
+/// for the Windows/Cmd key, which winit calls "Super". From a Mac to a Windows or
+/// Linux computer Cmd and Ctrl are swapped ([`mac_swap`]); from a Mac to a Mac
+/// they stay what they are.
+fn w3c_code(code: winit::keyboard::KeyCode, remote_mac: bool) -> String {
     let name = match format!("{code:?}").as_str() {
         "SuperLeft" => "MetaLeft".into(),
         "SuperRight" => "MetaRight".into(),
         other => other.to_string(),
     };
-    if cfg!(target_os = "macos") { mac_swap(name) } else { name }
+    if cfg!(target_os = "macos") && !remote_mac { mac_swap(name) } else { name }
 }
 
 /// On a Mac, Cmd does what Ctrl does on Windows and Linux (Cmd+C, Cmd+V, Cmd+Z):
@@ -1644,8 +1651,14 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn super_becomes_meta() {
-        assert_eq!(w3c_code(winit::keyboard::KeyCode::SuperLeft), "MetaLeft");
-        assert_eq!(w3c_code(winit::keyboard::KeyCode::KeyA), "KeyA");
+        assert_eq!(w3c_code(winit::keyboard::KeyCode::SuperLeft, false), "MetaLeft");
+        assert_eq!(w3c_code(winit::keyboard::KeyCode::KeyA, false), "KeyA");
+    }
+
+    #[test]
+    fn mac_to_mac_keeps_cmd() {
+        assert_eq!(w3c_code(winit::keyboard::KeyCode::SuperLeft, true), "MetaLeft");
+        assert_eq!(w3c_code(winit::keyboard::KeyCode::ControlLeft, true), "ControlLeft");
     }
 
     #[test]

@@ -1,12 +1,23 @@
 //! macOS input: mouse and keyboard as Quartz events (`CGEventPost`). macOS
 //! accepts them only once the person allowed NuviraHub in System Settings →
 //! Privacy & Security → Accessibility.
+//!
+//! Keys are sent by position (the W3C code of the viewer's physical key): the
+//! character is the one of the Mac's own layout at that position. Two details
+//! macOS does not do by itself for synthetic events:
+//! - the modifiers held (Shift, Control, Option, Command, Caps Lock) must be in
+//!   the flags of every key and mouse event, otherwise many apps see "a" instead
+//!   of "A" or "è" instead of "é", and Cmd+click is a plain click;
+//! - on ISO keyboards (Italian, German, French…) the key left of 1 and the one
+//!   left of Z have each other's virtual codes.
 
 use std::collections::HashSet;
 
 use anyhow::{Result, anyhow};
 use core_graphics::display::CGDisplay;
-use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit};
+use core_graphics::event::{
+    CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit,
+};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use nuvira_proto::v1::input_event::Event;
@@ -25,18 +36,33 @@ pub struct QuartzInjector {
     buttons: HashSet<u8>,
     position: CGPoint,
     wheel: (i32, i32),
+    /// The Mac's keyboard is ISO (see the module's notes).
+    iso: bool,
 }
 
 // CGEventSource is made for every event: it is not Send.
 impl QuartzInjector {
     pub fn new(screen: ScreenRect) -> Result<Self> {
         let _ = source()?;
-        Ok(Self { screen: points(screen), keys: HashSet::new(), buttons: HashSet::new(), position: CGPoint::new(0.0, 0.0), wheel: (0, 0) })
+        let iso = iso_keyboard();
+        debug!(iso, "Mac keyboard type");
+        Ok(Self {
+            screen: points(screen),
+            keys: HashSet::new(),
+            buttons: HashSet::new(),
+            position: CGPoint::new(0.0, 0.0),
+            wheel: (0, 0),
+            iso,
+        })
     }
 
-    fn post(event: Result<CGEvent, ()>) {
+    /// Posts the event with the modifiers held.
+    fn post(&self, event: Result<CGEvent, ()>) {
         match event {
-            Ok(event) => event.post(CGEventTapLocation::HID),
+            Ok(event) => {
+                event.set_flags(modifier_flags(&self.keys));
+                event.post(CGEventTapLocation::HID);
+            }
             Err(()) => debug!("Quartz event not created"),
         }
     }
@@ -58,7 +84,7 @@ impl QuartzInjector {
             (CGEventType::MouseMoved, CGMouseButton::Left)
         };
         let Ok(src) = source() else { return };
-        Self::post(CGEvent::new_mouse_event(src, kind, self.position, button));
+        self.post(CGEvent::new_mouse_event(src, kind, self.position, button));
     }
 
     fn button(&mut self, button: Button, down: bool) {
@@ -83,7 +109,7 @@ impl QuartzInjector {
         if let Ok(event) = &event {
             event.set_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER, i64::from(number));
         }
-        Self::post(event);
+        self.post(event);
     }
 
     fn wheel(&mut self, dx: i32, dy: i32) {
@@ -97,7 +123,7 @@ impl QuartzInjector {
         }
         // Positive is up and right in both NuviraHub's units and Quartz lines.
         let Ok(src) = source() else { return };
-        Self::post(CGEvent::new_scroll_event(src, ScrollEventUnit::LINE, 2, steps_y, steps_x, 0));
+        self.post(CGEvent::new_scroll_event(src, ScrollEventUnit::LINE, 2, steps_y, steps_x, 0));
     }
 
     fn key(&mut self, code: &str, down: bool) {
@@ -105,14 +131,73 @@ impl QuartzInjector {
             debug!("key without a macOS code: {code}");
             return;
         };
+        let keycode = if self.iso { iso_swap(keycode) } else { keycode };
         if down {
+            // A repeat of a held key (auto-repeat of the viewer) is sent again.
             self.keys.insert(keycode);
         } else if !self.keys.remove(&keycode) {
             return;
         }
-        let Ok(src) = source() else { return };
-        Self::post(CGEvent::new_keyboard_event(src, keycode, down));
+        self.post_key(keycode, down);
     }
+
+    /// A modifier key changes the flags (`FlagsChanged`, as a real keyboard does);
+    /// the others are key down/up events.
+    fn post_key(&self, keycode: u16, down: bool) {
+        let Ok(src) = source() else { return };
+        let event = CGEvent::new_keyboard_event(src, keycode, down);
+        if let Ok(event) = &event
+            && modifier_flag(keycode).is_some()
+        {
+            event.set_type(CGEventType::FlagsChanged);
+        }
+        self.post(event);
+    }
+}
+
+/// Flag of a modifier key, by virtual code.
+fn modifier_flag(keycode: u16) -> Option<CGEventFlags> {
+    Some(match keycode {
+        0x38 | 0x3C => CGEventFlags::CGEventFlagShift,
+        0x3B | 0x3E => CGEventFlags::CGEventFlagControl,
+        0x3A | 0x3D => CGEventFlags::CGEventFlagAlternate,
+        0x37 | 0x36 => CGEventFlags::CGEventFlagCommand,
+        0x39 => CGEventFlags::CGEventFlagAlphaShift,
+        _ => return None,
+    })
+}
+
+/// Flags of the modifier keys held.
+fn modifier_flags(keys: &HashSet<u16>) -> CGEventFlags {
+    keys.iter().filter_map(|k| modifier_flag(*k)).fold(CGEventFlags::CGEventFlagNull, |a, b| a | b)
+}
+
+/// ISO keyboards: the key left of 1 is `kVK_ISO_Section` and the one left of Z
+/// is `kVK_ANSI_Grave`, the other way round from their names.
+fn iso_swap(keycode: u16) -> u16 {
+    match keycode {
+        0x0A => 0x32,
+        0x32 => 0x0A,
+        other => other,
+    }
+}
+
+/// The keyboard of this Mac is ISO (Carbon's `KBGetLayoutType`). A Mac without a
+/// keyboard reports ANSI. `NUVIRA_MAC_KEYBOARD=iso|ansi` forces it.
+fn iso_keyboard() -> bool {
+    match std::env::var("NUVIRA_MAC_KEYBOARD").as_deref() {
+        Ok("iso") => return true,
+        Ok("ansi") => return false,
+        _ => {}
+    }
+    #[link(name = "Carbon", kind = "framework")]
+    unsafe extern "C" {
+        fn LMGetKbdType() -> u8;
+        fn KBGetLayoutType(keyboard_type: i16) -> u32;
+    }
+    const KEYBOARD_ISO: u32 = u32::from_be_bytes(*b"ISO ");
+    // SAFETY: plain queries of the keyboard type, no arguments to keep alive.
+    unsafe { KBGetLayoutType(i16::from(LMGetKbdType())) == KEYBOARD_ISO }
 }
 
 fn source() -> Result<CGEventSource> {
@@ -151,10 +236,12 @@ impl InputInjector for QuartzInjector {
     }
 
     fn release_all(&mut self) {
-        for keycode in std::mem::take(&mut self.keys) {
-            if let Ok(src) = source() {
-                Self::post(CGEvent::new_keyboard_event(src, keycode, false));
-            }
+        // The other keys first, then the modifiers, each with the flags still held.
+        let mut keys: Vec<u16> = self.keys.iter().copied().collect();
+        keys.sort_by_key(|k| modifier_flag(*k).is_some());
+        for keycode in keys {
+            self.keys.remove(&keycode);
+            self.post_key(keycode, false);
         }
         for button in [Button::Left, Button::Right, Button::Middle, Button::Back, Button::Forward] {
             self.button(button, false);
@@ -286,7 +373,7 @@ pub fn mac_key_code(code: &str) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::mac_key_code;
+    use super::*;
 
     #[test]
     fn mac_codes() {
@@ -295,5 +382,19 @@ mod tests {
         assert_eq!(mac_key_code("MetaLeft"), Some(0x37));
         assert_eq!(mac_key_code("ArrowUp"), Some(0x7E));
         assert_eq!(mac_key_code("Sconosciuto"), None);
+    }
+
+    #[test]
+    fn flags_of_held_modifiers() {
+        let keys: HashSet<u16> = [0x38, 0x37, 0x00].into();
+        assert_eq!(modifier_flags(&keys), CGEventFlags::CGEventFlagShift | CGEventFlags::CGEventFlagCommand);
+        assert_eq!(modifier_flags(&HashSet::new()), CGEventFlags::CGEventFlagNull);
+    }
+
+    #[test]
+    fn iso_keys_swapped() {
+        assert_eq!(iso_swap(mac_key_code("Backquote").unwrap()), 0x0A);
+        assert_eq!(iso_swap(mac_key_code("IntlBackslash").unwrap()), 0x32);
+        assert_eq!(iso_swap(0x00), 0x00);
     }
 }

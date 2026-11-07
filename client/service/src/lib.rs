@@ -1,4 +1,5 @@
-//! nuvira-service — unattended access on Windows.
+//! nuvira-service — unattended access (Windows service; user services on
+//! Linux and macOS: modules `user` and `launchd`).
 //!
 //! System service (LocalSystem) that keeps nuvira-agent running in the session
 //! of the person using the PC, with a fixed ID and a permanent password. As SYSTEM
@@ -12,9 +13,15 @@
 //! ```
 
 pub mod branding;
+#[cfg(unix)]
+mod unix_shared;
 #[cfg(target_os = "linux")]
 pub mod user;
-#[cfg(target_os = "linux")]
+/// The same interface as Linux's user service, with launchd.
+#[cfg(target_os = "macos")]
+#[path = "launchd.rs"]
+pub mod user;
+#[cfg(unix)]
 pub use user::{ServiceState, installed_version, service_state};
 #[cfg(windows)]
 mod config;
@@ -248,9 +255,9 @@ fn run_service() -> anyhow::Result<()> {
     result
 }
 
-/// Linux: `nuvira service install`, `start` (run at login by the autostart entry) and
-/// `uninstall`; the app's settings install it too.
-#[cfg(target_os = "linux")]
+/// Linux and macOS: `nuvira service install`, `start` (on Linux run at login by
+/// the autostart entry) and `uninstall`; the app's settings install it too.
+#[cfg(unix)]
 pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<()> {
     let args: Vec<String> = args.into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
     let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
@@ -277,6 +284,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
             Ok(())
         }
         Some("start") => user::start(),
+        #[cfg(target_os = "linux")]
         Some("portal") => user::portal(),
         Some("uninstall") => user::uninstall(),
         _ => anyhow::bail!(
@@ -285,9 +293,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, unix)))]
 pub fn run(_args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<()> {
-    anyhow::bail!("{COPYRIGHT}\nnuvira-service exists only for Windows and Linux for now")
+    anyhow::bail!("{COPYRIGHT}\nnuvira-service exists only for Windows, Linux and macOS")
 }
 
 /// Random 8-character password that is easy to dictate, like the agent's.

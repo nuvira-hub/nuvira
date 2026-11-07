@@ -3497,6 +3497,7 @@ version = "0.16.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "nuvira-capture",
  "nuvira-proto",
  "nuvira-secret",

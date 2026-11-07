@@ -31,6 +31,8 @@ pub enum NetEvent {
         file_manager: bool,
         /// Ctrl+Alt+Del means something there: only on Windows.
         secure_attention: bool,
+        /// The remote computer is a Mac: from a Mac, Cmd and Ctrl stay what they are.
+        remote_mac: bool,
         /// The agent can turn on privacy mode.
         privacy: bool,
         /// The agent opens remote terminals.
@@ -507,6 +509,7 @@ async fn handshake(
             height: 0,
             file_manager: false,
             secure_attention: false,
+            remote_mac: agent.os == "macos",
             privacy: false,
             terminal: true,
             tunnel: agent.tunnel,
@@ -536,6 +539,7 @@ async fn handshake(
         file_manager: agent.file_manager,
         // Older agents send no system: they are all Windows.
         secure_attention: agent.os.is_empty() || agent.os == "windows",
+        remote_mac: agent.os == "macos",
         privacy: agent.privacy_mode,
         terminal: agent.terminal,
         tunnel: agent.tunnel,

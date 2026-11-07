@@ -16,7 +16,7 @@ Only with unattended access, which brings the agent back by itself after the boo
 |---|---|---|
 | Windows | `shutdown.exe /r /f /t 3 /d p:4:1` from the agent (SYSTEM) | The service starts the agent again at the boot, also before anyone signs in (lock screen). `/f` closes the programs without asking; 3 s let the answer reach the viewer |
 | Linux | `systemctl reboot --no-ask-password` as the signed-in user (logind) | logind allows it to the user of the active local session when no other user is signed in; otherwise it is refused and the viewer shows the reason. The computer comes back only with automatic login (see [20-linux.md](20-linux.md)) |
-| macOS | — | No unattended access yet: not offered |
+| macOS | Apple event "restart" (`kAERestart`) to loginwindow through `osascript`, 2 s after the answer | No administrator needed. The apps are asked to quit: one with unsaved work can stop the restart (the agent then accepts sessions again after 3 minutes, and the waiting viewer simply connects again). The Mac comes back only with automatic login, then the LaunchAgent starts the agent (see [33-macos.md](33-macos.md)) |
 
 ## Protocol
 

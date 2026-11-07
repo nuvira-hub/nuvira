@@ -220,6 +220,7 @@
   "settings.installed": "Installé : cet ordinateur est accessible même lorsque personne n'est devant. Pour supprimer NuviraHub, utilisez les applications installées dans les paramètres de Windows.",
   "settings.unattended_hint_linux": "Rendez cet ordinateur accessible même quand personne n'est devant, avec un mot de passe permanent : NuviraHub démarre alors tout seul à chaque connexion, sans la fenêtre. Après un redémarrage, l'ordinateur a besoin de la connexion automatique, et sur GNOME avec Wayland l'écran ne doit pas se verrouiller (GNOME arrête de le partager quand il est verrouillé).",
   "settings.installed_linux": "Accès sans surveillance actif : NuviraHub démarre tout seul à chaque connexion et est accessible avec le mot de passe permanent.",
+  "settings.unattended_hint_mac": "Rendez ce Mac accessible même quand personne n'est devant, avec un mot de passe permanent : NuviraHub démarre alors tout seul à chaque connexion, sans la fenêtre. Après un redémarrage, le Mac a besoin de la connexion automatique (Réglages Système → Utilisateurs et groupes ; indisponible avec FileVault activé), et il ne peut pas être contrôlé quand l'écran est verrouillé.",
   "settings.uninstall": "Supprimer l'accès sans surveillance",
 
   "about.version": "Version {v}",
@@ -393,6 +394,7 @@
   "install.removed": "Accès sans surveillance supprimé : cet ordinateur n'est accessible que lorsque l'app est ouverte, avec le mot de passe temporaire.",
   "install.done_password": "NuviraHub est installé. Mot de passe permanent : {password} (notez-le : il n'est affiché que maintenant).",
   "install.windows_only": "L'installation n'est disponible que sous Windows pour le moment.",
+  "install.move_to_applications": "Déplacez d'abord NuviraHub dans le dossier Applications et ouvrez-le depuis là : lancé depuis l'image disque, macOS ne le laisse pas démarrer tout seul.",
 
   "update.available": "NuviraHub {version} est disponible.",
   "update.button": "Mettre à jour",

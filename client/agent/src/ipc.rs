@@ -450,7 +450,8 @@ fn check_server(pipe: &tokio::net::windows::named_pipe::NamedPipeClient) -> Resu
 }
 
 // Linux and macOS: the agent of the user service (`nuvira-agent.service` of
-// systemd, see nuvira-service) and the app run as the same user. The channel is
+// systemd, a LaunchAgent of launchd, see nuvira-service) and the app run as the
+// same user. The channel is
 // a Unix socket in the user's runtime folder, and each side accepts only a
 // process of that same user.
 
@@ -462,11 +463,15 @@ fn socket_path() -> std::path::PathBuf {
     base.join("nuvira").join("agent.sock")
 }
 
-/// The user service is installed.
+/// The user service is installed: the systemd unit on Linux, the LaunchAgent on
+/// macOS (see nuvira-service).
 #[cfg(unix)]
 pub fn service_installed() -> bool {
-    std::env::var_os("HOME")
-        .is_some_and(|home| std::path::Path::new(&home).join(".config/systemd/user/nuvira-agent.service").exists())
+    #[cfg(target_os = "macos")]
+    const DEFINITION: &str = "Library/LaunchAgents/io.github.nuvira-hub.nuvira.agent.plist";
+    #[cfg(not(target_os = "macos"))]
+    const DEFINITION: &str = ".config/systemd/user/nuvira-agent.service";
+    std::env::var_os("HOME").is_some_and(|home| std::path::Path::new(&home).join(DEFINITION).exists())
 }
 
 #[cfg(unix)]

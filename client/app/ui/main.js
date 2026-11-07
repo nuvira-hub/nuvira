@@ -235,11 +235,15 @@ function render(state) {
     }
   }
   $("install-on").classList.toggle("hidden", !state.service);
-  // Linux: a user service, removed from here; Windows: from the system settings.
+  // Linux and macOS: a user service (systemd, launchd), removed from here;
+  // Windows: from the system settings.
   const linux = state.platform === "linux";
-  $("install-on").textContent = t(linux ? "settings.installed_linux" : "settings.installed");
-  $("unattended-hint").textContent = t(linux ? "settings.unattended_hint_linux" : "settings.unattended_hint");
-  $("uninstall-row").classList.toggle("hidden", !(linux && state.service));
+  const mac = state.platform === "macos";
+  $("install-on").textContent = t(linux || mac ? "settings.installed_linux" : "settings.installed");
+  $("unattended-hint").textContent = t(
+    linux ? "settings.unattended_hint_linux" : mac ? "settings.unattended_hint_mac" : "settings.unattended_hint",
+  );
+  $("uninstall-row").classList.toggle("hidden", !((linux || mac) && state.service));
   $("password-label").textContent = t(state.service ? "connect.temp_password" : "connect.password");
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password || "—";

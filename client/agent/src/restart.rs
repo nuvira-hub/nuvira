@@ -5,15 +5,17 @@
 //!   closes the open programs without asking (unsaved work is lost: the viewer
 //!   warns before asking), a few seconds after the answer has left;
 //! - Linux: `systemctl reboot` through logind, as the signed-in user; the computer
-//!   comes back only with automatic login (see the service's notes).
-//!
-//! macOS has no unattended access yet: there it is not offered.
+//!   comes back only with automatic login (see the service's notes);
+//! - macOS: the "restart" Apple event to loginwindow (`kAERestart`, what the
+//!   Apple menu does without its dialog), which needs no administrator. The open
+//!   apps are asked to quit: one with unsaved work can stop the restart. The Mac
+//!   comes back only with automatic login, then the LaunchAgent starts the agent.
 
 use anyhow::Result;
 
 /// The system can be restarted from here.
 pub fn available() -> bool {
-    cfg!(any(windows, target_os = "linux"))
+    cfg!(any(windows, target_os = "linux", target_os = "macos"))
 }
 
 /// Asks the system to restart; `Err` with the reason when it refused.
@@ -38,12 +40,35 @@ pub fn restart() -> Result<()> {
     check(output)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+/// The event starts closing the apps at once, this agent among them: it is sent
+/// two seconds later from a thread, after the answer has reached the viewer.
+/// A refusal is only logged; the viewer then finds the agent still online and
+/// connects again.
+#[cfg(target_os = "macos")]
+pub fn restart() -> Result<()> {
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        match std::process::Command::new("/usr/bin/osascript")
+            .args(["-e", "tell application \"loginwindow\" to «event aevtrest»"])
+            .output()
+        {
+            Ok(output) => {
+                if let Err(e) = check(output) {
+                    tracing::warn!("restart refused by macOS: {e:#}");
+                }
+            }
+            Err(e) => tracing::warn!("osascript not started: {e}"),
+        }
+    });
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn restart() -> Result<()> {
     anyhow::bail!("@agent.restart_unavailable")
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn check(output: std::process::Output) -> Result<()> {
     if output.status.success() {
         return Ok(());

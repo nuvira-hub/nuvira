@@ -23,6 +23,9 @@ tracing-subscriber.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 nuvira-capture.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies.windows]
 workspace = true
 features = [
