@@ -67,6 +67,10 @@ Scaleway Mac mini M4, macOS 27.2, SIP on, FileVault off, a 1920×1080 virtual di
 - **The Mac as the viewer** towards Mint: window, toolbar, Dock icon; recording into `~/Movies/NuviraHub` (H.264 1280×800, read by Spotlight); a document printed on Mint opened the "Print" window with the Mac's printers (its own NuviraHub left out) and went into the chosen CUPS queue; terminal window; file manager window: its own side was empty (Windows folders only), fixed, then a file sent from the Mac's Desktop to Mint with the same SHA-256.
 - `nuvira viewer --server ""` does not mean the public server (the agent's does): to align.
 
+- With a **NuviraHub Pro** test server on the Mac itself (built for macOS from nuvira-pro, the test licence): **TCP tunnel** from the Fedora viewer to `127.0.0.1:8000` of the Mac (500 kB, same SHA-256), `8.8.8.8:53` refused by the agent; **RMM inventory** of the Mac in the console (macOS 27.2, Apple M4, 10 cores, 16 GB, disks, uptime; `os_version` empty and the APFS data volume listed as a second disk, to tidy); **address book sign-in with 2FA** in the Mac's app (password, then the TOTP code). Single sign-on not tried (no identity provider).
+- **The Mac as the viewer towards Windows** (a test agent on PC-LABORATORIO): picture at 1280×1024, the "Ctrl+Alt+Del" button in the toolbar (not pressed).
+- **IPv6**: an agent with a synthetic picture on the OVH VPS (Canada, in a Debian 12 container with the host's network) registered on the Mac's server by its IPv6 address; the Mac's viewer went **direct over IPv6** (`path=Direct remote=[2607:5300:…]`, agent "viewer connected directly ([2001:bc8:…])"): 29.9 fps, latency p50 55 ms, p95 60 ms; the viewer draws with Metal.
+
 ## Not tested yet
 
-Tunnels, RMM inventory and address book sign-in with 2FA/SSO (they need a NuviraHub Pro server the Mac can reach); a session towards Windows (Ctrl+Alt+Del button); Mac to Mac (Cmd kept); several displays, a Retina/5K screen; IPv6.
+Single sign-on; Mac to Mac (Cmd kept); several displays, a Retina/5K screen.
