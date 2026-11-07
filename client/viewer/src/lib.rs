@@ -1456,10 +1456,15 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 self.update_toolbar_state();
             }
-            NetEvent::ScreenLocked(locked) => {
-                info!(locked, "remote screen lock state");
+            NetEvent::ScreenLocked { locked, input } => {
+                info!(locked, input, "remote screen lock state");
                 // Kept on screen while locked: the image is only a dark placeholder.
-                self.notice(&t(if locked { "viewer.screen_locked" } else { "viewer.screen_unlocked" }), locked);
+                let text = match (locked, input) {
+                    (true, true) => "viewer.screen_locked",
+                    (true, false) => "viewer.screen_locked_no_input",
+                    (false, _) => "viewer.screen_unlocked",
+                };
+                self.notice(&t(text), locked);
             }
             NetEvent::Privacy { on, error } => {
                 info!(on, error, "privacy mode");

@@ -1394,7 +1394,9 @@ async fn session(
                     if locked != screen_locked {
                         screen_locked = locked;
                         info!(locked, "screen lock state");
-                        ctrl_tx.send(&control(Msg::ScreenState(nuvira_proto::v1::ScreenState { locked }))).await?;
+                        let input = nuvira_capture::lock_screen_takes_input();
+                        let state = nuvira_proto::v1::ScreenState { locked, input };
+                        ctrl_tx.send(&control(Msg::ScreenState(state))).await?;
                     }
                     let now = Instant::now();
                     sent_samples.push_back((now, sent_bytes.load(Ordering::Relaxed)));

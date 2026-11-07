@@ -123,12 +123,20 @@ pub fn hide_process(pid: u32) {
 }
 
 /// The screen of the person's session is locked and its image cannot be captured
-/// (macOS: the capture sends a placeholder meanwhile). Other systems: false.
+/// (macOS, GNOME): the capture sends a placeholder meanwhile.
 pub fn screen_locked() -> bool {
     #[cfg(target_os = "macos")]
     return macos::screen_locked();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    return linux::screen_locked();
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     false
+}
+
+/// While [`screen_locked`], the keyboard and mouse still reach the lock screen
+/// (macOS: the password can be typed blind); GNOME closes the input too.
+pub fn lock_screen_takes_input() -> bool {
+    cfg!(target_os = "macos")
 }
 
 #[cfg(target_os = "linux")]

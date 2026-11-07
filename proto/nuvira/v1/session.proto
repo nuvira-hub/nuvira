@@ -54,11 +54,14 @@ message ControlMessage {
 }
 
 // From the agent, when it changes: the screen of the controlled computer is locked
-// and its image cannot be captured (macOS shows no capture program its lock screen).
-// Meanwhile the video is a dark placeholder, and the keyboard and mouse still reach
-// the computer: the viewer tells the technician to type the password.
+// and its image cannot be captured (macOS shows no capture program its lock screen;
+// GNOME stops remote desktop sessions while locked). Meanwhile the video is a dark
+// placeholder. With `input` the keyboard and mouse still reach the lock screen
+// (macOS): the viewer tells the technician to type the password; without it someone
+// must unlock it at the computer.
 message ScreenState {
   bool locked = 1;
+  bool input = 2;
 }
 
 // From the viewer (only when Hello.recording from the agent): it starts or stops

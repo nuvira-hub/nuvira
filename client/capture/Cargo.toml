@@ -25,6 +25,7 @@ features = [
 ]
 
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 nuvira-portal = { path = "../portal" }
 nuvira-transport.workspace = true
 pipewire = "0.10"

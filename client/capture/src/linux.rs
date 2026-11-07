@@ -4,8 +4,14 @@
 //! PipeWire objects belong to the thread of their loop: the stream runs in its own
 //! thread and hands over copies of the images; the buffers come back to it to be
 //! reused, so that a still screen allocates nothing.
+//!
+//! Locked screen: GNOME closes every remote desktop session when the screen
+//! locks and allows none until it is unlocked (also through its own API). While
+//! the session is locked the capture gives a dark placeholder once a second, and
+//! [`screen_locked`] tells the agent, which tells the viewer.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -21,6 +27,30 @@ use crate::{Capturer, Display, Frame};
 
 /// File in the data folder with the portal's restore token.
 const TOKEN_FILE: &str = "remote-desktop-token";
+
+/// The person's session is locked and the system shares no screen meanwhile.
+static LOCKED: AtomicBool = AtomicBool::new(false);
+
+pub fn screen_locked() -> bool {
+    LOCKED.load(Ordering::Relaxed)
+}
+
+/// logind's `LockedHint` of this user's graphical session (set by GNOME's lock screen).
+fn session_locked() -> bool {
+    let value = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("loginctl").args(args).output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    // SAFETY: getuid cannot fail.
+    let uid = unsafe { libc::getuid() }.to_string();
+    let Some(session) = value(&["show-user", &uid, "-p", "Display", "--value"]).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    value(&["show-session", &session, "-p", "LockedHint", "--value"]).as_deref() == Some("yes")
+}
+
+/// Dark grey of the placeholder (BGRA), as on macOS.
+const PLACEHOLDER: [u8; 4] = [0x2a, 0x26, 0x24, 0xff];
 
 fn portal_session(ask: bool) -> Result<Arc<nuvira_portal::Session>> {
     nuvira_portal::session(nuvira_transport::identity::data_dir().join(TOKEN_FILE), ask)
@@ -53,12 +83,20 @@ pub struct PipeWireCapturer {
     frame: Option<Frame>,
     /// When to try again to share the screen, after the system stopped it.
     retry_at: Instant,
+    /// Last placeholder sent while the screen is locked.
+    placeholder_at: Option<Instant>,
 }
 
 impl PipeWireCapturer {
     pub fn new() -> Result<Self> {
         let stream = Stream::open(true)?;
-        Ok(Self { display: stream.display.clone(), stream: Some(stream), frame: None, retry_at: Instant::now() })
+        Ok(Self {
+            display: stream.display.clone(),
+            stream: Some(stream),
+            frame: None,
+            retry_at: Instant::now(),
+            placeholder_at: None,
+        })
     }
 
     /// The system stopped the sharing (GNOME does it when the screen locks, and
@@ -83,6 +121,25 @@ impl PipeWireCapturer {
     }
 }
 
+impl PipeWireCapturer {
+    /// The dark image, once a second while the screen is locked.
+    fn placeholder(&mut self) -> Option<&Frame> {
+        if !LOCKED.load(Ordering::Relaxed) || self.placeholder_at.is_some_and(|t| t.elapsed() < Duration::from_secs(1)) {
+            return None;
+        }
+        self.placeholder_at = Some(Instant::now());
+        let (width, height) = (self.display.width, self.display.height);
+        self.frame = Some(Frame {
+            width,
+            height,
+            stride: width as usize * 4,
+            data: PLACEHOLDER.repeat(width as usize * height as usize),
+            captured_us: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64),
+        });
+        self.frame.as_ref()
+    }
+}
+
 impl Capturer for PipeWireCapturer {
     fn display(&self) -> &Display {
         &self.display
@@ -96,8 +153,23 @@ impl Capturer for PipeWireCapturer {
                 // session, got no answer at all.
                 self.retry_at = Instant::now() + Duration::from_secs(2);
             }
-            if !self.reopen(timeout)? {
-                return Ok(None);
+            match self.reopen(timeout) {
+                Ok(true) => {
+                    if LOCKED.swap(false, Ordering::Relaxed) {
+                        info!("screen unlocked: capture resumed");
+                    }
+                }
+                Ok(false) => return Ok(self.placeholder()),
+                Err(e) => {
+                    if !session_locked() {
+                        LOCKED.store(false, Ordering::Relaxed);
+                        return Err(e);
+                    }
+                    if !LOCKED.swap(true, Ordering::Relaxed) {
+                        info!("screen locked: placeholder until it is unlocked");
+                    }
+                    return Ok(self.placeholder());
+                }
             }
         }
         let Some(stream) = &self.stream else { return Ok(None) };

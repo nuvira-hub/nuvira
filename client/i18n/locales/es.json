@@ -303,6 +303,7 @@
   "viewer.waiting_restart": "Esperando a que {agent} se reinicie…",
   "viewer.title_restarting": "NuviraHub — esperando el reinicio de {agent}…",
   "viewer.screen_locked": "La pantalla del equipo remoto está bloqueada: macOS no deja ver su imagen. Escribe la contraseña y pulsa Intro para desbloquearla.",
+  "viewer.screen_locked_no_input": "La pantalla del equipo remoto está bloqueada y su escritorio no permite el control remoto mientras tanto (GNOME): alguien debe desbloquearla en el equipo.",
   "viewer.screen_unlocked": "La pantalla del equipo remoto está desbloqueada",
   "viewer.restart_back": "El equipo remoto se ha reiniciado: conectado de nuevo",
   "viewer.restart_not_back": "{agent} no ha vuelto tras el reinicio: {reason}",

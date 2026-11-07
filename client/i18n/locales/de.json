@@ -303,6 +303,7 @@
   "viewer.waiting_restart": "Warten auf den Neustart von {agent}…",
   "viewer.title_restarting": "NuviraHub — Neustart von {agent}…",
   "viewer.screen_locked": "Der Bildschirm des entfernten Computers ist gesperrt: macOS lässt sein Bild nicht anzeigen. Geben Sie das Passwort ein und drücken Sie die Eingabetaste, um ihn zu entsperren.",
+  "viewer.screen_locked_no_input": "Der Bildschirm des entfernten Computers ist gesperrt, und sein Desktop erlaubt währenddessen keine Fernsteuerung (GNOME): Jemand muss ihn am Computer entsperren.",
   "viewer.screen_unlocked": "Der Bildschirm des entfernten Computers ist entsperrt",
   "viewer.restart_back": "Der entfernte Computer wurde neu gestartet: wieder verbunden",
   "viewer.restart_not_back": "{agent} ist nach dem Neustart nicht wieder erreichbar: {reason}",
