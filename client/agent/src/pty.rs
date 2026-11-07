@@ -306,9 +306,11 @@ mod imp {
 
     pub fn spawn(cols: u16, rows: u16) -> Result<(Shell, Box<dyn Read + Send>)> {
         let (mut master, mut slave) = (0, 0);
-        let size = winsize(cols, rows);
+        let mut size = winsize(cols, rows);
+        // macOS declares the size `*mut winsize`, Linux `*const`: a raw `*mut` fits both.
+        let size_ptr = std::ptr::addr_of_mut!(size);
         if unsafe {
-            libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &size)
+            libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), size_ptr)
         } != 0
         {
             return Err(std::io::Error::last_os_error()).context("openpty");
