@@ -19,7 +19,7 @@ NuviraHub/
 │  ├─ proto/               # protocol messages and framing (no OS dependencies)
 │  ├─ transport/           # QUIC, device identity, signalling, P2P/relay, WebSocket, address book client
 │  ├─ capture/             # screen capture per platform (DXGI on Windows)
-│  ├─ codec/               # H.264: Media Foundation (hardware), OpenH264 (software)
+│  ├─ codec/               # H.264: Media Foundation and VideoToolbox (hardware), OpenH264 (software)
 │  ├─ input/               # mouse and keyboard injection per platform
 │  ├─ clipboard/           # shared clipboard
 │  ├─ i18n/                # interface strings in five languages

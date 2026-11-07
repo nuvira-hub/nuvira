@@ -12,6 +12,8 @@ Since 0.15.0 the app runs on macOS 13 or later (one universal `.app` for Apple s
 
 - **Screen**: ScreenCaptureKit (`client/capture/src/macos.rs`), BGRA frames with the cursor, at the display's pixel size (2× on Retina).
 - **Mouse and keyboard**: Quartz events posted at the HID level (`client/input/src/macos.rs`).
+- **Encoder**: H.264 with VideoToolbox (`client/codec/src/vt.rs`), the media engine of Apple Silicon or Quick Sync on Intel Macs. Low-latency rate control (one frame out for every frame in, Constrained Baseline) when the Mac has it, otherwise a real-time session in Main profile without B-frames. The BGRA frames go in as they are: the encoder converts them to YUV with BT.601, as the viewer expects. The output (AVCC) is turned into Annex B with SPS/PPS before every keyframe. With `--encoder auto` the agent measures it against OpenH264 at start and keeps the faster (hardware wins unless software is 25% faster); `--encoder hardware` refuses Apple's software encoder.
+- **Privacy mode**: black screens in a child process left out of the capture, local input dropped by an event tap; see [24-privacy-mode.md](24-privacy-mode.md#how-it-works-macos).
 - **Permissions**: macOS gives the screen and accepts input only once the person allows NuviraHub in System Settings → Privacy & Security → **Screen Recording** and **Accessibility**. The app asks for both at start. A copy of the program signed differently, or not signed, would need them again.
 
 ### Keyboard
@@ -44,4 +46,4 @@ See [27-remote-restart.md](27-remote-restart.md): the Apple event "restart" to l
 
 ## Not tested yet
 
-Everything in this section on a real Mac: the LaunchAgent (install, remove, after a restart with automatic login, Login Items switch), the remote restart, the keyboard flags and the ISO swap. Also clipboard, files, terminal, tunnels and printing in both roles. The list is kept in the internal parity document.
+Everything in this section on a real Mac: the LaunchAgent (install, remove, after a restart with automatic login, Login Items switch), the remote restart, the keyboard flags and the ISO swap, privacy mode, the VideoToolbox encoder (speed on a Retina/5K screen, colours, bitrate changes). Also clipboard, files, terminal, tunnels and printing in both roles. The list is kept in the internal parity document.

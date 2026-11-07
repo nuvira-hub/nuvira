@@ -6,10 +6,10 @@ During a session the technician can turn the screen of the controlled PC black a
 
 - **From the viewer.** The toolbar button with a slashed screen turns it on and off; it appears only when the agent has privacy mode. `nuvira-viewer --privacy` turns it on as soon as the session starts (automated tests). The viewer shows a notice when it turns on, off, or fails, with the reason.
 - **At the PC.** Every screen is black with a short message in the local language: remote support in progress, mouse and keyboard paused until the end of the session, Ctrl+Alt+Del to lock the PC.
-- **Not allowing it at the PC.** App settings → "This computer" → "Allow privacy mode" (Windows, on by default). The app saves the choice (`app.json`, `no_privacy`) and sends it to its agent, or to the service's one, at every start and at every change (`AgentCommand::AllowPrivacy`). The agent keeps its own copy in `permissions.json` in its data folder (with the service: `C:\ProgramData
+- **Not allowing it at the PC.** App settings → "This computer" → "Allow privacy mode" (Windows and macOS, on by default). The app saves the choice (`app.json`, `no_privacy`) and sends it to its agent, or to the service's one, at every start and at every change (`AgentCommand::AllowPrivacy`). The agent keeps its own copy in `permissions.json` in its data folder (with the service: `C:\ProgramData
 uvira`, writable only by administrators and SYSTEM), so the choice holds also while the app is closed. Not allowed: the agent does not announce privacy mode, refuses it with `@agent.privacy_not_allowed`, and turns it off at once if it was on.
 - **Forbidding it.** On a NuviraHub Pro server an administrator can forbid it for every device: rule "No privacy mode" in the web console (Rules) or in the app (Administration), `Policy.no_privacy`. The agents then do not announce it, the button does not appear, and a `SetPrivacy` is refused with `@agent.privacy_disabled`. Like the other rules it applies from the next session.
-- **End.** Privacy mode ends when the technician turns it off and always with the session (closed, connection lost, agent ended). Windows removes the windows and the input hooks by itself if the agent process dies.
+- **End.** Privacy mode ends when the technician turns it off and always with the session (closed, connection lost, agent ended). Windows removes the windows and the input hooks by itself if the agent process dies; on macOS the black screens are a child process that ends when the agent's end of its input closes, and the event tap dies with the agent.
 
 ## How it works (Windows 10 version 2004 or later)
 
@@ -19,13 +19,22 @@ Module `nuvira_input::privacy`, a thread of its own in the agent:
 - **Local input blocked.** Low-level hooks (`WH_MOUSE_LL`, `WH_KEYBOARD_LL`) drop every event whose `dwExtraInfo` is not NuviraHub's tag (`INJECTED_TAG`), which `SendInput` in `nuvira_input::windows` puts on everything it injects. Physical mouse and keyboard, and input injected by other programs, do not reach Windows.
 - **Protocol.** The agent announces it in `Hello.privacy_mode` (not in view-only mode or with a synthetic image); the viewer sends `SetPrivacy { on }` and the agent answers `PrivacyState { on, error }` (see `proto/nuvira/v1/session.proto`).
 
+## How it works (macOS)
+
+Module `nuvira_input::privacy` (`privacy_mac.rs`), branch `macos-privacy-vt`:
+
+- **Black windows in a child process.** AppKit windows can only be made on a main thread, and the agent's main thread runs tokio (or Tauri inside the app). The agent starts its own program again with `--privacy-overlay` (`overlay_if_asked()`, first thing in `main` of `nuvira` and `nuvira-agent`; the message comes in `NUVIRA_PRIVACY_MESSAGE`). The child is an accessory app (no Dock icon) with one borderless black window per screen at `CGShieldingWindowLevel` (above the menu bar, the Dock and full-screen apps; only the pointer is higher), `ignoresMouseEvents`, on every Space, `NSWindowSharingNone`. It prints `ready <window numbers>` and ends when its standard input closes.
+- **Left out of the capture.** The windows start transparent (alpha 0). The agent passes the child's pid to `nuvira_capture::hide_process`: the ScreenCaptureKit capture rebuilds its filter between two frames with `excludingApplications` for that process (`SCStream.updateContentFilter`) and confirms; the agent waits at most 1.5 s, then sends `show` and the windows turn black. A capture started later (screen switch) builds its filter with the hidden processes already in it.
+- **Local input blocked.** An active event tap at session level, on a thread with its own run loop, drops every mouse and keyboard event whose `kCGEventSourceUserData` is not NuviraHub's tag; `QuartzInjector` puts the tag on everything it posts. When macOS turns the tap off (timeout, secure input) it is turned on again. Creating the tap needs the Accessibility permission, which remote control needs anyway: without it privacy mode is refused with `@agent.privacy_permission_mac`.
+
 ## Limits
 
 - **Ctrl+Alt+Del** cannot be blocked by any program: the person at the PC can always lock it (said on the black screen). The **secure desktop** (UAC prompt, lock screen) is not covered: the person at the PC sees it.
 - Some shell surfaces have their own layer above every topmost window and are expected to show through: the Start menu, notifications, the volume indicator (not verified yet).
 - The **mouse pointer** stays visible on the black screen and moves with the technician's mouse.
 - Started by the user, without nuvira-service, the hooks may not see the input going to elevated windows (UIPI); with the service (SYSTEM) this does not apply. Not verified yet.
-- **macOS and Linux:** not available yet; the button does not appear.
+- **macOS:** the black screens are not rebuilt when screens are added or removed during privacy mode. Keys handled below the session (power button, Touch ID, the lock key) cannot be blocked. Not tested on a real Mac yet.
+- **Linux:** not available yet; the button does not appear.
 
 ## Tests
 
