@@ -40,6 +40,9 @@ pub struct ServiceConfig {
     /// tools): the installed apps entry then removes it through Windows Installer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub msi_product: Option<String>,
+    /// Profile of a customised installer of the Pro server (see `profile`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 fn default_transport() -> String {

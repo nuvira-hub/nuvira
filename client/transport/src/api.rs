@@ -32,7 +32,21 @@ impl ApiClient {
         identity: &Identity,
         device_name: &str,
     ) -> Result<Self> {
-        let expected = signal::known_server::get(server_name);
+        Self::connect_pinned(server_name, server, ws_url, mode, identity, device_name, None).await
+    }
+
+    /// As [`connect`](Self::connect), with the server's fingerprint given (the service
+    /// has it in its settings); without one, the remembered one.
+    pub async fn connect_pinned(
+        server_name: &str,
+        server: SocketAddr,
+        ws_url: &str,
+        mode: TransportMode,
+        identity: &Identity,
+        device_name: &str,
+        fingerprint: Option<crate::Fingerprint>,
+    ) -> Result<Self> {
+        let expected = fingerprint.or_else(|| signal::known_server::get(server_name));
         let device = DeviceInfo { name: device_name, reachable: false };
         let mut sig = signal::connect_auto(server, ws_url, mode, expected, identity, &device).await?;
         if expected.is_none() {

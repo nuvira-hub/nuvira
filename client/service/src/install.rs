@@ -157,6 +157,8 @@ pub struct InstallOptions {
     /// itself past the package's version) and the installed apps entry goes through
     /// Windows Installer.
     pub msi_product: Option<String>,
+    /// Profile of a customised installer of the Pro server; `None` keeps the one in place.
+    pub profile: Option<String>,
 }
 
 /// Outcome of an installation.
@@ -236,6 +238,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     });
     // Shown only when generated here: whoever chose it knows it, and the output of an
     // automatic update goes to a log, where passwords never go. Only the hash is stored.
+    let profile = opts.profile.clone().or_else(|| previous.as_ref().and_then(|p| p.profile.clone()));
     let (password_hash, generated_password) = match (opts.password, previous) {
         (Some(password), _) => (nuvira_secret::hash(&password), None),
         (None, Some(previous)) => (previous.password_hash, None),
@@ -251,6 +254,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
         transport: opts.transport,
         server_ws,
         msi_product: msi_product.clone(),
+        profile,
     };
     service_config.save()?;
     step("configuration saved");
@@ -612,6 +616,7 @@ pub fn update() -> Result<()> {
         transport: current.transport,
         server_ws: current.server_ws,
         msi_product: current.msi_product,
+        profile: None,
     });
     match &result {
         Ok(_) => remove_rescue(),

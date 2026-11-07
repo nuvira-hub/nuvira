@@ -11,6 +11,7 @@ nuvira-secret = { path = "../secret" }
 anyhow.workspace = true
 clap.workspace = true
 nuvira-update = { path = "../update" }
+nuvira-proto.workspace = true
 nuvira-transport.workspace = true
 ring = "0.17"
 serde = { version = "1", features = ["derive"] }

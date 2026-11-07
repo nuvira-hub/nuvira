@@ -217,6 +217,9 @@ message ApiRequest {
     // Light RMM (NuviraHub Pro): for the computers the account sees in its books.
     GetInventory get_inventory = 27;
     WakeDevice wake_device = 28;
+    // Customised installers (NuviraHub Pro): the customisation of a profile, by its
+    // code; needs no sign-in (the services of the PCs installed with it ask).
+    GetBranding get_branding = 29;
   }
 }
 
@@ -369,7 +372,18 @@ message ApiResponse {
     Queue queue = 14;
     TakenRequest taken = 15;
     DeviceInventory inventory = 16;
+    Branding branding = 17;
   }
+}
+
+message GetBranding {
+  string profile = 1;
+}
+
+// The customisation as the JSON document a customised program carries
+// (nuvira_service::branding).
+message Branding {
+  string doc = 1;
 }
 
 message Login {

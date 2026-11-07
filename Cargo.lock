@@ -3497,6 +3497,7 @@ dependencies = [
  "anyhow",
  "clap",
  "nuvira-capture",
+ "nuvira-proto",
  "nuvira-secret",
  "nuvira-transport",
  "nuvira-update",

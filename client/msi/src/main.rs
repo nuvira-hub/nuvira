@@ -232,7 +232,7 @@ fn build(out: &Path, program: &Path, version: &str, product_code: &str, package_
     db.insert("Media", &[I(1), I(0), N, N, N, N])?;
 
     let install = "service install --msi-product [ProductCode] --server \"[SERVER]\" --server-key \"[KEY]\" \
-                   --password \"[PASSWORD]\"";
+                   --password \"[PASSWORD]\" --profile \"[PROFILE]\"";
     let deferred = CA_DEFERRED | CA_NO_IMPERSONATE;
     db.insert(
         "CustomAction",

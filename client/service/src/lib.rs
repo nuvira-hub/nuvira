@@ -28,6 +28,8 @@ mod launch;
 pub mod policy;
 #[cfg(windows)]
 mod printer;
+#[cfg(windows)]
+mod profile;
 
 /// The program installed with the service (in Program Files).
 #[cfg(windows)]
@@ -82,6 +84,10 @@ enum Cmd {
         /// the settings in place, and the installed apps entry removes the package.
         #[arg(long, value_name = "PRODUCT_CODE", hide = true)]
         msi_product: Option<String>,
+        /// Code of a customised installer profile of the NuviraHub Pro server: the PC takes
+        /// that profile's logo, colours, contacts and language from the server.
+        #[arg(long, value_name = "CODE")]
+        profile: Option<String>,
     },
     /// Stops and removes the service (data and ID remain). Asks for administrator
     /// rights by itself when they are missing.
@@ -131,7 +137,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
 
     let args = Args::parse_from(args);
     match args.command {
-        Cmd::Install { server, password, server_key, transport, server_ws, password_file, report, msi_product } => {
+        Cmd::Install { server, password, server_key, transport, server_ws, password_file, report, msi_product, profile } => {
             println!("{COPYRIGHT}");
             let password = match password_file {
                 Some(file) => {
@@ -152,6 +158,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
                 transport,
                 server_ws,
                 msi_product: given(msi_product),
+                profile: given(profile),
             });
             // The password only when generated: shown once, then only its hash exists.
             write_report(
