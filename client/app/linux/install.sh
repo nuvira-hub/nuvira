@@ -28,6 +28,8 @@ fi
 
 mkdir -p "$prefix" "$bin" "$apps"
 install -m 755 "$here/nuvira" "$prefix/nuvira"
+# The CUPS backend of the NuviraHub printer, installed with unattended access.
+install -m 755 "$here/nuvira-cups" "$prefix/nuvira-cups"
 ln -sf "$prefix/nuvira" "$bin/nuvira"
 
 for size in 32 128 256; do

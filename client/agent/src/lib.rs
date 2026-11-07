@@ -228,8 +228,8 @@ pub enum AgentCommand {
     AllowTunnel {
         allow: bool,
     },
-    /// The person at the PC allows remote printing or not (Windows: the NuviraHub
-    /// printer sends what is printed on it to the technician).
+    /// The person at the PC allows remote printing or not (the NuviraHub printer
+    /// sends what is printed on it to the technician).
     AllowPrint {
         allow: bool,
     },

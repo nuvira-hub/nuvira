@@ -1,0 +1,20 @@
+[package]
+name = "nuvira-cups"
+description = "NuviraHub: CUPS backend of the NuviraHub printer (remote printing on Linux and macOS)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "nuvira_cups"
+path = "src/lib.rs"
+
+# Copied by `nuvira service printer` into CUPS's backend folder as "nuvira": std
+# and libc only, so that it stays small and loads nothing CUPS does not need.
+[[bin]]
+name = "nuvira-cups"
+path = "src/main.rs"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

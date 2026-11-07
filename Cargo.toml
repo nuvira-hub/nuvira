@@ -16,6 +16,7 @@ members = [
     "client/secret",
     "client/portal",
     "client/msi",
+    "client/cups",
 ]
 
 [workspace.package]
@@ -33,6 +34,7 @@ nuvira-codec = { path = "client/codec" }
 nuvira-input = { path = "client/input" }
 nuvira-clipboard = { path = "client/clipboard" }
 nuvira-i18n = { path = "client/i18n" }
+nuvira-cups = { path = "client/cups" }
 
 anyhow = "1"
 bytes = "1"

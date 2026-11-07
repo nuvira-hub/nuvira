@@ -19,13 +19,17 @@ trap 'rm -rf "$stage"' EXIT
 export MACOSX_DEPLOYMENT_TARGET=13.0
 
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
-    cargo build --release --target "$target" -p nuvira-app
+    cargo build --release --target "$target" -p nuvira-app -p nuvira-cups
 done
 
 app="$stage/dmg/NuviraHub.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$out"
 lipo -create -output "$app/Contents/MacOS/nuvira" \
     target/aarch64-apple-darwin/release/nuvira target/x86_64-apple-darwin/release/nuvira
+# The CUPS backend of the NuviraHub printer (remote printing), copied into
+# /usr/libexec/cups/backend when unattended access is installed.
+lipo -create -output "$app/Contents/MacOS/nuvira-cups" \
+    target/aarch64-apple-darwin/release/nuvira-cups target/x86_64-apple-darwin/release/nuvira-cups
 
 # Icon: every size of the iconset from the SVG of the app logo.
 set_dir="$stage/nuvira.iconset"
@@ -59,6 +63,8 @@ EOF
 cp LICENSE "$app/Contents/Resources/"
 
 if [ -n "$identity" ]; then
+    # Nested code first: the app's signature seals it.
+    codesign --force --options runtime --timestamp --sign "$identity" "$app/Contents/MacOS/nuvira-cups"
     codesign --force --options runtime --timestamp --sign "$identity" "$app"
     codesign --verify --strict --verbose=2 "$app"
 fi

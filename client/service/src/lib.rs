@@ -13,6 +13,9 @@
 //! ```
 
 pub mod branding;
+/// The NuviraHub printer (remote printing) as a CUPS queue.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod cups;
 #[cfg(unix)]
 mod unix_shared;
 #[cfg(target_os = "linux")]
@@ -287,8 +290,13 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         #[cfg(target_os = "linux")]
         Some("portal") => user::portal(),
         Some("uninstall") => user::uninstall(),
+        // As root (the packages, the app through the administrator prompt).
+        Some("printer") if args.iter().any(|a| a == "--remove") => {
+            cups::uninstall().map(|()| println!("NuviraHub printer removed"))
+        }
+        Some("printer") => cups::install().map(|done| println!("{done}")),
         _ => anyhow::bail!(
-            "{COPYRIGHT}\nusage: nuvira service install [--server HOST] [--server-key FP] [--password-file FILE] | start | uninstall"
+            "{COPYRIGHT}\nusage: nuvira service install [--server HOST] [--server-key FP] [--password-file FILE] | start | uninstall | printer [--remove]"
         ),
     }
 }

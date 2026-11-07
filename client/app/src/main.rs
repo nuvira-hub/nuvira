@@ -121,7 +121,7 @@ struct UiState {
     terminal_allowed: bool,
     /// TCP tunnels allowed on this PC (settings).
     tunnel_allowed: bool,
-    /// Remote printing allowed on this PC (settings, Windows).
+    /// Remote printing allowed on this PC (settings).
     print_allowed: bool,
     /// Recordings of the sessions allowed on this PC (settings).
     recording_allowed: bool,
@@ -1338,9 +1338,13 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
                 password: (!password.is_empty()).then_some(password),
             };
             let generated = nuvira_service::user::install(&opts).map_err(|e| format!("{e:#}"))?;
-            Ok(match generated {
+            let done = match generated {
                 Some(generated) => tf("install.done_password", &[("password", &generated)]),
                 None => t("install.done"),
+            };
+            Ok(match install_printer() {
+                Some(note) => format!("{done} {note}"),
+                None => done,
             })
         })
         .await
@@ -1388,6 +1392,28 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
     }
 }
 
+/// The NuviraHub printer (remote printing) with unattended access, on Linux and macOS:
+/// CUPS needs root, so the system asks for the administrator password; without it
+/// the rest works the same. Returns a note for the person when it was not installed.
+#[cfg(unix)]
+fn install_printer() -> Option<String> {
+    use nuvira_service::cups;
+    if !cups::available() || cups::installed() {
+        return None;
+    }
+    match cups::run_as_admin(false) {
+        Ok(true) => {
+            info!("NuviraHub printer installed");
+            None
+        }
+        Ok(false) => Some(t("install.no_printer_cancelled")),
+        Err(e) => {
+            warn!("NuviraHub printer not installed: {e:#}");
+            Some(tf("install.no_printer", &[("e", &format!("{e:#}"))]))
+        }
+    }
+}
+
 /// Starts the stopped service again (UAC prompt), first installing this program if the
 /// installed one is older: see `nuvira service repair`. The link with the service picks
 /// it up by itself.
@@ -1427,10 +1453,23 @@ async fn repair_service() -> Result<(), String> {
 async fn uninstall_service(app: AppHandle) -> Result<String, String> {
     #[cfg(unix)]
     {
-        tauri::async_runtime::spawn_blocking(nuvira_service::user::uninstall)
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| format!("{e:#}"))?;
+        tauri::async_runtime::spawn_blocking(|| {
+            nuvira_service::user::uninstall()?;
+            // Installed with unattended access, removed with it (the .deb and .rpm
+            // packages keep theirs until they are removed).
+            use nuvira_service::cups;
+            if cups::installed() && !cups::packaged() {
+                match cups::run_as_admin(true) {
+                    Ok(true) => info!("NuviraHub printer removed"),
+                    Ok(false) => info!("NuviraHub printer kept: administrator prompt declined"),
+                    Err(e) => warn!("NuviraHub printer not removed: {e:#}"),
+                }
+            }
+            anyhow::Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))?;
         app.state::<NuviraApp>().update(&app, |ui| {
             ui.service = false;
             ui.service_stopped = false;

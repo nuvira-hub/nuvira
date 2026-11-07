@@ -3349,6 +3349,7 @@ dependencies = [
  "nuvira-capture",
  "nuvira-clipboard",
  "nuvira-codec",
+ "nuvira-cups",
  "nuvira-i18n",
  "nuvira-input",
  "nuvira-proto",
@@ -3436,6 +3437,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nuvira-cups"
+version = "0.16.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "nuvira-i18n"
 version = "0.16.0"
 dependencies = [
@@ -3508,6 +3516,7 @@ dependencies = [
  "clap",
  "libc",
  "nuvira-capture",
+ "nuvira-cups",
  "nuvira-proto",
  "nuvira-secret",
  "nuvira-transport",

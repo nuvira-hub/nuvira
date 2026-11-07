@@ -36,6 +36,15 @@ contents:
     dst: /usr/share/icons/hicolor/256x256/apps/nuvira-viewer.png
   - src: LICENSE
     dst: /usr/share/doc/nuvira/LICENSE
+  # Copied by `nuvira service printer` (postinstall) into CUPS's backend folder.
+  - src: nuvira-cups
+    dst: /usr/lib/nuvira/nuvira-cups
+    file_info: { mode: 0755 }
+
+# The NuviraHub printer (remote printing), when CUPS is there.
+scripts:
+  postinstall: postinstall.sh
+  preremove: preremove.sh
 
 overrides:
   deb:

@@ -636,13 +636,25 @@ mod unix {
                 .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
                 .unwrap_or_default()
         };
-        let mut list: Vec<String> =
-            run(&["-e"]).lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+        // This computer's own NuviraHub printer would print nowhere.
+        let ours = |p: &str| p == nuvira_cups_printer();
+        let mut list: Vec<String> = run(&["-e"])
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !ours(l))
+            .map(String::from)
+            .collect();
         list.sort_by_key(|p| p.to_lowercase());
         // "system default destination: NAME"
         let default =
             run(&["-d"]).lines().find_map(|l| l.split_once(": ").map(|(_, n)| n.trim().to_string()));
-        (list, default.filter(|d| !d.is_empty()))
+        (list, default.filter(|d| !d.is_empty() && !ours(d)))
+    }
+
+    /// Same name as `nuvira_cups::PRINTER`.
+    #[cfg(not(windows))]
+    fn nuvira_cups_printer() -> &'static str {
+        "NuviraHub"
     }
 
     #[cfg(not(windows))]

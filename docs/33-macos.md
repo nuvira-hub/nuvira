@@ -46,4 +46,4 @@ See [27-remote-restart.md](27-remote-restart.md): the Apple event "restart" to l
 
 ## Not tested yet
 
-Everything in this section on a real Mac: the LaunchAgent (install, remove, after a restart with automatic login, Login Items switch), the remote restart, the keyboard flags and the ISO swap, privacy mode, the VideoToolbox encoder (speed on a Retina/5K screen, colours, bitrate changes). Also clipboard, files, terminal, tunnels and printing in both roles. The list is kept in the internal parity document.
+Everything in this section on a real Mac: the LaunchAgent (install, remove, after a restart with automatic login, Login Items switch), the remote restart, the keyboard flags and the ISO swap, privacy mode, the VideoToolbox encoder (speed on a Retina/5K screen, colours, bitrate changes). Also clipboard, files, terminal, tunnels and printing in both roles (as the controlled computer: the "NuviraHub" CUPS queue, docs/29-remote-printing.md). The list is kept in the internal parity document.

@@ -395,6 +395,8 @@
   "install.done": "NuviraHub è installato: questo computer è raggiungibile con la password permanente che hai scelto.",
   "install.removed": "Accesso non presidiato rimosso: questo computer è raggiungibile solo con l'app aperta, con la password temporanea.",
   "install.done_password": "NuviraHub è installato. Password permanente: {password} (annotala: viene mostrata solo ora).",
+  "install.no_printer_cancelled": "La stampante NuviraHub (stampa remota) non è stata installata: la password di amministratore non è stata data. Installa di nuovo l'accesso non presidiato per aggiungerla.",
+  "install.no_printer": "La stampante NuviraHub (stampa remota) non è stata installata: {e}",
   "install.windows_only": "Per ora l'installazione è disponibile solo su Windows.",
   "install.move_to_applications": "Sposta prima NuviraHub nella cartella Applicazioni e aprilo da lì: avviato dall'immagine disco, macOS non lo lascia partire da solo.",
 
