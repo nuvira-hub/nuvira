@@ -238,7 +238,10 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     });
     // Shown only when generated here: whoever chose it knows it, and the output of an
     // automatic update goes to a log, where passwords never go. Only the hash is stored.
-    let profile = opts.profile.clone().or_else(|| previous.as_ref().and_then(|p| p.profile.clone()));
+    // A profile belongs to its server: on another server it is gone.
+    let profile = opts.profile.clone().or_else(|| {
+        previous.as_ref().filter(|p| p.server.eq_ignore_ascii_case(&server)).and_then(|p| p.profile.clone())
+    });
     let (password_hash, generated_password) = match (opts.password, previous) {
         (Some(password), _) => (nuvira_secret::hash(&password), None),
         (None, Some(previous)) => (previous.password_hash, None),
