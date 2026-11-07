@@ -9,7 +9,8 @@
 //! always lock it. The secure desktop (UAC, lock screen) is not covered.
 //! macOS: see `privacy_mac.rs` (black windows in a child process left out of
 //! ScreenCaptureKit, event tap for the local input).
-//! Linux: not available yet.
+//! Linux: X11 only, see `privacy_x11.rs` (gamma at zero, local devices switched off
+//! through XInput, in a child process); not available on Wayland.
 
 use anyhow::Result;
 
@@ -23,12 +24,18 @@ mod mac;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::{INJECTED_TAG, USER_DATA};
 
+#[cfg(target_os = "linux")]
+#[path = "privacy_x11.rs"]
+mod x11;
+
 /// Privacy mode is on as long as this value lives.
 pub struct Privacy {
     #[cfg(windows)]
     inner: imp::Overlay,
     #[cfg(target_os = "macos")]
     inner: mac::Overlay,
+    #[cfg(target_os = "linux")]
+    inner: x11::Overlay,
 }
 
 /// The system can turn on privacy mode.
@@ -37,7 +44,9 @@ pub fn available() -> bool {
     return imp::available();
     #[cfg(target_os = "macos")]
     return mac::available();
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    return x11::available();
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     false
 }
 
@@ -52,7 +61,12 @@ pub fn start(message: &str, hide_from_capture: &dyn Fn(u32)) -> Result<Privacy> 
     };
     #[cfg(target_os = "macos")]
     let privacy = Privacy { inner: mac::Overlay::start(message, hide_from_capture)? };
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    let privacy = {
+        let _ = hide_from_capture;
+        Privacy { inner: x11::Overlay::start(message)? }
+    };
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     let privacy = {
         let _ = (message, hide_from_capture);
         anyhow::bail!("@agent.privacy_unsupported")
@@ -61,11 +75,22 @@ pub fn start(message: &str, hide_from_capture: &dyn Fn(u32)) -> Result<Privacy> 
     Ok(privacy)
 }
 
-/// macOS: runs the black screens when the program was started as their child
-/// process (and never returns then). Call it first thing in `main`.
+/// macOS and Linux: runs the privacy child process when the program was started
+/// as it (and never returns then). Call it first thing in `main`.
 pub fn overlay_if_asked() {
     #[cfg(target_os = "macos")]
     mac::overlay_if_asked();
+    #[cfg(target_os = "linux")]
+    x11::overlay_if_asked();
+}
+
+/// Linux: undoes a privacy mode left on by a killed process (local devices still
+/// off, black screens). Call it when the agent starts. Other systems: nothing.
+pub fn recover() {
+    #[cfg(target_os = "linux")]
+    if !crate::wayland_session() {
+        x11::recover();
+    }
 }
 
 impl Privacy {
@@ -73,7 +98,7 @@ impl Privacy {
     pub fn stop(self) {}
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 impl Drop for Privacy {
     fn drop(&mut self) {
         self.inner.stop();

@@ -345,6 +345,7 @@
   "agent.files_view_only": "el equipo remoto está en modo solo ver",
   "agent.files_disabled": "las reglas del servidor no permiten transferir archivos",
   "agent.privacy_unsupported": "el modo privacidad requiere Windows 10 versión 2004 o posterior",
+  "agent.privacy_unsupported_linux": "el modo privacidad en Linux requiere una sesión X11 y una tarjeta gráfica cuyo gamma se pueda cambiar (no disponible en Wayland)",
   "agent.privacy_failed": "no se pudo iniciar el modo privacidad en el PC remoto",
   "agent.privacy_permission_mac": "el modo privacidad requiere el permiso de Accesibilidad en el Mac: en el Mac, abre Ajustes del Sistema → Privacidad y seguridad → Accesibilidad y activa NuviraHub",
   "agent.privacy_disabled": "las reglas del servidor no permiten el modo privacidad",

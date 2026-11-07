@@ -9,7 +9,7 @@ During a session the technician can turn the screen of the controlled PC black a
 - **Not allowing it at the PC.** App settings → "This computer" → "Allow privacy mode" (Windows and macOS, on by default). The app saves the choice (`app.json`, `no_privacy`) and sends it to its agent, or to the service's one, at every start and at every change (`AgentCommand::AllowPrivacy`). The agent keeps its own copy in `permissions.json` in its data folder (with the service: `C:\ProgramData
 uvira`, writable only by administrators and SYSTEM), so the choice holds also while the app is closed. Not allowed: the agent does not announce privacy mode, refuses it with `@agent.privacy_not_allowed`, and turns it off at once if it was on.
 - **Forbidding it.** On a NuviraHub Pro server an administrator can forbid it for every device: rule "No privacy mode" in the web console (Rules) or in the app (Administration), `Policy.no_privacy`. The agents then do not announce it, the button does not appear, and a `SetPrivacy` is refused with `@agent.privacy_disabled`. Like the other rules it applies from the next session.
-- **End.** Privacy mode ends when the technician turns it off and always with the session (closed, connection lost, agent ended). Windows removes the windows and the input hooks by itself if the agent process dies; on macOS the black screens are a child process that ends when the agent's end of its input closes, and the event tap dies with the agent.
+- **End.** Privacy mode ends when the technician turns it off and always with the session (closed, connection lost, agent ended). Windows removes the windows and the input hooks by itself if the agent process dies; on macOS the black screens are a child process that ends when the agent's end of its input closes, and the event tap dies with the agent. On Linux a child process does the work and undoes it when its input closes or it is told to end (see below); if both processes are killed, the agent undoes it when it starts again.
 
 ## How it works (Windows 10 version 2004 or later)
 
@@ -27,6 +27,16 @@ Module `nuvira_input::privacy` (`privacy_mac.rs`), branch `macos-privacy-vt`:
 - **Left out of the capture.** The windows start transparent (alpha 0). The agent passes the child's pid to `nuvira_capture::hide_process`: the ScreenCaptureKit capture rebuilds its filter between two frames with `excludingApplications` for that process (`SCStream.updateContentFilter`) and confirms; the agent waits at most 1.5 s, then sends `show` and the windows turn black. A capture started later (screen switch) builds its filter with the hidden processes already in it.
 - **Local input blocked.** An active event tap at session level, on a thread with its own run loop, drops every mouse and keyboard event whose `kCGEventSourceUserData` is not NuviraHub's tag; `QuartzInjector` puts the tag on everything it posts. When macOS turns the tap off (timeout, secure input) it is turned on again. Creating the tap needs the Accessibility permission, which remote control needs anyway: without it privacy mode is refused with `@agent.privacy_permission_mac`.
 
+## How it works (Linux, X11)
+
+Module `nuvira_input::privacy` (`privacy_x11.rs`), branch `linux-privacy-vaapi`. X11 has no way to leave one window out of a capture of the root window, so there are no black windows and no message:
+
+- **Black screen.** The gamma ramp of every CRTC (RandR) goes to zero. The capture (`GetImage`) reads the frame buffer before the ramp, so the technician sees the real image while the monitor and the hardware pointer show black. The ramps in use before are kept and put back at the end; a ramp already at zero at the start (left by a killed process) is put back linear.
+- **Local input blocked.** Every physical slave device (mice, keyboards, touchpads, the power button) is switched off with the XInput 2 property "Device Enabled" = 0, as `xinput disable` does. The XTest devices, through which the agent injects (property "XTEST Device"), stay on.
+- **Child process.** The agent starts its own program again with `--privacy-overlay`; the child applies all this, prints `ready devices=N screens=M`, and every 500 ms applies it again (devices plugged in meanwhile, a night-light tool changing the gamma). It undoes everything when its standard input closes (privacy off, session over, agent ended or killed) or on SIGTERM, SIGINT or SIGHUP (systemd stopping the user service sends SIGTERM to the whole group). The switched-off devices are listed in `$XDG_RUNTIME_DIR/nuvira-privacy<display>`, removed once restored: if child and agent are both killed, the next agent start switches them on again (`privacy::recover`).
+- **Offered** only in an X11 session with XInput 2 and at least one CRTC with a gamma ramp; refused otherwise with `@agent.privacy_unsupported_linux`.
+- **Wayland:** not available. The compositor owns the input and no client can block the local devices without root; GNOME's `SetCrtcGamma` (Mutter D-Bus) could blacken the screen, but without blocking the input it would not be privacy mode.
+
 ## Limits
 
 - **Ctrl+Alt+Del** cannot be blocked by any program: the person at the PC can always lock it (said on the black screen). The **secure desktop** (UAC prompt, lock screen) is not covered: the person at the PC sees it.
@@ -34,7 +44,7 @@ Module `nuvira_input::privacy` (`privacy_mac.rs`), branch `macos-privacy-vt`:
 - The **mouse pointer** stays visible on the black screen and moves with the technician's mouse.
 - Started by the user, without nuvira-service, the hooks may not see the input going to elevated windows (UIPI); with the service (SYSTEM) this does not apply. Not verified yet.
 - **macOS:** the black screens are not rebuilt when screens are added or removed during privacy mode. Keys handled below the session (power button, Touch ID, the lock key) cannot be blocked. Not tested on a real Mac yet.
-- **Linux:** not available yet; the button does not appear.
+- **Linux (X11):** no message on the black screen (the gamma is zero). Drivers without a working gamma ramp keep the image on the monitor: virtual machines (virtio-gpu reports a ramp but ignores it) and some DisplayLink adapters; the local input is blocked anyway. A device switched on again from another program (`xinput enable`) is switched off within 500 ms. Laptop backlight is not touched. **Wayland:** not available, the button does not appear.
 
 ## Tests
 
@@ -59,3 +69,14 @@ Setting "Allow privacy mode", same day, on PC-LABORATORIO with this build instal
 uvira\permissions.json`; ticked again, `{"privacy":true}`. An agent started with a `permissions.json` that does not allow it (through the Pro test server) was reached with `--privacy`: privacy mode not available.
 
 Not tested yet: turning it off from the button or unticking the setting while privacy mode is on, two screens, an elevated window in front, privacy mode in a session of the service's agent.
+
+Linux, 2026-11-07, agent on the Mint 22.3 VM (Cinnamon, X11, through the Pro test server), viewer on the Fedora 44 VM with `--privacy --input-test`. The VM's own mouse and keyboard were driven through its VNC console on the NAS (QEMU USB tablet), the pointer read with `XQueryPointer`:
+
+| | before | during | after |
+|---|---|---|---|
+| Gamma ramp (1024 entries), middle value | 32799 | 0 | 32799 |
+| Physical devices (tablet, 2 VMware mice, AT keyboard, power button) | on | floating, "Device Enabled" 0 | on |
+| Pointer moved through the VNC console | moves | does not move | moves |
+| Pointer moved by the viewer (XTest) | moves | moves | moves |
+
+The viewer's last frame showed the real desktop. The monitor of the VM (VNC screenshot) did not turn black: virtio-gpu ignores the ramp, as expected. Robustness: agent killed with `kill -9` during privacy mode → the child restored everything within 2 s; child and agent both killed → devices stayed off until the agent was started again, which logged "privacy mode of a killed process undone devices=[6, 7, 8, 9, 10]" and switched them on; SIGTERM to the agent's process group → "ended by a signal", everything restored.

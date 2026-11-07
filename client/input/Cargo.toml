@@ -27,7 +27,8 @@ features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nuvira-portal = { path = "../portal" }
-x11rb = { version = "0.13", features = ["xtest"] }
+libc = "0.2"
+x11rb = { version = "0.13", features = ["randr", "xinput", "xtest"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"

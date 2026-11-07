@@ -345,6 +345,7 @@
   "agent.files_view_only": "der entfernte Computer ist im Nur-ansehen-Modus",
   "agent.files_disabled": "die Regeln des Servers erlauben keine Dateiübertragungen",
   "agent.privacy_unsupported": "der Datenschutzmodus benötigt Windows 10 Version 2004 oder neuer",
+  "agent.privacy_unsupported_linux": "der Datenschutzmodus unter Linux benötigt eine X11-Sitzung und eine Grafikkarte, deren Gamma sich ändern lässt (unter Wayland nicht verfügbar)",
   "agent.privacy_failed": "der Datenschutzmodus konnte auf dem entfernten PC nicht starten",
   "agent.privacy_permission_mac": "der Datenschutzmodus benötigt am Mac die Berechtigung Bedienungshilfen: Öffnen Sie am Mac Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen und aktivieren Sie NuviraHub",
   "agent.privacy_disabled": "die Regeln des Servers erlauben den Datenschutzmodus nicht",

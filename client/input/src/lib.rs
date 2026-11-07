@@ -43,7 +43,7 @@ pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
     #[cfg(target_os = "linux")]
     {
         let _ = screen;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if wayland_session() {
             Ok(Box::new(linux::PortalInjector::new()?))
         } else {
             Ok(Box::new(x11::XTestInjector::new()?))
@@ -63,4 +63,10 @@ pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
 pub fn set_dpi_awareness() {
     #[cfg(windows)]
     windows::set_dpi_awareness();
+}
+
+/// A Wayland session (input through the portal); otherwise X11.
+#[cfg(target_os = "linux")]
+pub(crate) fn wayland_session() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
 }

@@ -318,6 +318,7 @@ pub async fn serve_direct(
     once: bool,
     fingerprint_file: Option<PathBuf>,
 ) -> Result<()> {
+    nuvira_input::privacy::recover();
     let bind: SocketAddr = ([0, 0, 0, 0], port).into();
     let (endpoint, fingerprint) = nuvira_transport::server_endpoint(bind)?;
     info!("waiting for the viewer on UDP {bind}");
@@ -364,6 +365,8 @@ pub async fn serve_via_server(
     events: mpsc::UnboundedSender<AgentEvent>,
     mut commands: mpsc::UnboundedReceiver<AgentCommand>,
 ) -> Result<()> {
+    // A privacy mode left on by a killed agent (Linux: local devices still off).
+    nuvira_input::privacy::recover();
     let server = nuvira_transport::resolve_addr(&opts.server_name, nuvira_transport::signal::DEFAULT_PORT)?;
     let identity = Arc::new(nuvira_transport::identity::Identity::load_or_create(&opts.identity_path)?);
     let permissions = Permissions::load();
