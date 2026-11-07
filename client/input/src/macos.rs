@@ -15,7 +15,7 @@ use std::collections::HashSet;
 
 use anyhow::Result;
 use core_graphics::display::CGDisplay;
-use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField};
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventType, CGMouseButton, EventField};
 use core_graphics::geometry::CGPoint;
 use nuvira_proto::v1::input_event::Event;
 use nuvira_proto::v1::{Button, InputEvent};
@@ -59,7 +59,7 @@ impl QuartzInjector {
                 event.set_flags(modifier_flags(&self.keys));
                 // Marked as ours: privacy mode lets only these through.
                 event.set_integer_value_field(crate::privacy::USER_DATA, crate::privacy::INJECTED_TAG);
-                event.post(CGEventTapLocation::HID);
+                events::post(&event);
             }
             Err(()) => debug!("Quartz event not created"),
         }
@@ -253,6 +253,42 @@ mod events {
         ) -> *mut c_void;
     }
 
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventSourceCreate(state: i32) -> *mut c_void;
+        fn CGEventPost(tap: u32, event: *mut c_void);
+    }
+
+    /// Tests at the sign-in screen: `NUVIRA_MAC_EVENT_SOURCE` = null (default) |
+    /// hid | combined | private, one source for the whole process.
+    fn source() -> *const c_void {
+        static SOURCE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        *SOURCE.get_or_init(|| {
+            let state = match std::env::var("NUVIRA_MAC_EVENT_SOURCE").as_deref() {
+                Ok("hid") => 1,
+                Ok("combined") => 0,
+                Ok("private") => -1,
+                _ => return 0,
+            };
+            // SAFETY: plain value; the source is kept for the whole process.
+            let source = unsafe { CGEventSourceCreate(state) } as usize;
+            tracing::info!(state, created = source != 0, "Quartz event source for the process");
+            source
+        }) as *const c_void
+    }
+
+    /// `NUVIRA_MAC_EVENT_TAP` = hid (default) | session | annotated (tests).
+    pub fn post(event: &CGEvent) {
+        static TAP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let tap = *TAP.get_or_init(|| match std::env::var("NUVIRA_MAC_EVENT_TAP").as_deref() {
+            Ok("session") => 1,
+            Ok("annotated") => 2,
+            _ => 0,
+        });
+        // SAFETY: a valid event, retained by `event` during the call.
+        unsafe { CGEventPost(tap, event.as_ptr().cast()) };
+    }
+
     fn wrap(event: *mut c_void) -> Result<CGEvent, ()> {
         if event.is_null() {
             return Err(());
@@ -262,19 +298,19 @@ mod events {
     }
 
     pub fn keyboard(key: u16, down: bool) -> Result<CGEvent, ()> {
-        // SAFETY: a NULL source is allowed; plain values.
-        wrap(unsafe { CGEventCreateKeyboardEvent(std::ptr::null(), key, down) })
+        // SAFETY: a NULL source is allowed, a real one lives as long as the process.
+        wrap(unsafe { CGEventCreateKeyboardEvent(source(), key, down) })
     }
 
     pub fn mouse(kind: CGEventType, at: CGPoint, button: CGMouseButton) -> Result<CGEvent, ()> {
         // SAFETY: as above.
-        wrap(unsafe { CGEventCreateMouseEvent(std::ptr::null(), kind as u32, at, button as u32) })
+        wrap(unsafe { CGEventCreateMouseEvent(source(), kind as u32, at, button as u32) })
     }
 
     /// Lines (`kCGScrollEventUnitLine`), vertical then horizontal.
     pub fn scroll(vertical: i32, horizontal: i32) -> Result<CGEvent, ()> {
         // SAFETY: as above.
-        wrap(unsafe { CGEventCreateScrollWheelEvent2(std::ptr::null(), 1, 2, vertical, horizontal, 0) })
+        wrap(unsafe { CGEventCreateScrollWheelEvent2(source(), 1, 2, vertical, horizontal, 0) })
     }
 }
 

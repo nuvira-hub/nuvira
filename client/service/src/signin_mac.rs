@@ -159,6 +159,12 @@ fn start_agent(exe: &Path, settings: &Settings, hash: &str) -> Result<Child> {
         command.args(["--server-key", key]);
     }
     command.env("NUVIRA_PASSWORD_HASH", hash).env("NUVIRA_DATA_DIR", SYSTEM_DIR);
+    // Tests: variables for the agent (KEY=VALUE lines), read at every start.
+    if let Ok(text) = std::fs::read_to_string(Path::new(SYSTEM_DIR).join("signin.env")) {
+        for (key, value) in text.lines().filter_map(|l| l.split_once('=')) {
+            command.env(key.trim(), value.trim());
+        }
+    }
     command.spawn().context("starting the agent")
 }
 
