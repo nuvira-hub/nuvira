@@ -170,10 +170,15 @@ fn report_permission() {
         let uid = unsafe { libc::geteuid() };
         if trusted && post {
             info!(uid, "Accessibility permission: input allowed");
-        } else {
+            return;
+        }
+        warn!(uid, trusted, post, "no Accessibility permission: macOS drops the input");
+        // Asking shows a window and waits for it: only in a person's session (at the
+        // sign-in screen, as root, nobody could answer it).
+        if uid != 0 {
             // SAFETY: as above.
             let asked = unsafe { CGRequestPostEventAccess() };
-            warn!(uid, trusted, post, asked, "no Accessibility permission: macOS drops the input");
+            info!(asked, "Accessibility permission asked");
         }
     });
 }
