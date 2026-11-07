@@ -13,12 +13,9 @@
 
 use std::collections::HashSet;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use core_graphics::display::CGDisplay;
-use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit,
-};
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField};
 use core_graphics::geometry::CGPoint;
 use nuvira_proto::v1::input_event::Event;
 use nuvira_proto::v1::{Button, InputEvent};
@@ -43,7 +40,6 @@ pub struct QuartzInjector {
 // CGEventSource is made for every event: it is not Send.
 impl QuartzInjector {
     pub fn new(screen: ScreenRect) -> Result<Self> {
-        let _ = source()?;
         let iso = iso_keyboard();
         debug!(iso, "Mac keyboard type");
         Ok(Self {
@@ -85,8 +81,7 @@ impl QuartzInjector {
         } else {
             (CGEventType::MouseMoved, CGMouseButton::Left)
         };
-        let Ok(src) = source() else { return };
-        self.post(CGEvent::new_mouse_event(src, kind, self.position, button));
+        self.post(events::mouse(kind, self.position, button));
     }
 
     fn button(&mut self, button: Button, down: bool) {
@@ -106,8 +101,7 @@ impl QuartzInjector {
         } else if !self.buttons.remove(&number) {
             return;
         }
-        let Ok(src) = source() else { return };
-        let event = CGEvent::new_mouse_event(src, kind, self.position, cg);
+        let event = events::mouse(kind, self.position, cg);
         if let Ok(event) = &event {
             event.set_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER, i64::from(number));
         }
@@ -124,8 +118,7 @@ impl QuartzInjector {
             return;
         }
         // Positive is up and right in both NuviraHub's units and Quartz lines.
-        let Ok(src) = source() else { return };
-        self.post(CGEvent::new_scroll_event(src, ScrollEventUnit::LINE, 2, steps_y, steps_x, 0));
+        self.post(events::scroll(steps_y, steps_x));
     }
 
     fn key(&mut self, code: &str, down: bool) {
@@ -146,8 +139,7 @@ impl QuartzInjector {
     /// A modifier key changes the flags (`FlagsChanged`, as a real keyboard does);
     /// the others are key down/up events.
     fn post_key(&self, keycode: u16, down: bool) {
-        let Ok(src) = source() else { return };
-        let event = CGEvent::new_keyboard_event(src, keycode, down);
+        let event = events::keyboard(keycode, down);
         if let Ok(event) = &event
             && modifier_flag(keycode).is_some()
         {
@@ -202,8 +194,54 @@ fn iso_keyboard() -> bool {
     unsafe { KBGetLayoutType(i16::from(LMGetKbdType())) == KEYBOARD_ISO }
 }
 
-fn source() -> Result<CGEventSource> {
-    CGEventSource::new(CGEventSourceStateID::HIDSystemState).map_err(|()| anyhow!("Quartz event source not available"))
+/// Quartz events made without an event source (`NULL`). With a `HIDSystemState`
+/// source, made for every event, creating the event never returned in the sign-in
+/// screen's session (macOS 27: SkyLight's `CGSEventSourceForID` waiting on a lock),
+/// and the agent's input stopped there. The modifier flags are set by
+/// [`QuartzInjector::post`] anyway.
+mod events {
+    use core_graphics::event::{CGEvent, CGEventType, CGMouseButton};
+    use core_graphics::geometry::CGPoint;
+    use foreign_types::ForeignType;
+    use std::ffi::c_void;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventCreateKeyboardEvent(source: *const c_void, key: u16, down: bool) -> *mut c_void;
+        fn CGEventCreateMouseEvent(source: *const c_void, kind: u32, at: CGPoint, button: u32) -> *mut c_void;
+        fn CGEventCreateScrollWheelEvent2(
+            source: *const c_void,
+            units: u32,
+            count: u32,
+            wheel1: i32,
+            wheel2: i32,
+            wheel3: i32,
+        ) -> *mut c_void;
+    }
+
+    fn wrap(event: *mut c_void) -> Result<CGEvent, ()> {
+        if event.is_null() {
+            return Err(());
+        }
+        // SAFETY: a CGEventRef just created (+1), owned by the wrapper from now on.
+        Ok(unsafe { CGEvent::from_ptr(event.cast()) })
+    }
+
+    pub fn keyboard(key: u16, down: bool) -> Result<CGEvent, ()> {
+        // SAFETY: a NULL source is allowed; plain values.
+        wrap(unsafe { CGEventCreateKeyboardEvent(std::ptr::null(), key, down) })
+    }
+
+    pub fn mouse(kind: CGEventType, at: CGPoint, button: CGMouseButton) -> Result<CGEvent, ()> {
+        // SAFETY: as above.
+        wrap(unsafe { CGEventCreateMouseEvent(std::ptr::null(), kind as u32, at, button as u32) })
+    }
+
+    /// Lines (`kCGScrollEventUnitLine`), vertical then horizontal.
+    pub fn scroll(vertical: i32, horizontal: i32) -> Result<CGEvent, ()> {
+        // SAFETY: as above.
+        wrap(unsafe { CGEventCreateScrollWheelEvent2(std::ptr::null(), 1, 2, vertical, horizontal, 0) })
+    }
 }
 
 /// The capture gives the screen in pixels; Quartz events are in points (half

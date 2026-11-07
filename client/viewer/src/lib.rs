@@ -151,6 +151,15 @@ struct Args {
     /// quarters of the width of the screen, as the mouse over the window would.
     #[arg(long, hide = true)]
     input_test: bool,
+    /// Automated tests: types this text (letters, digits, space, "\n" for Enter) on the
+    /// remote computer 3 s after connecting, key by key: for passwords on a lock or
+    /// sign-in screen.
+    #[arg(long, value_name = "TEXT", hide = true)]
+    type_keys: Option<String>,
+    /// Automated tests: clicks there (fractions of the remote screen, e.g. 0.5,0.44)
+    /// 3 s after connecting, before `--type-keys`.
+    #[arg(long, value_name = "X,Y", hide = true)]
+    click_at: Option<String>,
 
     /// TCP tunnel through the session (NuviraHub Pro): LOCAL:HOST:PORT, e.g.
     /// 13389:192.168.1.20:3389 (LOCAL 0 = any free port); HOST must be in the
@@ -446,6 +455,12 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         ),
         terminal_type: args.terminal_type.as_ref().map(|t| t.replace("\\n", "\r").into_bytes()),
         input_test: args.input_test.then_some(0),
+        type_keys: (args.type_keys.is_some() || args.click_at.is_some())
+            .then(|| (0, args.type_keys.as_deref().unwrap_or("").replace("\n", "\n"))),
+        click_at: args.click_at.as_deref().and_then(|t| {
+            let (x, y) = t.split_once(',')?;
+            Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+        }),
         terminal_log: args.terminal_log.as_ref().and_then(|p| match std::fs::File::create(p) {
             Ok(f) => Some(f),
             Err(e) => {
@@ -586,6 +601,10 @@ struct App {
     terminal_type: Option<Vec<u8>>,
     /// `--input-test`: moves sent so far.
     input_test: Option<u32>,
+    /// `--type-keys`: clock measurements seen so far (one a second) and the text.
+    type_keys: Option<(u32, String)>,
+    /// `--click-at`.
+    click_at: Option<(f32, f32)>,
     /// `--terminal-log`.
     terminal_log: Option<std::fs::File>,
     /// Fit or real size, and the pan at real size.
@@ -1228,6 +1247,30 @@ impl ApplicationHandler<NetEvent> for App {
                     let x = if *n % 2 == 0 { 0.25 } else { 0.75 };
                     self.send(Event::MouseMove(MouseMove { x, y: 0.5 }));
                 }
+                if let Some((seen, _)) = self.type_keys.as_mut() {
+                    *seen += 1;
+                    if *seen >= 3
+                        && let Some((_, text)) = self.type_keys.take()
+                    {
+                        if let Some((x, y)) = self.click_at.take() {
+                            self.send(Event::MouseMove(MouseMove { x, y }));
+                            for down in [true, false] {
+                                self.send(Event::MouseButton(MouseButton { button: Button::Left as i32, down }));
+                            }
+                        }
+                        for (code, shift) in text.chars().filter_map(test_key_code) {
+                            if shift {
+                                self.send(Event::Key(Key { code: "ShiftLeft".into(), down: true }));
+                            }
+                            self.send(Event::Key(Key { code: code.clone(), down: true }));
+                            self.send(Event::Key(Key { code, down: false }));
+                            if shift {
+                                self.send(Event::Key(Key { code: "ShiftLeft".into(), down: false }));
+                            }
+                        }
+                        info!("test text typed");
+                    }
+                }
                 self.rtt_us = rtt_us;
                 self.report.rtt_us.push(rtt_us.min(u32::MAX as u64) as u32);
                 // The measurement with the lowest RTT is the least disturbed by network queues.
@@ -1400,6 +1443,11 @@ impl ApplicationHandler<NetEvent> for App {
                     toolbar.update(&format!("{{fileManager:{files},terminal:{terminal},tunnel:{tunnel}}}"));
                 }
                 self.update_toolbar_state();
+            }
+            NetEvent::ScreenLocked(locked) => {
+                info!(locked, "remote screen lock state");
+                // Kept on screen while locked: the image is only a dark placeholder.
+                self.notice(&t(if locked { "viewer.screen_locked" } else { "viewer.screen_unlocked" }), locked);
             }
             NetEvent::Privacy { on, error } => {
                 info!(on, error, "privacy mode");
@@ -1596,6 +1644,18 @@ impl ApplicationHandler<NetEvent> for App {
             _ => {}
         }
     }
+}
+
+/// `--type-keys`: the W3C code of a character on a US layout, and whether it needs Shift.
+fn test_key_code(c: char) -> Option<(String, bool)> {
+    Some(match c {
+        'a'..='z' => (format!("Key{}", c.to_ascii_uppercase()), false),
+        'A'..='Z' => (format!("Key{c}"), true),
+        '0'..='9' => (format!("Digit{c}"), false),
+        ' ' => ("Space".into(), false),
+        '\n' => ("Enter".into(), false),
+        _ => return None,
+    })
 }
 
 /// W3C name (`KeyboardEvent.code`) of a winit key. The names are the same except

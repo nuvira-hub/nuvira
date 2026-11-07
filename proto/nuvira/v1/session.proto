@@ -49,7 +49,16 @@ message ControlMessage {
     SetRecording set_recording = 23;
     RecordingState recording_state = 24;
     Permissions permissions = 25;
+    ScreenState screen_state = 26;
   }
+}
+
+// From the agent, when it changes: the screen of the controlled computer is locked
+// and its image cannot be captured (macOS shows no capture program its lock screen).
+// Meanwhile the video is a dark placeholder, and the keyboard and mouse still reach
+// the computer: the viewer tells the technician to type the password.
+message ScreenState {
+  bool locked = 1;
 }
 
 // From the viewer (only when Hello.recording from the agent): it starts or stops

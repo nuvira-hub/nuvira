@@ -122,6 +122,15 @@ pub fn hide_process(pid: u32) {
     let _ = pid;
 }
 
+/// The screen of the person's session is locked and its image cannot be captured
+/// (macOS: the capture sends a placeholder meanwhile). Other systems: false.
+pub fn screen_locked() -> bool {
+    #[cfg(target_os = "macos")]
+    return macos::screen_locked();
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
 #[cfg(target_os = "linux")]
 pub fn wayland() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some()

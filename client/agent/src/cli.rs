@@ -101,6 +101,13 @@ struct Args {
     #[arg(long)]
     ipc: bool,
 
+    /// Started for the sign-in screen (macOS LoginWindow, Linux greeter), by the
+    /// system's part of unattended access: only the permanent password is accepted
+    /// (nobody there could confirm a temporary one), and the user's agent does the
+    /// updates.
+    #[arg(long, hide = true)]
+    signin_screen: bool,
+
     /// File with the device key (default: device.key in the data folder).
     #[arg(long, value_name = "FILE")]
     identity: Option<std::path::PathBuf>,
@@ -213,14 +220,15 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             .identity
             .clone()
             .unwrap_or_else(|| nuvira_transport::identity::data_dir().join("device.key")),
-        // Without the app there is nobody to ask: the password is enough.
-        confirm: ipc,
+        // Without the app there is nobody to ask: the password is enough. At the
+        // sign-in screen nobody can answer: a temporary password is refused.
+        confirm: ipc || args.signin_screen,
         permanent_password_hash: args
             .password_hash
             .clone()
             .or_else(|| args.password.as_deref().map(nuvira_secret::hash)),
         info_file: args.fingerprint_file.clone(),
-        unattended: args.ipc,
+        unattended: args.ipc || args.signin_screen,
     };
     let password = Arc::new(Mutex::new(crate::random_password()));
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
@@ -279,7 +287,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
                         info!("ID {} {} {}", &id[..3], &id[3..6], &id[6..])
                     }
                     // With the app the temporary password is seen by the person at the PC, not the log.
-                    AgentEvent::Password { password } if !ipc => info!("temporary password {password}"),
+                    AgentEvent::Password { password } if !ipc && !args.signin_screen => {
+                        info!("temporary password {password}")
+                    }
                     _ => {}
                 }
                 if ipc {

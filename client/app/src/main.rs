@@ -1361,7 +1361,11 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
             start_agent(&app);
         }
         let done = result?;
-        let note = tauri::async_runtime::spawn_blocking(install_printer).await.ok().flatten();
+        let settings = load_settings();
+        let note = tauri::async_runtime::spawn_blocking(move || install_system(&settings.server, settings.server_key.as_deref()))
+            .await
+            .ok()
+            .flatten();
         Ok(match note {
             Some(note) => format!("{done} {note}"),
             None => done,
@@ -1405,18 +1409,19 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
     }
 }
 
-/// The NuviraHub printer (remote printing) with unattended access, on Linux and macOS:
-/// CUPS needs root, so the system asks for the administrator password; without it
-/// the rest works the same. Returns a note for the person when it was not installed.
+/// The system's part of unattended access, on Linux and macOS: the NuviraHub printer
+/// (remote printing) and, on macOS, the sign-in screen's agent. They need root, so
+/// the system asks for the administrator password once; without it the rest works
+/// the same. Returns a note for the person when it was not installed.
 #[cfg(unix)]
-fn install_printer() -> Option<String> {
-    use nuvira_service::cups;
-    if !cups::available() || cups::installed() {
+fn install_system(server: &str, server_key: Option<&str>) -> Option<String> {
+    use nuvira_service::system;
+    if !system::wanted() {
         return None;
     }
-    match cups::run_as_admin(false, &t("install.printer_reason")) {
+    match system::run_as_admin(false, &t("install.printer_reason"), server, server_key) {
         Ok(true) => {
-            info!("NuviraHub printer installed");
+            info!("system part of unattended access installed");
             None
         }
         Ok(false) => Some(t("install.no_printer_cancelled")),
@@ -1469,13 +1474,13 @@ async fn uninstall_service(app: AppHandle) -> Result<String, String> {
         tauri::async_runtime::spawn_blocking(|| {
             nuvira_service::user::uninstall()?;
             // Installed with unattended access, removed with it (the .deb and .rpm
-            // packages keep theirs until they are removed).
-            use nuvira_service::cups;
-            if cups::installed() && !cups::packaged() {
-                match cups::run_as_admin(true, &t("install.printer_remove_reason")) {
-                    Ok(true) => info!("NuviraHub printer removed"),
-                    Ok(false) => info!("NuviraHub printer kept: administrator prompt declined"),
-                    Err(e) => warn!("NuviraHub printer not removed: {e:#}"),
+            // packages keep their printer until they are removed).
+            use nuvira_service::system;
+            if system::installed() {
+                match system::run_as_admin(true, &t("install.printer_remove_reason"), "", None) {
+                    Ok(true) => info!("system part of unattended access removed"),
+                    Ok(false) => info!("system part kept: administrator prompt declined"),
+                    Err(e) => warn!("system part not removed: {e:#}"),
                 }
             }
             anyhow::Ok(())

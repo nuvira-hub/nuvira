@@ -3400,6 +3400,7 @@ name = "nuvira-capture"
 version = "0.16.0"
 dependencies = [
  "anyhow",
+ "core-foundation 0.10.1",
  "core-graphics 0.25.0",
  "libc",
  "nuvira-portal",
@@ -3460,6 +3461,7 @@ dependencies = [
  "core-foundation 0.10.1",
  "core-graphics 0.25.0",
  "dispatch2",
+ "foreign-types",
  "libc",
  "nuvira-portal",
  "nuvira-proto",

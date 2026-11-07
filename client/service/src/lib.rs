@@ -19,6 +19,13 @@ pub mod cups;
 /// Root's updates of the .deb and .rpm packages.
 #[cfg(target_os = "linux")]
 mod package_update;
+/// The sign-in screen's agent (macOS LoginWindow).
+#[cfg(target_os = "macos")]
+#[path = "signin_mac.rs"]
+pub mod signin;
+/// The root part of unattended access: printer, sign-in screen.
+#[cfg(unix)]
+pub mod system;
 #[cfg(unix)]
 mod unix_shared;
 #[cfg(target_os = "linux")]
@@ -298,6 +305,11 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
             cups::uninstall().map(|()| println!("NuviraHub printer removed"))
         }
         Some("printer") => cups::install().map(|done| println!("{done}")),
+        // As root, through the administrator prompt of the app: printer and sign-in screen.
+        Some("system") => system::command(&args),
+        // launchd at the sign-in screen.
+        #[cfg(target_os = "macos")]
+        Some("signin-run") => signin::run(),
         // Root's nuvira-update.timer of the packages.
         #[cfg(target_os = "linux")]
         Some("update-package") => package_update::run(),

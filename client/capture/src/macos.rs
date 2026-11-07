@@ -9,10 +9,17 @@
 //! Privacy mode: the windows of the black-screen process are left out of the
 //! stream ([`hide_process`]); the filter is changed by the capture itself,
 //! between two frames.
+//!
+//! Locked screen: macOS shows no capture program the lock screen (ScreenCaptureKit
+//! lists no display and stops a running stream a few seconds after the lock;
+//! the older CoreGraphics captures are black, also as root). While the screen is
+//! locked the capture gives a dark placeholder image once a second, so the session
+//! goes on (the input still reaches the password field), and opens the stream again
+//! once it is unlocked. The viewer is told by the agent ([`screen_locked`]).
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Condvar, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use core_graphics::display::CGDisplay;
@@ -103,7 +110,49 @@ fn content() -> Result<SCShareableContent> {
 }
 
 pub fn displays() -> Result<Vec<Display>> {
-    Ok(displays_of(&content()?).into_iter().map(|(_, d)| d).collect())
+    let list: Vec<Display> = displays_of(&content()?).into_iter().map(|(_, d)| d).collect();
+    if list.is_empty() && screen_locked() {
+        return Ok(vec![main_display()]);
+    }
+    Ok(list)
+}
+
+/// The main display as CoreGraphics sees it (also while the screen is locked).
+fn main_display() -> Display {
+    let main = CGDisplay::main();
+    Display {
+        index: 0,
+        name: "Screen 1".into(),
+        left: 0,
+        top: 0,
+        width: main.pixels_wide() as u32,
+        height: main.pixels_high() as u32,
+        primary: true,
+    }
+}
+
+/// The screen of the person's session is locked (`CGSSessionScreenIsLocked`).
+/// False outside a person's session, as at the sign-in screen.
+pub fn screen_locked() -> bool {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::string::CFString;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
+    }
+    // SAFETY: no arguments; the result is owned (+1) or NULL.
+    let dict = unsafe { CGSessionCopyCurrentDictionary() };
+    if dict.is_null() {
+        return false;
+    }
+    // SAFETY: a dictionary just copied, released by the wrapper.
+    let dict: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_create_rule(dict) };
+    dict.find(CFString::from_static_string("CGSSessionScreenIsLocked"))
+        .and_then(|v| v.downcast::<CFBoolean>())
+        .is_some_and(bool::from)
 }
 
 struct Image {
@@ -141,22 +190,59 @@ impl SCStreamOutputTrait for Handler {
     }
 }
 
+/// A running ScreenCaptureKit stream and its images.
+struct Running {
+    stream: SCStream,
+    images: Receiver<Image>,
+}
+
 pub struct ScreenCaptureKitCapturer {
     display: Display,
+    /// The display asked for (`None`: the primary one).
+    index: Option<usize>,
     /// CoreGraphics id of the display, to build the filter again.
     display_id: u32,
     /// Generation of [`HIDDEN`] in the stream's filter.
     hidden_generation: u64,
-    stream: SCStream,
-    images: Receiver<Image>,
+    /// `None` while the screen is locked.
+    running: Option<Running>,
     frame: Option<Frame>,
+    /// Last look at the lock state, and the next placeholder or reopening.
+    lock_checked: Instant,
+    next_try: Instant,
 }
+
+/// How often the lock state is read, and the placeholder sent.
+const LOCK_CHECK: Duration = Duration::from_millis(500);
+const PLACEHOLDER_EVERY: Duration = Duration::from_secs(1);
+/// Dark grey of the placeholder (BGRA).
+const PLACEHOLDER: [u8; 4] = [0x2a, 0x26, 0x24, 0xff];
 
 impl ScreenCaptureKitCapturer {
     pub fn new(index: Option<usize>) -> Result<Self> {
+        let now = Instant::now();
+        let mut capturer = Self {
+            display: main_display(),
+            index,
+            display_id: CGDisplay::main().id,
+            hidden_generation: 0,
+            running: None,
+            frame: None,
+            lock_checked: now,
+            next_try: now,
+        };
+        if screen_locked() {
+            info!("screen locked: placeholder until it is unlocked");
+            return Ok(capturer);
+        }
+        capturer.start()?;
+        Ok(capturer)
+    }
+
+    fn start(&mut self) -> Result<()> {
         let content = content()?;
         let mut list = displays_of(&content);
-        let pick = match index {
+        let pick = match self.index {
             Some(i) => list.iter().position(|(_, d)| d.index == i),
             None => list.iter().position(|(_, d)| d.primary).or(Some(0)),
         }
@@ -178,12 +264,57 @@ impl ScreenCaptureKitCapturer {
         stream.add_output_handler(Handler { images: Mutex::new(tx) }, SCStreamOutputType::Screen)?;
         stream.start_capture().map_err(|e| anyhow!("{e:?}")).context("@agent.screen_permission_mac")?;
         info!(name = screen.name, width = screen.width, height = screen.height, "ScreenCaptureKit capture");
-        let display_id = sc_display.display_id();
-        Ok(Self { display: screen, display_id, hidden_generation, stream, images, frame: None })
+        self.display_id = sc_display.display_id();
+        self.display = screen;
+        self.hidden_generation = hidden_generation;
+        self.running = Some(Running { stream, images });
+        Ok(())
+    }
+
+    /// Follows the lock state: the stream is closed when the screen locks and
+    /// opened again (once a second) after it is unlocked.
+    fn follow_lock(&mut self) {
+        if self.lock_checked.elapsed() < LOCK_CHECK {
+            return;
+        }
+        self.lock_checked = Instant::now();
+        let locked = screen_locked();
+        if locked && let Some(running) = self.running.take() {
+            info!("screen locked: placeholder until it is unlocked");
+            let _ = running.stream.stop_capture();
+        } else if !locked && self.running.is_none() && Instant::now() >= self.next_try {
+            match self.start() {
+                Ok(()) => info!("screen unlocked: capture resumed"),
+                Err(e) => {
+                    info!("capture not resumed yet: {e:#}");
+                    self.next_try = Instant::now() + PLACEHOLDER_EVERY;
+                }
+            }
+        }
+    }
+
+    /// The dark image sent while the screen is locked, once a second.
+    fn placeholder(&mut self, timeout: Duration) -> Option<&Frame> {
+        let now = Instant::now();
+        if now < self.next_try {
+            std::thread::sleep(timeout.min(self.next_try - now));
+            return None;
+        }
+        self.next_try = now + PLACEHOLDER_EVERY;
+        let (width, height) = (self.display.width, self.display.height);
+        self.frame = Some(Frame {
+            width,
+            height,
+            stride: width as usize * 4,
+            data: PLACEHOLDER.repeat(width as usize * height as usize),
+            captured_us: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64),
+        });
+        self.frame.as_ref()
     }
 
     /// Leaves out the windows of the processes hidden since the last frame.
     fn apply_hidden(&mut self) {
+        let Some(running) = &self.running else { return };
         let Some((generation, pids)) = HIDDEN
             .lock()
             .ok()
@@ -199,7 +330,7 @@ impl ScreenCaptureKitCapturer {
                 .find(|d| d.display_id() == self.display_id)
                 .context("screen not found")?;
             let filter = filter_for(&content, &display, &pids)?;
-            self.stream.update_content_filter(&filter).map_err(|e| anyhow!("{e:?}"))
+            running.stream.update_content_filter(&filter).map_err(|e| anyhow!("{e:?}"))
         });
         match result {
             Ok(()) => info!(?pids, "capture filter updated"),
@@ -219,11 +350,15 @@ impl Capturer for ScreenCaptureKitCapturer {
     }
 
     fn next_frame(&mut self, timeout: Duration) -> Result<Option<&Frame>> {
+        self.follow_lock();
         self.apply_hidden();
-        let image = match self.images.recv_timeout(timeout) {
-            Ok(image) => image,
-            Err(RecvTimeoutError::Timeout) => return Ok(None),
-            Err(RecvTimeoutError::Disconnected) => bail!("the screen stream ended"),
+        let image = match &self.running {
+            None => return Ok(self.placeholder(timeout)),
+            Some(running) => match running.images.recv_timeout(timeout) {
+                Ok(image) => image,
+                Err(RecvTimeoutError::Timeout) => return Ok(None),
+                Err(RecvTimeoutError::Disconnected) => bail!("the screen stream ended"),
+            },
         };
         self.frame = Some(Frame {
             width: image.width,
@@ -242,7 +377,9 @@ impl Capturer for ScreenCaptureKitCapturer {
 
 impl Drop for ScreenCaptureKitCapturer {
     fn drop(&mut self) {
-        let _ = self.stream.stop_capture();
+        if let Some(running) = &self.running {
+            let _ = running.stream.stop_capture();
+        }
     }
 }
 

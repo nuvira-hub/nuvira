@@ -1344,6 +1344,8 @@ async fn session(
             }
         };
         let mut changes = off.clone();
+        // Lock state last told to the viewer (macOS only: elsewhere always false).
+        let mut screen_locked = false;
         loop {
             let msg = tokio::select! {
                 msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
@@ -1388,6 +1390,12 @@ async fn session(
                     continue;
                 }
                 _ = tick.tick() => {
+                    let locked = nuvira_capture::screen_locked();
+                    if locked != screen_locked {
+                        screen_locked = locked;
+                        info!(locked, "screen lock state");
+                        ctrl_tx.send(&control(Msg::ScreenState(nuvira_proto::v1::ScreenState { locked }))).await?;
+                    }
                     let now = Instant::now();
                     sent_samples.push_back((now, sent_bytes.load(Ordering::Relaxed)));
                     while sent_samples.front().is_some_and(|(t, _)| now.duration_since(*t) > Duration::from_secs(2)) {

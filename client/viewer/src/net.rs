@@ -100,6 +100,8 @@ pub enum NetEvent {
         /// Switched off by the person there ("input", "clipboard", "files", …).
         switched_off: Vec<String>,
     },
+    /// The remote screen is locked and cannot be shown (macOS), or no longer.
+    ScreenLocked(bool),
     /// Privacy mode reached by the agent; `error` ("@key" or text) when it did not turn on.
     Privacy {
         on: bool,
@@ -872,6 +874,9 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::Chat(chat)) }) => {
                         let _ = proxy.send_event(NetEvent::Chat(chat.text));
+                    }
+                    Some(ControlMessage { msg: Some(Msg::ScreenState(s)) }) => {
+                        let _ = proxy.send_event(NetEvent::ScreenLocked(s.locked));
                     }
                     Some(ControlMessage { msg: Some(Msg::PrivacyState(p)) }) => {
                         let _ = proxy.send_event(NetEvent::Privacy { on: p.on, error: p.error });
