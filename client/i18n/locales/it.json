@@ -506,5 +506,14 @@
   "settings.record_hint": "Le sessioni verso altri computer vengono salvate come video MP4 dall'inizio, se la persona all'altro computer lo consente (viene avvisata). Il pulsante di registrazione nella barra della sessione avvia e ferma una registrazione in qualsiasi momento.",
   "settings.record_open": "Apri cartella",
   "settings.record_change": "Cambia cartella",
-  "settings.record_dir_pick": "Cartella delle registrazioni delle sessioni"
+  "settings.record_dir_pick": "Cartella delle registrazioni delle sessioni",
+
+  "admin.policy_record": "Registra ogni sessione (inviata al server)",
+  "settings.recording_required": "Richiesto dalle regole della tua organizzazione: ogni sessione di questo computer viene registrata, e la striscia in alto lo indica.",
+  "agent.recording_required": "le regole del server vogliono ogni sessione registrata, e questo viewer non registra",
+  "server.recording_session": "questo dispositivo non era il viewer di quella sessione, oppure è troppo vecchia",
+  "server.recording_name": "nome non valido per una registrazione",
+  "server.recording_too_large": "la registrazione è più grande di quanto il server accetta",
+  "server.recording_busy": "questa registrazione è già in arrivo",
+  "server.upload_failed": "il server non è riuscito a salvare il file"
 }

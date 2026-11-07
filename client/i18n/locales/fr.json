@@ -506,5 +506,14 @@
   "settings.record_hint": "Les sessions vers d'autres ordinateurs sont enregistrées en vidéo MP4 dès le début, si la personne devant l'autre ordinateur l'autorise (elle est prévenue). Le bouton d'enregistrement de la barre de session démarre et arrête un enregistrement à tout moment.",
   "settings.record_open": "Ouvrir le dossier",
   "settings.record_change": "Changer de dossier",
-  "settings.record_dir_pick": "Dossier des enregistrements des sessions"
+  "settings.record_dir_pick": "Dossier des enregistrements des sessions",
+
+  "admin.policy_record": "Enregistrer chaque session (envoyée au serveur)",
+  "settings.recording_required": "Imposé par les règles de votre organisation : chaque session de cet ordinateur est enregistrée, et la bande en haut l'indique.",
+  "agent.recording_required": "les règles du serveur veulent que chaque session soit enregistrée, et cette visionneuse n'enregistre pas",
+  "server.recording_session": "cet appareil n'était pas la visionneuse de cette session, ou elle est trop ancienne",
+  "server.recording_name": "nom non valide pour un enregistrement",
+  "server.recording_too_large": "l'enregistrement est plus grand que ce que le serveur accepte",
+  "server.recording_busy": "cet enregistrement est déjà en cours de réception",
+  "server.upload_failed": "le serveur n'a pas pu enregistrer le fichier"
 }

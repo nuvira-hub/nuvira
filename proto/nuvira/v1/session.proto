@@ -304,6 +304,10 @@ message Hello {
   // From the viewer: it can record the session (SetRecording). From the agent: the
   // person at the PC allows recordings, and is told when one starts.
   bool recording = 14;
+  // From the agent: the server's rules want every session recorded (Policy.record_always).
+  // The viewer records from the start and cannot stop; a viewer that does not
+  // record is refused, and the session ends if the recording stops.
+  bool recording_required = 15;
 }
 
 // First message of every bidirectional stream the viewer opens after the control

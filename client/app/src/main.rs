@@ -124,6 +124,8 @@ struct UiState {
     print_allowed: bool,
     /// Recordings of the sessions allowed on this PC (settings).
     recording_allowed: bool,
+    /// The server's rules record every session: the setting is locked.
+    recording_required: bool,
     /// Sessions towards other computers are recorded from the start (settings).
     record_sessions: bool,
     /// Folder of the recordings.
@@ -644,6 +646,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                 bring_to_front(app);
             }
         }
+        AgentEvent::Rules { recording_required } => state.update(app, |ui| ui.recording_required = recording_required),
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
             ui.session = None;
             if let Some(e) = error {

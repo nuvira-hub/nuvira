@@ -506,5 +506,14 @@
   "settings.record_hint": "Sessions towards other computers are saved as MP4 videos from the start, when the person at the other computer allows it (they are told). The record button in the session bar starts and stops a recording at any time.",
   "settings.record_open": "Open folder",
   "settings.record_change": "Change folder",
-  "settings.record_dir_pick": "Folder of the session recordings"
+  "settings.record_dir_pick": "Folder of the session recordings",
+
+  "admin.policy_record": "Record every session (sent to the server)",
+  "settings.recording_required": "Required by your organisation's rules: every session of this computer is recorded, and the strip at the top says so.",
+  "agent.recording_required": "the server's rules want every session recorded, and this viewer does not record",
+  "server.recording_session": "this device was not the viewer of that session, or it is too old",
+  "server.recording_name": "invalid name for a recording",
+  "server.recording_too_large": "the recording is larger than the server accepts",
+  "server.recording_busy": "this recording is already being received",
+  "server.upload_failed": "the server could not store the file"
 }

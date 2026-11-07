@@ -506,5 +506,14 @@
   "settings.record_hint": "Las sesiones hacia otros equipos se guardan como vídeo MP4 desde el principio, si la persona del otro equipo lo permite (se le avisa). El botón de grabación de la barra de la sesión inicia y detiene una grabación en cualquier momento.",
   "settings.record_open": "Abrir carpeta",
   "settings.record_change": "Cambiar carpeta",
-  "settings.record_dir_pick": "Carpeta de las grabaciones de las sesiones"
+  "settings.record_dir_pick": "Carpeta de las grabaciones de las sesiones",
+
+  "admin.policy_record": "Grabar cada sesión (enviada al servidor)",
+  "settings.recording_required": "Lo exigen las reglas de tu organización: cada sesión de este equipo se graba, y la franja de arriba lo indica.",
+  "agent.recording_required": "las reglas del servidor exigen grabar cada sesión, y este visor no graba",
+  "server.recording_session": "este dispositivo no era el visor de esa sesión, o es demasiado antigua",
+  "server.recording_name": "nombre no válido para una grabación",
+  "server.recording_too_large": "la grabación es más grande de lo que acepta el servidor",
+  "server.recording_busy": "esta grabación ya se está recibiendo",
+  "server.upload_failed": "el servidor no pudo guardar el archivo"
 }

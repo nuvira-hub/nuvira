@@ -54,6 +54,8 @@ const WRONG_PASSWORD: &str = "@agent.wrong_password";
 
 /// Time given to the person at the PC to accept a connection request.
 pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
+/// With the rule "record every session", how long the viewer has to start recording.
+const RECORDING_START: Duration = Duration::from_secs(15);
 
 /// How to capture and encode the screen.
 #[derive(Debug, Clone)]
@@ -171,6 +173,10 @@ pub enum AgentEvent {
     /// The controlling side started (`on`) or stopped recording the session.
     Recording {
         on: bool,
+    },
+    /// Rules of the server that the app shows (at the registration and when they change).
+    Rules {
+        recording_required: bool,
     },
     /// State of this device's support request (support queue, NuviraHub Pro):
     /// its place in the queue, who took it, or closed.
@@ -511,8 +517,11 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
         no_terminal = policy.no_terminal,
         no_tunnel = policy.no_tunnel,
         no_print = policy.no_print,
+        record_always = policy.record_always,
         "rules of the server"
     );
+    // The app shows the setting of the recordings locked when the rules want them.
+    let _ = ctx.events.send(AgentEvent::Rules { recording_required: policy.record_always });
     *ctx.policy.lock().expect("policy") = policy;
 }
 
@@ -961,6 +970,9 @@ async fn session(
     }
     let viewer_protocol = hello.protocol_version;
     let terminal_only = hello.terminal_only;
+    // The server's rules want every session recorded: by the viewer, which must be able to.
+    let recording_required = policy.record_always && !terminal_only;
+    let viewer_records = hello.recording;
     if let Some(gate) = gate {
         gate.terminal_only.store(terminal_only, Ordering::Relaxed);
     }
@@ -1002,7 +1014,9 @@ async fn session(
     let print_allowed = || gate.is_none_or(|g| g.ctx.allow_print.load(Ordering::Relaxed));
     // Recording of the session by the viewer, allowed by the person at the PC (always
     // without the app: LAN tests), who is told when it starts.
-    let recording_allowed = || gate.is_none_or(|g| g.ctx.allow_recording.load(Ordering::Relaxed));
+    // The server's rules come first (every session recorded, the person is told anyway).
+    let recording_allowed =
+        || recording_required || gate.is_none_or(|g| g.ctx.allow_recording.load(Ordering::Relaxed));
     let printer = match hello.print
         && !terminal_only
         && !config.view_only
@@ -1029,6 +1043,7 @@ async fn session(
         restart: restart_available && !terminal_only,
         print: printer.is_some(),
         recording: !terminal_only && recording_allowed(),
+        recording_required,
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -1037,6 +1052,13 @@ async fn session(
             Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
             _ => bail!("the viewer did not send the password"),
         };
+        // A viewer that does not record cannot work here (older ones, the web client).
+        if recording_required && !viewer_records {
+            let message = "@agent.recording_required".to_string();
+            ctrl_tx.send(&control(Msg::AuthResult(AuthResult { ok: false, message: message.clone() }))).await?;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            bail!("{message}");
+        }
         // Viewers that know it are told when the person at the PC is being asked.
         let pending = (viewer_protocol >= nuvira_proto::v1::ProtocolVersion::ConfirmationPending as u32)
             .then_some(&mut ctrl_tx);
@@ -1256,6 +1278,13 @@ async fn session(
                         let state = nuvira_proto::v1::PrivacyState { on: false, error: "@agent.privacy_not_allowed".into() };
                         ctrl_tx.send(&control(Msg::PrivacyState(state))).await?;
                     }
+                    // Required by the rules: the viewer has a few seconds to start.
+                    if recording_required && !recording && session_start.elapsed() > RECORDING_START {
+                        warn!("session ended: not recorded as the server's rules want");
+                        let state = nuvira_proto::v1::RecordingState { on: false, error: "@agent.recording_required".into() };
+                        ctrl_tx.send(&control(Msg::RecordingState(state))).await?;
+                        return anyhow::Ok(());
+                    }
                     if recording && !recording_allowed() {
                         recording = false;
                         info!("recording stopped: no longer allowed by the person at the PC");
@@ -1435,6 +1464,13 @@ async fn session(
                     }
                     let state = nuvira_proto::v1::PrivacyState { on: privacy.is_some(), error };
                     ctrl_tx.send(&control(Msg::PrivacyState(state))).await?;
+                }
+                Some(Msg::SetRecording(set)) if !set.on && recording_required => {
+                    warn!("session ended: the viewer stopped the recording the server's rules want");
+                    tell_app(false);
+                    let state = nuvira_proto::v1::RecordingState { on: false, error: "@agent.recording_required".into() };
+                    ctrl_tx.send(&control(Msg::RecordingState(state))).await?;
+                    return anyhow::Ok(());
                 }
                 Some(Msg::SetRecording(set)) => {
                     let mut error = String::new();
@@ -1862,6 +1898,7 @@ fn local_hello() -> Hello {
         restart: false,
         print: false,
         recording: false,
+        recording_required: false,
     }
 }
 

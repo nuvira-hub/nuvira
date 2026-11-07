@@ -48,6 +48,8 @@ pub struct Signal {
     pub transport: ServerTransport,
     pub tx: SignalSender,
     pub rx: SignalReceiver,
+    /// The QUIC connection: further streams carry files to the server (Upload).
+    pub conn: quinn::Connection,
 }
 
 pub struct SignalSender(FramedSend);
@@ -198,6 +200,7 @@ pub async fn connect(
         transport: transport.clone(),
         tx,
         rx,
+        conn,
     })
 }
 

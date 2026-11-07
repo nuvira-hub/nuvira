@@ -506,5 +506,14 @@
   "settings.record_hint": "Sitzungen zu anderen Computern werden von Anfang an als MP4-Video gespeichert, wenn die Person am anderen Computer es erlaubt (sie wird informiert). Die Aufnahmetaste in der Sitzungsleiste startet und beendet eine Aufzeichnung jederzeit.",
   "settings.record_open": "Ordner öffnen",
   "settings.record_change": "Ordner ändern",
-  "settings.record_dir_pick": "Ordner der Sitzungsaufzeichnungen"
+  "settings.record_dir_pick": "Ordner der Sitzungsaufzeichnungen",
+
+  "admin.policy_record": "Jede Sitzung aufzeichnen (an den Server gesendet)",
+  "settings.recording_required": "Von den Regeln Ihrer Organisation verlangt: jede Sitzung dieses Computers wird aufgezeichnet, und die Leiste oben zeigt es an.",
+  "agent.recording_required": "die Regeln des Servers verlangen, dass jede Sitzung aufgezeichnet wird, und dieser Viewer zeichnet nicht auf",
+  "server.recording_session": "dieses Gerät war nicht der Viewer dieser Sitzung, oder sie ist zu alt",
+  "server.recording_name": "ungültiger Name für eine Aufzeichnung",
+  "server.recording_too_large": "die Aufzeichnung ist größer, als der Server annimmt",
+  "server.recording_busy": "diese Aufzeichnung wird bereits empfangen",
+  "server.upload_failed": "der Server konnte die Datei nicht speichern"
 }

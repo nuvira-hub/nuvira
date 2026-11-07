@@ -147,6 +147,8 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 	}
 	s.setOnline(c)
 	defer s.setOffline(c)
+	// Files sent to the server, each on a stream of its own.
+	go s.streams(ctx, c)
 	s.log.Info("device connected", "id", c.device.ID, "name", c.device.Name, "from", conn.RemoteAddr())
 
 	for {

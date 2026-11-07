@@ -27,6 +27,8 @@ struct Part {
 }
 
 pub struct Recorder {
+    /// NuviraHub Pro: every closed file is sent to the server.
+    upload: Option<crate::upload::Target>,
     dir: PathBuf,
     stem: String,
     part: Option<Part>,
@@ -39,8 +41,8 @@ pub struct Recorder {
 
 impl Recorder {
     /// Files go in `dir` (created if missing), named after `stem`.
-    pub fn new(dir: PathBuf, stem: String) -> Self {
-        Self { dir, stem, part: None, parts: 0, last_seq: None, waiting_key: true, files: Vec::new() }
+    pub fn new(dir: PathBuf, stem: String, upload: Option<crate::upload::Target>) -> Self {
+        Self { upload, dir, stem, part: None, parts: 0, last_seq: None, waiting_key: true, files: Vec::new() }
     }
 
     /// Adds a frame. Errors (disk full, folder not writable) end the recording: the
@@ -97,6 +99,9 @@ impl Recorder {
             info!(seconds, "recording saved: {}", part.path.display());
             // For the NuviraHub app, which reads the output (also while the window closes).
             println!("@recorded	{}", part.path.display());
+            if let Some(target) = &self.upload {
+                crate::upload::spawn(target, &part.path);
+            }
         }
         Ok(())
     }
@@ -112,9 +117,18 @@ impl Recorder {
 /// files): a recording to the folder with the name, or none. Every start has its own
 /// number, so that a stop and a new start between two frames are not missed.
 #[derive(Default)]
-pub struct Switch(Mutex<(u64, Option<(PathBuf, String)>)>);
+pub struct Switch(Mutex<(u64, Option<(PathBuf, String)>)>, Mutex<Option<crate::upload::Target>>);
 
 impl Switch {
+    /// Where the files of the current session go besides the folder (NuviraHub Pro).
+    pub fn set_upload(&self, target: Option<crate::upload::Target>) {
+        *self.1.lock().expect("recording switch") = target;
+    }
+
+    pub fn upload(&self) -> Option<crate::upload::Target> {
+        self.1.lock().expect("recording switch").clone()
+    }
+
     pub fn start(&self, dir: PathBuf, stem: String) {
         let mut s = self.0.lock().expect("recording switch");
         s.0 += 1;
@@ -258,7 +272,7 @@ mod tests {
     fn parts_follow_the_resolution() {
         let dir = std::env::temp_dir().join(format!("nuvira-rec-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let mut rec = Recorder::new(dir.clone(), "test".into());
+        let mut rec = Recorder::new(dir.clone(), "test".into(), None);
         // It starts at a keyframe: the frames before are skipped.
         let mut first = frames(320, 240, 20, 1, 0);
         first.remove(0);

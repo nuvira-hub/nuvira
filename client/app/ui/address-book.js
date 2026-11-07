@@ -82,6 +82,8 @@ function renderAddressBook(state) {
   // Accounts and shared books only with the server's address book module (Pro);
   // the book on this computer is always there.
   const pro = (state.features ?? []).includes("pro.address_book");
+  // The rule "record every session" only with the recordings on the server.
+  $("policy-record-row").classList.toggle("hidden", !(state.features ?? []).includes("pro.recording"));
   // Single sign-on: "pro.sso=<provider name>".
   const sso = (state.features ?? []).find((f) => f.startsWith("pro.sso="))?.slice(8);
   $("login-sso").classList.toggle("hidden", !sso || Boolean(account));
@@ -483,6 +485,7 @@ function showPolicy(policy) {
   $("policy-terminal").checked = policy.no_terminal;
   $("policy-tunnel").checked = policy.no_tunnel;
   $("policy-print").checked = policy.no_print;
+  $("policy-record").checked = policy.record_always;
 }
 
 $("policy-form").addEventListener("submit", async (e) => {
@@ -495,6 +498,7 @@ $("policy-form").addEventListener("submit", async (e) => {
     no_terminal: $("policy-terminal").checked,
     no_tunnel: $("policy-tunnel").checked,
     no_print: $("policy-print").checked,
+    record_always: $("policy-record").checked,
   };
   try {
     showPolicy(await call("address_book_save_policy", { policy }, "policy-message"));

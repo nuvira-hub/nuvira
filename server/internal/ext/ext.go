@@ -149,3 +149,22 @@ type InventoryDesk interface {
 type SessionObserver interface {
 	SessionEvent(ev SessionEvent)
 }
+
+// UploadDesk is implemented by modules that take files from the devices (session
+// recordings, NuviraHub Pro), sent on a stream of their signalling connection: the
+// device is the one that proved its key at the registration. Upload checks the
+// request and returns where the bytes go; ErrNotAvailable when the kind is not
+// the module's. Any other error is sent to the device ("@key" or text).
+type UploadDesk interface {
+	Upload(deviceID string, up *pb.Upload) (UploadSink, error)
+}
+
+// UploadSink receives the bytes of one upload.
+type UploadSink interface {
+	io.Writer
+	// Offset is how much of the file is already stored: the device sends the rest.
+	Offset() uint64
+	// Finish ends the upload; complete false when the device stopped before the end
+	// (what arrived is kept, for a later upload to go on from there).
+	Finish(complete bool) error
+}

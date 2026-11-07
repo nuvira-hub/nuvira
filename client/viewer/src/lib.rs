@@ -16,6 +16,7 @@ mod report;
 mod terminal;
 mod tunnels;
 mod toolbar;
+mod upload;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -331,13 +332,18 @@ fn own_taskbar_group() {
     }
 }
 
-/// The viewer's command line: `args` as from `std::env::args_os()` (program name first).
 /// Where the session window saves recordings unless told otherwise.
 pub fn default_recording_dir() -> PathBuf {
     recorder::default_dir()
 }
 
+/// The viewer's command line: `args` as from `std::env::args_os()` (program name first).
+/// `upload ...` sends a recording to the server instead (see `upload.rs`).
 pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
+    let args: Vec<std::ffi::OsString> = args.into_iter().collect();
+    if args.get(1).is_some_and(|a| a == "upload") {
+        return upload::run(args.into_iter().skip(1));
+    }
     let _ = tracing_subscriber::fmt()
         .with_ansi(ansi_colors())
         .with_env_filter(
@@ -415,6 +421,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             on: false,
             at_start: args.record,
             asked: false,
+            required: false,
         },
         restart_at_start: args.restart,
         terminal_only: args.terminal,
@@ -509,6 +516,8 @@ struct Recording {
     at_start: bool,
     /// Asked to the agent, no answer yet.
     asked: bool,
+    /// The server's rules want every session recorded.
+    required: bool,
 }
 
 struct App {
@@ -801,6 +810,8 @@ impl App {
                 info!("restart of the remote computer requested");
                 self.send_control(Msg::Restart(nuvira_proto::v1::Restart {}));
             }
+            // Required by the server's rules: it cannot be stopped (the button is disabled).
+            Action::Record if self.recording.required => {}
             Action::Record => {
                 info!("recording requested: {}", !self.recording.on);
                 self.recording.asked = !self.recording.on;
@@ -895,10 +906,11 @@ impl App {
     fn update_toolbar_state(&self) {
         let (Some(toolbar), Some(window)) = (&self.toolbar, &self.window) else { return };
         toolbar.update(&format!(
-            "{{viewOnly:{},privacy:{},recording:{},actualSize:{},fullscreen:{},quality:{}}}",
+            "{{viewOnly:{},privacy:{},recording:{},recordingRequired:{},actualSize:{},fullscreen:{},quality:{}}}",
             self.view_only,
             self.privacy,
             self.recording.on,
+            self.recording.required,
             self.view.actual,
             window.fullscreen().is_some(),
             toolbar::js_string(toolbar::quality_name(self.quality))
@@ -1032,6 +1044,7 @@ impl ApplicationHandler<NetEvent> for App {
                 restart,
                 print,
                 recording,
+                recording_required,
             } => {
                 if self.restarting.take().is_some() {
                     info!("connected again after the restart");
@@ -1063,7 +1076,11 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 // After a reconnection the recording goes on in a new file.
                 self.recording.available = recording;
-                if std::mem::take(&mut self.recording.at_start) || self.recording.on {
+                self.recording.required = recording_required;
+                if recording_required {
+                    info!("the server's rules want this session recorded");
+                }
+                if std::mem::take(&mut self.recording.at_start) || self.recording.on || recording_required {
                     // Nothing is written before the agent says the person there was told.
                     self.recording.switch.stop();
                     self.recording.on = false;

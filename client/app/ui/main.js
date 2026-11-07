@@ -212,7 +212,9 @@ function render(state) {
   $("terminal-allowed").checked = state.terminal_allowed;
   $("tunnel-allowed").checked = state.tunnel_allowed;
   $("print-allowed").checked = state.print_allowed;
-  $("recording-allowed").checked = state.recording_allowed;
+  $("recording-allowed").checked = state.recording_allowed || state.recording_required;
+  $("recording-allowed").disabled = state.recording_required;
+  $("recording-required").classList.toggle("hidden", !state.recording_required);
   $("record-sessions").checked = state.record_sessions;
   $("record-dir").textContent = state.record_dir;
   $("print-auto").classList.toggle("hidden", !state.print_auto);

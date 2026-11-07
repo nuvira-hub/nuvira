@@ -117,6 +117,39 @@ message Policy {
   bool no_tunnel = 6;
   // No remote printing (documents of the PC printed at the technician's).
   bool no_print = 7;
+  // Every session is recorded by the viewer (NuviraHub Pro, recordings uploaded to
+  // the server): the person at the PC is always told, and cannot refuse it.
+  bool record_always = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Files sent to the server (NuviraHub Pro: session recordings). After Registered
+// the device opens a further bidirectional stream on the same connection and sends
+// Upload; the server answers UploadReady with the bytes it already has of that file
+// (an interrupted upload goes on from there), or with the reason it refuses it. The
+// device then sends the rest of the file, raw, up to `size`, and finishes the
+// stream; the server answers UploadResult. Messages length-prefixed as above.
+
+message Upload {
+  // What the file is: "recording".
+  string kind = 1;
+  // Session the file belongs to (the device must have been its viewer).
+  string session_id = 2;
+  // File name, without folders.
+  string name = 3;
+  uint64 size = 4;
+}
+
+message UploadReady {
+  uint64 offset = 1;
+  // Not accepted: why ("@key" messages are translated); nothing is to be sent.
+  string error = 2;
+}
+
+message UploadResult {
+  bool ok = 1;
+  // Why not ("@key" messages are translated).
+  string error = 2;
 }
 
 // The viewer asks to connect to a device.

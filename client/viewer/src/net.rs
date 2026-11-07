@@ -43,6 +43,8 @@ pub enum NetEvent {
         print: bool,
         /// The person at the remote computer allows recording the session.
         recording: bool,
+        /// The server's rules want the session recorded: from the start, no stopping.
+        recording_required: bool,
     },
     /// A document printed on the remote computer (PDF).
     PrintJob {
@@ -346,14 +348,17 @@ fn control(msg: Msg) -> ControlMessage {
 
 /// Connection to the agent: direct, or asking nuvira-server for the route.
 /// Also returns whether the path is direct (`false`: through the server's relay).
-async fn open_connection(target: Target) -> Result<(nuvira_transport::Connection, bool)> {
+async fn open_connection(
+    target: Target,
+) -> Result<(nuvira_transport::Connection, bool, Option<crate::upload::Target>)> {
     use nuvira_proto::v1::{Connect, Role, client_message, server_message};
     use nuvira_transport::{identity::Identity, p2p, signal};
     match target {
         Target::Direct { addr, fingerprint } => {
-            Ok((nuvira_transport::connect(addr, fingerprint).await?, true))
+            Ok((nuvira_transport::connect(addr, fingerprint).await?, true, None))
         }
         Target::Server { server, server_name, server_key, transport, server_ws, device_id, identity } => {
+            let identity_path = identity.clone();
             let identity = Identity::load_or_create(&identity)?;
             let expected = server_key.or_else(|| signal::known_server::get(&server_name));
             let name = nuvira_transport::device_name();
@@ -380,6 +385,7 @@ async fn open_connection(target: Target) -> Result<(nuvira_transport::Connection
                     None => bail!("nuvira-server closed the connection"),
                 }
             };
+            let session_id = route.session_id.clone();
             let route = p2p::Route {
                 relay: server,
                 transport: sig.transport.clone(),
@@ -387,9 +393,18 @@ async fn open_connection(target: Target) -> Result<(nuvira_transport::Connection
                 peer_public_key: route.peer_public_key.as_slice().try_into().context("invalid agent key")?,
                 role: p2p::Role::Viewer,
             };
+            // NuviraHub Pro: the recordings of this session go to the server too.
+            let upload = sig.features.iter().any(|f| f == "pro.recording").then(|| crate::upload::Target {
+                server: server_name.clone(),
+                server_key: nuvira_transport::fingerprint_hex(&sig.server_fingerprint),
+                transport,
+                server_ws: Some(ws_url.clone()),
+                identity: identity_path.clone(),
+                session: session_id.clone(),
+            });
             let (conn, path) = p2p::viewer_connect(&identity, &route).await?;
             info!(?path, remote = %conn.remote_address(), "path");
-            Ok((conn, path == p2p::Path::Direct))
+            Ok((conn, path == p2p::Path::Direct, upload))
         }
     }
 }
@@ -488,6 +503,7 @@ async fn handshake(
             restart: false,
             print: false,
             recording: false,
+            recording_required: false,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None));
     }
@@ -516,6 +532,7 @@ async fn handshake(
         restart: agent.restart,
         print: agent.print,
         recording: agent.recording,
+        recording_required: agent.recording_required,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -540,10 +557,11 @@ async fn session(
     // Until the session starts the viewer may close (window closed while connecting
     // or waiting for the confirmation): then nothing more is done, and a connection
     // already open is closed, or the agent would stay "busy" until the timeout.
-    let (conn, direct) = tokio::select! {
+    let (conn, direct, upload) = tokio::select! {
         r = open_connection(target) => r?,
         () = viewer_gone(&mut input_rx) => return Ok(()),
     };
+    recording.set_upload(upload);
     let (mut ctrl_tx, mut ctrl_rx, mut input_tx, video_rx) = tokio::select! {
         r = handshake(&conn, direct, password, &proxy, terminal_only) => match r {
             Ok(channels) => channels,
@@ -1263,7 +1281,7 @@ fn decode_loop(
         if recorder.as_ref().map(|r| r.0) != wanted.as_ref().map(|w| w.0) {
             close(recorder.take(), None);
             if let Some((n, dir, stem)) = wanted {
-                recorder = Some((n, crate::recorder::Recorder::new(dir, stem)));
+                recorder = Some((n, crate::recorder::Recorder::new(dir, stem, recording.upload())));
                 // It starts at a keyframe.
                 let _ = request_keyframe.send(());
             }
