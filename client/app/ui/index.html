@@ -39,6 +39,7 @@
     <div id="session-strip" class="strip hidden" role="status">
       <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
       <span id="session-text"></span>
+      <span id="session-rec" class="rec hidden" data-i18n="session.recording">Recorded</span>
       <button id="strip-chat" class="on-accent" data-i18n="session.chat">Chat</button>
       <button id="end-session" class="on-accent strong" data-i18n="session.end">End</button>
     </div>
@@ -256,11 +257,19 @@
         <label class="check"><input id="print-allowed" type="checkbox"> <span data-i18n="settings.print_allowed">Allow remote printing</span></label>
         <p class="hint" data-i18n="settings.print_hint">During a session, what is printed on the "NuviraHub" printer of this computer comes out of the printer of whoever controls it. The printer is installed with unattended access.</p>
         </div>
+        <label class="check"><input id="recording-allowed" type="checkbox"> <span data-i18n="settings.recording_allowed">Allow session recordings</span></label>
+        <p class="hint" data-i18n="settings.recording_hint">Whoever controls this computer can save a video of the session on their own computer. While it happens the strip at the top says so.</p>
         <label class="check"><input id="terminal-allowed" type="checkbox"> <span data-i18n="settings.terminal_allowed">Allow the remote terminal</span></label>
         <p class="hint" data-i18n="settings.terminal_hint">Whoever connects to this computer can open a command prompt with the rights of the user signed in, without seeing the desktop. The strip at the top says when a terminal is open.</p>
         <label class="check"><input id="tunnel-allowed" type="checkbox"> <span data-i18n="settings.tunnel_allowed">Allow tunnels to the local network</span></label>
         <p class="hint" data-i18n="settings.tunnel_hint">With a NuviraHub Pro server, whoever controls this computer can reach through it the addresses of its local network, e.g. the router's web panel or another PC's Remote Desktop. Never internet addresses.</p>
         </div>
+
+        <h2 data-i18n="settings.recordings">Session recordings</h2>
+        <label class="check"><input id="record-sessions" type="checkbox"> <span data-i18n="settings.record_sessions">Record my sessions automatically</span></label>
+        <p class="hint" data-i18n="settings.record_hint">Sessions towards other computers are saved as MP4 videos from the start, when the person at the other computer allows it (they are told). The record button in the session bar starts and stops a recording at any time.</p>
+        <p class="hint mono" id="record-dir"></p>
+        <div class="actions"><span class="spacer"></span><button type="button" id="record-open" data-i18n="settings.record_open">Open folder</button><button type="button" id="record-change" data-i18n="settings.record_change">Change folder</button></div>
 
         <div id="print-auto" class="hidden">
         <h2 data-i18n="settings.printing">Printing</h2>

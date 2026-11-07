@@ -168,6 +168,10 @@ pub enum AgentEvent {
         name: String,
         path: String,
     },
+    /// The controlling side started (`on`) or stopped recording the session.
+    Recording {
+        on: bool,
+    },
     /// State of this device's support request (support queue, NuviraHub Pro):
     /// its place in the queue, who took it, or closed.
     Support {
@@ -215,6 +219,11 @@ pub enum AgentCommand {
     AllowPrint {
         allow: bool,
     },
+    /// The person at the PC allows whoever controls it to record the session or not
+    /// (the app shows a notice while it happens).
+    AllowRecording {
+        allow: bool,
+    },
 }
 
 /// Choices of the person at the PC kept by the agent (`permissions.json` in its
@@ -229,6 +238,8 @@ struct Permissions {
     tunnel: bool,
     #[serde(default = "yes")]
     print: bool,
+    #[serde(default = "yes")]
+    recording: bool,
 }
 
 fn yes() -> bool {
@@ -244,7 +255,7 @@ impl Permissions {
         std::fs::read_to_string(Self::path())
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(Self { privacy: true, terminal: true, tunnel: true, print: true })
+            .unwrap_or(Self { privacy: true, terminal: true, tunnel: true, print: true, recording: true })
     }
 
     fn save(self) {
@@ -353,6 +364,7 @@ pub async fn serve_via_server(
         allow_terminal: AtomicBool::new(permissions.terminal),
         allow_tunnel: AtomicBool::new(permissions.tunnel),
         allow_print: AtomicBool::new(permissions.print),
+        allow_recording: AtomicBool::new(permissions.recording),
         features: Mutex::new(Vec::new()),
         unattended: opts.unattended,
         restarting: AtomicBool::new(false),
@@ -466,6 +478,8 @@ struct SessionContext {
     allow_tunnel: AtomicBool,
     /// The person at the PC allows remote printing ([`AgentCommand::AllowPrint`]).
     allow_print: AtomicBool,
+    /// The person at the PC allows recordings ([`AgentCommand::AllowRecording`]).
+    allow_recording: AtomicBool,
     /// Optional modules of the server (NuviraHub Pro), from the registration.
     features: Mutex<Vec<String>>,
     /// See [`ServerOptions::unattended`].
@@ -482,6 +496,7 @@ impl SessionContext {
             terminal: self.allow_terminal.load(Ordering::Relaxed),
             tunnel: self.allow_tunnel.load(Ordering::Relaxed),
             print: self.allow_print.load(Ordering::Relaxed),
+            recording: self.allow_recording.load(Ordering::Relaxed),
         }
         .save();
     }
@@ -717,6 +732,13 @@ async fn signal_loop(
                 Some(AgentCommand::AllowPrint { allow }) => {
                     if ctx.allow_print.swap(allow, Ordering::Relaxed) != allow {
                         info!(allow, "remote printing allowed by the person at the PC");
+                        ctx.save_permissions();
+                    }
+                    None
+                }
+                Some(AgentCommand::AllowRecording { allow }) => {
+                    if ctx.allow_recording.swap(allow, Ordering::Relaxed) != allow {
+                        info!(allow, "session recording allowed by the person at the PC");
                         ctx.save_permissions();
                     }
                     None
@@ -978,6 +1000,9 @@ async fn session(
     // Remote printing, to a viewer that prints: allowed by the person at the PC (always
     // without the app: LAN tests) and by the server's rules, during the session only.
     let print_allowed = || gate.is_none_or(|g| g.ctx.allow_print.load(Ordering::Relaxed));
+    // Recording of the session by the viewer, allowed by the person at the PC (always
+    // without the app: LAN tests), who is told when it starts.
+    let recording_allowed = || gate.is_none_or(|g| g.ctx.allow_recording.load(Ordering::Relaxed));
     let printer = match hello.print
         && !terminal_only
         && !config.view_only
@@ -1003,6 +1028,7 @@ async fn session(
         tunnel: tunnel_refused().is_none(),
         restart: restart_available && !terminal_only,
         print: printer.is_some(),
+        recording: !terminal_only && recording_allowed(),
         ..local_hello()
     };
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
@@ -1173,6 +1199,13 @@ async fn session(
         let mut last_requested_key: Option<Instant> = None;
         // Privacy mode: on while this lives, at most until the end of the session.
         let mut privacy: Option<nuvira_input::privacy::Privacy> = None;
+        // The viewer is recording (the person at the PC was told).
+        let mut recording = false;
+        let tell_app = |on: bool| {
+            if let Some(g) = gate {
+                let _ = g.ctx.events.send(AgentEvent::Recording { on });
+            }
+        };
         loop {
             let msg = tokio::select! {
                 msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
@@ -1222,6 +1255,13 @@ async fn session(
                         }
                         let state = nuvira_proto::v1::PrivacyState { on: false, error: "@agent.privacy_not_allowed".into() };
                         ctrl_tx.send(&control(Msg::PrivacyState(state))).await?;
+                    }
+                    if recording && !recording_allowed() {
+                        recording = false;
+                        info!("recording stopped: no longer allowed by the person at the PC");
+                        tell_app(false);
+                        let state = nuvira_proto::v1::RecordingState { on: false, error: "@agent.recording_not_allowed".into() };
+                        ctrl_tx.send(&control(Msg::RecordingState(state))).await?;
                     }
                     // The encoder's share follows the overhead measured.
                     if video_datagrams && let Some(abr) = abr.as_ref() {
@@ -1395,6 +1435,18 @@ async fn session(
                     }
                     let state = nuvira_proto::v1::PrivacyState { on: privacy.is_some(), error };
                     ctrl_tx.send(&control(Msg::PrivacyState(state))).await?;
+                }
+                Some(Msg::SetRecording(set)) => {
+                    let mut error = String::new();
+                    if set.on && !recording_allowed() {
+                        error = "@agent.recording_not_allowed".into();
+                    } else if set.on != recording {
+                        recording = set.on;
+                        info!(on = recording, "session recording");
+                        tell_app(recording);
+                    }
+                    let state = nuvira_proto::v1::RecordingState { on: recording, error };
+                    ctrl_tx.send(&control(Msg::RecordingState(state))).await?;
                 }
                 Some(Msg::Restart(_)) => {
                     let mut state = nuvira_proto::v1::RestartState::default();
@@ -1809,6 +1861,7 @@ fn local_hello() -> Hello {
         tunnel: false,
         restart: false,
         print: false,
+        recording: false,
     }
 }
 

@@ -488,5 +488,23 @@
   "pr.save": "Als PDF speichern…",
   "pr.cancel": "Nicht drucken",
   "pr.waiting": "Weitere Dokumente in der Warteschlange: {count}",
-  "pr.no_printers": "Auf diesem Computer gibt es keinen Drucker: Speichern Sie das Dokument als PDF."
+  "pr.no_printers": "Auf diesem Computer gibt es keinen Drucker: Speichern Sie das Dokument als PDF.",
+
+  "tb.record": "Sitzung aufzeichnen (MP4-Video auf diesem Computer; die Person am entfernten Computer wird informiert)",
+  "tb.record_stop": "Aufzeichnung beenden",
+  "tb.record_required": "Wird aufgezeichnet: von den Regeln des Servers verlangt",
+  "viewer.recording_on": "Sitzung wird in {dir} aufgezeichnet",
+  "viewer.recording_saved": "Aufzeichnung in {dir} gespeichert",
+  "viewer.recording_failed": "Aufzeichnung beendet: {reason}",
+  "viewer.recording_not_allowed": "Nicht aufgezeichnet: die Person am entfernten Computer erlaubt keine Aufzeichnungen",
+  "agent.recording_not_allowed": "die Person am entfernten Computer erlaubt keine Aufzeichnungen",
+  "session.recording": "Wird aufgezeichnet",
+  "settings.recording_allowed": "Aufzeichnung von Sitzungen erlauben",
+  "settings.recording_hint": "Wer diesen Computer steuert, kann ein Video der Sitzung auf dem eigenen Computer speichern. Solange das geschieht, zeigt es die Leiste oben an.",
+  "settings.recordings": "Sitzungsaufzeichnungen",
+  "settings.record_sessions": "Meine Sitzungen automatisch aufzeichnen",
+  "settings.record_hint": "Sitzungen zu anderen Computern werden von Anfang an als MP4-Video gespeichert, wenn die Person am anderen Computer es erlaubt (sie wird informiert). Die Aufnahmetaste in der Sitzungsleiste startet und beendet eine Aufzeichnung jederzeit.",
+  "settings.record_open": "Ordner öffnen",
+  "settings.record_change": "Ordner ändern",
+  "settings.record_dir_pick": "Ordner der Sitzungsaufzeichnungen"
 }

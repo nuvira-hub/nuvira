@@ -136,6 +136,11 @@ p { margin: 0 0 8px; }
   padding: 9px 20px 9px 32px; font-weight: 500;
 }
 .strip span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the session is being recorded: a red dot and the word */
+.strip span.rec { flex: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.strip span.rec::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #e53935; box-shadow: 0 0 0 2px var(--accent-text); animation: rec-blink 1.6s ease-in-out infinite; }
+@keyframes rec-blink { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .strip span.rec::before { animation: none; } }
 button.on-accent { background: transparent; color: var(--accent-text); border-color: var(--accent-text); padding: 4px 12px; }
 button.on-accent.strong { background: var(--accent-text); color: var(--accent); }
 

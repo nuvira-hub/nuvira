@@ -46,7 +46,24 @@ message ControlMessage {
     PrivacyState privacy_state = 20;
     Restart restart = 21;
     RestartState restart_state = 22;
+    SetRecording set_recording = 23;
+    RecordingState recording_state = 24;
   }
+}
+
+// From the viewer (only when Hello.recording from the agent): it starts or stops
+// saving the session's video. The agent tells the person at the PC (a notice in the
+// app) and answers RecordingState; the viewer writes only after `on` came back.
+message SetRecording {
+  bool on = 1;
+}
+
+// From the agent, after every SetRecording, and by itself when the person at the PC
+// stops allowing recordings during the session (`on` false and `error`, "@key"
+// messages are translated): the viewer then stops writing.
+message RecordingState {
+  bool on = 1;
+  string error = 2;
 }
 
 // From the viewer (only when Hello.restart): restart the controlled computer. The
@@ -284,6 +301,9 @@ message Hello {
   // agent: what is printed on its NuviraHub printer during the session reaches the
   // viewer.
   bool print = 13;
+  // From the viewer: it can record the session (SetRecording). From the agent: the
+  // person at the PC allows recordings, and is told when one starts.
+  bool recording = 14;
 }
 
 // First message of every bidirectional stream the viewer opens after the control

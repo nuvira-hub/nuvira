@@ -488,5 +488,23 @@
   "pr.save": "Enregistrer en PDF…",
   "pr.cancel": "Ne pas imprimer",
   "pr.waiting": "Autres documents en attente : {count}",
-  "pr.no_printers": "Il n'y a aucune imprimante sur cet ordinateur : enregistrez le document en PDF."
+  "pr.no_printers": "Il n'y a aucune imprimante sur cet ordinateur : enregistrez le document en PDF.",
+
+  "tb.record": "Enregistrer la session (vidéo MP4 sur cet ordinateur ; la personne devant l'ordinateur distant est prévenue)",
+  "tb.record_stop": "Arrêter l'enregistrement",
+  "tb.record_required": "Enregistrée : imposé par les règles du serveur",
+  "viewer.recording_on": "Enregistrement de la session dans {dir}",
+  "viewer.recording_saved": "Enregistrement sauvegardé dans {dir}",
+  "viewer.recording_failed": "Enregistrement arrêté : {reason}",
+  "viewer.recording_not_allowed": "Non enregistrée : la personne devant l'ordinateur distant n'autorise pas les enregistrements",
+  "agent.recording_not_allowed": "la personne devant l'ordinateur distant n'autorise pas les enregistrements",
+  "session.recording": "Enregistrée",
+  "settings.recording_allowed": "Autoriser l'enregistrement des sessions",
+  "settings.recording_hint": "La personne qui contrôle cet ordinateur peut enregistrer une vidéo de la session sur son propre ordinateur. Pendant ce temps, la bande en haut l'indique.",
+  "settings.recordings": "Enregistrements des sessions",
+  "settings.record_sessions": "Enregistrer automatiquement mes sessions",
+  "settings.record_hint": "Les sessions vers d'autres ordinateurs sont enregistrées en vidéo MP4 dès le début, si la personne devant l'autre ordinateur l'autorise (elle est prévenue). Le bouton d'enregistrement de la barre de session démarre et arrête un enregistrement à tout moment.",
+  "settings.record_open": "Ouvrir le dossier",
+  "settings.record_change": "Changer de dossier",
+  "settings.record_dir_pick": "Dossier des enregistrements des sessions"
 }

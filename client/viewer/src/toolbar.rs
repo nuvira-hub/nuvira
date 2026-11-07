@@ -38,6 +38,8 @@ pub enum Action {
     ViewOnly,
     /// Privacy mode on or off at the agent.
     Privacy,
+    /// Starts or stops recording the session.
+    Record,
     /// Opens a remote terminal window.
     Terminal,
     /// Opens the TCP tunnels window.
@@ -85,6 +87,7 @@ impl Action {
             "sas" => Self::SecureAttention,
             "viewonly" => Self::ViewOnly,
             "privacy" => Self::Privacy,
+            "record" => Self::Record,
             "terminal" => Self::Terminal,
             "tunnels" => Self::Tunnels,
             "restart" => Self::Restart,
@@ -382,6 +385,7 @@ mod tests {
     fn actions_and_escaping() {
         assert_eq!(Action::parse("sas"), Some(Action::SecureAttention));
         assert_eq!(Action::parse("privacy"), Some(Action::Privacy));
+        assert_eq!(Action::parse("record"), Some(Action::Record));
         assert_eq!(Action::parse("terminal"), Some(Action::Terminal));
         assert_eq!(Action::parse("altro"), None);
         assert_eq!(Action::parse("display:1"), Some(Action::Display(1)));

@@ -122,6 +122,12 @@ struct UiState {
     tunnel_allowed: bool,
     /// Remote printing allowed on this PC (settings, Windows).
     print_allowed: bool,
+    /// Recordings of the sessions allowed on this PC (settings).
+    recording_allowed: bool,
+    /// Sessions towards other computers are recorded from the start (settings).
+    record_sessions: bool,
+    /// Folder of the recordings.
+    record_dir: String,
     /// Documents of remote computers go to this printer without asking (chosen in the
     /// session window's print window; `print.json` of the viewer).
     print_auto: Option<String>,
@@ -170,6 +176,8 @@ struct SessionUi {
     direct: bool,
     /// Terminal only: nothing shows on the screen, the strip says it.
     terminal: bool,
+    /// Whoever controls this PC is recording the session: the strip says it.
+    recording: bool,
 }
 
 /// Settings saved in `app.json` in the data folder.
@@ -197,6 +205,15 @@ struct Settings {
     /// The person at this PC does not allow remote printing.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_print: bool,
+    /// The person at this PC does not allow recordings of the sessions.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    no_recording: bool,
+    /// Sessions towards other computers are recorded from the start.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    record_sessions: bool,
+    /// Folder of the recordings, when not the default one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    record_dir: Option<String>,
 }
 
 /// Server written in the program's file name, e.g. `nuvira-host=nuvira.example.com.exe`
@@ -602,7 +619,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
             }
         }),
         AgentEvent::SessionStarted { viewer_id, viewer_name, direct, terminal } => state.update(app, |ui| {
-            ui.session = Some(SessionUi { viewer_id, viewer_name, direct, terminal });
+            ui.session = Some(SessionUi { viewer_id, viewer_name, direct, terminal, recording: false });
             ui.chat.clear();
         }),
         AgentEvent::FileReceived { name, path } => {
@@ -614,6 +631,18 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
         AgentEvent::Chat { text } => {
             state.update(app, |ui| ui.chat.push(ChatLine { mine: false, system: false, text }));
             bring_to_front(app);
+        }
+        AgentEvent::Recording { on } => {
+            info!(on, "session recorded by the controlling side");
+            state.update(app, |ui| {
+                if let Some(session) = ui.session.as_mut() {
+                    session.recording = on;
+                }
+            });
+            // The person at the PC must see it.
+            if on {
+                bring_to_front(app);
+            }
         }
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
             ui.session = None;
@@ -781,6 +810,58 @@ fn set_print_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> 
     Ok(())
 }
 
+/// Like [`set_privacy_allowed`], for the recordings of the sessions.
+#[tauri::command]
+fn set_recording_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.no_recording = !allowed;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.send(AgentCommand::AllowRecording { allow: allowed });
+    state.update(&app, |ui| ui.recording_allowed = allowed);
+    Ok(())
+}
+
+/// Folder where the session window saves the recordings.
+fn record_dir(settings: &Settings) -> PathBuf {
+    settings.record_dir.as_ref().map(PathBuf::from).unwrap_or_else(nuvira_viewer::default_recording_dir)
+}
+
+/// Sessions towards other computers recorded from the start, or not.
+#[tauri::command]
+fn set_record_sessions(app: AppHandle, state: State<NuviraApp>, on: bool) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.record_sessions = on;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.update(&app, |ui| ui.record_sessions = on);
+    Ok(())
+}
+
+/// Lets the technician pick another folder for the recordings.
+#[tauri::command]
+async fn choose_record_dir(app: AppHandle) -> Result<(), String> {
+    let current = record_dir(&load_settings());
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        rfd::FileDialog::new().set_title(t("settings.record_dir_pick")).set_directory(&current).pick_folder()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(dir) = picked else { return Ok(()) };
+    let mut settings = load_settings();
+    settings.record_dir = Some(dir.display().to_string());
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    let state = app.state::<NuviraApp>();
+    state.update(&app, |ui| ui.record_dir = dir.display().to_string());
+    Ok(())
+}
+
+/// Opens the folder of the recordings in the file manager.
+#[tauri::command]
+fn open_record_dir(app: AppHandle) -> Result<(), String> {
+    let dir = record_dir(&load_settings());
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    app.opener().open_path(dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
+}
+
 /// What the person at this PC allows, for the agent (the app's or the service's).
 fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
     let settings = load_settings();
@@ -788,6 +869,7 @@ fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
     let _ = commands.send(AgentCommand::AllowTerminal { allow: !settings.no_terminal });
     let _ = commands.send(AgentCommand::AllowTunnel { allow: !settings.no_tunnel });
     let _ = commands.send(AgentCommand::AllowPrint { allow: !settings.no_print });
+    let _ = commands.send(AgentCommand::AllowRecording { allow: !settings.no_recording });
 }
 
 #[tauri::command]
@@ -887,6 +969,13 @@ pub(crate) fn launch_viewer(
     let settings = load_settings();
     if let Some(token) = &settings.token {
         command.env("NUVIRA_ACCOUNT_TOKEN", token);
+    }
+    // Recordings: from the start when the technician asked for it, and where.
+    if !terminal {
+        if settings.record_sessions {
+            command.arg("--record");
+        }
+        command.arg("--record-dir").arg(record_dir(&settings));
     }
     let ask_note = settings.token.is_some()
         && state.ui.lock().expect("state").features.iter().any(|f| f == "pro.session_log");
@@ -1052,6 +1141,7 @@ fn main() {
     apply_policy(&mut settings);
     nuvira_i18n::init(settings.language.as_deref());
     let password = nuvira_agent::random_password();
+    let recordings = record_dir(&settings).display().to_string();
     let state = NuviraApp {
         ui: Mutex::new(UiState {
             server: settings.server,
@@ -1064,6 +1154,9 @@ fn main() {
             terminal_allowed: !settings.no_terminal,
             tunnel_allowed: !settings.no_tunnel,
             print_allowed: !settings.no_print,
+            recording_allowed: !settings.no_recording,
+            record_sessions: settings.record_sessions,
+            record_dir: recordings,
             server_managed: policy_server().is_some(),
             ..Default::default()
         }),
@@ -1083,6 +1176,10 @@ fn main() {
             set_server,
             new_password,
             set_privacy_allowed,
+            set_recording_allowed,
+            set_record_sessions,
+            choose_record_dir,
+            open_record_dir,
             set_terminal_allowed,
             set_tunnel_allowed,
             set_print_allowed,

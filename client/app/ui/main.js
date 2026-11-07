@@ -115,6 +115,27 @@ $("print-allowed").addEventListener("change", async (e) => {
   }
 });
 
+$("recording-allowed").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_recording_allowed", { allowed: e.target.checked });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !e.target.checked;
+  }
+});
+
+$("record-sessions").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_record_sessions", { on: e.target.checked });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !e.target.checked;
+  }
+});
+
+$("record-change").addEventListener("click", () => invoke("choose_record_dir").catch(console.error));
+$("record-open").addEventListener("click", () => invoke("open_record_dir").catch(console.error));
+
 $("print-ask").addEventListener("click", async () => {
   try {
     await invoke("print_ask_again");
@@ -191,6 +212,9 @@ function render(state) {
   $("terminal-allowed").checked = state.terminal_allowed;
   $("tunnel-allowed").checked = state.tunnel_allowed;
   $("print-allowed").checked = state.print_allowed;
+  $("recording-allowed").checked = state.recording_allowed;
+  $("record-sessions").checked = state.record_sessions;
+  $("record-dir").textContent = state.record_dir;
   $("print-auto").classList.toggle("hidden", !state.print_auto);
   $("print-auto-text").textContent = state.print_auto ? t("settings.print_auto", { printer: state.print_auto }) : "";
   $("update-bar").classList.toggle("hidden", !state.update && !state.installed && !state.service_stopped);
@@ -232,6 +256,7 @@ function render(state) {
     const path = t(session.direct ? "session.direct" : "session.relay");
     $("session-text").textContent = t(session.terminal ? "session.strip_terminal" : "session.strip", { who, path });
   }
+  $("session-rec").classList.toggle("hidden", !session?.recording);
 
   const message = state.viewer_message;
   $("connect-message").classList.toggle("hidden", !message);

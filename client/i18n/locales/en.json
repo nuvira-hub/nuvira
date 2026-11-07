@@ -488,5 +488,23 @@
   "pr.save": "Save as PDF…",
   "pr.cancel": "Don't print",
   "pr.waiting": "Other documents waiting: {count}",
-  "pr.no_printers": "There is no printer on this computer: save the document as PDF."
+  "pr.no_printers": "There is no printer on this computer: save the document as PDF.",
+
+  "tb.record": "Record the session (MP4 video on this computer; the person at the remote computer is told)",
+  "tb.record_stop": "Stop recording",
+  "tb.record_required": "Recorded: required by the server's rules",
+  "viewer.recording_on": "Recording the session in {dir}",
+  "viewer.recording_saved": "Recording saved in {dir}",
+  "viewer.recording_failed": "Recording stopped: {reason}",
+  "viewer.recording_not_allowed": "Not recorded: the person at the remote computer does not allow recordings",
+  "agent.recording_not_allowed": "the person at the remote computer does not allow recordings",
+  "session.recording": "Recorded",
+  "settings.recording_allowed": "Allow session recordings",
+  "settings.recording_hint": "Whoever controls this computer can save a video of the session on their own computer. While it happens the strip at the top says so.",
+  "settings.recordings": "Session recordings",
+  "settings.record_sessions": "Record my sessions automatically",
+  "settings.record_hint": "Sessions towards other computers are saved as MP4 videos from the start, when the person at the other computer allows it (they are told). The record button in the session bar starts and stops a recording at any time.",
+  "settings.record_open": "Open folder",
+  "settings.record_change": "Change folder",
+  "settings.record_dir_pick": "Folder of the session recordings"
 }

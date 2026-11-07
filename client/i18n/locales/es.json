@@ -488,5 +488,23 @@
   "pr.save": "Guardar como PDF…",
   "pr.cancel": "No imprimir",
   "pr.waiting": "Otros documentos en espera: {count}",
-  "pr.no_printers": "No hay ninguna impresora en este equipo: guarda el documento como PDF."
+  "pr.no_printers": "No hay ninguna impresora en este equipo: guarda el documento como PDF.",
+
+  "tb.record": "Grabar la sesión (vídeo MP4 en este equipo; se avisa a la persona del equipo remoto)",
+  "tb.record_stop": "Detener la grabación",
+  "tb.record_required": "Se graba: lo exigen las reglas del servidor",
+  "viewer.recording_on": "Grabando la sesión en {dir}",
+  "viewer.recording_saved": "Grabación guardada en {dir}",
+  "viewer.recording_failed": "Grabación detenida: {reason}",
+  "viewer.recording_not_allowed": "No se graba: la persona del equipo remoto no permite grabaciones",
+  "agent.recording_not_allowed": "la persona del equipo remoto no permite grabaciones",
+  "session.recording": "Grabando",
+  "settings.recording_allowed": "Permitir grabar las sesiones",
+  "settings.recording_hint": "Quien controla este equipo puede guardar un vídeo de la sesión en su propio equipo. Mientras ocurre, la franja de arriba lo indica.",
+  "settings.recordings": "Grabaciones de las sesiones",
+  "settings.record_sessions": "Grabar automáticamente mis sesiones",
+  "settings.record_hint": "Las sesiones hacia otros equipos se guardan como vídeo MP4 desde el principio, si la persona del otro equipo lo permite (se le avisa). El botón de grabación de la barra de la sesión inicia y detiene una grabación en cualquier momento.",
+  "settings.record_open": "Abrir carpeta",
+  "settings.record_change": "Cambiar carpeta",
+  "settings.record_dir_pick": "Carpeta de las grabaciones de las sesiones"
 }

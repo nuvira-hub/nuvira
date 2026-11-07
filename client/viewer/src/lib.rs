@@ -8,7 +8,9 @@
 mod cpu;
 mod filemanager;
 mod net;
+mod mp4;
 mod printing;
+mod recorder;
 mod render;
 mod report;
 mod terminal;
@@ -120,6 +122,15 @@ struct Args {
     /// Turns on privacy mode as soon as connected, when the agent has it (also from the toolbar).
     #[arg(long)]
     privacy: bool,
+
+    /// Records the session from the start, when the person at the remote computer
+    /// allows it (also from the toolbar). The video is saved as MP4 files.
+    #[arg(long)]
+    record: bool,
+
+    /// Folder of the recordings (default: Videos/NuviraHub, Movies/NuviraHub on macOS).
+    #[arg(long, value_name = "DIR")]
+    record_dir: Option<PathBuf>,
 
     /// Tests: restarts the remote computer as soon as connected, without asking, then
     /// waits for it and connects again (the toolbar button asks first).
@@ -321,6 +332,11 @@ fn own_taskbar_group() {
 }
 
 /// The viewer's command line: `args` as from `std::env::args_os()` (program name first).
+/// Where the session window saves recordings unless told otherwise.
+pub fn default_recording_dir() -> PathBuf {
+    recorder::default_dir()
+}
+
 pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     let _ = tracing_subscriber::fmt()
         .with_ansi(ansi_colors())
@@ -392,6 +408,14 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         view_only: args.view_only,
         privacy: false,
         privacy_at_start: args.privacy,
+        recording: Recording {
+            switch: Default::default(),
+            dir: args.record_dir.clone().unwrap_or_else(recorder::default_dir),
+            available: false,
+            on: false,
+            at_start: args.record,
+            asked: false,
+        },
         restart_at_start: args.restart,
         terminal_only: args.terminal,
         terminals: Default::default(),
@@ -472,6 +496,21 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     Ok(())
 }
 
+/// Recording of the session (see `recorder.rs`).
+struct Recording {
+    /// Read by the decoding thread, which writes the files.
+    switch: Arc<recorder::Switch>,
+    dir: PathBuf,
+    /// The person at the remote computer allows it.
+    available: bool,
+    /// On at the agent (as it last said): the person there was told.
+    on: bool,
+    /// `--record`: to start as soon as connected.
+    at_start: bool,
+    /// Asked to the agent, no answer yet.
+    asked: bool,
+}
+
 struct App {
     /// Keeps a copy of the last frame for `--snapshot`.
     keep_last_frame: bool,
@@ -505,6 +544,7 @@ struct App {
     privacy: bool,
     /// `--privacy`: to turn on as soon as connected.
     privacy_at_start: bool,
+    recording: Recording,
     /// `--restart`: to ask as soon as connected.
     restart_at_start: bool,
     /// `--terminal`: no session window, only terminals.
@@ -590,7 +630,9 @@ impl App {
     /// drawn; real size wants the screen's own resolution (0x0).
     fn send_view_size(&mut self) {
         let Some(window) = &self.window else { return };
-        let size = if self.view.actual {
+        // While recording the agent sends the full screen (the window shows it reduced):
+        // readable text in the video, and resizing the window does not cut the file.
+        let size = if self.view.actual || self.recording.on || self.recording.asked {
             (0, 0)
         } else {
             let s = window.inner_size();
@@ -609,7 +651,8 @@ impl App {
     /// Connects to the agent (again, after a restart) with the window already open.
     fn start_session(&mut self) {
         let Some((target, password)) = self.connect.clone() else { return };
-        let session = net::start(target, password, self.proxy.clone(), self.slot.clone(), false);
+        let session =
+            net::start(target, password, self.proxy.clone(), self.slot.clone(), self.recording.switch.clone(), false);
         self.input = Some(session.input);
         self.control = Some(session.control.clone());
         self.term_link = Some(session.terminals);
@@ -758,6 +801,12 @@ impl App {
                 info!("restart of the remote computer requested");
                 self.send_control(Msg::Restart(nuvira_proto::v1::Restart {}));
             }
+            Action::Record => {
+                info!("recording requested: {}", !self.recording.on);
+                self.recording.asked = !self.recording.on;
+                self.send_view_size();
+                self.send_control(Msg::SetRecording(nuvira_proto::v1::SetRecording { on: !self.recording.on }));
+            }
             Action::Privacy => {
                 info!("privacy mode requested: {}", !self.privacy);
                 self.send_control(Msg::SetPrivacy(nuvira_proto::v1::SetPrivacy { on: !self.privacy }));
@@ -846,9 +895,10 @@ impl App {
     fn update_toolbar_state(&self) {
         let (Some(toolbar), Some(window)) = (&self.toolbar, &self.window) else { return };
         toolbar.update(&format!(
-            "{{viewOnly:{},privacy:{},actualSize:{},fullscreen:{},quality:{}}}",
+            "{{viewOnly:{},privacy:{},recording:{},actualSize:{},fullscreen:{},quality:{}}}",
             self.view_only,
             self.privacy,
+            self.recording.on,
             self.view.actual,
             window.fullscreen().is_some(),
             toolbar::js_string(toolbar::quality_name(self.quality))
@@ -886,7 +936,14 @@ impl ApplicationHandler<NetEvent> for App {
                 return;
             }
             if let Some((target, password)) = self.connect.take() {
-                let session = net::start(target, password, self.proxy.clone(), self.slot.clone(), true);
+                let session = net::start(
+                    target,
+                    password,
+                    self.proxy.clone(),
+                    self.slot.clone(),
+                    self.recording.switch.clone(),
+                    true,
+                );
                 self.input = Some(session.input);
                 self.control = Some(session.control);
                 self.term_link = Some(session.terminals);
@@ -974,6 +1031,7 @@ impl ApplicationHandler<NetEvent> for App {
                 tunnel,
                 restart,
                 print,
+                recording,
             } => {
                 if self.restarting.take().is_some() {
                     info!("connected again after the restart");
@@ -1003,13 +1061,30 @@ impl ApplicationHandler<NetEvent> for App {
                 if !agent.is_empty() {
                     self.printing.agent = agent.clone();
                 }
+                // After a reconnection the recording goes on in a new file.
+                self.recording.available = recording;
+                if std::mem::take(&mut self.recording.at_start) || self.recording.on {
+                    // Nothing is written before the agent says the person there was told.
+                    self.recording.switch.stop();
+                    self.recording.on = false;
+                    match recording {
+                        true => {
+                            self.recording.asked = true;
+                            self.send_control(nuvira_proto::v1::control_message::Msg::SetRecording(
+                                nuvira_proto::v1::SetRecording { on: true },
+                            ));
+                        }
+                        false => self.notice(&t("viewer.recording_not_allowed"), true),
+                    }
+                }
                 self.sent_view_size = None;
                 self.send_view_size();
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.update(&format!(
-                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal},tunnel:{tunnel},restart:{restart}}}"
+                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal},tunnel:{tunnel},restart:{restart},recordingAvailable:{recording}}}"
                     ));
                 }
+
                 if std::mem::take(&mut self.restart_at_start) {
                     match restart {
                         true => self.send_control(nuvira_proto::v1::control_message::Msg::Restart(
@@ -1205,6 +1280,47 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Some(log) = self.terminal_log.as_mut() {
                     use std::io::Write;
                     let _ = writeln!(log, "\n@exit {code} {error}");
+                }
+            }
+            NetEvent::Recording { on, error } => {
+                info!(on, error, "recording");
+                if on && !self.recording.on {
+                    let stem = recorder::file_stem(&self.printing.agent);
+                    self.recording.switch.start(self.recording.dir.clone(), stem);
+                    let dir = self.recording.dir.display().to_string();
+                    self.notice(&tf("viewer.recording_on", &[("dir", &dir)]), false);
+                } else if !on && self.recording.on {
+                    self.recording.switch.stop();
+                }
+                if !error.is_empty() {
+                    let reason = nuvira_i18n::message(&error);
+                    self.notice(&tf("viewer.recording_failed", &[("reason", &reason)]), true);
+                }
+                self.recording.on = on;
+                self.recording.asked = false;
+                self.send_view_size();
+                self.update_toolbar_state();
+            }
+            NetEvent::RecordingSaved { files, error } => {
+                match error {
+                    Some(e) => {
+                        error!("recording: {e}");
+                        self.notice(&tf("viewer.recording_failed", &[("reason", &e)]), true);
+                        // The person at the remote computer is no longer told it is recorded.
+                        if self.recording.on {
+                            self.recording.on = false;
+                            self.send_view_size();
+                            self.send_control(nuvira_proto::v1::control_message::Msg::SetRecording(
+                                nuvira_proto::v1::SetRecording { on: false },
+                            ));
+                            self.update_toolbar_state();
+                        }
+                    }
+                    None if !files.is_empty() => {
+                        let dir = self.recording.dir.display().to_string();
+                        self.notice(&tf("viewer.recording_saved", &[("dir", &dir)]), false);
+                    }
+                    None => {}
                 }
             }
             NetEvent::Privacy { on, error } => {

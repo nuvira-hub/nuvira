@@ -488,5 +488,23 @@
   "pr.save": "Salva come PDF…",
   "pr.cancel": "Non stampare",
   "pr.waiting": "Altri documenti in attesa: {count}",
-  "pr.no_printers": "Su questo computer non c'è nessuna stampante: salva il documento come PDF."
+  "pr.no_printers": "Su questo computer non c'è nessuna stampante: salva il documento come PDF.",
+
+  "tb.record": "Registra la sessione (video MP4 su questo computer; la persona al computer remoto viene avvisata)",
+  "tb.record_stop": "Ferma la registrazione",
+  "tb.record_required": "Registrata: richiesto dalle regole del server",
+  "viewer.recording_on": "Registrazione della sessione in {dir}",
+  "viewer.recording_saved": "Registrazione salvata in {dir}",
+  "viewer.recording_failed": "Registrazione interrotta: {reason}",
+  "viewer.recording_not_allowed": "Non registrata: la persona al computer remoto non consente le registrazioni",
+  "agent.recording_not_allowed": "la persona al computer remoto non consente le registrazioni",
+  "session.recording": "Registrata",
+  "settings.recording_allowed": "Consenti le registrazioni delle sessioni",
+  "settings.recording_hint": "Chi controlla questo computer può salvare un video della sessione sul proprio computer. Mentre succede la striscia in alto lo indica.",
+  "settings.recordings": "Registrazioni delle sessioni",
+  "settings.record_sessions": "Registra automaticamente le mie sessioni",
+  "settings.record_hint": "Le sessioni verso altri computer vengono salvate come video MP4 dall'inizio, se la persona all'altro computer lo consente (viene avvisata). Il pulsante di registrazione nella barra della sessione avvia e ferma una registrazione in qualsiasi momento.",
+  "settings.record_open": "Apri cartella",
+  "settings.record_change": "Cambia cartella",
+  "settings.record_dir_pick": "Cartella delle registrazioni delle sessioni"
 }

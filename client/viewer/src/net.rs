@@ -41,6 +41,8 @@ pub enum NetEvent {
         restart: bool,
         /// What is printed on the remote computer's NuviraHub printer arrives here.
         print: bool,
+        /// The person at the remote computer allows recording the session.
+        recording: bool,
     },
     /// A document printed on the remote computer (PDF).
     PrintJob {
@@ -88,6 +90,17 @@ pub enum NetEvent {
     Privacy {
         on: bool,
         error: String,
+    },
+    /// Recording state from the agent (the person there was told); `error` ("@key"
+    /// or text) when it refused or stopped it.
+    Recording {
+        on: bool,
+        error: String,
+    },
+    /// The decoding thread closed a recording: the files written, or why it broke.
+    RecordingSaved {
+        files: Vec<std::path::PathBuf>,
+        error: Option<String>,
     },
     /// Answer of the agent to a restart request: with `ok` the computer is restarting,
     /// with `reconnect` the viewer can connect again by itself once it is back.
@@ -285,6 +298,7 @@ pub fn start(
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
+    recording: Arc<crate::recorder::Switch>,
     terminal_only: bool,
 ) -> Session {
     let (input_tx, input_rx) = mpsc::unbounded_channel();
@@ -299,7 +313,7 @@ pub fn start(
         .spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             let channels = (input_rx, control_rx, files_rx, session_downloads, (terminals_rx, tunnels_rx));
-            let (reason, retry) = match rt.block_on(session(target, password, proxy.clone(), slot, channels, terminal_only)) {
+            let (reason, retry) = match rt.block_on(session(target, password, proxy.clone(), (slot, recording), channels, terminal_only)) {
                 Ok(()) => ("session ended".to_string(), true),
                 // A computer still restarting refuses with "@agent.restarting": it will be back.
                 Err(e) => {
@@ -429,6 +443,7 @@ async fn handshake(
                 && conn.max_datagram_size().is_some(),
             terminal_only,
             print: !terminal_only && crate::printing::available(),
+            recording: !terminal_only,
             ..Default::default()
         })))
         .await?;
@@ -472,6 +487,7 @@ async fn handshake(
             tunnel: agent.tunnel,
             restart: false,
             print: false,
+            recording: false,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None));
     }
@@ -499,6 +515,7 @@ async fn handshake(
         tunnel: agent.tunnel,
         restart: agent.restart,
         print: agent.print,
+        recording: agent.recording,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -516,7 +533,7 @@ async fn session(
     target: Target,
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
-    slot: Arc<FrameSlot>,
+    (slot, recording): (Arc<FrameSlot>, Arc<crate::recorder::Switch>),
     (mut input_rx, mut control_rx, mut files_rx, downloads, (mut terminals_rx, mut tunnels_rx)): SessionChannels,
     terminal_only: bool,
 ) -> Result<()> {
@@ -557,7 +574,7 @@ async fn session(
     let decoder_proxy = proxy.clone();
     let decoder = std::thread::Builder::new()
         .name("decoding".into())
-        .spawn(move || decode_loop(frame_rx, decoder_proxy, slot, key_tx))?;
+        .spawn(move || decode_loop(frame_rx, decoder_proxy, slot, key_tx, &recording))?;
 
     let video = async {
         if terminal_only {
@@ -823,6 +840,9 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::PrivacyState(p)) }) => {
                         let _ = proxy.send_event(NetEvent::Privacy { on: p.on, error: p.error });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::RecordingState(r)) }) => {
+                        let _ = proxy.send_event(NetEvent::Recording { on: r.on, error: r.error });
                     }
                     Some(ControlMessage { msg: Some(Msg::RestartState(r)) }) => {
                         let _ = proxy.send_event(NetEvent::Restart { ok: r.ok, error: r.error, reconnect: r.reconnect });
@@ -1211,6 +1231,7 @@ fn decode_loop(
     proxy: EventLoopProxy<NetEvent>,
     slot: Arc<FrameSlot>,
     request_keyframe: mpsc::UnboundedSender<()>,
+    recording: &crate::recorder::Switch,
 ) {
     let mut decoder = match nuvira_codec::best_decoder() {
         Ok(d) => d,
@@ -1224,7 +1245,41 @@ fn decode_loop(
     };
     info!("decoder: {}", decoder.name());
     let mut waiting_key = false;
-    while let Ok((frame, received_us)) = frames.recv() {
+    // The recording being written, with its number (see recorder::Switch).
+    let mut recorder: Option<(u64, crate::recorder::Recorder)> = None;
+    let close = |recorder: Option<(u64, crate::recorder::Recorder)>, error: Option<String>| {
+        if let Some((_, r)) = recorder {
+            let (files, error) = match r.finish() {
+                Ok(files) => (files, error),
+                Err(e) => (Vec::new(), Some(error.unwrap_or_else(|| format!("{e:#}")))),
+            };
+            let _ = proxy.send_event(NetEvent::RecordingSaved { files, error });
+        }
+    };
+    loop {
+        // Also without frames (still screen), so that a stop closes the file at once.
+        let next = frames.recv_timeout(Duration::from_millis(200));
+        let wanted = recording.wanted();
+        if recorder.as_ref().map(|r| r.0) != wanted.as_ref().map(|w| w.0) {
+            close(recorder.take(), None);
+            if let Some((n, dir, stem)) = wanted {
+                recorder = Some((n, crate::recorder::Recorder::new(dir, stem)));
+                // It starts at a keyframe.
+                let _ = request_keyframe.send(());
+            }
+        }
+        let (frame, received_us) = match next {
+            Ok(f) => f,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        if let Some((_, r)) = recorder.as_mut()
+            && let Err(e) = r.push(&frame)
+        {
+            warn!("recording stopped: {e:#}");
+            recording.stop();
+            close(recorder.take(), Some(format!("{e:#}")));
+        }
         // After an error frames are dropped until the next keyframe.
         if waiting_key && !frame.keyframe {
             continue;
@@ -1254,7 +1309,7 @@ fn decode_loop(
                     bytes: frame.data.len(),
                 };
                 if slot.put(Box::new(decoded)) && proxy.send_event(NetEvent::FrameReady).is_err() {
-                    return;
+                    break;
                 }
             }
             Ok(None) => {}
@@ -1275,4 +1330,6 @@ fn decode_loop(
             }
         }
     }
+    // End of the session: the recording is closed as it is.
+    close(recorder.take(), None);
 }

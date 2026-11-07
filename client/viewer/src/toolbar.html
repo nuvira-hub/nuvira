@@ -51,6 +51,9 @@
   button:hover { background: var(--hover); }
   button:active { transform: translateY(1px); }
   button.on { background: var(--on-bg); color: var(--on); }
+  /* recording: a red dot while it runs */
+  #record.on { background: transparent; color: #e53935; }
+  #record.on svg circle.dot-rec { fill: #e53935; }
   button.close:hover { background: var(--danger); color: #3a0d0b; }
   svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .displays { display: flex; gap: 2px; }
@@ -99,6 +102,9 @@
   <button id="privacy" data-i18n-title="tb.privacy" hidden>
     <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M4 5l16 10"/></svg>
   </button>
+  <button id="record" data-i18n-title="tb.record" hidden>
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle class="dot-rec" cx="12" cy="12" r="4"/></svg>
+  </button>
   <button id="restart" data-i18n-title="tb.restart" hidden>
     <svg viewBox="0 0 24 24"><path d="M12 2v10M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
   </button>
@@ -127,7 +133,7 @@
   for (const node of document.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
 
   const send = (action) => window.ipc.postMessage(action);
-  for (const id of ["sendfile", "files", "terminal", "tunnels", "chat", "sas", "viewonly", "privacy", "restart", "actual", "fullscreen", "collapse", "expand", "close"]) {
+  for (const id of ["sendfile", "files", "terminal", "tunnels", "chat", "sas", "viewonly", "privacy", "record", "restart", "actual", "fullscreen", "collapse", "expand", "close"]) {
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
@@ -175,6 +181,14 @@
       if ("privacyAvailable" in state) document.getElementById("privacy").hidden = !state.privacyAvailable;
       if ("privacy" in state) document.getElementById("privacy").classList.toggle("on", state.privacy);
       if ("restart" in state) document.getElementById("restart").hidden = !state.restart;
+      if ("recordingAvailable" in state) document.getElementById("record").hidden = !state.recordingAvailable;
+      if ("recording" in state) {
+        const b = document.getElementById("record");
+        b.classList.toggle("on", state.recording);
+        // Required by the server's rules: it cannot be stopped.
+        b.disabled = state.recording && Boolean(state.recordingRequired);
+        b.title = t(state.recordingRequired ? "tb.record_required" : state.recording ? "tb.record_stop" : "tb.record");
+      }
       if ("actualSize" in state) {
         const b = document.getElementById("actual");
         b.classList.toggle("on", state.actualSize);

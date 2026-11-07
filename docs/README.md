@@ -27,3 +27,4 @@
 | 28 | [Web client](28-web-client.md) | NuviraHub Pro: controlling computers from a browser, with the same end-to-end encryption (QUIC and TLS in WebAssembly through the server's WebSocket) |
 | 29 | [Remote printing](29-remote-printing.md) | Documents printed on the controlled computer's NuviraHub printer come out of the technician's printer |
 | 30 | [MSI package and policies](30-msi-deployment.md) | Silent installation for Intune, Group Policy and RMM tools; ADMX template for server and permanent password |
+| 31 | [Session recording](31-session-recording.md) | MP4 video of the session on the technician's computer, with a notice at the controlled one, which can refuse it |
