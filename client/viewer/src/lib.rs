@@ -151,9 +151,9 @@ struct Args {
     /// quarters of the width of the screen, as the mouse over the window would.
     #[arg(long, hide = true)]
     input_test: bool,
-    /// Automated tests: types this text (letters, digits, space, "\n" for Enter) on the
-    /// remote computer 3 s after connecting, key by key: for passwords on a lock or
-    /// sign-in screen.
+    /// Automated tests: types this text (letters, digits, space, "\n" for Enter, "\b"
+    /// for Backspace) on the remote computer 3 s after connecting, key by key: for
+    /// passwords on a lock or sign-in screen.
     #[arg(long, value_name = "TEXT", hide = true)]
     type_keys: Option<String>,
     /// Automated tests: clicks there (fractions of the remote screen, e.g. 0.5,0.44)
@@ -455,8 +455,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         ),
         terminal_type: args.terminal_type.as_ref().map(|t| t.replace("\\n", "\r").into_bytes()),
         input_test: args.input_test.then_some(0),
-        type_keys: (args.type_keys.is_some() || args.click_at.is_some())
-            .then(|| (0, args.type_keys.as_deref().unwrap_or("").replace("\n", "\n"))),
+        type_keys: (args.type_keys.is_some() || args.click_at.is_some()).then(|| {
+            (0, args.type_keys.as_deref().unwrap_or("").replace("\\n", "\n").replace("\\b", "\u{8}"))
+        }),
         click_at: args.click_at.as_deref().and_then(|t| {
             let (x, y) = t.split_once(',')?;
             Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
@@ -1258,17 +1259,28 @@ impl ApplicationHandler<NetEvent> for App {
                                 self.send(Event::MouseButton(MouseButton { button: Button::Left as i32, down }));
                             }
                         }
-                        for (code, shift) in text.chars().filter_map(test_key_code) {
-                            if shift {
-                                self.send(Event::Key(Key { code: "ShiftLeft".into(), down: true }));
-                            }
-                            self.send(Event::Key(Key { code: code.clone(), down: true }));
-                            self.send(Event::Key(Key { code, down: false }));
-                            if shift {
-                                self.send(Event::Key(Key { code: "ShiftLeft".into(), down: false }));
-                            }
+                        // At a person's pace (40 ms a key): in a burst the input method of
+                        // a sign-in screen (ibus) mixed up the order of the characters.
+                        if let Some(input) = self.input.clone() {
+                            std::thread::spawn(move || {
+                                let key = |code: &str, down| {
+                                    let event = Event::Key(Key { code: code.into(), down });
+                                    let _ = input.send(InputEvent { event: Some(event) });
+                                    std::thread::sleep(Duration::from_millis(20));
+                                };
+                                for (code, shift) in text.chars().filter_map(test_key_code) {
+                                    if shift {
+                                        key("ShiftLeft", true);
+                                    }
+                                    key(&code, true);
+                                    key(&code, false);
+                                    if shift {
+                                        key("ShiftLeft", false);
+                                    }
+                                }
+                                info!("test text typed");
+                            });
                         }
-                        info!("test text typed");
                     }
                 }
                 self.rtt_us = rtt_us;
@@ -1654,6 +1666,7 @@ fn test_key_code(c: char) -> Option<(String, bool)> {
         '0'..='9' => (format!("Digit{c}"), false),
         ' ' => ("Space".into(), false),
         '\n' => ("Enter".into(), false),
+        '\u{8}' => ("Backspace".into(), false),
         _ => return None,
     })
 }

@@ -44,6 +44,11 @@ fn unit_path() -> PathBuf {
 struct Settings {
     server: String,
     server_key: Option<String>,
+    /// Who installed unattended access: their user service is stopped while the
+    /// sign-in screen is shown (their systemd can outlive the session, kept by an
+    /// SSH login for example, and the two agents would take the ID from each other).
+    #[serde(default)]
+    user: Option<String>,
 }
 
 fn settings_path() -> PathBuf {
@@ -116,7 +121,11 @@ pub fn install(exe: &Path, user_data: &Path, server: &str, server_key: Option<&s
             Err(e) => return Err(e).with_context(|| from.display().to_string()),
         }
     }
-    let settings = Settings { server: server.to_string(), server_key: server_key.map(str::to_string) };
+    let user = {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(user_data).ok().and_then(|m| user_name(m.uid()))
+    };
+    let settings = Settings { server: server.to_string(), server_key: server_key.map(str::to_string), user };
     std::fs::write(settings_path(), serde_json::to_string(&settings)?)?;
     std::fs::set_permissions(settings_path(), std::fs::Permissions::from_mode(0o600))?;
     let program = program_for_root(exe)?;
@@ -258,6 +267,29 @@ fn greeter_data(uid: u32, gid: u32) -> Result<PathBuf> {
     Ok(dir)
 }
 
+fn user_name(uid: u32) -> Option<String> {
+    // SAFETY: as in `primary_gid`.
+    unsafe {
+        let pw = libc::getpwuid(uid);
+        if pw.is_null() || (*pw).pw_name.is_null() {
+            return None;
+        }
+        Some(std::ffi::CStr::from_ptr((*pw).pw_name).to_string_lossy().into_owned())
+    }
+}
+
+/// Stops the user service of `user`, if their systemd is running.
+fn stop_user_service(user: &str) {
+    let target = format!("--machine={user}@.host");
+    let stopped = Command::new("systemctl")
+        .args(["--user", &target, "stop", "nuvira-agent.service"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if stopped {
+        info!(user, "the user's agent stopped while the sign-in screen is shown");
+    }
+}
+
 fn primary_gid(uid: u32) -> u32 {
     // SAFETY: getpwuid returns a pointer into static storage or NULL; read at once.
     unsafe {
@@ -346,6 +378,9 @@ pub fn run() -> Result<()> {
             && agent.is_none()
             && Instant::now() >= next_start
         {
+            if let Some(user) = &settings.user {
+                stop_user_service(user);
+            }
             match start_agent(&exe, &settings, &hash, session) {
                 Ok(child) => {
                     info!(pid = child.id(), session = session.id, kind = session.kind, "sign-in screen's agent started");
