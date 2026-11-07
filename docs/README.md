@@ -26,3 +26,4 @@
 | 27 | [Remote restart](27-remote-restart.md) | Restarting the controlled computer from the session; the viewer waits and connects again by itself |
 | 28 | [Web client](28-web-client.md) | NuviraHub Pro: controlling computers from a browser, with the same end-to-end encryption (QUIC and TLS in WebAssembly through the server's WebSocket) |
 | 29 | [Remote printing](29-remote-printing.md) | Documents printed on the controlled computer's NuviraHub printer come out of the technician's printer |
+| 30 | [MSI package and policies](30-msi-deployment.md) | Silent installation for Intune, Group Policy and RMM tools; ADMX template for server and permanent password |

@@ -188,6 +188,7 @@
   "settings.server_label": "Serveur NuviraHub",
   "settings.save": "Enregistrer",
   "settings.server_hint": "Laissez vide pour utiliser le serveur public NuviraHub, ou indiquez votre propre serveur (nécessaire pour les carnets d'adresses partagés et les modules Pro).",
+  "settings.server_managed": "Le serveur est défini par les stratégies de votre organisation (stratégies de groupe ou Intune).",
   "settings.server_service": "Avec l'accès sans surveillance installé, c'est aussi le serveur du service : en enregistrer un nouveau demande la confirmation d'un administrateur, et l'ID peut changer.",
   "settings.public_terms": "Conditions d'utilisation du serveur public",
   "settings.account": "Compte",
@@ -466,6 +467,7 @@
   "server.sso_username_taken": "un compte portant ce nom existe déjà sur le serveur : contactez un administrateur",
   "support.title": "Assistance",
   "err.locked": "ce réglage est fixé par le fournisseur du programme",
+  "err.policy": "ce réglage est fixé par les stratégies de votre organisation",
 
   "admin.policy_print": "Pas d'impression à distance",
   "settings.print_allowed": "Autoriser l'impression à distance",

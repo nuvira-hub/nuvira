@@ -218,6 +218,12 @@ function render(state) {
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password || "—";
   if (document.activeElement !== $("server")) $("server").value = state.server;
+  // Set by the organisation's policies (Group Policy, Intune).
+  $("server-managed").classList.toggle("hidden", !state.server_managed);
+  if (state.server_managed) {
+    $("server").disabled = true;
+    $("server-form").querySelector("button").disabled = true;
+  }
 
   const session = state.session;
   $("session-strip").classList.toggle("hidden", !session);

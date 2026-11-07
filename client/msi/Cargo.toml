@@ -1,0 +1,17 @@
+[package]
+name = "nuvira-msi"
+description = "NuviraHub: builds the Windows Installer package (MSI) around nuvira.exe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+ring = "0.17"
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = ["Win32_Foundation", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_SystemInformation"]

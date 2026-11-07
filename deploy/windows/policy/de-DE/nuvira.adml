@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>NuviraHub</displayName>
+  <description>NuviraHub</description>
+  <resources>
+    <stringTable>
+      <string id="SUPPORTED_NuviraHub_0_17">NuviraHub 0.17 oder neuer</string>
+      <string id="NuviraHub">NuviraHub</string>
+      <string id="Server">Server</string>
+      <string id="Server_Help">Der NuviraHub-Server, bei dem sich die PCs registrieren, als Host oder Host:Port (zum Beispiel nuvira.example.com), und optional der Fingerabdruck seines Zertifikats (wie im Protokoll des Servers). Dienst und App verwenden ihn anstelle ihrer eigenen Einstellungen, und die App zeigt den Server als von der Organisation festgelegt. Ohne diese Richtlinie behalten die PCs den Server, mit dem sie installiert wurden; ohne jeden Server verwenden sie den öffentlichen NuviraHub-Server.</string>
+      <string id="PasswordHash">Dauerhaftes Passwort</string>
+      <string id="PasswordHash_Help">Das dauerhafte Passwort für den unbeaufsichtigten Zugriff, als Hash: nie das Passwort selbst, denn jeder Benutzer des PCs kann die Richtlinien lesen. Den Hash erzeugen Sie mit: nuvira.exe service password-hash (fragt nach dem Passwort). Verwenden Sie ein langes, zufälliges Passwort: Wer den Hash lesen kann, kann offline Passwörter ausprobieren.</string>
+      <string id="Profile">Profil des angepassten Installationsprogramms (Pro)</string>
+      <string id="Profile_Help">NuviraHub Pro: der Code eines Profils für angepasste Installationsprogramme Ihres Servers (Webkonsole, Installationsprogramme). Die PCs übernehmen Logo, Farben, Kontakte und Sprache dieses Profils vom Server.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="Server">
+        <textBox refId="Server"><label>Server (Host oder Host:Port):</label></textBox>
+        <textBox refId="ServerKey"><label>Zertifikat-Fingerabdruck (optional):</label></textBox>
+      </presentation>
+      <presentation id="PasswordHash">
+        <textBox refId="PasswordHash"><label>Passwort-Hash:</label></textBox>
+      </presentation>
+      <presentation id="Profile">
+        <textBox refId="Profile"><label>Profilcode:</label></textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

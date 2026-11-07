@@ -25,6 +25,8 @@ pub use install::{ServiceState, installed_version, run_elevated, service_state};
 #[cfg(windows)]
 mod launch;
 #[cfg(windows)]
+pub mod policy;
+#[cfg(windows)]
 mod printer;
 
 /// The program installed with the service (in Program Files).
@@ -76,6 +78,10 @@ enum Cmd {
         /// the output of a process started as administrator).
         #[arg(long, value_name = "FILE", hide = true)]
         report: Option<std::path::PathBuf>,
+        /// Started by the NuviraHub MSI package (its ProductCode): empty values keep
+        /// the settings in place, and the installed apps entry removes the package.
+        #[arg(long, value_name = "PRODUCT_CODE", hide = true)]
+        msi_product: Option<String>,
     },
     /// Stops and removes the service (data and ID remain). Asks for administrator
     /// rights by itself when they are missing.
@@ -84,9 +90,16 @@ enum Cmd {
         /// entry in the installed apps (used by that entry).
         #[arg(long)]
         remove_program: bool,
+        /// Started by the MSI package while Windows Installer removes it.
+        #[arg(long, hide = true)]
+        from_msi: bool,
     },
     /// Shows the service state and the device ID.
     Status,
+    /// Prints the hash of a permanent password, read from the input, for the
+    /// "Permanent password" policy (Group Policy, Intune): the policies are readable by
+    /// every user of the PC, so they hold only the hash.
+    PasswordHash,
     /// Starts the stopped service, first installing this program over the installed
     /// one if that is older (used by the app, as administrator).
     #[command(hide = true)]
@@ -118,7 +131,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
 
     let args = Args::parse_from(args);
     match args.command {
-        Cmd::Install { server, password, server_key, transport, server_ws, password_file, report } => {
+        Cmd::Install { server, password, server_key, transport, server_ws, password_file, report, msi_product } => {
             println!("{COPYRIGHT}");
             let password = match password_file {
                 Some(file) => {
@@ -128,12 +141,17 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
                 }
                 None => password,
             };
+            // The package passes every property, also the empty ones.
+            let given = |v: Option<String>| v.filter(|v| !v.trim().is_empty());
+            let (password, server_key, server_ws) = (given(password), given(server_key), given(server_ws));
+            let server = server.trim().to_string();
             let result = install::install(install::InstallOptions {
                 server,
                 server_key,
                 password,
                 transport,
                 server_ws,
+                msi_product: given(msi_product),
             });
             // The password only when generated: shown once, then only its hash exists.
             write_report(
@@ -148,8 +166,20 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
             write_report(report, &result, |_| serde_json::json!({}))?;
             result
         }
-        Cmd::Uninstall { remove_program } => install::uninstall(remove_program),
+        Cmd::Uninstall { remove_program, from_msi } => install::uninstall(remove_program, from_msi),
         Cmd::Status => install::status(),
+        Cmd::PasswordHash => {
+            use std::io::BufRead;
+            eprintln!("permanent password (at least 8 characters), then Enter:");
+            let mut line = String::new();
+            std::io::stdin().lock().read_line(&mut line)?;
+            let password = line.trim_end_matches(['\r', '\n']);
+            if password.chars().count() < 8 {
+                anyhow::bail!("the password must have at least 8 characters");
+            }
+            println!("{}", nuvira_secret::hash(password));
+            Ok(())
+        }
         Cmd::Printer { remove: false } => printer::install().map(|done| println!("{done}")),
         Cmd::Printer { remove: true } => printer::uninstall().map(|()| println!("NuviraHub printer removed")),
         Cmd::Run => run_service(),
@@ -192,7 +222,11 @@ fn run_service() -> anyhow::Result<()> {
         .context("opening the service log")?;
     tracing_subscriber::fmt().with_ansi(false).with_writer(std::sync::Mutex::new(log)).init();
 
-    let service_config = config::ServiceConfig::load()?;
+    let mut service_config = config::ServiceConfig::load()?;
+    if service_config.apply_policy(&policy::read()) {
+        tracing::info!("settings from the organisation's policies applied (server {})", service_config.server);
+        service_config.save()?;
+    }
     // Inherited by the agent: the password does not appear on the command line, and the
     // data (remembered server fingerprint) stays in the protected folder.
     // SAFETY: the process still has a single thread.

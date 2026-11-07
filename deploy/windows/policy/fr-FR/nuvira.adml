@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>NuviraHub</displayName>
+  <description>NuviraHub</description>
+  <resources>
+    <stringTable>
+      <string id="SUPPORTED_NuviraHub_0_17">NuviraHub 0.17 ou ultérieur</string>
+      <string id="NuviraHub">NuviraHub</string>
+      <string id="Server">Serveur</string>
+      <string id="Server_Help">Le serveur NuviraHub auprès duquel les PC s'enregistrent, sous la forme hôte ou hôte:port (par exemple nuvira.example.com), et éventuellement l'empreinte de son certificat (comme dans le journal du serveur). Le service et l'application l'utilisent à la place de leurs propres réglages, et l'application indique que le serveur est défini par l'organisation. Sans cette stratégie, les PC gardent le serveur avec lequel ils ont été installés ; sans aucun serveur, ils utilisent le serveur public NuviraHub.</string>
+      <string id="PasswordHash">Mot de passe permanent</string>
+      <string id="PasswordHash_Help">Le mot de passe permanent de l'accès sans surveillance, sous forme de hachage : jamais le mot de passe lui-même, car tout utilisateur du PC peut lire les stratégies. Le hachage s'obtient avec : nuvira.exe service password-hash (il demande le mot de passe). Utilisez un mot de passe long et aléatoire : qui lit le hachage peut essayer des mots de passe hors ligne.</string>
+      <string id="Profile">Profil de programme d'installation personnalisé (Pro)</string>
+      <string id="Profile_Help">NuviraHub Pro : le code d'un profil de programme d'installation personnalisé de votre serveur (console web, Programmes d'installation). Les PC reçoivent du serveur le logo, les couleurs, les contacts et la langue de ce profil.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="Server">
+        <textBox refId="Server"><label>Serveur (hôte ou hôte:port) :</label></textBox>
+        <textBox refId="ServerKey"><label>Empreinte du certificat (facultative) :</label></textBox>
+      </presentation>
+      <presentation id="PasswordHash">
+        <textBox refId="PasswordHash"><label>Hachage du mot de passe :</label></textBox>
+      </presentation>
+      <presentation id="Profile">
+        <textBox refId="Profile"><label>Code du profil :</label></textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

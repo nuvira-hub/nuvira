@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Windows setup: dist/nuvira-setup.exe.
+# Builds the Windows setup: dist/nuvira-setup.exe, then the MSI package (build-msi.sh).
 #
 #   tools/build-setup.sh            release build of the app, then the setup
 #
@@ -37,3 +37,4 @@ echo "== building the setup ($VERSION)"
     nuvira-setup.nsi)
 "$ROOT/tools/sign-code.sh" "$ROOT/dist/nuvira-setup.exe"
 ls -la "$ROOT/dist/nuvira-setup.exe"
+"$ROOT/tools/build-msi.sh"

@@ -15,6 +15,7 @@ members = [
     "client/update",
     "client/secret",
     "client/portal",
+    "client/msi",
 ]
 
 [workspace.package]

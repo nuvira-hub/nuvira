@@ -36,6 +36,10 @@ pub struct ServiceConfig {
     pub transport: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_ws: Option<String>,
+    /// ProductCode of the MSI package that installed NuviraHub (Intune, GPO, RMM
+    /// tools): the installed apps entry then removes it through Windows Installer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub msi_product: Option<String>,
 }
 
 fn default_transport() -> String {
@@ -54,6 +58,26 @@ impl ServiceConfig {
             config.save()?;
         }
         Ok(config)
+    }
+
+    /// Puts the policies of the organisation (Group Policy, Intune) in place of the
+    /// settings they set. True if something changed.
+    pub fn apply_policy(&mut self, policy: &crate::policy::Policy) -> bool {
+        let before = (self.server.clone(), self.server_key.clone(), self.password_hash.clone());
+        if let Some(server) = &policy.server
+            && !server.eq_ignore_ascii_case(&self.server)
+        {
+            self.server = server.clone();
+            // The remembered fingerprint was the old server's.
+            self.server_key = None;
+        }
+        if let Some(key) = &policy.server_key {
+            self.server_key = Some(key.clone());
+        }
+        if let Some(hash) = &policy.password_hash {
+            self.password_hash = hash.clone();
+        }
+        before != (self.server.clone(), self.server_key.clone(), self.password_hash.clone())
     }
 
     pub fn save(&self) -> Result<()> {

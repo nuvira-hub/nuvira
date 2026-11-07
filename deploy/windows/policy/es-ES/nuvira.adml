@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>NuviraHub</displayName>
+  <description>NuviraHub</description>
+  <resources>
+    <stringTable>
+      <string id="SUPPORTED_NuviraHub_0_17">NuviraHub 0.17 o posterior</string>
+      <string id="NuviraHub">NuviraHub</string>
+      <string id="Server">Servidor</string>
+      <string id="Server_Help">El servidor NuviraHub en el que se registran los PC, como host o host:puerto (por ejemplo nuvira.example.com), y si quieres la huella de su certificado (como en el registro del servidor). El servicio y la app lo usan en lugar de sus propios ajustes, y la app muestra el servidor como fijado por la organización. Sin esta directiva los PC mantienen el servidor con el que se instalaron; sin ninguno usan el servidor público de NuviraHub.</string>
+      <string id="PasswordHash">Contraseña permanente</string>
+      <string id="PasswordHash_Help">La contraseña permanente del acceso desatendido, como hash: nunca la contraseña en sí, porque cualquier usuario del PC puede leer las directivas. El hash se obtiene con: nuvira.exe service password-hash (pide la contraseña). Usa una contraseña larga y aleatoria: quien lea el hash puede probar contraseñas sin conexión.</string>
+      <string id="Profile">Perfil de instalador personalizado (Pro)</string>
+      <string id="Profile_Help">NuviraHub Pro: el código de un perfil de instalador personalizado de tu servidor (consola web, Instaladores). Los PC toman del servidor el logotipo, los colores, los contactos y el idioma de ese perfil.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="Server">
+        <textBox refId="Server"><label>Servidor (host o host:puerto):</label></textBox>
+        <textBox refId="ServerKey"><label>Huella del certificado (opcional):</label></textBox>
+      </presentation>
+      <presentation id="PasswordHash">
+        <textBox refId="PasswordHash"><label>Hash de la contraseña:</label></textBox>
+      </presentation>
+      <presentation id="Profile">
+        <textBox refId="Profile"><label>Código del perfil:</label></textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

@@ -56,6 +56,8 @@ nuvira-setup.exe /S [/SERVER=host[:port]] [/PASSWORD=...] [/KEY=fingerprint]
 
 Without a server (neither `/SERVER=` nor in the file name, field left empty) the NuviraHub public server is used, also in a silent installation.
 
+For deployment tools (Intune, Group Policy, RMM) there is also an MSI package with the same settings as properties, and policies for the server and the permanent password: [30-msi-deployment.md](30-msi-deployment.md).
+
 ## Tests of 2026-10-27
 
 - PC-LABORATORIO, from an administrator prompt: install with password file and report, update over a running service (an earlier installation with separate programs is converted: service command changed, old programs removed), full uninstall and reinstall with the same ID; silent setup with the server from its file name and with `/SERVER=`, and without a server (exit code 2).

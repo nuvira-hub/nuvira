@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>NuviraHub</displayName>
+  <description>NuviraHub</description>
+  <resources>
+    <stringTable>
+      <string id="SUPPORTED_NuviraHub_0_17">NuviraHub 0.17 o successivo</string>
+      <string id="NuviraHub">NuviraHub</string>
+      <string id="Server">Server</string>
+      <string id="Server_Help">Il server NuviraHub a cui si registrano i PC, come host o host:porta (ad esempio nuvira.example.com), e se vuoi l'impronta del suo certificato (come nel log del server). Il servizio e l'app lo usano al posto delle proprie impostazioni, e l'app mostra il server come impostato dall'organizzazione. Senza questo criterio i PC tengono il server con cui sono stati installati; se non ne hanno nessuno usano il server pubblico NuviraHub.</string>
+      <string id="PasswordHash">Password permanente</string>
+      <string id="PasswordHash_Help">La password permanente per l'accesso non presidiato, come hash: mai la password vera, perché i criteri li può leggere ogni utente del PC. L'hash si ottiene con: nuvira.exe service password-hash (chiede la password). Usa una password lunga e casuale: chi legge l'hash può provare password senza collegarsi.</string>
+      <string id="Profile">Profilo dell'installer personalizzato (Pro)</string>
+      <string id="Profile_Help">NuviraHub Pro: il codice di un profilo di installer personalizzato del tuo server (console web, Installer). I PC prendono dal server logo, colori, contatti e lingua di quel profilo.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="Server">
+        <textBox refId="Server"><label>Server (host o host:porta):</label></textBox>
+        <textBox refId="ServerKey"><label>Impronta del certificato (facoltativa):</label></textBox>
+      </presentation>
+      <presentation id="PasswordHash">
+        <textBox refId="PasswordHash"><label>Hash della password:</label></textBox>
+      </presentation>
+      <presentation id="Profile">
+        <textBox refId="Profile"><label>Codice del profilo:</label></textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

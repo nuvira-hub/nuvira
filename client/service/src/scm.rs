@@ -173,6 +173,24 @@ fn agent_args(config: &ServiceConfig) -> String {
     args
 }
 
+/// Group Policy refreshes the policies every 90 minutes or so: when NuviraHub's change
+/// the process ends, and the service manager starts it again within seconds (its
+/// failure actions) with the new settings in place (see `run_service`). Setting them
+/// again in a running process would mean changing its environment, which the agent
+/// inherits, from more than one thread.
+fn watch_policies() {
+    let applied = crate::policy::read();
+    let _ = std::thread::Builder::new().name("policies".into()).spawn(move || {
+        while !STOP.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_secs(60));
+            if crate::policy::read() != applied {
+                warn!("the organisation's policies for NuviraHub changed: starting again with them");
+                std::process::exit(3);
+            }
+        }
+    });
+}
+
 fn run() -> Result<()> {
     let config = ServiceConfig::load()?;
     let args = format!("agent {}", agent_args(&config));
@@ -181,6 +199,7 @@ fn run() -> Result<()> {
     let job = Job::new()?;
     let _sas = sas_listener();
     let _updates = crate::update::spawn(&STOP);
+    watch_policies();
 
     let mut agent: Option<AgentProcess> = None;
     let mut backoff = Duration::from_secs(1);

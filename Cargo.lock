@@ -3453,6 +3453,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nuvira-msi"
+version = "0.16.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ring",
+ "windows",
+]
+
+[[package]]
 name = "nuvira-portal"
 version = "0.16.0"
 dependencies = [

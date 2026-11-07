@@ -152,6 +152,11 @@ pub struct InstallOptions {
     pub password: Option<String>,
     pub transport: String,
     pub server_ws: Option<String>,
+    /// Installed by an MSI package (its ProductCode): settings left empty keep the
+    /// ones in place, a newer program already installed is kept (the service updates
+    /// itself past the package's version) and the installed apps entry goes through
+    /// Windows Installer.
+    pub msi_product: Option<String>,
 }
 
 /// Outcome of an installation.
@@ -177,7 +182,11 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     let program_dir = config::program_dir();
     std::fs::create_dir_all(&program_dir).with_context(|| format!("creating {}", program_dir.display()))?;
     let program = program_dir.join(config::PROGRAM_EXE);
-    if !same_file(&src, &program) {
+    let keep_newer = opts.msi_product.is_some()
+        && installed_version().is_some_and(|v| version_newer(&v, env!("CARGO_PKG_VERSION")));
+    if keep_newer {
+        step("a newer NuviraHub is already installed: kept");
+    } else if !same_file(&src, &program) {
         replace_program(&src, &program)?;
         step(&format!("program copied to {}", program.display()));
     }
@@ -186,7 +195,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     }
     // Customised installer: its configuration stays next to the program, for
     // the app of every user and across the updates (which bring the standard program).
-    if let Some(doc) = crate::branding::read_trailer(&src) {
+    if let Some(doc) = crate::branding::read_trailer(&src).filter(|_| !keep_newer) {
         std::fs::write(program_dir.join("branding.json"), doc).context("saving the customisation")?;
     }
 
@@ -210,6 +219,21 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
 
     // Reinstalling without --password keeps the one already set.
     let previous = ServiceConfig::load().ok();
+    // From an MSI package: what the command line leaves empty stays as it is (an
+    // upgrade or a repair passes no settings), and a first installation gets the defaults.
+    let (server, server_key, server_ws) = match (&opts.msi_product, &previous) {
+        (Some(_), Some(previous)) => (
+            if opts.server.is_empty() { previous.server.clone() } else { opts.server.clone() },
+            opts.server_key.clone().or_else(|| previous.server_key.clone()),
+            opts.server_ws.clone().or_else(|| previous.server_ws.clone()),
+        ),
+        _ => (opts.server.clone(), opts.server_key.clone(), opts.server_ws.clone()),
+    };
+    // Installed again without the package (setup, app): its ProductCode stays while the
+    // package is still registered, so that the installed apps entry keeps removing it.
+    let msi_product = opts.msi_product.clone().or_else(|| {
+        previous.as_ref().and_then(|p| p.msi_product.clone()).filter(|code| msi_registered(code))
+    });
     // Shown only when generated here: whoever chose it knows it, and the output of an
     // automatic update goes to a log, where passwords never go. Only the hash is stored.
     let (password_hash, generated_password) = match (opts.password, previous) {
@@ -221,11 +245,12 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
         }
     };
     let service_config = ServiceConfig {
-        server: opts.server,
-        server_key: opts.server_key,
+        server,
+        server_key,
         password_hash,
         transport: opts.transport,
-        server_ws: opts.server_ws,
+        server_ws,
+        msi_product: msi_product.clone(),
     };
     service_config.save()?;
     step("configuration saved");
@@ -262,7 +287,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     start_service(&service)?;
     step("service installed and started");
     // After the start: if an antivirus stops this process here, the PC is reachable anyway.
-    register_app(&program)?;
+    register_app(&program, msi_product.as_deref())?;
     let id = wait_online(Duration::from_secs(30));
     match &id {
         Some(id) => match &generated_password {
@@ -290,10 +315,15 @@ fn start_menu_shortcut() -> std::path::PathBuf {
 
 /// Start menu shortcut and entry in the installed apps, so that NuviraHub can be
 /// found and removed like any other program.
-fn register_app(program: &Path) -> Result<()> {
+fn register_app(program: &Path, msi_product: Option<&str>) -> Result<()> {
     let program_s = program.display().to_string();
     let dir = program.parent().map(|d| d.display().to_string()).unwrap_or_default();
-    let uninstall = format!("\"{program_s}\" service uninstall --remove-program");
+    // Installed by an MSI package: removed through Windows Installer, which then runs
+    // `service uninstall --from-msi`, so that the package does not stay registered.
+    let uninstall = match msi_product {
+        Some(code) => format!("MsiExec.exe /X{code}"),
+        None => format!("\"{program_s}\" service uninstall --remove-program"),
+    };
     let values: [(&str, &str, &str); 9] = [
         ("DisplayName", "REG_SZ", "NuviraHub"),
         ("DisplayVersion", "REG_SZ", env!("CARGO_PKG_VERSION")),
@@ -581,6 +611,7 @@ pub fn update() -> Result<()> {
         password: None,
         transport: current.transport,
         server_ws: current.server_ws,
+        msi_product: current.msi_product,
     });
     match &result {
         Ok(_) => remove_rescue(),
@@ -590,9 +621,27 @@ pub fn update() -> Result<()> {
     result.map(|_| ())
 }
 
-pub fn uninstall(remove_program: bool) -> Result<()> {
+pub fn uninstall(remove_program: bool, from_msi: bool) -> Result<()> {
     if elevate_if_needed()? {
         return Ok(());
+    }
+    // Installed by an MSI package: Windows Installer removes it (and runs this again
+    // with --from-msi), otherwise the package would stay registered and the deployment
+    // tools would take NuviraHub for installed.
+    if remove_program
+        && !from_msi
+        && let Some(code) = ServiceConfig::load().ok().and_then(|c| c.msi_product)
+    {
+        let status = Command::new("msiexec").args(["/x", &code, "/qn", "/norestart"]).status();
+        match status.map(|s| s.code()) {
+            Ok(Some(0)) => {
+                println!("NuviraHub removed (MSI package {code})");
+                return Ok(());
+            }
+            // 1605: the package is no longer registered: removed here as usual.
+            Ok(Some(1605)) => {}
+            other => bail!("removing the MSI package {code}: {other:?}"),
+        }
     }
     let scm = manager(SC_MANAGER_ALL_ACCESS)?;
     match open_service(&scm, SERVICE_ALL_ACCESS)? {
@@ -618,6 +667,12 @@ pub fn uninstall(remove_program: bool) -> Result<()> {
         return Ok(());
     }
     let _ = run(Command::new("reg").args(["delete", UNINSTALL_KEY, "/f"]));
+    // The data stays (ID, password) for a later installation, the package does not.
+    if let Ok(mut config) = ServiceConfig::load()
+        && config.msi_product.take().is_some()
+    {
+        let _ = config.save();
+    }
     if let Some(dir) = config::backup_program().parent() {
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -759,6 +814,20 @@ fn wait_online(timeout: Duration) -> Option<String> {
 
 fn format_id(id: &str) -> String {
     if id.len() == 9 { format!("{} {} {}", &id[..3], &id[3..6], &id[6..]) } else { id.to_string() }
+}
+
+/// The value the MSI package writes while it is installed (`HKLM\SOFTWARE\nuvira\Msi`).
+fn msi_registered(code: &str) -> bool {
+    Command::new("reg")
+        .args(["query", r"HKLM\SOFTWARE\nuvira\Msi", "/v", "ProductCode", "/reg:64"])
+        .output()
+        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains(code))
+}
+
+/// `a` newer than `b`, both "X.Y.Z".
+fn version_newer(a: &str, b: &str) -> bool {
+    let parse = |v: &str| v.split('.').map(|n| n.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>();
+    parse(a) > parse(b)
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {

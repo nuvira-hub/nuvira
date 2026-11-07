@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- NuviraHub policies for Group Policy and Intune (docs/30-msi-deployment.md).
+     Values under HKLM\SOFTWARE\Policies\nuvira, read by the service and the app. -->
+<policyDefinitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <policyNamespaces>
+    <target prefix="nuvira" namespace="NuviraHub.Policies.NuviraHub" />
+    <using prefix="windows" namespace="Microsoft.Policies.Windows" />
+  </policyNamespaces>
+  <resources minRequiredRevision="1.0" />
+  <supportedOn>
+    <definitions>
+      <definition name="SUPPORTED_NuviraHub_0_17" displayName="$(string.SUPPORTED_NuviraHub_0_17)" />
+    </definitions>
+  </supportedOn>
+  <categories>
+    <category name="NuviraHub" displayName="$(string.NuviraHub)" />
+  </categories>
+  <policies>
+    <policy name="Server" class="Machine" displayName="$(string.Server)" explainText="$(string.Server_Help)"
+        presentation="$(presentation.Server)" key="Software\Policies\nuvira">
+      <parentCategory ref="NuviraHub" />
+      <supportedOn ref="SUPPORTED_NuviraHub_0_17" />
+      <elements>
+        <text id="Server" valueName="Server" required="true" maxLength="255" />
+        <text id="ServerKey" valueName="ServerKey" maxLength="128" />
+      </elements>
+    </policy>
+    <policy name="PasswordHash" class="Machine" displayName="$(string.PasswordHash)"
+        explainText="$(string.PasswordHash_Help)" presentation="$(presentation.PasswordHash)" key="Software\Policies\nuvira">
+      <parentCategory ref="NuviraHub" />
+      <supportedOn ref="SUPPORTED_NuviraHub_0_17" />
+      <elements>
+        <text id="PasswordHash" valueName="PasswordHash" required="true" maxLength="512" />
+      </elements>
+    </policy>
+    <policy name="Profile" class="Machine" displayName="$(string.Profile)" explainText="$(string.Profile_Help)"
+        presentation="$(presentation.Profile)" key="Software\Policies\nuvira">
+      <parentCategory ref="NuviraHub" />
+      <supportedOn ref="SUPPORTED_NuviraHub_0_17" />
+      <elements>
+        <text id="Profile" valueName="Profile" required="true" maxLength="64" />
+      </elements>
+    </policy>
+  </policies>
+</policyDefinitions>

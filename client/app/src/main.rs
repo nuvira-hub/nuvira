@@ -125,6 +125,8 @@ struct UiState {
     /// Documents of remote computers go to this printer without asking (chosen in the
     /// session window's print window; `print.json` of the viewer).
     print_auto: Option<String>,
+    /// The server is set by the organisation's policies: the field is read-only.
+    server_managed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -258,6 +260,35 @@ fn apply_branding(settings: &mut Settings) {
         changed = true;
     }
     if changed && let Err(e) = save_settings(settings) {
+        tracing::warn!("settings not saved: {e:#}");
+    }
+}
+
+/// Server set by the organisation's policies (Group Policy, Intune), with its fingerprint.
+fn policy_server() -> Option<(String, Option<String>)> {
+    #[cfg(windows)]
+    {
+        let policy = nuvira_service::policy::read();
+        policy.server.map(|server| (server, policy.server_key))
+    }
+    #[cfg(not(windows))]
+    None
+}
+
+/// The organisation's policies win over the settings and the customisation: the
+/// service applies them too (see nuvira_service::policy).
+fn apply_policy(settings: &mut Settings) {
+    let Some((server, key)) = policy_server() else { return };
+    if settings.server.eq_ignore_ascii_case(&server) && (key.is_none() || settings.server_key == key) {
+        return;
+    }
+    info!("server from the organisation's policies: {server}");
+    if !settings.server.eq_ignore_ascii_case(&server) {
+        settings.token = None;
+    }
+    settings.server = server;
+    settings.server_key = key;
+    if let Err(e) = save_settings(settings) {
         tracing::warn!("settings not saved: {e:#}");
     }
 }
@@ -640,6 +671,9 @@ async fn set_server(app: AppHandle, server: String) -> Result<(), String> {
     if branding::get().is_some_and(|b| b.lock_server) {
         return Err(t("err.locked"));
     }
+    if policy_server().is_some() {
+        return Err(t("err.policy"));
+    }
     let server = server.trim().to_string();
     if !server.is_empty() {
         nuvira_transport::resolve_addr(&server, nuvira_transport::signal::DEFAULT_PORT)
@@ -1015,6 +1049,7 @@ fn main() {
     let mut settings = load_settings();
     apply_file_config(&mut settings);
     apply_branding(&mut settings);
+    apply_policy(&mut settings);
     nuvira_i18n::init(settings.language.as_deref());
     let password = nuvira_agent::random_password();
     let state = NuviraApp {
@@ -1029,6 +1064,7 @@ fn main() {
             terminal_allowed: !settings.no_terminal,
             tunnel_allowed: !settings.no_tunnel,
             print_allowed: !settings.no_print,
+            server_managed: policy_server().is_some(),
             ..Default::default()
         }),
         password: Arc::new(Mutex::new(password)),
