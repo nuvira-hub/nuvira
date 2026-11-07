@@ -104,6 +104,8 @@ fn copy_backend(from: &Path, to: &Path) -> Result<()> {
     let new = dir.join(format!(".{}.new", nuvira_cups::SCHEME));
     std::fs::copy(from, &new)
         .with_context(|| format!("copying {} into {}", from.display(), dir.display()))?;
+    // macOS's copy (a clone) keeps the owner of the original, the user's.
+    std::os::unix::fs::chown(&new, Some(0), Some(0)).context("backend owned by root")?;
     std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o700))?;
     std::fs::rename(&new, to).with_context(|| format!("installing {}", to.display()))?;
     // SELinux: the label of the backend folder's programs, not the copy's.

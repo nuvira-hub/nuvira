@@ -68,7 +68,7 @@ jobs:
           lp -d NuviraHub -t "No session" /tmp/np.txt
           sleep 15
           lpstat -W completed -o NuviraHub || true
-          sudo grep -E "Job [0-9]+\].*(NuviraHub|nuvira|status|Sandbox)" /var/log/cups/error_log | tail -20 || true
+          sudo grep -E "\[Job 1\]" /var/log/cups/error_log | grep -vE "envp|argv|Content-Length" | tail -40 || true
 
       - name: "Printer: a document reaches the agent's socket"
         run: |
