@@ -1,0 +1,162 @@
+name: macos-live-checks
+
+# Checks on a real macOS runner (no screen, passwordless sudo) of what the unit
+# tests cannot reach, with the signed and notarized app of a client-macos run:
+# - the NuviraHub printer: backend in /usr/libexec/cups/backend (SIP), queue with
+#   our PPD, the document as PDF through CUPS's sandbox to a listener on the
+#   agent's socket, the job cancelled without one;
+# - the update swap of NuviraHub.app (signature and designated requirement
+#   checks, refusal of a changed or differently signed app).
+# Runs on a push of this file or of the example it builds.
+on:
+  push:
+    branches: [auto-update]
+    paths: ['.github/workflows/macos-live-checks.yml', 'client/update/examples/**']
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: client-macos run whose app is checked
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  # client-macos run of commit e09b668 (branch auto-update).
+  APP_RUN: ${{ inputs.run_id || '42396555040' }}
+
+jobs:
+  checks:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuvira-macos
+          path: ci
+          run-id: ${{ env.APP_RUN }}
+          github-token: ${{ github.token }}
+
+      - name: Install the app from the disk image
+        run: |
+          ls -l ci
+          hdiutil attach -nobrowse -mountpoint /tmp/nuvira-dmg ci/nuvira-macos.dmg
+          sudo rm -rf /Applications/NuviraHub.app
+          ditto /tmp/nuvira-dmg/NuviraHub.app /Applications/NuviraHub.app
+          hdiutil detach /tmp/nuvira-dmg
+          codesign --verify --deep --strict --verbose=2 /Applications/NuviraHub.app
+          codesign -d -r- /Applications/NuviraHub.app 2>&1 | grep designated
+          spctl --assess --type execute -v /Applications/NuviraHub.app || true
+          /Applications/NuviraHub.app/Contents/MacOS/nuvira agent --version
+          sw_vers; csrutil status || true
+
+      - name: "Printer: install"
+        run: |
+          app=/Applications/NuviraHub.app/Contents/MacOS/nuvira
+          echo "-- without root"; $app service printer || true
+          sudo cupsctl --debug-logging || true
+          sudo $app service printer
+          sudo ls -le@ /usr/libexec/cups/backend/nuvira
+          lpstat -v NuviraHub
+          lpoptions -p NuviraHub | tr ' ' '\n' | grep -E "make-and-model|shared|error-policy" || true
+
+      - name: "Printer: no session, the job is cancelled"
+        run: |
+          echo "NuviraHub printer test without a session" > /tmp/np.txt
+          lp -d NuviraHub -t "No session" /tmp/np.txt
+          sleep 15
+          lpstat -W completed -o NuviraHub || true
+          sudo grep -E "Job [0-9]+\].*(NuviraHub|nuvira|status|Sandbox)" /var/log/cups/error_log | tail -20 || true
+
+      - name: "Printer: a document reaches the agent's socket"
+        run: |
+          cat > /tmp/listener.py <<'EOF'
+          # Stands in for the agent: the Unix socket of this user, one job, "sent".
+          import os, socket, sys
+          path = "/private/tmp/nuvira-print-%d" % os.getuid()
+          try: os.unlink(path)
+          except FileNotFoundError: pass
+          s = socket.socket(socket.AF_UNIX); s.bind(path); os.chmod(path, 0o600); s.listen(1); s.settimeout(90)
+          c, _ = s.accept(); data = b""
+          while True:
+              b = c.recv(65536)
+              if not b: break
+              data += b
+          head, title, pdf = data.split(b"\n", 2)
+          print("header", head, "title", title, "bytes", len(pdf), "start", pdf[:8], flush=True)
+          c.sendall(b"sent\n"); c.close(); os.unlink(path)
+          sys.exit(0 if head == b"NUVIRA-PRINT 1" and pdf.startswith(b"%PDF") else 1)
+          EOF
+          python3 /tmp/listener.py > /tmp/listener.out 2>&1 &
+          listener=$!
+          sleep 2
+          echo "Prova stampa remota NuviraHub dal Mac" > /tmp/doc.txt
+          lp -d NuviraHub -t "Fattura di prova Mac" /tmp/doc.txt
+          status=0; wait $listener || status=$?
+          cat /tmp/listener.out
+          sleep 3
+          lpstat -W completed -o NuviraHub || true
+          sudo grep -E "Job [0-9]+\].*(NuviraHub|INFO: Sent|status)" /var/log/cups/error_log | tail -10 || true
+          exit $status
+
+      - name: "Printer: sandbox denials"
+        if: always()
+        run: |
+          log show --last 15m --style compact --predicate 'sender == "Sandbox" AND eventMessage CONTAINS[c] "nuvira"' | tail -20 || true
+          sudo tail -40 /var/log/cups/error_log | grep -vE "^D .*(cupsdReadClient|cupsdWriteClient|Content-Length)" | tail -30 || true
+
+      - name: "Printer: remove"
+        if: always()
+        run: |
+          sudo /Applications/NuviraHub.app/Contents/MacOS/nuvira service printer --remove
+          lpstat -v NuviraHub || echo "queue gone"
+          ls /usr/libexec/cups/backend/nuvira 2>/dev/null || echo "backend gone"
+
+      - name: "Update: build the swap tool"
+        run: cargo build --release -p nuvira-update --example apply
+
+      - name: "Update: swap the app with the CI's zip"
+        run: |
+          tool=target/release/examples/apply
+          program=/Applications/NuviraHub.app/Contents/MacOS/nuvira
+          before=$(stat -f %i "$program")
+          $tool "$program" ci/nuvira-macos-app.zip
+          after=$(stat -f %i "$program")
+          echo "inode $before -> $after"
+          [ "$before" != "$after" ]
+          codesign --verify --deep --strict /Applications/NuviraHub.app
+          "$program" agent --version
+          ls -la /Applications | grep -i nuvira
+
+      - name: "Update: a changed app is refused"
+        run: |
+          tool=target/release/examples/apply
+          program=/Applications/NuviraHub.app/Contents/MacOS/nuvira
+          work=$(mktemp -d)
+          ditto -x -k ci/nuvira-macos-app.zip "$work"
+          echo "changed" >> "$work/NuviraHub.app/Contents/Resources/LICENSE"
+          ditto -c -k --keepParent "$work/NuviraHub.app" "$work/changed.zip"
+          before=$(stat -f %i "$program")
+          if $tool "$program" "$work/changed.zip"; then echo "a changed app was accepted"; exit 1; fi
+          [ "$before" = "$(stat -f %i "$program")" ]
+          codesign --verify --deep --strict /Applications/NuviraHub.app
+
+      - name: "Update: an app signed by someone else is refused"
+        run: |
+          tool=target/release/examples/apply
+          program=/Applications/NuviraHub.app/Contents/MacOS/nuvira
+          work=$(mktemp -d)
+          ditto -x -k ci/nuvira-macos-app.zip "$work"
+          codesign --force --deep --sign - "$work/NuviraHub.app"
+          ditto -c -k --keepParent "$work/NuviraHub.app" "$work/adhoc.zip"
+          before=$(stat -f %i "$program")
+          if $tool "$program" "$work/adhoc.zip"; then echo "an ad-hoc signed app was accepted"; exit 1; fi
+          [ "$before" = "$(stat -f %i "$program")" ]
+
+      - name: "Update: a standard user's read-only folder"
+        run: |
+          tool=target/release/examples/apply
+          sudo mkdir -p /tmp/ro && sudo ditto /Applications/NuviraHub.app /tmp/ro/NuviraHub.app
+          if $tool /tmp/ro/NuviraHub.app/Contents/MacOS/nuvira ci/nuvira-macos-app.zip; then exit 1; fi
