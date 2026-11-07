@@ -211,6 +211,10 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     };
 
     let ipc = args.ipc;
+    // Unattended on GNOME: its own remote desktop API, which asks nothing, keeps the
+    // lock screen and exists at GDM's sign-in screen (the portal is the fallback).
+    #[cfg(target_os = "linux")]
+    nuvira_portal::set_direct(ipc || args.signin_screen);
     let opts = ServerOptions {
         server_name: nuvira_transport::signal::server_or_public(&server_name).to_string(),
         server_key: args.server_key.as_deref().map(nuvira_transport::parse_fingerprint).transpose()?,

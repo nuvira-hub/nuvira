@@ -3352,6 +3352,7 @@ dependencies = [
  "nuvira-cups",
  "nuvira-i18n",
  "nuvira-input",
+ "nuvira-portal",
  "nuvira-proto",
  "nuvira-secret",
  "nuvira-transport",

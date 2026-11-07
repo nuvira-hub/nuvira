@@ -43,6 +43,9 @@ libc = "0.2"
 nuvira-cups.workspace = true
 nuvira-update = { path = "../update" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+nuvira-portal = { path = "../portal" }
+
 [target.'cfg(windows)'.dependencies]
 nu-ansi-term.workspace = true
 

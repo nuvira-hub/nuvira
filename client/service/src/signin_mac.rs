@@ -93,7 +93,11 @@ pub fn install(exe: &Path, user_data: &Path, server: &str, server_key: Option<&s
         let from = user_data.join(name);
         let to = dir.join(name);
         match std::fs::copy(&from, &to) {
-            Ok(_) => std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o600))?,
+            Ok(_) => {
+                // A clone made by root keeps the person as the owner.
+                std::os::unix::fs::chown(&to, Some(0), Some(0))?;
+                std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o600))?;
+            }
             // Without a remembered fingerprint the first connection's is taken.
             Err(e) if name == "servers.txt" && e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e).with_context(|| from.display().to_string()),

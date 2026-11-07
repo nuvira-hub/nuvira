@@ -19,7 +19,7 @@ use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventTyp
 use core_graphics::geometry::CGPoint;
 use nuvira_proto::v1::input_event::Event;
 use nuvira_proto::v1::{Button, InputEvent};
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 use crate::{InputInjector, ScreenRect};
 
@@ -37,9 +37,9 @@ pub struct QuartzInjector {
     iso: bool,
 }
 
-// CGEventSource is made for every event: it is not Send.
 impl QuartzInjector {
     pub fn new(screen: ScreenRect) -> Result<Self> {
+        report_permission();
         let iso = iso_keyboard();
         debug!(iso, "Mac keyboard type");
         Ok(Self {
@@ -147,6 +147,35 @@ impl QuartzInjector {
         }
         self.post(event);
     }
+}
+
+/// Without the Accessibility permission macOS drops the events without a word: said
+/// in the log once per process, and asked for (the system adds NuviraHub to the
+/// list, or shows its window where there is someone to answer it).
+fn report_permission() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        unsafe extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        #[link(name = "CoreGraphics", kind = "framework")]
+        unsafe extern "C" {
+            fn CGPreflightPostEventAccess() -> bool;
+            fn CGRequestPostEventAccess() -> bool;
+        }
+        // SAFETY: plain queries, no arguments.
+        let (trusted, post) = unsafe { (AXIsProcessTrusted(), CGPreflightPostEventAccess()) };
+        // SAFETY: as above.
+        let uid = unsafe { libc::geteuid() };
+        if trusted && post {
+            info!(uid, "Accessibility permission: input allowed");
+        } else {
+            // SAFETY: as above.
+            let asked = unsafe { CGRequestPostEventAccess() };
+            warn!(uid, trusted, post, asked, "no Accessibility permission: macOS drops the input");
+        }
+    });
 }
 
 /// Flag of a modifier key, by virtual code.

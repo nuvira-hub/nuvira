@@ -9,7 +9,12 @@
 //! The portal is asynchronous (D-Bus): the session lives in its own thread with a
 //! small Tokio runtime, and the rest of the program talks to it through a channel,
 //! from any thread, with or without a runtime of its own.
+//!
+//! For unattended access on GNOME the session is opened through GNOME's own API
+//! instead ([`mutter`]), see [`set_direct`].
 #![cfg(target_os = "linux")]
+
+mod mutter;
 
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
@@ -65,6 +70,15 @@ pub struct Session {
 
 static CURRENT: Mutex<Weak<Session>> = Mutex::new(Weak::new());
 
+/// Sessions through GNOME's own remote desktop API when it is there (unattended
+/// access: the agent of the user service and of GDM's sign-in screen), with the
+/// portal as the fallback on other desktops.
+static DIRECT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_direct(direct: bool) {
+    DIRECT.store(direct, Ordering::Relaxed);
+}
+
 /// The open session, or a new one. With `ask` the system dialog is shown when
 /// there is no saved permission or it is not accepted, and the person's answer is
 /// awaited; without it only the saved permission is tried (resuming after the
@@ -88,14 +102,33 @@ pub fn current() -> Option<Arc<Session>> {
 
 impl Session {
     fn start(token_file: PathBuf, ask: bool) -> Result<Self> {
+        if DIRECT.load(Ordering::Relaxed) {
+            match Self::spawn("mutter", mutter::run) {
+                Ok(session) => return Ok(session),
+                Err(e) => info!("GNOME's remote desktop API not used ({e:#}): through the portal"),
+            }
+        }
+        Self::spawn("portal", move |ready, rx, open| run(token_file, ask, ready, rx, open))
+    }
+
+    fn spawn(
+        name: &str,
+        body: impl FnOnce(std::sync::mpsc::Sender<Result<Screen>>, mpsc::UnboundedReceiver<Cmd>, &AtomicBool)
+        + Send
+        + 'static,
+    ) -> Result<Self> {
         let (cmds, rx) = mpsc::unbounded_channel();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let open = Arc::new(AtomicBool::new(true));
         let thread_open = open.clone();
-        let thread = std::thread::Builder::new()
-            .name("portal".into())
-            .spawn(move || run(token_file, ask, ready_tx, rx, &thread_open))?;
-        let screen = ready_rx.recv().map_err(|_| anyhow!("portal thread ended"))??;
+        let thread = std::thread::Builder::new().name(name.into()).spawn(move || body(ready_tx, rx, &thread_open))?;
+        let screen = match ready_rx.recv().map_err(|_| anyhow!("{name} thread ended")).and_then(|r| r) {
+            Ok(screen) => screen,
+            Err(e) => {
+                let _ = thread.join();
+                return Err(e);
+            }
+        };
         Ok(Self { cmds, screen, open, thread: Mutex::new(Some(thread)) })
     }
 

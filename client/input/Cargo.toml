@@ -35,6 +35,7 @@ core-foundation = "0.10"
 core-graphics = { version = "0.25", features = ["highsierra"] }
 dispatch2 = "0.3"
 foreign-types = "0.5"
+libc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
