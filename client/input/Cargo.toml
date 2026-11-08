@@ -29,6 +29,9 @@ features = [
 nuvira-portal = { path = "../portal" }
 libc = "0.2"
 x11rb = { version = "0.13", features = ["randr", "xinput", "xtest"] }
+# Privacy mode on Wayland: Mutter's DisplayConfig (zbus as ashpd builds it, on tokio).
+tokio = { workspace = true, features = ["rt"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"

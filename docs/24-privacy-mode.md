@@ -35,7 +35,17 @@ Module `nuvira_input::privacy` (`privacy_x11.rs`), branch `linux-privacy-vaapi`.
 - **Local input blocked.** Every physical slave device (mice, keyboards, touchpads, the power button) is switched off with the XInput 2 property "Device Enabled" = 0, as `xinput disable` does. The XTest devices, through which the agent injects (property "XTEST Device"), stay on.
 - **Child process.** The agent starts its own program again with `--privacy-overlay`; the child applies all this, prints `ready devices=N screens=M`, and every 500 ms applies it again (devices plugged in meanwhile, a night-light tool changing the gamma). It undoes everything when its standard input closes (privacy off, session over, agent ended or killed) or on SIGTERM, SIGINT or SIGHUP (systemd stopping the user service sends SIGTERM to the whole group). The switched-off devices are listed in `$XDG_RUNTIME_DIR/nuvira-privacy<display>`, removed once restored: if child and agent are both killed, the next agent start switches them on again (`privacy::recover`).
 - **Offered** only in an X11 session with XInput 2 and at least one CRTC with a gamma ramp; refused otherwise with `@agent.privacy_unsupported_linux`.
-- **Wayland:** not available. The compositor owns the input and no client can block the local devices without root; GNOME's `SetCrtcGamma` (Mutter D-Bus) could blacken the screen, but without blocking the input it would not be privacy mode.
+- **Wayland:** see the next section.
+
+## How it works (Linux, Wayland)
+
+Module `nuvira_input::privacy` (`privacy_wayland.rs`) and `nuvira_input::local_input` (`local_input_linux.rs`), branch `wayland-privacy`. The same child process (`--privacy-overlay`) as on X11, with two other means:
+
+- **Black screen.** The gamma ramp of every active CRTC goes to zero through Mutter's D-Bus API (`org.gnome.Mutter.DisplayConfig`, `GetResources`, `GetCrtcGamma`, `SetCrtcGamma`). Mutter's screencast reads the frame buffer, before the ramp. Only GNOME has this API: on other compositors (KDE) privacy mode is not offered. No message and no window, since Mutter's screencast cannot leave a window out.
+- **Local input blocked by root.** On Wayland the compositor reads `/dev/input` itself, and no client can hold the input back: a GNOME Shell extension's event filter was tried and runs after Mutter has given the events to the windows and run its shortcuts (Super still opened the overview). Root can: the sign-in screen's system service (`nuvira service signin-run`, installed with the system part of unattended access) listens on `/run/nuvira-input.sock`. The child writes `block`; the service grabs every `/dev/input/event*` device with keys, relative or absolute axes (`EVIOCGRAB`: the kernel then gives its events only to that descriptor, so neither Mutter nor logind receives them), answers `ok N`, looks for new devices every 500 ms, and lets them go when the connection closes: privacy off, child ended or killed (the kernel drops the grabs with the descriptors). The technician's input is not affected: Mutter's remote desktop devices are virtual, with no `/dev/input` node. Switches (lid) and devices named "NuviraHub…" are left alone.
+- **Who may ask.** Only the user of the active session of `seat0` (`SO_PEERCRED` against logind), so nobody else signed in can take the input of the person at the computer; otherwise `@agent.privacy_not_active_user`. When the active session changes (user switching) the devices are let go.
+- **Offered** in a Wayland session with Mutter, a CRTC with a gamma ramp and the system part installed; refused otherwise with `@agent.privacy_unsupported_linux` or `@agent.privacy_needs_system_linux`. `NUVIRA_PRIVACY_NO_BLACK=1` on the agent offers it without the black (tests on virtual machines, which have no ramp).
+- **A killed child**: the devices are free at once; a screen left at zero gets a linear ramp from `privacy::recover` (agent start, end of privacy mode).
 
 ## Limits
 
@@ -44,7 +54,7 @@ Module `nuvira_input::privacy` (`privacy_x11.rs`), branch `linux-privacy-vaapi`.
 - The **mouse pointer** stays visible on the black screen and moves with the technician's mouse.
 - Started by the user, without nuvira-service, the hooks may not see the input going to elevated windows (UIPI); with the service (SYSTEM) this does not apply. Not verified yet.
 - **macOS:** the black screens are not rebuilt when screens are added or removed during privacy mode. Keys handled below the session (power button, Touch ID, the lock key) cannot be blocked. Not tested on a real Mac yet.
-- **Linux (X11):** no message on the black screen (the gamma is zero). Drivers without a working gamma ramp keep the image on the monitor: virtual machines (virtio-gpu reports a ramp but ignores it) and some DisplayLink adapters; the local input is blocked anyway. A device switched on again from another program (`xinput enable`) is switched off within 500 ms. Laptop backlight is not touched. **Wayland:** not available, the button does not appear.
+- **Linux (X11):** no message on the black screen (the gamma is zero). Drivers without a working gamma ramp keep the image on the monitor: virtual machines (virtio-gpu reports a ramp but ignores it) and some DisplayLink adapters; the local input is blocked anyway. A device switched on again from another program (`xinput enable`) is switched off within 500 ms. Laptop backlight is not touched. **Linux (Wayland):** GNOME only, with the system part of unattended access; the black screen not seen on a real monitor yet (the test VMs have no gamma ramp). If the child process is killed the agent does not notice: the viewer still shows privacy mode on, with the local input free again (also on X11).
 
 ## Tests
 
@@ -80,3 +90,13 @@ Linux, 2026-11-07, agent on the Mint 22.3 VM (Cinnamon, X11, through the Pro tes
 | Pointer moved by the viewer (XTest) | moves | moves | moves |
 
 The viewer's last frame showed the real desktop. The monitor of the VM (VNC screenshot) did not turn black: virtio-gpu ignores the ramp, as expected. Robustness: agent killed with `kill -9` during privacy mode → the child restored everything within 2 s; child and agent both killed → devices stayed off until the agent was started again, which logged "privacy mode of a killed process undone devices=[6, 7, 8, 9, 10]" and switched them on; SIGTERM to the agent's process group → "ended by a signal", everything restored.
+
+Linux Wayland, 2026-11-08, agent on the Fedora 44 VM (GNOME 50) as the user service with the system part installed and `NUVIRA_PRIVACY_NO_BLACK=1` (virtio-gpu: `GetCrtcGamma` gives empty ramps), viewer on the NUC (Windows) through the NAS server with `--privacy --type-keys xyz`. The computer's own keyboard was a uinput device made by a root script ("fake-local", typing "a" every 2 s), the keys read by a full-screen GTK 4 window:
+
+| | before | during | after |
+|---|---|---|---|
+| "a" of the local keyboard | 5 of 5 reached the window | 0 of 7 | 8 of 8 |
+| "xyz" of the viewer | | reached the window | |
+| Devices grabbed by the service | none | 6 (QEMU tablet, 2 VMware mice, AT keyboard, power button, fake-local) | none |
+
+Robustness: the child killed with `kill -9` during privacy mode → the service let the devices go in the same second and the local keys reached the window again; a `block` request as root and as `nobody` → `error @agent.privacy_not_active_user`.

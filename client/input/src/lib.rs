@@ -9,6 +9,9 @@ use nuvira_proto::v1::InputEvent;
 pub mod keys;
 pub mod privacy;
 #[cfg(target_os = "linux")]
+#[path = "local_input_linux.rs"]
+pub mod local_input;
+#[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;

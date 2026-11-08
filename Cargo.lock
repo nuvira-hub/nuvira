@@ -3469,9 +3469,11 @@ dependencies = [
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "tokio",
  "tracing",
  "windows",
  "x11rb",
+ "zbus",
 ]
 
 [[package]]
@@ -3521,6 +3523,7 @@ dependencies = [
  "libc",
  "nuvira-capture",
  "nuvira-cups",
+ "nuvira-input",
  "nuvira-proto",
  "nuvira-secret",
  "nuvira-transport",

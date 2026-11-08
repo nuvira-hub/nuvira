@@ -18,6 +18,9 @@
 //! The program must not be one a user can replace (it runs as root): from the
 //! packages it is `/usr/bin/nuvira`; otherwise a copy goes into
 //! `/usr/local/lib/nuvira`.
+//!
+//! The same service blocks the local mouse and keyboard for privacy mode on
+//! Wayland, when the person's agent asks (`nuvira_input::local_input`).
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
@@ -379,6 +382,13 @@ pub fn run() -> Result<()> {
     let settings: Settings =
         serde_json::from_str(&std::fs::read_to_string(settings_path()).context("signin.json")?)?;
     let hash = password_hash()?;
+    // Privacy mode on Wayland: the person's agent asks root to hold their local input.
+    std::thread::Builder::new().name("input-block".into()).spawn(|| {
+        let allowed = |uid: u32| active_session().is_some_and(|s| s.uid == uid && s.class == "user");
+        if let Err(e) = nuvira_input::local_input::serve(allowed) {
+            warn!("local input blocking not available: {e:#}");
+        }
+    })?;
     // The greeter session the agent was started for.
     let mut agent: Option<(String, Child)> = None;
     let mut next_start = Instant::now();

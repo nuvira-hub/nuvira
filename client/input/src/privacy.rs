@@ -9,8 +9,10 @@
 //! always lock it. The secure desktop (UAC, lock screen) is not covered.
 //! macOS: see `privacy_mac.rs` (black windows in a child process left out of
 //! ScreenCaptureKit, event tap for the local input).
-//! Linux: X11 only, see `privacy_x11.rs` (gamma at zero, local devices switched off
-//! through XInput, in a child process); not available on Wayland.
+//! Linux: X11, see `privacy_x11.rs` (gamma at zero, local devices switched off
+//! through XInput, in a child process); Wayland with GNOME, see
+//! `privacy_wayland.rs` (gamma at zero through Mutter, local devices grabbed by
+//! root: needs the system part of unattended access).
 
 use anyhow::Result;
 
@@ -27,6 +29,21 @@ pub(crate) use mac::{INJECTED_TAG, USER_DATA};
 #[cfg(target_os = "linux")]
 #[path = "privacy_x11.rs"]
 mod x11;
+#[cfg(target_os = "linux")]
+#[path = "privacy_wayland.rs"]
+mod wayland;
+
+/// Linux: why privacy mode cannot start in this session, if it cannot.
+#[cfg(target_os = "linux")]
+fn check() -> Result<()> {
+    if crate::wayland_session() {
+        wayland::check()
+    } else if x11::available() {
+        Ok(())
+    } else {
+        anyhow::bail!("@agent.privacy_unsupported_linux")
+    }
+}
 
 /// Privacy mode is on as long as this value lives.
 pub struct Privacy {
@@ -45,7 +62,7 @@ pub fn available() -> bool {
     #[cfg(target_os = "macos")]
     return mac::available();
     #[cfg(target_os = "linux")]
-    return x11::available();
+    return check().is_ok();
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     false
 }
@@ -88,7 +105,9 @@ pub fn overlay_if_asked() {
 /// off, black screens). Call it when the agent starts. Other systems: nothing.
 pub fn recover() {
     #[cfg(target_os = "linux")]
-    if !crate::wayland_session() {
+    if crate::wayland_session() {
+        wayland::recover();
+    } else {
         x11::recover();
     }
 }

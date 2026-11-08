@@ -10,8 +10,8 @@
 //! - Local mouse and keyboard: every physical slave device is switched off
 //!   (XInput 2 "Device Enabled" = 0, like `xinput disable`). The XTest devices,
 //!   through which NuviraHub injects, stay on.
-//! - Wayland: not available. The compositor owns the input and no client can
-//!   block the local one without root.
+//! - Wayland: see `privacy_wayland.rs` (Mutter's gamma, input grabbed by root).
+//!   The [`Overlay`] here starts the child process for both.
 //!
 //! The work is done by a child process (the same program started with
 //! `--privacy-overlay`), so it is undone even if the agent dies: the child
@@ -71,9 +71,7 @@ impl Overlay {
     pub fn start(message: &str) -> Result<Self> {
         // Nothing can be written on a screen whose gamma is zero.
         let _ = message;
-        if !available() {
-            bail!("@agent.privacy_unsupported_linux");
-        }
+        super::check()?;
         let exe = std::env::current_exe().context("program path")?;
         let mut child = Command::new(exe)
             .arg(OVERLAY_ARG)
@@ -98,7 +96,7 @@ impl Overlay {
             other => {
                 drop(stdin);
                 let _ = child.wait();
-                recover();
+                super::recover();
                 let error = other.ok().and_then(|l| l.trim().strip_prefix("error ").map(str::to_owned));
                 bail!(error.unwrap_or_else(|| "@agent.privacy_failed".into()));
             }
@@ -126,7 +124,7 @@ impl Overlay {
             }
         }
         // The child died without restoring (killed): do it from its notes.
-        recover();
+        super::recover();
         info!("privacy mode off");
     }
 }
@@ -266,11 +264,29 @@ impl X {
     }
 }
 
+/// Blocks SIGTERM, SIGINT and SIGHUP and returns a descriptor that becomes
+/// readable when one arrives.
+pub(super) fn signal_fd() -> std::io::Result<i32> {
+    // SAFETY: plain libc calls on a local signal set.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for s in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+            libc::sigaddset(&mut set, s);
+        }
+        if libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let fd = libc::signalfd(-1, &set, libc::SFD_CLOEXEC);
+        if fd < 0 { Err(std::io::Error::last_os_error()) } else { Ok(fd) }
+    }
+}
+
 /// Runs the privacy child process when the program was started for it (never
 /// returns then); otherwise does nothing. Call it first thing in `main`.
 pub fn overlay_if_asked() {
     if std::env::args_os().nth(1).is_some_and(|a| a == OVERLAY_ARG) {
-        std::process::exit(child::run());
+        std::process::exit(if crate::wayland_session() { super::wayland::run_child() } else { child::run() });
     }
 }
 
@@ -354,24 +370,6 @@ mod child {
         restore(&x, &applied);
         eprintln!("privacy: devices and screens restored");
         0
-    }
-
-    /// Blocks SIGTERM, SIGINT and SIGHUP and returns a descriptor that becomes
-    /// readable when one arrives.
-    fn signal_fd() -> std::io::Result<i32> {
-        // SAFETY: plain libc calls on a local signal set.
-        unsafe {
-            let mut set: libc::sigset_t = std::mem::zeroed();
-            libc::sigemptyset(&mut set);
-            for s in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-                libc::sigaddset(&mut set, s);
-            }
-            if libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            let fd = libc::signalfd(-1, &set, libc::SFD_CLOEXEC);
-            if fd < 0 { Err(std::io::Error::last_os_error()) } else { Ok(fd) }
-        }
     }
 
     fn enforce(x: &X, applied: &mut Applied) -> Result<()> {

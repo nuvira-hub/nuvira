@@ -22,6 +22,7 @@ tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nuvira-capture.workspace = true
+nuvira-input.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 nuvira-cups.workspace = true
