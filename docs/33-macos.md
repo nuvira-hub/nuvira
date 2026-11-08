@@ -66,7 +66,7 @@ The lock screen takes the input of a HID device. The DriverKit driver of [Karabi
 
 Tested 2026-11-08 on the Mac mini (macOS 27.2): locked, the viewer on PC-LABORATORIO typed the password with Enter, the Mac unlocked 2 s later and the desktop came back in the same session.
 
-So the session no longer ends when the Mac is locked: the capture sends a dark placeholder once a second and opens the stream again after the unlock; the agent tells the viewer (`ScreenState` with `input: false`, session protocol), which shows a notice. Without the virtual keyboard (driver extension not allowed) someone must unlock it at the Mac, or the technician restarts it (toolbar) and signs in at the sign-in screen.
+So the session no longer ends when the Mac is locked: the capture sends a dark placeholder once a second and opens the stream again after the unlock; the agent tells the viewer (`ScreenState`, `input` true when the virtual keyboard is installed), which shows a notice. Without the virtual keyboard (driver extension not allowed) someone must unlock it at the Mac, or the technician restarts it (toolbar) and signs in at the sign-in screen.
 
 ## Remote restart
 
