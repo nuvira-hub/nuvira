@@ -213,6 +213,9 @@ pub struct ScreenCaptureKitCapturer {
     /// Last look at the lock state, and the next placeholder or reopening.
     lock_checked: Instant,
     next_try: Instant,
+    /// Next attempt to open the stream again after the unlock (separate from the
+    /// placeholder's clock, which moved it forward every second).
+    reopen_at: Instant,
 }
 
 /// How often the lock state is read, and the placeholder sent.
@@ -233,6 +236,7 @@ impl ScreenCaptureKitCapturer {
             frame: None,
             lock_checked: now,
             next_try: now,
+            reopen_at: now,
         };
         if screen_locked() {
             info!("screen locked: placeholder until it is unlocked");
@@ -285,12 +289,12 @@ impl ScreenCaptureKitCapturer {
         if locked && let Some(running) = self.running.take() {
             info!("screen locked: placeholder until it is unlocked");
             let _ = running.stream.stop_capture();
-        } else if !locked && self.running.is_none() && Instant::now() >= self.next_try {
+        } else if !locked && self.running.is_none() && Instant::now() >= self.reopen_at {
             match self.start() {
                 Ok(()) => info!("screen unlocked: capture resumed"),
                 Err(e) => {
                     info!("capture not resumed yet: {e:#}");
-                    self.next_try = Instant::now() + PLACEHOLDER_EVERY;
+                    self.reopen_at = Instant::now() + PLACEHOLDER_EVERY;
                 }
             }
         }
