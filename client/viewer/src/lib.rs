@@ -483,6 +483,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         rtt_us: 0,
         pressed_keys: HashSet::new(),
         remote_mac: false,
+        altgr: AltGrFix::default(),
         input_blocked: false,
         switched_off: Vec::new(),
         exit_reason: None,
@@ -626,6 +627,9 @@ struct App {
     pressed_keys: HashSet<String>,
     /// The controlled computer is a Mac (see [`w3c_code`]).
     remote_mac: bool,
+    /// Windows towards a Mac: when the left Ctrl went down, and whether it was the one
+    /// Windows adds to AltGr (see [`AltGrFix`]).
+    altgr: AltGrFix,
     exit_reason: Option<String>,
     /// Why the session ended, for the user (translated); printed as `@closed` for the app.
     closed_message: Option<String>,
@@ -1651,12 +1655,19 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                     return;
                 }
-                if down {
-                    self.pressed_keys.insert(code.clone());
+                let keys = if cfg!(windows) && self.remote_mac {
+                    self.altgr.filter(&code, down, Instant::now())
                 } else {
-                    self.pressed_keys.remove(&code);
+                    vec![(code, down)]
+                };
+                for (code, down) in keys {
+                    if down {
+                        self.pressed_keys.insert(code.clone());
+                    } else {
+                        self.pressed_keys.remove(&code);
+                    }
+                    self.send(Event::Key(Key { code, down }));
                 }
-                self.send(Event::Key(Key { code, down }));
             }
             _ => {}
         }
@@ -1687,6 +1698,53 @@ fn w3c_code(code: winit::keyboard::KeyCode, remote_mac: bool) -> String {
         other => other.to_string(),
     };
     if cfg!(target_os = "macos") && !remote_mac { mac_swap(name) } else { name }
+}
+
+/// AltGr from Windows towards a Mac. Windows reports AltGr as a left Ctrl followed at
+/// once by the right Alt; a Mac would get Ctrl+Option, which types nothing, where
+/// Option alone types what AltGr types on Windows (`[`, `{`, `@`, `#` on Italian
+/// layouts). When the right Alt goes down within a few milliseconds of the left Ctrl,
+/// the Ctrl is let go on the Mac and its own release is dropped.
+#[derive(Default)]
+struct AltGrFix {
+    ctrl_down: Option<Instant>,
+    swallow_ctrl_up: bool,
+}
+
+impl AltGrFix {
+    /// Windows sends the two together: well under this.
+    const WINDOW: Duration = Duration::from_millis(30);
+
+    /// The keys to send for this one.
+    fn filter(&mut self, code: &str, down: bool, now: Instant) -> Vec<(String, bool)> {
+        match (code, down) {
+            ("ControlLeft", true) => {
+                // Repeats of a held Ctrl keep the first time.
+                if self.ctrl_down.is_none() && !self.swallow_ctrl_up {
+                    self.ctrl_down = Some(now);
+                }
+                if self.swallow_ctrl_up {
+                    return Vec::new();
+                }
+            }
+            ("ControlLeft", false) => {
+                self.ctrl_down = None;
+                if std::mem::take(&mut self.swallow_ctrl_up) {
+                    return Vec::new();
+                }
+            }
+            ("AltRight", true) => {
+                if let Some(at) = self.ctrl_down.take()
+                    && now.duration_since(at) <= Self::WINDOW
+                {
+                    self.swallow_ctrl_up = true;
+                    return vec![("ControlLeft".into(), false), ("AltRight".into(), true)];
+                }
+            }
+            _ => self.ctrl_down = None,
+        }
+        vec![(code.to_string(), down)]
+    }
 }
 
 /// On a Mac, Cmd does what Ctrl does on Windows and Linux (Cmd+C, Cmd+V, Cmd+Z):
@@ -1739,6 +1797,32 @@ mod tests {
     fn mac_to_mac_keeps_cmd() {
         assert_eq!(w3c_code(winit::keyboard::KeyCode::SuperLeft, true), "MetaLeft");
         assert_eq!(w3c_code(winit::keyboard::KeyCode::ControlLeft, true), "ControlLeft");
+    }
+
+    #[test]
+    fn altgr_towards_mac_is_option() {
+        let t = Instant::now();
+        let ms = |n| t + Duration::from_millis(n);
+        let mut f = AltGrFix::default();
+        let k = |c: &str, d| vec![(c.to_string(), d)];
+        // AltGr: Ctrl then right Alt together → Ctrl let go, its release dropped.
+        assert_eq!(f.filter("ControlLeft", true, ms(0)), k("ControlLeft", true));
+        assert_eq!(
+            f.filter("AltRight", true, ms(1)),
+            vec![("ControlLeft".to_string(), false), ("AltRight".to_string(), true)]
+        );
+        assert!(f.filter("ControlLeft", true, ms(500)).is_empty(), "repeat while AltGr is held");
+        assert_eq!(f.filter("BracketLeft", true, ms(600)), k("BracketLeft", true));
+        assert_eq!(f.filter("AltRight", false, ms(700)), k("AltRight", false));
+        assert!(f.filter("ControlLeft", false, ms(700)).is_empty());
+        // A real Ctrl, then the right Alt later: both go through.
+        assert_eq!(f.filter("ControlLeft", true, ms(1000)), k("ControlLeft", true));
+        assert_eq!(f.filter("AltRight", true, ms(1300)), k("AltRight", true));
+        assert_eq!(f.filter("ControlLeft", false, ms(1400)), k("ControlLeft", false));
+        // Ctrl+C is untouched.
+        assert_eq!(f.filter("ControlLeft", true, ms(2000)), k("ControlLeft", true));
+        assert_eq!(f.filter("KeyC", true, ms(2001)), k("KeyC", true));
+        assert_eq!(f.filter("ControlLeft", false, ms(2100)), k("ControlLeft", false));
     }
 
     #[test]
