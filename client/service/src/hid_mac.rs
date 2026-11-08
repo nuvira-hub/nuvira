@@ -413,19 +413,24 @@ fn karabiner_elements() -> bool {
 
 /// As the person (the app, before the administrator prompt of the removal):
 /// unloads the driver extension that the removal will delete; root cannot.
-/// macOS finishes it at the next restart.
+/// macOS asks for the administrator's password for it (a window of its own,
+/// answered within ~2 minutes on the Mac mini: stopping the manager earlier
+/// cancelled the request) and finishes it at the next restart.
 pub fn deactivate() {
     if !Path::new(KV_MANAGER).exists() || karabiner_elements() {
         return;
     }
-    if let Ok(mut child) = Command::new(KV_MANAGER).arg("deactivate").spawn() {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline && child.try_wait().ok().flatten().is_none() {
-            std::thread::sleep(Duration::from_millis(200));
+    let Ok(mut child) = Command::new(KV_MANAGER).arg("deactivate").spawn() else { return };
+    let deadline = Instant::now() + Duration::from_secs(180);
+    while Instant::now() < deadline {
+        if let Ok(Some(status)) = child.try_wait() {
+            info!(%status, "virtual HID keyboard driver deactivated (gone at the next restart)");
+            return;
         }
-        let _ = child.kill();
-        info!("virtual HID keyboard driver deactivated");
+        std::thread::sleep(Duration::from_millis(250));
     }
+    warn!("the driver extension was not deactivated in time: it stays until removed in System Settings");
+    let _ = child.kill();
 }
 
 /// As root: our daemon, and Karabiner's driver unless Karabiner-Elements uses it.

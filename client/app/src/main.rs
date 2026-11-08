@@ -422,6 +422,11 @@ fn bring_to_front(app: &AppHandle) {
 /// Starts (or restarts, if the server changes) the agent in Tauri's runtime, or the
 /// link with the service's agent if the service is installed.
 fn start_agent(app: &AppHandle) {
+    start_agent_with(app, true);
+}
+
+/// `ask`: macOS asks for its permissions (not again at every retry).
+fn start_agent_with(app: &AppHandle, ask: bool) {
     let state = app.state::<NuviraApp>();
     if let Some(old) = state.agent.lock().expect("agent").take() {
         old.abort();
@@ -430,7 +435,11 @@ fn start_agent(app: &AppHandle) {
         return;
     }
     #[cfg(target_os = "macos")]
-    mac_permissions();
+    if ask {
+        mac_permissions();
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = ask;
 #[cfg(any(windows, unix))]
     if nuvira_agent::ipc::service_installed() {
         start_service_link(app);
@@ -499,6 +508,11 @@ fn start_agent(app: &AppHandle) {
                 ui.status = "offline".into();
                 ui.error = Some(format!("{e:#}"));
             });
+            // Started before the network was there (after a restart: the server's
+            // name not resolved yet), or the server away: tried again.
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            info!("starting the agent again");
+            start_agent_with(&app, false);
         }
     });
     *state.agent.lock().expect("agent") = Some(handle);
