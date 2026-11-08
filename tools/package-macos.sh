@@ -64,12 +64,11 @@ cp LICENSE "$app/Contents/Resources/"
 
 # The virtual HID keyboard that types into the lock screen (docs/33-macos.md,
 # "Locked screen"): Karabiner-DriverKit-VirtualHIDDevice, public domain, signed and
-# notarized by its author; installed by `nuvira service system`.
+# notarized by its author (tools/vendor); installed by `nuvira service system`.
 KVHID_VERSION=8.7.0
 KVHID_SHA256=3364294fca2629d4d8968bbc434537f4093b8ba620a211ec192b3d2e71e42dfb
 kvhid="$app/Contents/Resources/Karabiner-DriverKit-VirtualHIDDevice.pkg"
-curl -fsSL --retry 3 -o "$kvhid" \
-    "https://github.com/pqrs-org/Karabiner-DriverKit-VirtualHIDDevice/releases/download/v$KVHID_VERSION/Karabiner-DriverKit-VirtualHIDDevice-$KVHID_VERSION.pkg"
+cp "tools/vendor/Karabiner-DriverKit-VirtualHIDDevice-$KVHID_VERSION.pkg" "$kvhid"
 echo "$KVHID_SHA256  $kvhid" | shasum -a 256 -c -
 
 if [ -n "$identity" ]; then
