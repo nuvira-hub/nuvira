@@ -161,13 +161,17 @@ impl Karabiner {
     }
 }
 
-/// Karabiner's daemon: the one already running (Karabiner-Elements, an earlier
-/// start), or one started by us.
+/// A Karabiner daemon is running (ours, Karabiner-Elements', an earlier one).
+fn daemon_running() -> bool {
+    Command::new("/usr/bin/pgrep").args(["-x", "Karabiner-VirtualHIDDevice-Daemon"]).output().is_ok_and(|o| o.status.success())
+}
+
+/// Karabiner's daemon: the one already running, or one started by us. Never
+/// probed by connecting: a connection closed at once makes its server close and
+/// bind again a second later (seen with 8.7.0), so only the socket file is looked at.
 fn ensure_daemon(child: &mut Option<Child>) -> Result<()> {
-    if UnixStream::connect(KV_SOCKET).is_ok() {
-        return Ok(());
-    }
-    if child.as_mut().is_none_or(|c| c.try_wait().ok().flatten().is_some()) {
+    let ours_alive = child.as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_none());
+    if !ours_alive && !daemon_running() {
         if !Path::new(KV_DAEMON).exists() {
             bail!("Karabiner-DriverKit-VirtualHIDDevice is not installed");
         }
@@ -176,7 +180,7 @@ fn ensure_daemon(child: &mut Option<Child>) -> Result<()> {
     }
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
-        if UnixStream::connect(KV_SOCKET).is_ok() {
+        if Path::new(KV_SOCKET).exists() {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(200));
@@ -211,6 +215,9 @@ fn peer_program(stream: &UnixStream) -> Option<PathBuf> {
 
 fn serve_agent(mut stream: UnixStream, keyboard: &Mutex<Option<Karabiner>>, daemon: &Mutex<Option<Child>>) {
     let mut report = [0u8; REPORT_SIZE];
+    // After a failure the next attempt waits a little (a burst of connections
+    // disturbs Karabiner's daemon).
+    let mut retry_at = Instant::now();
     loop {
         if stream.read_exact(&mut report).is_err() {
             break;
@@ -221,12 +228,16 @@ fn serve_agent(mut stream: UnixStream, keyboard: &Mutex<Option<Karabiner>>, daem
         }
         let mut kv = keyboard.lock().unwrap_or_else(|e| e.into_inner());
         if kv.is_none() {
+            if Instant::now() < retry_at {
+                continue;
+            }
             let started = ensure_daemon(&mut daemon.lock().unwrap_or_else(|e| e.into_inner()))
                 .and_then(|()| Karabiner::connect());
             match started {
                 Ok(k) => *kv = Some(k),
                 Err(e) => {
                     warn!("virtual HID keyboard not available: {e:#}");
+                    retry_at = Instant::now() + Duration::from_secs(2);
                     continue;
                 }
             }
