@@ -132,6 +132,22 @@ pub fn install_user() -> Result<()> {
         return Ok(());
     };
     write_extension(&user_dir()?, major)?;
+    enable_in_settings()?;
+    info!(gnome = major, "GNOME extension for the lock screen installed (from the next sign-in)");
+    Ok(())
+}
+
+/// As the person, when the system's part put the extension in place for everyone
+/// (installation for the whole computer): enables it only. GNOME Shell already
+/// knows it, so it works at once.
+pub fn enable_user() -> Result<()> {
+    if shell_major().is_none_or(|m| m < FIRST_SHELL) || !Path::new(SYSTEM_EXTENSIONS).join(UUID).exists() {
+        return Ok(());
+    }
+    enable_in_settings()
+}
+
+fn enable_in_settings() -> Result<()> {
     let mut enabled = gsettings_strv("enabled-extensions", &[])?;
     if !enabled.iter().any(|e| e == UUID) {
         enabled.push(UUID.to_string());
@@ -142,7 +158,6 @@ pub fn install_user() -> Result<()> {
         let kept: Vec<String> = disabled.into_iter().filter(|e| e != UUID).collect();
         gsettings_set_strv("disabled-extensions", &kept)?;
     }
-    info!(gnome = major, "GNOME extension for the lock screen installed (from the next sign-in)");
     Ok(())
 }
 

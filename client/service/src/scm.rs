@@ -200,7 +200,7 @@ fn run() -> Result<()> {
     let _sas = sas_listener();
     let _updates = crate::update::spawn(&STOP);
     watch_policies();
-    crate::profile::spawn(&STOP, config.clone());
+    crate::profile::spawn(&STOP, (&config).into());
 
     let mut agent: Option<AgentProcess> = None;
     let mut backoff = Duration::from_secs(1);

@@ -41,6 +41,10 @@ pub mod system;
 mod unix_shared;
 #[cfg(target_os = "linux")]
 pub mod user;
+/// Unattended access installed for the whole computer by an administrator.
+#[cfg(target_os = "linux")]
+#[path = "managed_linux.rs"]
+pub mod managed;
 /// The same interface as Linux's user service, with launchd.
 #[cfg(target_os = "macos")]
 #[path = "launchd.rs"]
@@ -55,11 +59,11 @@ mod install;
 pub use install::{ServiceState, installed_version, run_elevated, service_state};
 #[cfg(windows)]
 mod launch;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub mod policy;
 #[cfg(windows)]
 mod printer;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod profile;
 
 /// The program installed with the service (in Program Files).
@@ -206,18 +210,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         }
         Cmd::Uninstall { remove_program, from_msi } => install::uninstall(remove_program, from_msi),
         Cmd::Status => install::status(),
-        Cmd::PasswordHash => {
-            use std::io::BufRead;
-            eprintln!("permanent password (at least 8 characters), then Enter:");
-            let mut line = String::new();
-            std::io::stdin().lock().read_line(&mut line)?;
-            let password = line.trim_end_matches(['\r', '\n']);
-            if password.chars().count() < 8 {
-                anyhow::bail!("the password must have at least 8 characters");
-            }
-            println!("{}", nuvira_secret::hash(password));
-            Ok(())
-        }
+        Cmd::PasswordHash => password_hash_command(),
         Cmd::Printer { remove: false } => printer::install().map(|done| println!("{done}")),
         Cmd::Printer { remove: true } => printer::uninstall().map(|()| println!("NuviraHub printer removed")),
         Cmd::Run => run_service(),
@@ -308,6 +301,40 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
             Ok(())
         }
         Some("start") => user::start(),
+        // As root: the installation for the whole computer (organisations).
+        #[cfg(target_os = "linux")]
+        Some("deploy") if args.iter().any(|a| a == "--remove") => {
+            managed::remove().map(|()| println!("NuviraHub removed (the computer keeps its ID and settings in /var/lib/nuvira)"))
+        }
+        #[cfg(target_os = "linux")]
+        Some("deploy") => {
+            let password = match value("--password-file") {
+                Some(file) => {
+                    let text = std::fs::read_to_string(&file)?;
+                    let _ = std::fs::remove_file(&file);
+                    Some(text.trim().to_string())
+                }
+                None => None,
+            };
+            let opts = managed::DeployOptions {
+                server: value("--server"),
+                server_key: value("--server-key"),
+                password,
+                password_hash: value("--password-hash"),
+                profile: value("--profile"),
+            };
+            let generated = managed::deploy(opts)?;
+            println!("NuviraHub installed for the whole computer");
+            if let Some(generated) = generated {
+                println!("permanent password: {generated}");
+            }
+            Ok(())
+        }
+        // The agent of a person's session on a computer installed with `deploy`.
+        #[cfg(target_os = "linux")]
+        Some("session-agent") => managed::session_agent(),
+        // For the policies: they hold only the hash.
+        Some("password-hash") => password_hash_command(),
         #[cfg(target_os = "linux")]
         Some("portal") => user::portal(),
         Some("uninstall") => user::uninstall(),
@@ -327,7 +354,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         #[cfg(target_os = "linux")]
         Some("update-package") => package_update::run(),
         _ => anyhow::bail!(
-            "{COPYRIGHT}\nusage: nuvira service install [--server HOST] [--server-key FP] [--password-file FILE] | start | uninstall | printer [--remove]"
+            "{COPYRIGHT}\nusage: nuvira service install [--server HOST] [--server-key FP] [--password-file FILE] | start | uninstall | printer [--remove]\n\
+             as root, for the whole computer: nuvira service deploy [--server HOST] [--server-key FP] [--password-hash HASH | --password-file FILE] [--profile CODE] | deploy --remove\n\
+             nuvira service password-hash   (the hash of a password, for /etc/nuvira/policy.json)"
         ),
     }
 }
@@ -335,6 +364,21 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
 #[cfg(not(any(windows, unix)))]
 pub fn run(_args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<()> {
     anyhow::bail!("{COPYRIGHT}\nnuvira-service exists only for Windows, Linux and macOS")
+}
+
+/// `nuvira service password-hash`: the hash of a permanent password read from the
+/// input, for the policies (readable by every user, so they hold only the hash).
+fn password_hash_command() -> anyhow::Result<()> {
+    use std::io::BufRead;
+    eprintln!("permanent password (at least 8 characters), then Enter:");
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line)?;
+    let password = line.trim_end_matches(['\r', '\n']);
+    if password.chars().count() < 8 {
+        anyhow::bail!("the password must have at least 8 characters");
+    }
+    println!("{}", nuvira_secret::hash(password));
+    Ok(())
 }
 
 /// Random 8-character password that is easy to dictate, like the agent's.

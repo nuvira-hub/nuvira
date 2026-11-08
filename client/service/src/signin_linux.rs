@@ -21,6 +21,11 @@
 //!
 //! The same service blocks the local mouse and keyboard for privacy mode on
 //! Wayland, when the person's agent asks (`nuvira_input::local_input`).
+//!
+//! Installed for the whole computer (`nuvira service deploy`, module `managed`)
+//! the ID is the computer's own, kept here, and the service also hands it to the
+//! agent of whoever is signed in at the computer, and follows the
+//! organisation's policies (`/etc/nuvira/policy.json`).
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
@@ -33,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 const UNIT: &str = "nuvira-signin.service";
-const SYSTEM_DIR: &str = "/var/lib/nuvira";
+pub(crate) const SYSTEM_DIR: &str = "/var/lib/nuvira";
 /// Root's copy of the program, when the person's one is not root's.
 const PROGRAM_COPY: &str = "/usr/local/lib/nuvira/nuvira";
 /// Files of the person's data folder the greeter's agent needs.
@@ -43,35 +48,49 @@ fn unit_path() -> PathBuf {
     Path::new("/etc/systemd/system").join(UNIT)
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct Settings {
-    server: String,
-    server_key: Option<String>,
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
+pub(crate) struct Settings {
+    pub server: String,
+    pub server_key: Option<String>,
     /// Who installed unattended access: their user service is stopped while the
     /// sign-in screen is shown (their systemd can outlive the session, kept by an
     /// SSH login for example, and the two agents would take the ID from each other).
     #[serde(default)]
-    user: Option<String>,
+    pub user: Option<String>,
+    /// Installed for the whole computer by an administrator (`nuvira service deploy`).
+    #[serde(default)]
+    pub managed: bool,
+    /// Profile of a customised installer of the Pro server (managed installations).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 fn settings_path() -> PathBuf {
     Path::new(SYSTEM_DIR).join("signin.json")
 }
 
+pub(crate) fn load_settings() -> Result<Settings> {
+    Ok(serde_json::from_str(&std::fs::read_to_string(settings_path()).context("signin.json")?)?)
+}
+
+pub(crate) fn save_settings(settings: &Settings) -> Result<()> {
+    crate::unix_shared::write_private(&settings_path(), &serde_json::to_string(settings)?)
+}
+
 pub fn installed() -> bool {
     unit_path().exists()
 }
 
-fn ensure_root() -> Result<()> {
+pub(crate) fn ensure_root() -> Result<()> {
     // SAFETY: geteuid cannot fail.
     if unsafe { libc::geteuid() } != 0 {
-        bail!("the sign-in screen's agent is installed by root");
+        bail!("this is done by root (sudo)");
     }
     Ok(())
 }
 
 /// A program only root can change: the packages' one, or a copy made now.
-fn program_for_root(exe: &Path) -> Result<PathBuf> {
+pub(crate) fn program_for_root(exe: &Path) -> Result<PathBuf> {
     let owned_by_root = |path: &Path| {
         use std::os::unix::fs::MetadataExt;
         let mut all = true;
@@ -122,7 +141,7 @@ fn label_as_program(path: &Path) {
     }
 }
 
-fn systemctl(args: &[&str]) -> Result<()> {
+pub(crate) fn systemctl(args: &[&str]) -> Result<()> {
     let status = Command::new("systemctl").args(args).status().context("systemctl")?;
     if !status.success() {
         bail!("systemctl {} failed ({status})", args.join(" "));
@@ -153,10 +172,16 @@ pub fn install(exe: &Path, user_data: &Path, server: &str, server_key: Option<&s
         use std::os::unix::fs::MetadataExt;
         std::fs::metadata(user_data).ok().and_then(|m| user_name(m.uid()))
     };
-    let settings = Settings { server: server.to_string(), server_key: server_key.map(str::to_string), user };
-    std::fs::write(settings_path(), serde_json::to_string(&settings)?)?;
-    std::fs::set_permissions(settings_path(), std::fs::Permissions::from_mode(0o600))?;
-    let program = program_for_root(exe)?;
+    let settings =
+        Settings { server: server.to_string(), server_key: server_key.map(str::to_string), user, ..Default::default() };
+    install_service(&program_for_root(exe)?, &settings)
+}
+
+/// As root: saves the settings, installs the service with `program` (one only root
+/// can change) and starts it again.
+pub(crate) fn install_service(program: &Path, settings: &Settings) -> Result<()> {
+    ensure_root()?;
+    save_settings(settings)?;
     let unit = format!(
         "[Unit]\n\
          Description=NuviraHub at the sign-in screen (unattended access)\n\
@@ -181,13 +206,23 @@ pub fn install(exe: &Path, user_data: &Path, server: &str, server_key: Option<&s
 
 /// As root: removes the service, root's copy of the data and of the program.
 pub fn uninstall() -> Result<()> {
+    remove(false)
+}
+
+/// As root: removes the service and root's copy of the program; with
+/// `keep_identity` the data folder stays, with the computer's ID, password and
+/// server (a managed installation removed and installed again keeps them, as
+/// Windows keeps `%ProgramData%\nuvira`).
+pub(crate) fn remove(keep_identity: bool) -> Result<()> {
     ensure_root()?;
     if unit_path().exists() {
         let _ = systemctl(&["disable", "--now", UNIT]);
         std::fs::remove_file(unit_path()).context("removing the service")?;
         let _ = systemctl(&["daemon-reload"]);
     }
-    for path in [Path::new(SYSTEM_DIR), Path::new(PROGRAM_COPY).parent().unwrap_or(Path::new(PROGRAM_COPY))] {
+    let system_dir = (!keep_identity).then_some(Path::new(SYSTEM_DIR));
+    let program_dir = Path::new(PROGRAM_COPY).parent().unwrap_or(Path::new(PROGRAM_COPY));
+    for path in system_dir.into_iter().chain([program_dir]) {
         match std::fs::remove_dir_all(path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                 return Err(e).with_context(|| path.display().to_string());
@@ -204,12 +239,12 @@ pub fn uninstall() -> Result<()> {
 
 /// What logind says of a session (`loginctl show-session`).
 #[derive(Debug, Default, Clone, PartialEq)]
-struct SessionInfo {
-    id: String,
-    class: String,
-    kind: String,
-    display: String,
-    uid: u32,
+pub(crate) struct SessionInfo {
+    pub id: String,
+    pub class: String,
+    pub kind: String,
+    pub display: String,
+    pub uid: u32,
 }
 
 fn key_values(text: &str) -> impl Iterator<Item = (&str, &str)> {
@@ -270,7 +305,7 @@ fn x_auth_of(args: &[&[u8]], display: &str) -> Option<PathBuf> {
     Some(PathBuf::from(std::str::from_utf8(args.get(i + 1)?).ok()?))
 }
 
-fn password_hash() -> Result<String> {
+pub(crate) fn password_hash() -> Result<String> {
     let text = std::fs::read_to_string(Path::new(SYSTEM_DIR).join("service.env")).context("service.env")?;
     text.lines()
         .find_map(|l| l.strip_prefix("NUVIRA_PASSWORD_HASH="))
@@ -298,7 +333,7 @@ fn greeter_data(uid: u32, gid: u32) -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn user_name(uid: u32) -> Option<String> {
+pub(crate) fn user_name(uid: u32) -> Option<String> {
     // SAFETY: as in `primary_gid`.
     unsafe {
         let pw = libc::getpwuid(uid);
@@ -310,18 +345,61 @@ fn user_name(uid: u32) -> Option<String> {
 }
 
 /// Stops the user service of `user`, if their systemd is running.
-fn stop_user_service(user: &str) {
-    let target = format!("--machine={user}@.host");
-    let stopped = Command::new("systemctl")
-        .args(["--user", &target, "stop", "nuvira-agent.service"])
-        .output()
-        .is_ok_and(|o| o.status.success());
-    if stopped {
+pub(crate) fn stop_user_service(user: &str) {
+    let Some(uid) = uid_of(user) else { return };
+    if as_user(uid, "systemctl", &["--user", "stop", "nuvira-agent.service"]).is_ok() {
         info!(user, "the user's agent stopped while the sign-in screen is shown");
     }
 }
 
-fn primary_gid(uid: u32) -> u32 {
+fn uid_of(user: &str) -> Option<u32> {
+    let name = std::ffi::CString::new(user).ok()?;
+    // SAFETY: as in `primary_gid`.
+    unsafe {
+        let pw = libc::getpwnam(name.as_ptr());
+        if pw.is_null() { None } else { Some((*pw).pw_uid) }
+    }
+}
+
+/// Runs `program` as `uid`, talking to that person's systemd and session bus (in
+/// their runtime folder): `systemctl --user --machine=<user>@.host` needs
+/// systemd-machined's bridge, which Fedora 44 refused ("Transport endpoint is
+/// not connected"). Fails when their systemd is not running.
+pub(crate) fn as_user(uid: u32, program: &str, args: &[&str]) -> Result<()> {
+    let runtime = format!("/run/user/{uid}");
+    if !Path::new(&runtime).join("systemd/private").exists() {
+        bail!("the person's systemd is not running");
+    }
+    let home = home_of(uid).unwrap_or_else(|| "/".into());
+    let output = Command::new(program)
+        .args(args)
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .env("HOME", home)
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .env("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={runtime}/bus"))
+        .uid(uid)
+        .gid(primary_gid(uid))
+        .output()
+        .with_context(|| program.to_string())?;
+    if !output.status.success() {
+        bail!("{program} {}: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim());
+    }
+    Ok(())
+}
+
+fn home_of(uid: u32) -> Option<String> {
+    // SAFETY: as in `primary_gid`.
+    unsafe {
+        let pw = libc::getpwuid(uid);
+        if pw.is_null() || (*pw).pw_dir.is_null() {
+            return None;
+        }
+        Some(std::ffi::CStr::from_ptr((*pw).pw_dir).to_string_lossy().into_owned())
+    }
+}
+
+pub(crate) fn primary_gid(uid: u32) -> u32 {
     // SAFETY: getpwuid returns a pointer into static storage or NULL; read at once.
     unsafe {
         let pw = libc::getpwuid(uid);
@@ -379,9 +457,16 @@ pub fn run() -> Result<()> {
     ensure_root().context("signin-run is started by systemd as root")?;
     let _ = tracing_subscriber::fmt().with_ansi(false).try_init();
     let exe = std::env::current_exe().context("program path")?;
-    let settings: Settings =
-        serde_json::from_str(&std::fs::read_to_string(settings_path()).context("signin.json")?)?;
+    let mut settings = load_settings()?;
+    // Managed: the organisation's policies, checked again every minute below.
+    let policy = crate::policy::read();
+    if settings.managed {
+        crate::managed::apply_policy(&mut settings, &policy)?;
+        crate::managed::spawn_profile(&settings);
+    }
     let hash = password_hash()?;
+    let mut handover = settings.managed.then(crate::managed::Handover::new);
+    let mut next_policy_check = Instant::now() + Duration::from_secs(60);
     // Privacy mode on Wayland: the person's agent asks root to hold their local input.
     std::thread::Builder::new().name("input-block".into()).spawn(|| {
         let allowed = |uid: u32| active_session().is_some_and(|s| s.uid == uid && s.class == "user");
@@ -393,7 +478,20 @@ pub fn run() -> Result<()> {
     let mut agent: Option<(String, Child)> = None;
     let mut next_start = Instant::now();
     loop {
-        let greeter = active_session().filter(|s| s.class == "greeter");
+        let active = active_session();
+        if let Some(handover) = &mut handover {
+            handover.follow(active.as_ref(), &settings, &hash);
+        }
+        if settings.managed && Instant::now() >= next_policy_check {
+            next_policy_check = Instant::now() + Duration::from_secs(60);
+            if crate::policy::read() != policy {
+                // Started again by systemd within 5 s, with the new settings.
+                info!("the organisation's policies changed: starting again with them");
+                stop(&mut agent);
+                return Ok(());
+            }
+        }
+        let greeter = active.filter(|s| s.class == "greeter");
         match (&greeter, &mut agent) {
             (None, Some(_)) => {
                 info!("the sign-in screen is gone: its agent ends");

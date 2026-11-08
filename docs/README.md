@@ -30,3 +30,4 @@
 | 31 | [Session recording](31-session-recording.md) | MP4 video of the session on the technician's computer, with a notice at the controlled one, which can refuse it |
 | 32 | [Session permissions](32-session-permissions.md) | What a session may do: settings of the computer, limits per technician (Pro), switches of the person at the computer during the session |
 | 33 | [macOS](33-macos.md) | Package, controlled Mac (ScreenCaptureKit, Quartz, permissions), keyboard, unattended access with a LaunchAgent |
+| 34 | [Linux: installation for the whole computer](34-linux-deployment.md) | `nuvira service deploy` and /etc/nuvira/policy.json: the computer's own ID, for Ansible, Puppet and scripts |

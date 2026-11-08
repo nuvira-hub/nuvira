@@ -9,6 +9,10 @@
 //! What it cannot do: reach the computer before someone logs in (the system's
 //! part does, see `signin`). On GNOME with Wayland the lock screen works through
 //! a GNOME Shell extension installed here (module `gnome`), from the next sign-in.
+//!
+//! On a computer where NuviraHub is installed for everyone by an administrator
+//! (module `managed`) the unit is the system's (`/etc/systemd/user`): a person
+//! cannot install or remove it, and their own earlier installation gives way.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -51,6 +55,9 @@ fn systemctl(args: &[&str]) -> Result<()> {
 /// Installs or updates the user service. Returns the permanent password when it
 /// was generated, to show it once.
 pub fn install(opts: &InstallOptions) -> Result<Option<String>> {
+    if crate::managed::installed() {
+        bail!("@install.managed");
+    }
     let exe = std::env::current_exe().context("program path")?;
     let generated = store_password(opts)?;
 
@@ -99,6 +106,19 @@ pub fn install(opts: &InstallOptions) -> Result<Option<String>> {
 
 /// Removes the user service; the ID and the address book stay.
 pub fn uninstall() -> Result<()> {
+    if crate::managed::installed() {
+        bail!("@install.managed");
+    }
+    remove_own()?;
+    if let Err(e) = crate::gnome::uninstall_user() {
+        warn!("GNOME extension for the lock screen not removed: {e:#}");
+    }
+    info!("user service removed");
+    Ok(())
+}
+
+/// The person's own unit, autostart entry and password.
+fn remove_own() -> Result<()> {
     let _ = systemctl(&["stop", UNIT]);
     for path in [unit_path()?, autostart_path()?, env_path()] {
         if path.exists() {
@@ -106,10 +126,6 @@ pub fn uninstall() -> Result<()> {
         }
     }
     let _ = systemctl(&["daemon-reload"]);
-    if let Err(e) = crate::gnome::uninstall_user() {
-        warn!("GNOME extension for the lock screen not removed: {e:#}");
-    }
-    info!("user service removed");
     Ok(())
 }
 
@@ -151,15 +167,23 @@ pub fn ask_folder_access() {}
 /// Hands the variables of the current desktop session to systemd and (re)starts
 /// the agent: run at login by the autostart entry, and after installing.
 pub fn start() -> Result<()> {
+    // Installed for everyone since: the person's own unit would hide the system's.
+    if crate::managed::installed() && unit_path()?.exists() {
+        info!("unattended access is now installed for the whole computer: the person's own installation gives way");
+        remove_own()?;
+    }
     let present: Vec<&str> = SESSION_VARS.iter().copied().filter(|v| std::env::var_os(v).is_some()).collect();
-    let mut args = vec!["import-environment"];
-    args.extend(&present);
-    systemctl(&args)?;
+    // Without names systemctl would import the whole environment.
+    if !present.is_empty() {
+        let mut args = vec!["import-environment"];
+        args.extend(&present);
+        systemctl(&args)?;
+    }
     systemctl(&["restart", UNIT])
 }
 
 pub fn service_state() -> Result<ServiceState> {
-    if !unit_path()?.exists() {
+    if !crate::managed::installed() && !unit_path()?.exists() {
         return Ok(ServiceState::NotInstalled);
     }
     let out = Command::new("systemctl").args(["--user", "is-active", UNIT]).output().context("systemctl")?;

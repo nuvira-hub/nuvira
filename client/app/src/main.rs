@@ -86,6 +86,9 @@ struct UiState {
     websocket: bool,
     /// ID and password are the service's (unattended access).
     service: bool,
+    /// Unattended access installed for the whole computer by the organisation
+    /// (Linux: `nuvira service deploy`): no Install or Remove here.
+    service_managed: bool,
     password: String,
     error: Option<String>,
     incoming: Option<IncomingUi>,
@@ -288,15 +291,30 @@ fn apply_branding(settings: &mut Settings) {
     }
 }
 
-/// Server set by the organisation's policies (Group Policy, Intune), with its fingerprint.
+/// Server set by the organisation's policies (Group Policy, Intune; on Linux
+/// /etc/nuvira/policy.json or the installation for the whole computer), with its
+/// fingerprint.
 fn policy_server() -> Option<(String, Option<String>)> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         let policy = nuvira_service::policy::read();
-        policy.server.map(|server| (server, policy.server_key))
+        if let Some(server) = policy.server {
+            return Some((server, policy.server_key));
+        }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    if let Some(state) = nuvira_service::managed::state() {
+        return Some((state.server, state.server_key));
+    }
     None
+}
+
+/// Installed for the whole computer by the organisation (Linux).
+fn service_managed() -> bool {
+    #[cfg(target_os = "linux")]
+    return nuvira_service::managed::installed();
+    #[cfg(not(target_os = "linux"))]
+    false
 }
 
 /// The organisation's policies win over the settings and the customisation: the
@@ -1205,6 +1223,7 @@ fn main() {
             record_sessions: settings.record_sessions,
             record_dir: recordings,
             server_managed: policy_server().is_some(),
+            service_managed: service_managed(),
             ..Default::default()
         }),
         password: Arc::new(Mutex::new(password)),
@@ -1340,6 +1359,9 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
     // Quick support runs and goes: it does not install.
     if branding::get().is_some_and(branding::Branding::quick) {
         return Err(t("err.locked"));
+    }
+    if service_managed() {
+        return Err(t("install.managed"));
     }
     #[cfg(unix)]
     {
@@ -1491,6 +1513,9 @@ async fn repair_service() -> Result<(), String> {
 /// from the installed apps of the system settings). The app runs its own agent again.
 #[tauri::command]
 async fn uninstall_service(app: AppHandle) -> Result<String, String> {
+    if service_managed() {
+        return Err(t("install.managed"));
+    }
     #[cfg(unix)]
     {
         tauri::async_runtime::spawn_blocking(|| {

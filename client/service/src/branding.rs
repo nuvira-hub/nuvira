@@ -46,7 +46,15 @@ pub fn trailer(doc: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Copy of the installation, next to the installed program (Linux: of the
+/// installation for the whole computer, `nuvira service deploy`).
+#[cfg(target_os = "linux")]
+pub fn installed_path() -> PathBuf {
+    PathBuf::from("/etc/nuvira/branding.json")
+}
+
 /// Copy of the installation, next to the installed program.
+#[cfg(not(target_os = "linux"))]
 pub fn installed_path() -> PathBuf {
     std::env::var_os("ProgramFiles")
         .map(PathBuf::from)

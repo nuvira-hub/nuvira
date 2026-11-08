@@ -464,13 +464,18 @@ fn socket_path() -> std::path::PathBuf {
 }
 
 /// The user service is installed: the systemd unit on Linux, the LaunchAgent on
-/// macOS (see nuvira-service).
+/// macOS (see nuvira-service); on Linux also the installation for the whole
+/// computer (`nuvira service deploy`, its state file in /etc).
 #[cfg(unix)]
 pub fn service_installed() -> bool {
     #[cfg(target_os = "macos")]
     const DEFINITION: &str = "Library/LaunchAgents/io.github.nuvira-hub.nuvira.agent.plist";
     #[cfg(not(target_os = "macos"))]
     const DEFINITION: &str = ".config/systemd/user/nuvira-agent.service";
+    #[cfg(not(target_os = "macos"))]
+    if std::path::Path::new("/etc/nuvira/managed.json").exists() {
+        return true;
+    }
     std::env::var_os("HOME").is_some_and(|home| std::path::Path::new(&home).join(DEFINITION).exists())
 }
 

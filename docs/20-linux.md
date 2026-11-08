@@ -63,6 +63,7 @@ A systemd **user** service, `nuvira-agent.service`, runs the agent as the person
 - **Wayland.** GNOME's permission is asked when installing, while the person is there, and the service then uses it (no dialog, also after a restart). GNOME ties a saved permission to the program that asked for it, telling programs apart by their systemd unit: asked from the app it was refused to the service (Fedora, 2026-11-06). So it is asked by `nuvira service portal`, started through `systemd-run` like the service.
 - **GNOME's own API.** The service's agent (`--ipc`, and the sign-in screen's) opens its sessions through `org.gnome.Mutter.RemoteDesktop` and `org.gnome.Mutter.ScreenCast` on the session bus (`client/portal/src/mutter.rs`), as gnome-remote-desktop does: no dialog, no saved permission; the portal stays the fallback (KDE, others). The app's own agent keeps the portal and its dialog.
 - **Limits.** See the sign-in screen and the locked screen below.
+- **For the whole computer.** An administrator can install it for everyone instead, with the computer's own ID and no sign-in first: `sudo nuvira service deploy`, or `/etc/nuvira/policy.json` before the package ([34-linux-deployment.md](34-linux-deployment.md)). The person's own installation then gives way.
 
 ## Sign-in screen
 

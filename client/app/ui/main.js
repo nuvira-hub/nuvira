@@ -199,7 +199,8 @@ function render(state) {
   // The public server's terms of use, while it is the one in use.
   for (const node of document.querySelectorAll(".public-only")) node.classList.toggle("hidden", Boolean(state.server.trim()));
   $("service-note").classList.toggle("hidden", !state.service);
-  $("server-service").classList.toggle("hidden", !state.service);
+  // With the server fixed there is nothing to save, so no note about the service.
+  $("server-service").classList.toggle("hidden", !state.service || state.server_managed);
   // Linux and macOS: a user service, installed again without an administrator.
   const serverKey = state.platform === "windows" ? "settings.server_service" : "settings.server_service_unix";
   $("server-service").dataset.i18n = serverKey;
@@ -243,17 +244,24 @@ function render(state) {
   // Windows: from the system settings.
   const linux = state.platform === "linux";
   const mac = state.platform === "macos";
-  $("install-on").textContent = t(linux || mac ? "settings.installed_linux" : "settings.installed");
+  $("install-on").textContent = t(
+    state.service_managed ? "settings.installed_managed" : linux || mac ? "settings.installed_linux" : "settings.installed",
+  );
   $("unattended-hint").textContent = t(
     linux ? "settings.unattended_hint_linux" : mac ? "settings.unattended_hint_mac" : "settings.unattended_hint",
   );
-  $("uninstall-row").classList.toggle("hidden", !((linux || mac) && state.service));
+  $("uninstall-row").classList.toggle("hidden", !((linux || mac) && state.service && !state.service_managed));
+  // Installed by the organisation: nothing to install from here either.
+  if (state.service_managed) $("install-off").classList.add("hidden");
   $("password-label").textContent = t(state.service ? "connect.temp_password" : "connect.password");
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password || "—";
   if (document.activeElement !== $("server")) $("server").value = state.server;
   // Set by the organisation's policies (Group Policy, Intune).
   $("server-managed").classList.toggle("hidden", !state.server_managed);
+  const managedKey = state.platform === "windows" ? "settings.server_managed" : "settings.server_managed_unix";
+  $("server-managed").dataset.i18n = managedKey;
+  $("server-managed").textContent = t(managedKey);
   if (state.server_managed) {
     $("server").disabled = true;
     $("server-form").querySelector("button").disabled = true;
