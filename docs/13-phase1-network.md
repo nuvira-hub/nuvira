@@ -95,7 +95,15 @@ Tests of 2026-11-09, test server of this version on the Mac mini at Scaleway (pu
 | Mint agent ↔ PC-LABORATORIO viewer, test server on the Mac | direct IPv4 (LAN) | 29.7 | 16 ms |
 | The same with `NUVIRA_FORCE_RELAY=1` | relay | 29.3 | 40 ms |
 
-The direct path over IPv6 between two networks was seen on 2026-11-07, between the Mac mini and the OVH VPS ([33-macos.md](33-macos.md)).
+Between two networks with IPv6, the same night: agent with a synthetic picture on the OVH VPS (Canada; in a Debian 12 container with the host's network, from the CI's .deb), on the Mac's test server by its IPv6 address; viewer on the Mac mini (Paris). The VPS's ufw lets in only its own ports: the agent's opening packets open the way back.
+
+| Viewer's server | Path | fps | latency p50 |
+|---|---|---|---|
+| name with A and AAAA (relay over IPv4, announce on IPv6), twice | direct **IPv6** | 29.8 | 55 ms |
+| IPv6 address | direct IPv4 (both families tried, the first answer wins) | 29.8 | 55 ms |
+| IPv6 address, `NUVIRA_FORCE_RELAY=1` | relay IPv6 ↔ IPv6 | 29.8 | 56 ms |
+
+The first direct IPv6 session between these two machines was on 2026-11-07, with the server reached by its IPv6 address ([33-macos.md](33-macos.md)).
 
 ## Steps
 
