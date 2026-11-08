@@ -162,23 +162,69 @@ pub fn uninstall_user() -> Result<()> {
     remove_dir(&dir)
 }
 
-/// The greeter reads dconf's `gdm` database (GDM is installed).
-fn gdm_dconf() -> bool {
-    DCONF_PROFILES
-        .iter()
-        .any(|p| std::fs::read_to_string(p).is_ok_and(|t| t.lines().any(|l| l.trim() == "system-db:gdm")))
+/// Where GDM's greeter takes its settings from.
+#[derive(Clone, Copy)]
+enum GreeterDb {
+    /// dconf's `gdm` system database (`system-db:gdm` in the profile: Fedora,
+    /// upstream GDM), rebuilt with `dconf update`.
+    Gdm,
+    /// Debian and Ubuntu: the keyfiles of `/usr/share/gdm/dconf`, compiled by
+    /// gdm3's `generate-config` into `/var/lib/gdm3/greeter-dconf-defaults` at
+    /// every start of GDM.
+    Debian,
 }
 
-fn dconf_update() -> Result<()> {
-    let status = Command::new("dconf").arg("update").status().context("dconf")?;
-    if !status.success() {
-        anyhow::bail!("dconf update failed ({status})");
+const DEBIAN_DCONF_DIR: &str = "/usr/share/gdm/dconf";
+const DEBIAN_GENERATE: &str = "/usr/share/gdm/generate-config";
+/// After the distribution's `90-debian-settings`: the later keyfile wins.
+const DEBIAN_DCONF_FILE: &str = "95-nuvira-remote-access";
+
+impl GreeterDb {
+    fn find() -> Option<Self> {
+        let gdm_db = DCONF_PROFILES.iter().any(|p| {
+            std::fs::read_to_string(p).is_ok_and(|t| t.lines().any(|l| l.trim() == "system-db:gdm"))
+        });
+        if gdm_db {
+            Some(Self::Gdm)
+        } else if Path::new(DEBIAN_DCONF_DIR).is_dir() && Path::new(DEBIAN_GENERATE).exists() {
+            Some(Self::Debian)
+        } else {
+            None
+        }
     }
-    Ok(())
-}
 
-fn gdm_dconf_path() -> PathBuf {
-    Path::new(GDM_DCONF_DIR).join(GDM_DCONF_FILE)
+    fn path(self) -> PathBuf {
+        match self {
+            Self::Gdm => Path::new(GDM_DCONF_DIR).join(GDM_DCONF_FILE),
+            Self::Debian => Path::new(DEBIAN_DCONF_DIR).join(DEBIAN_DCONF_FILE),
+        }
+    }
+
+    fn rebuild(self) -> Result<()> {
+        let mut command = match self {
+            Self::Gdm => {
+                let mut c = Command::new("dconf");
+                c.arg("update");
+                c
+            }
+            Self::Debian => Command::new(DEBIAN_GENERATE),
+        };
+        let status = command.status().with_context(|| format!("{command:?}"))?;
+        if !status.success() {
+            anyhow::bail!("{command:?} failed ({status})");
+        }
+        Ok(())
+    }
+
+    /// Removes our keyfile, if there.
+    fn remove(self) -> Result<()> {
+        let path = self.path();
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+            self.rebuild()?;
+        }
+        Ok(())
+    }
 }
 
 /// As root: installs the extension for everyone and enables it at GDM's
@@ -188,24 +234,25 @@ pub fn install_system() -> Result<()> {
         return Ok(());
     };
     write_extension(&Path::new(SYSTEM_EXTENSIONS).join(UUID), major)?;
-    if !gdm_dconf() {
-        info!("GNOME extension installed; no GDM with dconf's gdm database");
+    let Some(db) = GreeterDb::find() else {
+        info!("GNOME extension installed; GDM's settings not found");
         return Ok(());
-    }
-    // The greeter's list without ours (other databases may set one, e.g. the
-    // distribution's), plus ours: dconf's gdm database comes before them.
-    let path = gdm_dconf_path();
-    if path.exists() {
-        std::fs::remove_file(&path)?;
-        dconf_update()?;
-    }
-    let mut enabled = gsettings_strv("enabled-extensions", &[("DCONF_PROFILE", "gdm")]).unwrap_or_else(|e| {
+    };
+    // The greeter's list without ours (the distribution may set one), plus ours.
+    db.remove()?;
+    // Without the user-db of whoever runs this (the profile starts with it).
+    let mut enabled = gsettings_strv(
+        "enabled-extensions",
+        &[("DCONF_PROFILE", "gdm"), ("XDG_CONFIG_HOME", "/nonexistent")],
+    )
+    .unwrap_or_else(|e| {
         warn!("enabled extensions of the sign-in screen not read: {e:#}");
         Vec::new()
     });
     enabled.retain(|e| e != UUID);
     enabled.push(UUID.to_string());
-    std::fs::create_dir_all(GDM_DCONF_DIR)?;
+    let path = db.path();
+    std::fs::create_dir_all(path.parent().context("dconf folder")?)?;
     std::fs::write(
         &path,
         format!(
@@ -214,9 +261,10 @@ pub fn install_system() -> Result<()> {
             format_strv(&enabled)
         ),
     )?;
-    dconf_update()?;
+    db.rebuild()?;
     info!(
         gnome = major,
+        settings = %path.display(),
         "GNOME extension installed and enabled at the sign-in screen (from GDM's next start)"
     );
     Ok(())
@@ -224,10 +272,10 @@ pub fn install_system() -> Result<()> {
 
 /// As root: removes it.
 pub fn uninstall_system() -> Result<()> {
-    let path = gdm_dconf_path();
-    if path.exists() {
-        std::fs::remove_file(&path)?;
-        dconf_update()?;
+    for db in [GreeterDb::Gdm, GreeterDb::Debian] {
+        if db.path().exists() {
+            db.remove()?;
+        }
     }
     remove_dir(&Path::new(SYSTEM_EXTENSIONS).join(UUID))
 }
