@@ -2,7 +2,7 @@
 
 [← Index](README.md)
 
-Since 0.15.0 the app runs on macOS 13 or later (one universal `.app` for Apple silicon and Intel, in a `.dmg` signed with a Developer ID and notarized). It controls other computers and a Mac can be controlled. Unattended access works as a launchd LaunchAgent (below). Not released yet. Automatic updates exist only for Windows for now.
+Since 0.15.0 the app runs on macOS 13 or later (one universal `.app` for Apple silicon and Intel, in a `.dmg` signed with a Developer ID and notarized). It controls other computers and a Mac can be controlled. Since 0.17.0: unattended access as a launchd LaunchAgent, also at the sign-in screen, remote restart, privacy mode, VideoToolbox, the NuviraHub printer and automatic updates ([19-updates.md](19-updates.md)).
 
 ## Package
 
