@@ -70,14 +70,21 @@ The display manager's greeter (LightDM, GDM…) is reached by a systemd **system
 
 - It follows the active session of `seat0` (`loginctl`): while it is a greeter it keeps an agent there with `--signin-screen` (permanent password only), with the person's ID (device key, server fingerprint and password hash copied into `/var/lib/nuvira`, root only).
 - **X11 greeters (LightDM):** the agent runs as root on the greeter's display, with the X server's own `-auth` file read from its command line.
-- **Wayland greeters (GDM):** an agent as the greeter's user with its session bus, through GNOME's API: GNOME refuses it (see below).
+- **Wayland greeters (GDM):** an agent as the greeter's user with its session bus, through GNOME's API, which GNOME allows there only with NuviraHub's GNOME Shell extension (see the locked screen below).
 - **One agent at a time:** when the greeter appears, the user service of whoever installed it is stopped (`systemctl --user --machine=user@.host`: their systemd can outlive the session, kept by an SSH login for example, and the two agents took the ID from each other); when a person's session becomes active the greeter's agent ends and the autostart entry starts theirs.
-- The program must be one only root can change: from the packages `/usr/bin/nuvira`, otherwise a copy in `/usr/local/lib/nuvira`.
+- The program must be one only root can change: from the packages `/usr/bin/nuvira`, otherwise a copy in `/usr/local/lib/nuvira`. With SELinux (Fedora) the copy is labelled `bin_t` (`semanage fcontext`, or `chcon` without it): as `lib_t` systemd ran it as `init_t`, which may not connect to the greeter's D-Bus, and the screen at GDM was refused.
 
 ## Locked screen
 
 - **X11** (Mint, Cinnamon): the lock screen is a window of the session's X server; captured and typed into like the desktop.
-- **GNOME on Wayland:** GNOME closes every remote desktop session the moment the screen locks (`Closed` signal) and refuses new ones until it is unlocked ("Session creation inhibited"), through the portal and through its own API alike; at GDM's sign-in screen too. The capture then sends a dark placeholder once a second and the agent tells the viewer (`ScreenState`, `input: false`): someone must unlock it at the computer. The way around it would be below GNOME, as root: the screen read from DRM/KMS and input through a `uinput` device (not done).
+- **GNOME on Wayland:** GNOME Shell inhibits remote access whenever its session mode does not allow screencasts (`ui/main.js`, `inhibit_remote_access()` of Mutter's remote access controller): it closes every remote desktop session the moment the screen locks (`Closed` signal) and refuses new ones until it is unlocked ("Session creation inhibited"), through the portal and through its own API alike; at GDM's sign-in screen too. There is no setting for it.
+- **NuviraHub's GNOME Shell extension** `remote-access@nuvirahub.dev` (`client/service/gnome/extension.js`, module `client/service/src/gnome.rs`) makes the inhibition do nothing while it is enabled, in the session modes `user`, `unlock-dialog` and `gdm`. Mutter keeps a counter without a getter, and GNOME Shell inhibits at GDM before loading extensions, so the extension follows what GNOME Shell believes (inhibited when the mode does not allow screencasts) and gives the counter back when disabled. The idea is the one of the extension "Allow Locked Remote Desktop" (extensions.gnome.org 4338); the code is ours.
+  - The user's part of unattended access (`nuvira service install`) puts it in `~/.local/share/gnome-shell/extensions` and adds it to `enabled-extensions`: lock screen, **from the next sign-in** (GNOME loads extensions when the session starts).
+  - The system's part (`nuvira service system`, root) puts it in `/usr/share/gnome-shell/extensions` and enables it for the greeter in dconf's `gdm` database (`/etc/dconf/db/gdm.d/90-nuvira-remote-access`, with the list the greeter had, then `dconf update`): sign-in screen, from GDM's next start.
+  - `metadata.json` lists GNOME Shell 45 up to the installed version and the next, written again at every installation (GNOME refuses extensions that do not list its version).
+  - Removing unattended access removes both.
+- **Without the extension** (not yet signed in again, or another desktop) the capture sends a dark placeholder once a second and the agent tells the viewer (`ScreenState`, `input: false`): someone must unlock it at the computer.
+- **Other ways looked at** (2026-11-08): gnome-remote-desktop's system mode (RDP to GDM, but a separate headless session, not the one on the monitor); DRM/KMS capture with `uinput` input as root (works below GNOME, but tiled buffers, planes and drivers to handle). The extension keeps the same API and needed no new capture.
 
 ## Local address book
 
@@ -95,11 +102,12 @@ On Windows the saved passwords are protected with DPAPI. On Linux they are encry
 
 - **Mint 22.3 (LightDM, X11)**, `.deb` of the branch, viewer on PC-LABORATORIO: after logging the person out the greeter's agent started as root on `:0` with `/var/run/lightdm/root/:0`, same ID (780 221 705); greeter seen, password typed with `--type-keys` and Enter: signed in, the greeter's agent ended, the person's started by itself. Typing in a burst gave "wrong password" (the greeter's input method mixed the order): the test option now types at a person's pace. The lock screen of Cinnamon was captured by the person's agent as usual.
 - **Fedora 44 / Ubuntu 26.04 (GNOME 50)**: GNOME's API opens without a dialog; closed at the lock (2.1 s after), "Session creation inhibited" while locked and at GDM's greeter (user `gdm-greeter`, uid 60578).
+- **Fedora 44 (GNOME 50.0) with the extension**, agent 0.18.0, viewer on Mint: a session open before the lock stays open (no `Closed`), new ones open while locked; the viewer sees the lock screen and types into its password field. After logging out, GDM's greeter (extension active in mode `gdm`) seen from the viewer and a click on the user opened its password field. The sign-in screen's agent was first refused by SELinux (`init_t` writing to the greeter's bus socket): fixed with the `bin_t` label.
 
 ## To do
 
 - **X11, faster capture**: MIT-SHM and XDamage instead of `GetImage` and comparing images.
-- **GNOME's sign-in and lock screens**: DRM/KMS capture and `uinput` input as root (GNOME allows no remote desktop session there).
+- **GNOME's lock screen at once:** the extension works from the next sign-in; before it the lock still closes the session.
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
 - **Other desktops**: tested with GNOME only; KDE Plasma to be tested; Sway and Hyprland have no remote desktop portal (screen without input).

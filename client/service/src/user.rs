@@ -6,15 +6,15 @@
 //! - systemd starts it again if it ends;
 //! - the permanent password is in `service.env` (mode 0600), as a hash.
 //!
-//! What it cannot do: reach the computer before someone logs in. After a restart
-//! the computer needs automatic login; on GNOME with Wayland the screen must not
-//! lock either, since GNOME stops sharing it while locked.
+//! What it cannot do: reach the computer before someone logs in (the system's
+//! part does, see `signin`). On GNOME with Wayland the lock screen works through
+//! a GNOME Shell extension installed here (module `gnome`), from the next sign-in.
 
 use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use tracing::info;
+use tracing::{info, warn};
 
 pub use crate::unix_shared::{InstallOptions, ServiceState, installed_version};
 use crate::unix_shared::{env_path, home, store_password};
@@ -90,6 +90,9 @@ pub fn install(opts: &InstallOptions) -> Result<Option<String>> {
 
     systemctl(&["daemon-reload"])?;
     start()?;
+    if let Err(e) = crate::gnome::install_user() {
+        warn!("GNOME extension for the lock screen not installed: {e:#}");
+    }
     info!(unit = %unit_path.display(), "user service installed");
     Ok(generated)
 }
@@ -103,6 +106,9 @@ pub fn uninstall() -> Result<()> {
         }
     }
     let _ = systemctl(&["daemon-reload"]);
+    if let Err(e) = crate::gnome::uninstall_user() {
+        warn!("GNOME extension for the lock screen not removed: {e:#}");
+    }
     info!("user service removed");
     Ok(())
 }

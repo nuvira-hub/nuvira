@@ -40,6 +40,10 @@ pub fn install(user_data: &Path, server: &str, server_key: Option<&str>) -> Resu
     if let Err(e) = crate::signin::install(&exe, user_data, server, server_key) {
         errors.push(format!("sign-in screen: {e:#}"));
     }
+    #[cfg(target_os = "linux")]
+    if let Err(e) = crate::gnome::install_system() {
+        errors.push(format!("GNOME sign-in screen: {e:#}"));
+    }
     #[cfg(target_os = "macos")]
     if let Err(e) = crate::hid::install(&exe) {
         errors.push(format!("lock screen keyboard: {e:#}"));
@@ -57,6 +61,10 @@ pub fn uninstall() -> Result<()> {
         && let Err(e) = cups::uninstall()
     {
         errors.push(format!("printer: {e:#}"));
+    }
+    #[cfg(target_os = "linux")]
+    if let Err(e) = crate::gnome::uninstall_system() {
+        errors.push(format!("GNOME sign-in screen: {e:#}"));
     }
     // The keyboard first: the sign-in screen's removal deletes the data folder.
     #[cfg(target_os = "macos")]

@@ -91,7 +91,32 @@ fn program_for_root(exe: &Path) -> Result<PathBuf> {
     std::fs::copy(exe, &partial).with_context(|| exe.display().to_string())?;
     std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755))?;
     std::fs::rename(&partial, copy)?;
+    label_as_program(copy);
     Ok(copy.to_path_buf())
+}
+
+/// SELinux (Fedora): a file under /usr/local/lib is a library (`lib_t`), and
+/// systemd would run it as `init_t`, which may not talk to the greeter's D-Bus
+/// (the screen at GDM). As a program (`bin_t`) it runs as
+/// `unconfined_service_t`, as the packages' /usr/bin/nuvira does.
+fn label_as_program(path: &Path) {
+    if !Path::new("/sys/fs/selinux/enforce").exists() {
+        return;
+    }
+    // Also kept by a relabelling of the whole system, when semanage is there.
+    let rule = Command::new("semanage")
+        .args(["fcontext", "-a", "-t", "bin_t"])
+        .arg(path)
+        .output()
+        .is_ok_and(|o| o.status.success() || String::from_utf8_lossy(&o.stderr).contains("already defined"));
+    let labelled = if rule {
+        Command::new("restorecon").arg(path).status().is_ok_and(|s| s.success())
+    } else {
+        Command::new("chcon").args(["-t", "bin_t"]).arg(path).status().is_ok_and(|s| s.success())
+    };
+    if !labelled {
+        warn!(path = %path.display(), "SELinux label bin_t not set: the screen at GDM may be refused");
+    }
 }
 
 fn systemctl(args: &[&str]) -> Result<()> {
@@ -166,6 +191,9 @@ pub fn uninstall() -> Result<()> {
             }
             _ => {}
         }
+    }
+    if Path::new("/sys/fs/selinux/enforce").exists() {
+        let _ = Command::new("semanage").args(["fcontext", "-d", PROGRAM_COPY]).output();
     }
     info!("sign-in screen agent removed");
     Ok(())
