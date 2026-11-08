@@ -303,7 +303,7 @@
   "viewer.waiting_restart": "In attesa che {agent} si riavvii…",
   "viewer.title_restarting": "NuviraHub — in attesa del riavvio di {agent}…",
   "viewer.screen_locked": "Lo schermo del computer remoto è bloccato: macOS non ne lascia vedere l'immagine. Digita la password e premi Invio per sbloccarlo.",
-  "viewer.screen_locked_no_input": "Lo schermo del computer remoto è bloccato e il suo desktop non consente il controllo remoto nel frattempo (GNOME): qualcuno deve sbloccarlo al computer.",
+  "viewer.screen_locked_no_input": "Lo schermo del computer remoto è bloccato: il sistema non lascia vedere né usare la schermata di blocco a nessun programma di controllo remoto. Qualcuno deve sbloccarlo al computer; un Mac si può anche riavviare da qui e accedere dalla sua schermata di login.",
   "viewer.screen_unlocked": "Lo schermo del computer remoto è sbloccato",
   "viewer.restart_back": "Il computer remoto si è riavviato: di nuovo collegato",
   "viewer.restart_not_back": "{agent} non è tornato raggiungibile dopo il riavvio: {reason}",

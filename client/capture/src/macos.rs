@@ -14,8 +14,11 @@
 //! lists no display and stops a running stream a few seconds after the lock;
 //! the older CoreGraphics captures are black, also as root). While the screen is
 //! locked the capture gives a dark placeholder image once a second, so the session
-//! goes on (the input still reaches the password field), and opens the stream again
-//! once it is unlocked. The viewer is told by the agent ([`screen_locked`]).
+//! goes on, and opens the stream again once it is unlocked. The viewer is told by
+//! the agent ([`screen_locked`]). The lock screen takes no synthetic input either
+//! (tried on macOS 27: CGEventPost with every source and tap, CGPostKeyboardEvent,
+//! as the user and as root, with the pre-login section): someone unlocks it at the
+//! Mac, or the Mac is restarted and signed in at the sign-in screen.
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Condvar, Mutex};

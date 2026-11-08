@@ -19,7 +19,7 @@
 //! The lock screen of a signed-in person is another matter: it belongs to their
 //! session, and no capture program sees it (see `nuvira_capture`).
 
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -138,9 +138,29 @@ fn ensure_root() -> Result<()> {
     Ok(())
 }
 
-/// Someone is signed in on the console (its owner is not root).
+/// Someone is signed in on the console: SystemConfiguration's console user is a
+/// person, not `loginwindow`. (The owner of `/dev/console` stayed root after a
+/// sign-in at this screen.)
 fn someone_signed_in() -> bool {
-    std::fs::metadata("/dev/console").is_ok_and(|m| m.uid() != 0)
+    use std::ffi::c_void;
+    #[link(name = "SystemConfiguration", kind = "framework")]
+    unsafe extern "C" {
+        fn SCDynamicStoreCopyConsoleUser(store: *const c_void, uid: *mut u32, gid: *mut u32) -> *const c_void;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFRelease(cf: *const c_void);
+    }
+    let mut uid = 0u32;
+    // SAFETY: NULL store is allowed; the name, when returned, is owned (+1).
+    let name = unsafe { SCDynamicStoreCopyConsoleUser(std::ptr::null(), &mut uid, std::ptr::null_mut()) };
+    if name.is_null() {
+        return false;
+    }
+    // SAFETY: released once.
+    unsafe { CFRelease(name) };
+    // At the sign-in screen the console user is "loginwindow", uid 0.
+    uid != 0
 }
 
 /// The permanent password's hash, from root's copy of `service.env`.

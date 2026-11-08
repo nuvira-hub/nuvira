@@ -303,7 +303,7 @@
   "viewer.waiting_restart": "En attente du redémarrage de {agent}…",
   "viewer.title_restarting": "NuviraHub — redémarrage de {agent}…",
   "viewer.screen_locked": "L'écran de l'ordinateur distant est verrouillé : macOS ne laisse pas voir son image. Tapez le mot de passe et appuyez sur Entrée pour le déverrouiller.",
-  "viewer.screen_locked_no_input": "L'écran de l'ordinateur distant est verrouillé et son bureau n'autorise pas le contrôle à distance pendant ce temps (GNOME) : quelqu'un doit le déverrouiller sur place.",
+  "viewer.screen_locked_no_input": "L'écran de l'ordinateur distant est verrouillé : le système ne laisse aucun programme de contrôle à distance voir ni utiliser son écran de verrouillage. Quelqu'un doit le déverrouiller sur place ; un Mac peut aussi être redémarré d'ici puis ouvert depuis son écran de connexion.",
   "viewer.screen_unlocked": "L'écran de l'ordinateur distant est déverrouillé",
   "viewer.restart_back": "L'ordinateur distant a redémarré : à nouveau connecté",
   "viewer.restart_not_back": "{agent} n'est pas revenu après le redémarrage : {reason}",
