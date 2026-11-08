@@ -2,7 +2,7 @@
 
 [← Index](README.md)
 
-Since 0.13.0 the app runs on Linux and controls other computers: ID, address book, connecting, the session window with its toolbar. Since 0.14.0 a Linux computer with a **Wayland** session (the default on Ubuntu and Fedora) can also be controlled: screen, mouse, keyboard, clipboard, files. Since 0.15.0 an **X11** session can be controlled too (Linux Mint, Xfce). Unattended access works as a systemd user service (since 0.16.0); since 0.17.0 also at the sign-in screen of X11 display managers, with the NuviraHub printer and automatic updates ([19-updates.md](19-updates.md)).
+Since 0.13.0 the app runs on Linux and controls other computers: ID, address book, connecting, the session window with its toolbar. Since 0.14.0 a Linux computer with a **Wayland** session (the default on Ubuntu and Fedora) can also be controlled: screen, mouse, keyboard, clipboard, files. Since 0.15.0 an **X11** session can be controlled too (Linux Mint, Xfce). Unattended access works as a systemd user service (since 0.16.0); since 0.17.0 also at the sign-in screen of X11 display managers, with the NuviraHub printer and automatic updates ([19-updates.md](19-updates.md)); since 0.19.0 also at GNOME's lock screen and GDM's sign-in screen on Wayland.
 
 ## Packages
 

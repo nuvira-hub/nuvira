@@ -28,6 +28,8 @@ In the NuviraHub app, enter this server's address in Settings → Server. A sing
   <PostArgs/>
   <Requires>Forward port 21116 UDP (and TCP for the WebSocket fallback) from the router to Unraid, to reach the server from outside your network. Back up the Data folder: it holds the server's identity, which the apps pin.</Requires>
   <Changes>
+### 0.19.0 (2026-11-08)
+- Apps: on GNOME (Ubuntu, Fedora) the lock screen and the GDM sign-in screen can be controlled with unattended access. The server is unchanged. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.18.0 (2026-11-08)
 - Apps: a locked Mac is unlocked from the session (the technician types its password); the app connects again by itself when it started before the network. The server is unchanged. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.17.0 (2026-11-08)
