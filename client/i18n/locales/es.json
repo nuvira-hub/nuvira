@@ -401,6 +401,7 @@
   "install.removed": "Acceso desatendido quitado: este ordenador solo es accesible con la app abierta, con la contraseña temporal.",
   "install.done_password": "NuviraHub está instalado. Contraseña permanente: {password} (anótala: solo se muestra ahora).",
   "install.no_printer_cancelled": "La impresora NuviraHub (impresión remota) y el acceso a la pantalla de inicio de sesión no se instalaron: no se introdujo la contraseña de administrador. Vuelve a instalar el acceso desatendido para añadirlos.",
+  "install.hid_allow_mac": "Un paso más para la pantalla de bloqueo: en Ajustes del Sistema → General → Ítems de inicio y extensiones → Extensiones de controlador, activa Karabiner-DriverKit-VirtualHIDDevice (la página está abierta). Permite al técnico escribir la contraseña cuando este Mac está bloqueado.",
   "install.no_printer": "Una parte del acceso desatendido no se instaló (impresora, pantalla de inicio de sesión): {e}",
   "install.printer_remove_reason": "NuviraHub quita su impresora y su acceso a la pantalla de inicio de sesión, instalados con el acceso desatendido. Introduce tu contraseña para permitirlo.",
   "install.printer_reason": "NuviraHub instala su impresora (lo que se imprime en ella durante una sesión sale por la impresora de quien controla este equipo) y su acceso a la pantalla de inicio de sesión (este equipo se alcanza también cuando nadie ha iniciado sesión). Introduce tu contraseña para permitirlo.",

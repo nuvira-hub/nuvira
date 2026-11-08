@@ -401,6 +401,7 @@
   "install.removed": "Unbeaufsichtigter Zugriff entfernt: Dieser Computer ist nur bei geöffneter App erreichbar, mit dem temporären Passwort.",
   "install.done_password": "NuviraHub ist installiert. Dauerhaftes Passwort: {password} (notieren Sie es: Es wird nur jetzt angezeigt).",
   "install.no_printer_cancelled": "Der NuviraHub-Drucker (Remote-Druck) und der Zugang am Anmeldebildschirm wurden nicht installiert: Das Administratorpasswort wurde nicht eingegeben. Installieren Sie den unbeaufsichtigten Zugriff erneut, um sie hinzuzufügen.",
+  "install.hid_allow_mac": "Noch ein Schritt für den Sperrbildschirm: In Systemeinstellungen → Allgemein → Anmeldeobjekte & Erweiterungen → Treibererweiterungen Karabiner-DriverKit-VirtualHIDDevice einschalten (die Seite ist geöffnet). Damit kann der Techniker das Passwort eingeben, wenn dieser Mac gesperrt ist.",
   "install.no_printer": "Ein Teil des unbeaufsichtigten Zugriffs wurde nicht installiert (Drucker, Anmeldebildschirm): {e}",
   "install.printer_remove_reason": "NuviraHub entfernt seinen Drucker und seinen Zugang am Anmeldebildschirm, die mit dem unbeaufsichtigten Zugriff installiert wurden. Geben Sie Ihr Passwort ein, um es zu erlauben.",
   "install.printer_reason": "NuviraHub installiert seinen Drucker (was während einer Sitzung darauf gedruckt wird, kommt aus dem Drucker der Person, die diesen Computer steuert) und seinen Zugang am Anmeldebildschirm (dieser Computer ist auch erreichbar, wenn niemand angemeldet ist). Geben Sie Ihr Passwort ein, um es zu erlauben.",

@@ -133,11 +133,12 @@ pub fn screen_locked() -> bool {
     false
 }
 
-/// While [`screen_locked`], the keyboard and mouse still reach the lock screen.
-/// Nowhere so far: macOS 27's lock screen drops every synthetic event (any API,
-/// also as root or as a pre-login app), GNOME closes the input with the screen.
+/// While [`screen_locked`], the keyboard still reaches the lock screen: on macOS
+/// through the virtual HID keyboard of `nuvira service hid-run` (the lock screen
+/// drops every synthetic event), when it is installed. GNOME closes the input with
+/// the screen.
 pub fn lock_screen_takes_input() -> bool {
-    false
+    cfg!(target_os = "macos") && std::path::Path::new("/var/run/nuvira-hid.sock").exists()
 }
 
 #[cfg(target_os = "linux")]

@@ -401,6 +401,7 @@
   "install.removed": "Accesso non presidiato rimosso: questo computer è raggiungibile solo con l'app aperta, con la password temporanea.",
   "install.done_password": "NuviraHub è installato. Password permanente: {password} (annotala: viene mostrata solo ora).",
   "install.no_printer_cancelled": "La stampante NuviraHub (stampa remota) e l'accesso alla schermata di login non sono stati installati: la password di amministratore non è stata data. Installa di nuovo l'accesso non presidiato per aggiungerli.",
+  "install.hid_allow_mac": "Ancora un passo per la schermata di blocco: in Impostazioni di Sistema → Generali → Elementi di login ed estensioni → Estensioni del driver, attiva Karabiner-DriverKit-VirtualHIDDevice (la pagina è aperta). Permette al tecnico di digitare la password quando questo Mac è bloccato.",
   "install.no_printer": "Una parte dell'accesso non presidiato non è stata installata (stampante, schermata di login): {e}",
   "install.printer_remove_reason": "NuviraHub rimuove la sua stampante e l'accesso alla schermata di login, installati con l'accesso non presidiato. Inserisci la password per consentirlo.",
   "install.printer_reason": "NuviraHub installa la sua stampante (quello che si stampa su di essa durante una sessione esce dalla stampante di chi controlla questo computer) e l'accesso alla schermata di login (questo computer si raggiunge anche quando nessuno ha fatto l'accesso). Inserisci la password per consentirlo.",

@@ -19,6 +19,10 @@ pub mod cups;
 /// Root's updates of the .deb and .rpm packages.
 #[cfg(target_os = "linux")]
 mod package_update;
+/// Typing into the macOS lock screen through a virtual HID keyboard.
+#[cfg(target_os = "macos")]
+#[path = "hid_mac.rs"]
+pub mod hid;
 /// The sign-in screen's agent (macOS LoginWindow, Linux greeter).
 #[cfg(target_os = "macos")]
 #[path = "signin_mac.rs"]
@@ -310,6 +314,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         Some("printer") => cups::install().map(|done| println!("{done}")),
         // As root, through the administrator prompt of the app: printer and sign-in screen.
         Some("system") => system::command(&args),
+        // launchd's daemon of the virtual HID keyboard (macOS lock screen).
+        #[cfg(target_os = "macos")]
+        Some("hid-run") => hid::run(),
         // launchd at the sign-in screen, systemd on Linux.
         Some("signin-run") => signin::run(),
         // Root's nuvira-update.timer of the packages.

@@ -40,6 +40,10 @@ pub fn install(user_data: &Path, server: &str, server_key: Option<&str>) -> Resu
     if let Err(e) = crate::signin::install(&exe, user_data, server, server_key) {
         errors.push(format!("sign-in screen: {e:#}"));
     }
+    #[cfg(target_os = "macos")]
+    if let Err(e) = crate::hid::install(&exe) {
+        errors.push(format!("lock screen keyboard: {e:#}"));
+    }
     if !errors.is_empty() {
         bail!("{}", errors.join("; "));
     }
@@ -56,6 +60,10 @@ pub fn uninstall() -> Result<()> {
     }
     if let Err(e) = crate::signin::uninstall() {
         errors.push(format!("sign-in screen: {e:#}"));
+    }
+    #[cfg(target_os = "macos")]
+    if let Err(e) = crate::hid::uninstall() {
+        errors.push(format!("lock screen keyboard: {e:#}"));
     }
     if !errors.is_empty() {
         bail!("{}", errors.join("; "));

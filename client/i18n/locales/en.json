@@ -401,6 +401,7 @@
   "install.removed": "Unattended access removed: this computer can be reached only while the app is open, with the temporary password.",
   "install.done_password": "NuviraHub is installed. Permanent password: {password} (write it down: it is shown only now).",
   "install.no_printer_cancelled": "The NuviraHub printer (remote printing) and the access at the sign-in screen were not installed: the administrator password was not given. Install unattended access again to add them.",
+  "install.hid_allow_mac": "One more step for the lock screen: in System Settings → General → Login Items & Extensions → Driver Extensions, turn on Karabiner-DriverKit-VirtualHIDDevice (the page is open). It lets the technician type the password when this Mac is locked.",
   "install.no_printer": "Part of unattended access was not installed (printer, sign-in screen): {e}",
   "install.printer_remove_reason": "NuviraHub removes its printer and its access at the sign-in screen, installed with unattended access. Enter your password to allow it.",
   "install.printer_reason": "NuviraHub installs its printer (what is printed on it during a session comes out of the printer of whoever controls this computer) and its access at the sign-in screen (this computer can be reached also when nobody is signed in). Enter your password to allow it.",

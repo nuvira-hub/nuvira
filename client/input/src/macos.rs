@@ -122,6 +122,10 @@ impl QuartzInjector {
     }
 
     fn key(&mut self, code: &str, down: bool) {
+        // The lock screen takes only a HID device's keys (see lockhid_mac.rs).
+        if crate::lockhid::screen_locked() && crate::lockhid::key(code, down) {
+            return;
+        }
         let Some(keycode) = mac_key_code(code) else {
             debug!("key without a macOS code: {code}");
             return;
@@ -346,6 +350,7 @@ impl InputInjector for QuartzInjector {
     }
 
     fn release_all(&mut self) {
+        crate::lockhid::release_all();
         // The other keys first, then the modifiers, each with the flags still held.
         let mut keys: Vec<u16> = self.keys.iter().copied().collect();
         keys.sort_by_key(|k| modifier_flag(*k).is_some());

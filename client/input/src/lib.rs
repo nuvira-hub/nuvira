@@ -12,6 +12,10 @@ pub mod privacy;
 mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
+/// Keys typed into the macOS lock screen by a virtual HID keyboard.
+#[cfg(target_os = "macos")]
+#[path = "lockhid_mac.rs"]
+pub mod lockhid;
 #[cfg(target_os = "linux")]
 mod x11;
 #[cfg(windows)]

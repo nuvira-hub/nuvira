@@ -1422,6 +1422,14 @@ fn install_system(server: &str, server_key: Option<&str>) -> Option<String> {
     match system::run_as_admin(false, &t("install.printer_reason"), server, server_key) {
         Ok(true) => {
             info!("system part of unattended access installed");
+            // macOS: the virtual keyboard for the lock screen is a driver extension,
+            // which the person allows once in System Settings (the page is opened).
+            #[cfg(target_os = "macos")]
+            match nuvira_service::hid::activate() {
+                Ok(true) => {}
+                Ok(false) => return Some(t("install.hid_allow_mac")),
+                Err(e) => warn!("lock screen keyboard not activated: {e:#}"),
+            }
             None
         }
         Ok(false) => Some(t("install.no_printer_cancelled")),
