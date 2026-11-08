@@ -4,6 +4,14 @@
 //! token received from the server (RelayBind) and then runs QUIC on it. TLS is
 //! end-to-end between the devices: each presents the certificate signed with its
 //! own key and checks that the other's uses the key announced by the server.
+//!
+//! IPv6: the session socket is dual-stack where the system allows it (`[::]:0`
+//! with `IPV6_V6ONLY` off), so the same socket reaches IPv4 addresses too (as
+//! IPv4-mapped ones). Each side announces a local address of both families and,
+//! when the server's name has an address of the other family as well, announces
+//! itself to the relay on that one too: the other side then learns this side's
+//! public address of both families and tries them all. IPv6 has no NAT, so the
+//! direct path succeeds there much more often; the relay stays the fallback.
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
@@ -38,11 +46,70 @@ pub struct Route {
     pub token: [u8; 16],
     pub peer_public_key: PublicKey,
     pub role: Role,
+    /// The relay's address of the other IP family, when the server's name has one
+    /// ([`crate::other_family`]): this side announces itself there too, so the
+    /// other side learns its public address of that family.
+    pub relay_alt: Option<SocketAddr>,
+}
+
+/// The same address in its plain form: IPv4-mapped IPv6 (`::ffff:a.b.c.d`, as a
+/// dual-stack socket reports IPv4 peers) becomes IPv4.
+pub fn canonical(addr: SocketAddr) -> SocketAddr {
+    match addr {
+        SocketAddr::V6(a) => match a.ip().to_ipv4_mapped() {
+            Some(ip) => SocketAddr::new(ip.into(), a.port()),
+            None => addr,
+        },
+        v4 => v4,
+    }
+}
+
+/// `addr` as a socket of this family takes it: an IPv4 address becomes
+/// IPv4-mapped on an IPv6 (dual-stack) socket.
+fn for_socket(addr: SocketAddr, ipv6_socket: bool) -> SocketAddr {
+    match addr {
+        SocketAddr::V4(a) if ipv6_socket => SocketAddr::new(a.ip().to_ipv6_mapped().into(), a.port()),
+        other => other,
+    }
+}
+
+/// Whether this socket can send to `addr` (an IPv4-only socket cannot reach IPv6).
+fn reachable(addr: SocketAddr, ipv6_socket: bool) -> bool {
+    ipv6_socket || addr.is_ipv4()
+}
+
+/// The session's UDP socket: dual-stack if the system has IPv6, otherwise of the
+/// relay's family (IPv6 off, or a system without dual-stack sockets).
+fn session_udp(relay: SocketAddr) -> std::io::Result<UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let dual = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).and_then(|s| {
+        s.set_only_v6(false)?;
+        s.bind(&SocketAddr::from(([0u16; 8], 0)).into())?;
+        Ok(s)
+    });
+    match dual {
+        Ok(s) => Ok(s.into()),
+        Err(e) => {
+            debug!("no dual-stack socket ({e}): only the relay's family");
+            UdpSocket::bind(if relay.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" })
+        }
+    }
 }
 
 const RELAY_MAGIC: [u8; 4] = [0x00, b'N', b'X', b'R'];
 const RELAY_BIND: u8 = 0x01;
 const RELAY_BOUND: u8 = 0x02;
+/// Set on the role of a bind sent to the relay's address of the other family: the
+/// relay only notes the address it came from as one more of this side's
+/// candidates (servers older than 0.21 ignore it).
+const ROLE_ANNOUNCE: u8 = 0x80;
+
+/// The bind that only announces this side's address (see [`ROLE_ANNOUNCE`]).
+fn announce_message(route: &Route) -> Vec<u8> {
+    let mut msg = bind_message(route, &[]);
+    msg[5 + 16] |= ROLE_ANNOUNCE;
+    msg
+}
 
 /// Binds `socket` to the relay and waits until the other side is bound too.
 /// Returns the other side's address as the relay sees it (for the direct path).
@@ -52,6 +119,8 @@ fn bind_message(route: &Route, locals: &[SocketAddr]) -> Vec<u8> {
     bind.push(RELAY_BIND);
     bind.extend_from_slice(&route.token);
     bind.push(route.role as u8);
+    // At most 4 (the relay's limit).
+    let locals = &locals[..locals.len().min(4)];
     bind.push(locals.len() as u8);
     for addr in locals {
         push_addr(&mut bind, *addr);
@@ -84,6 +153,14 @@ async fn bind_relay_ws(socket: &crate::ws::WsSocket, route: &Route) -> Result<()
 
 fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Result<Candidates> {
     let bind = bind_message(route, locals);
+    let ipv6_socket = socket.local_addr()?.is_ipv6();
+    let relay = for_socket(route.relay, ipv6_socket);
+    // To the other family's address of the relay, before every bind: the announce
+    // must be there when the other side gets its answer.
+    let announce = route
+        .relay_alt
+        .filter(|a| reachable(*a, ipv6_socket))
+        .map(|a| (for_socket(a, ipv6_socket), announce_message(route)));
 
     socket.set_read_timeout(Some(Duration::from_millis(250)))?;
     // As large as a QUIC datagram: if the other side has already started, its packets
@@ -93,10 +170,14 @@ fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Resul
     let mut acked = false;
     // ~15 s: the other side may arrive a few seconds later.
     for _ in 0..60 {
-        socket.send_to(&bind, route.relay)?;
+        if let Some((to, msg)) = &announce {
+            // Errors ignored: the other family may have no route at all.
+            let _ = socket.send_to(msg, *to);
+        }
+        socket.send_to(&bind, relay)?;
         loop {
             match socket.recv_from(&mut buf) {
-                Ok((n, from)) if from == route.relay => match bound_state(&buf[..n], &route.token) {
+                Ok((n, from)) if canonical(from) == route.relay => match bound_state(&buf[..n], &route.token) {
                     Some(true) => {
                         socket.set_read_timeout(None)?;
                         return Ok(parse_candidates(&buf[22..n]));
@@ -189,23 +270,57 @@ fn parse_candidates(b: &[u8]) -> Candidates {
     Candidates { reflexive: Some(reflexive), locals }
 }
 
-/// Local address this PC uses to reach the relay (the main network interface),
-/// with the port of the session socket.
-fn local_candidates(relay: SocketAddr, port: u16) -> Vec<SocketAddr> {
-    let probe_bind: SocketAddr =
-        if relay.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse().expect("address");
-    // connect on UDP sends nothing: it only asks the system which interface it would use.
-    let ip = UdpSocket::bind(probe_bind).and_then(|s| s.connect(relay).and_then(|()| s.local_addr()));
-    match ip {
-        Ok(addr) if !addr.ip().is_unspecified() => vec![SocketAddr::new(addr.ip(), port)],
-        _ => Vec::new(),
+/// Local addresses this PC uses to reach the relay or the Internet (the main
+/// network interface), one per family the socket has, with the session socket's
+/// port. On IPv6 the local address is also the public one (no NAT).
+fn local_candidates(relay: SocketAddr, relay_alt: Option<SocketAddr>, port: u16, ipv6_socket: bool) -> Vec<SocketAddr> {
+    // Towards the relay where it has an address of that family, otherwise a public
+    // one (connect on UDP sends nothing: it only asks the system which interface
+    // it would use).
+    let towards = |v6: bool| {
+        [Some(relay), relay_alt].into_iter().flatten().find(|a| a.is_ipv6() == v6).unwrap_or_else(|| {
+            if v6 { "[2001:4860:4860::8888]:53" } else { "8.8.8.8:53" }.parse().expect("address")
+        })
+    };
+    let probe = |target: SocketAddr| {
+        let bind = if target.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+        UdpSocket::bind(bind).and_then(|s| s.connect(target).and_then(|()| s.local_addr())).ok()
+    };
+    let mut out = Vec::new();
+    if let Some(a) = probe(towards(false))
+        && !a.ip().is_unspecified()
+    {
+        out.push(SocketAddr::new(a.ip(), port));
     }
+    if ipv6_socket
+        && let Some(a) = probe(towards(true))
+        && let std::net::IpAddr::V6(ip) = a.ip()
+        && usable_ipv6(ip, relay)
+    {
+        out.push(SocketAddr::new(a.ip(), port));
+    }
+    out
+}
+
+/// An IPv6 address worth giving to the other side: not unspecified, not
+/// link-local (`fe80::/10`, valid only on one link and needing a scope), not
+/// IPv4-mapped, and loopback only towards a relay on loopback (tests).
+fn usable_ipv6(ip: std::net::Ipv6Addr, relay: SocketAddr) -> bool {
+    !ip.is_unspecified()
+        && (ip.segments()[0] & 0xffc0) != 0xfe80
+        && ip.to_ipv4_mapped().is_none()
+        && (!ip.is_loopback() || relay.ip().is_loopback())
 }
 
 /// Opening packets towards the other side: they open the NAT mapping and the local
 /// firewall state, so the other side's direct QUIC packets can get in.
 /// QUIC drops them (first byte without the 0x40 bit).
 fn punch(socket: &UdpSocket, peer: SocketAddr, token: &[u8; 16]) {
+    let Ok(local) = socket.local_addr() else { return };
+    if !reachable(peer, local.is_ipv6()) {
+        return;
+    }
+    let peer = for_socket(peer, local.is_ipv6());
     let mut packet = vec![0x00, b'N', b'X', b'P'];
     packet.extend_from_slice(token);
     for _ in 0..3 {
@@ -242,14 +357,21 @@ async fn session_endpoint(
 }
 
 async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
-    let bind: SocketAddr = if route.relay.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
-    let socket = UdpSocket::bind(bind)?;
+    let socket = session_udp(route.relay)?;
     let route = route.clone();
     tokio::task::spawn_blocking(move || {
-        let locals = local_candidates(route.relay, socket.local_addr()?.port());
+        let local = socket.local_addr()?;
+        let locals = local_candidates(route.relay, route.relay_alt, local.port(), local.is_ipv6());
+        debug!(?locals, "this side's addresses");
         let candidates = bind_relay(&socket, &route, &locals)?;
         debug!(?candidates, "addresses of the other side");
-        let peers: Vec<SocketAddr> = candidates.all().into_iter().filter(|a| *a != route.relay).collect();
+        let relays = [Some(route.relay), route.relay_alt];
+        let peers: Vec<SocketAddr> = candidates
+            .all()
+            .into_iter()
+            .map(canonical)
+            .filter(|a| !relays.contains(&Some(*a)) && reachable(*a, local.is_ipv6()))
+            .collect();
         for peer in &peers {
             punch(&socket, *peer, &route.token);
         }
@@ -358,7 +480,7 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
         }
         None => {}
     }
-    debug!(?path, remote = %conn.remote_address(), "connected");
+    debug!(?path, remote = %canonical(conn.remote_address()), "connected");
     Ok((conn, path))
 }
 
@@ -501,7 +623,61 @@ mod tests {
 
     #[test]
     fn finds_local_address() {
-        let locals = local_candidates("127.0.0.1:9".parse().unwrap(), 1234);
-        assert_eq!(locals, vec!["127.0.0.1:1234".parse().unwrap()]);
+        let locals = local_candidates("127.0.0.1:9".parse().unwrap(), None, 1234, true);
+        assert_eq!(locals.first(), Some(&"127.0.0.1:1234".parse().unwrap()));
+        // At most one of each family; an IPv6 one only if global or ULA.
+        assert!(locals.len() <= 2);
+        assert!(locals.iter().skip(1).all(|a| a.is_ipv6() && a.port() == 1234));
+        // IPv4-only socket: no IPv6 address.
+        assert!(local_candidates("127.0.0.1:9".parse().unwrap(), None, 1, false).iter().all(|a| a.is_ipv4()));
+    }
+
+    #[test]
+    fn ipv6_candidates_filtered() {
+        let relay: SocketAddr = "[2001:db8::1]:21116".parse().unwrap();
+        let ok = |s: &str| usable_ipv6(s.parse().unwrap(), relay);
+        assert!(ok("2001:db8::5"));
+        assert!(ok("fd12:3456::1"), "ULA: same network");
+        assert!(!ok("fe80::1"));
+        assert!(!ok("febf::1"));
+        assert!(!ok("::"));
+        assert!(!ok("::1"));
+        assert!(!ok("::ffff:192.168.1.2"));
+        assert!(usable_ipv6("::1".parse().unwrap(), "[::1]:9".parse().unwrap()));
+    }
+
+    #[test]
+    fn mapped_addresses() {
+        let v4: SocketAddr = "192.0.2.7:5000".parse().unwrap();
+        let mapped: SocketAddr = "[::ffff:192.0.2.7]:5000".parse().unwrap();
+        let v6: SocketAddr = "[2001:db8::7]:5000".parse().unwrap();
+        assert_eq!(canonical(mapped), v4);
+        assert_eq!(canonical(v4), v4);
+        assert_eq!(canonical(v6), v6);
+        assert_eq!(for_socket(v4, true), mapped);
+        assert_eq!(for_socket(v4, false), v4);
+        assert_eq!(for_socket(v6, true), v6);
+        assert!(!reachable(v6, false));
+        assert!(reachable(v4, true));
+    }
+
+    #[test]
+    fn announce_sets_the_role_flag() {
+        let route = Route {
+            relay: "192.0.2.1:21116".parse().unwrap(),
+            transport: crate::ServerTransport::Udp,
+            token: [7; 16],
+            peer_public_key: [0; 32],
+            role: Role::Agent,
+            relay_alt: None,
+        };
+        let bind = bind_message(&route, &[]);
+        let announce = announce_message(&route);
+        assert_eq!(bind[21], 2);
+        assert_eq!(announce[21], 0x82);
+        assert_eq!(announce[..21], bind[..21]);
+        // No more than the relay accepts.
+        let many: Vec<SocketAddr> = (1..=6).map(|i| SocketAddr::from(([10, 0, 0, i], 1))).collect();
+        assert_eq!(bind_message(&route, &many)[22], 4);
     }
 }

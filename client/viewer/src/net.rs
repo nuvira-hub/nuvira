@@ -407,6 +407,10 @@ async fn open_connection(
                 token: route.relay_token.as_slice().try_into().context("invalid relay token")?,
                 peer_public_key: route.peer_public_key.as_slice().try_into().context("invalid agent key")?,
                 role: p2p::Role::Viewer,
+                relay_alt: match sig.transport {
+                    nuvira_transport::ServerTransport::Udp => nuvira_transport::other_family(&server_name, server).await,
+                    nuvira_transport::ServerTransport::WebSocket(_) => None,
+                },
             };
             // NuviraHub Pro: the recordings of this session go to the server too.
             let upload = sig.features.iter().any(|f| f == "pro.recording").then(|| crate::upload::Target {
@@ -418,7 +422,9 @@ async fn open_connection(
                 session: session_id.clone(),
             });
             let (conn, path) = p2p::viewer_connect(&identity, &route).await?;
-            info!(?path, remote = %conn.remote_address(), "path");
+            let remote = p2p::canonical(conn.remote_address());
+            let family = if remote.is_ipv6() { "IPv6" } else { "IPv4" };
+            info!(?path, %remote, family, "path");
             Ok((conn, path == p2p::Path::Direct, upload))
         }
     }

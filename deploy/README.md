@@ -30,6 +30,19 @@ No public address has to be configured: clients reach the relay at the same addr
 
 See [docker-compose.yml](docker-compose.yml).
 
+## IPv6
+
+The server and its relay work over IPv4 and IPv6 alike, and the devices use both: with a name that has both an A and an AAAA record, each device also announces itself to the relay on its second family (server 0.21 or later), so the other side learns its public addresses of both and tries them all. Over IPv6 there is no NAT, and the direct path succeeds much more often (mobile networks and CGNAT, which over IPv4 end up on the relay).
+
+The server has to see the devices' real addresses, which a Docker bridge network does not give over IPv6 unless IPv6 is enabled in Docker: otherwise `docker-proxy` hands the packets to the container from the bridge's own address, so the relay gives the other side a useless address and the per-address limits count every IPv6 device as one. Two ways:
+
+- **Host network** (simplest, what the public server uses): `network_mode: host` in compose and no `ports:` (on Unraid: Network Type "Host"). The server listens on port 21116 of the host, IPv4 and IPv6; open it in the host's firewall for both families.
+- **IPv6 in Docker**: in `/etc/docker/daemon.json` `{"ipv6": true, "ip6tables": true}` (Docker 27 and later have `ip6tables` on by default), restart Docker, and give the container a network with IPv6 (`enable_ipv6: true` on the compose network). Docker then forwards IPv6 with the source address kept, as it does for IPv4. On Unraid: Settings → Docker → "IPv4 + IPv6" for the network type, with the Docker service stopped.
+
+Add the AAAA record only once the server answers over IPv6 (`nc -u -6 HOST 21116` from a network with IPv6, or a device with `--server [IPv6 address]`): a device that resolves the AAAA record first may otherwise reach nothing there. Devices on an IPv4-only network keep using IPv4.
+
+The router forwards ports only for IPv4 (NAT); over IPv6 the server's address is public, but the router's firewall must let UDP and TCP 21116 in towards it (often "Allow incoming IPv6", "Exposed host" or a "Port sharing" rule for the server's IPv6 address).
+
 ## Unraid
 
 1. Copy [unraid/nuvira-server.xml](unraid/nuvira-server.xml) to the flash drive as `/boot/config/plugins/dockerMan/templates-user/my-nuvira-server.xml`.

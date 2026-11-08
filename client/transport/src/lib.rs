@@ -112,6 +112,24 @@ pub fn resolve_addr(host: &str, default_port: u16) -> Result<SocketAddr> {
     addrs.next().with_context(|| format!("invalid address: {host}"))
 }
 
+/// The address of `host` of the other IP family than `of` (IPv6 for an IPv4 one
+/// and the other way round), with the same port: the relay's second address
+/// ([`p2p::Route::relay_alt`]). `None` for an address given as an IP, a name
+/// without one, or a name server slower than 2 s.
+pub async fn other_family(host: &str, of: SocketAddr) -> Option<SocketAddr> {
+    let host = host.trim();
+    if host.parse::<SocketAddr>().is_ok() || host.parse::<std::net::IpAddr>().is_ok() {
+        return None;
+    }
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if port.parse::<u16>().is_ok() => name.to_string(),
+        _ => host.to_string(),
+    };
+    let lookup = tokio::net::lookup_host((name, of.port()));
+    let addrs = tokio::time::timeout(Duration::from_secs(2), lookup).await.ok()?.ok()?;
+    addrs.map(p2p::canonical).find(|a| a.is_ipv6() != of.is_ipv6())
+}
+
 pub fn fingerprint_hex(fp: &Fingerprint) -> String {
     fp.iter().map(|b| format!("{b:02x}")).collect()
 }

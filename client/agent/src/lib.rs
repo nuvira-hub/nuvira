@@ -337,7 +337,7 @@ pub async fn serve_direct(
                 continue;
             }
         };
-        let peer = conn.remote_address();
+        let peer = nuvira_transport::p2p::canonical(conn.remote_address());
         info!("viewer connected from {peer}");
         let result = match conn.accept_bi().await.context("control channel") {
             Ok(streams) => session(conn.clone(), streams, &config, None).await,
@@ -608,6 +608,12 @@ async fn signal_loop(
     }
     let id = signal.device_id.clone();
     info!("registered on {}: ID {} {} {}", opts.server_name, &id[..3], &id[3..6], &id[6..]);
+    // The relay's address of the other IP family (IPv6 next to IPv4), for the
+    // direct path of the sessions: resolved at every connection to the server.
+    let relay_alt = match signal.transport {
+        nuvira_transport::ServerTransport::Udp => nuvira_transport::other_family(&opts.server_name, server).await,
+        nuvira_transport::ServerTransport::WebSocket(_) => None,
+    };
     set_policy(ctx, signal.policy);
     if let Some(path) = &opts.info_file {
         // In automated tests the viewer reads ID and password from here.
@@ -682,6 +688,7 @@ async fn signal_loop(
                             .try_into()
                             .context("invalid viewer key")?,
                         role: nuvira_transport::p2p::Role::Agent,
+                        relay_alt,
                     };
                     let Some(request) = request else {
                         // Only routes of requests accepted here: their limits are known.
@@ -880,13 +887,17 @@ async fn relayed_session(
     }
     acceptor.abort();
     let (conn, streams) = connected??;
-    let direct = conn.remote_address() != route.relay;
+    let remote = nuvira_transport::p2p::canonical(conn.remote_address());
+    let direct = remote != route.relay;
     outcome.connected = Some(std::time::Instant::now());
     outcome.direct = direct;
     info!(
-        "viewer connected {} ({})",
-        if direct { "directly" } else { "through the relay" },
-        conn.remote_address()
+        "viewer connected {} ({remote})",
+        match (direct, remote.is_ipv6()) {
+            (true, true) => "directly over IPv6",
+            (true, false) => "directly over IPv4",
+            (false, _) => "through the relay",
+        }
     );
     let gate = Gate { ctx, session_id, request, direct, access: &outcome.access, terminal_only: AtomicBool::new(false) };
     let result = tokio::select! {

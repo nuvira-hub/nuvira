@@ -3553,6 +3553,7 @@ dependencies = [
  "rustls",
  "rustls-webpki",
  "sha2",
+ "socket2",
  "tokio",
  "tokio-tungstenite",
  "tracing",

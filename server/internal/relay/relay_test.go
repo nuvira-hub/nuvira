@@ -65,6 +65,43 @@ func TestBindAndForward(t *testing.T) {
 	}
 }
 
+func TestAnnounceOfTheOtherFamily(t *testing.T) {
+	r := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var token [tokenLen]byte
+	token[0] = 7
+	viewer := &net.UDPAddr{IP: net.IPv4(198, 51, 100, 1), Port: 1000}
+	agent6 := &net.UDPAddr{IP: net.ParseIP("2001:db8::2"), Port: 2000}
+	agent4 := &net.UDPAddr{IP: net.IPv4(203, 0, 113, 2), Port: 2001}
+	r.Allow(token)
+	// The announce neither binds nor answers.
+	if reply := r.HandleControl(bind(token, 2|roleAnnounce), agent4); reply != nil {
+		t.Fatalf("answer to an announce: %v", reply)
+	}
+	if reply := r.HandleControl(bind(token, 1), viewer); reply[len(reply)-1] != 0 {
+		t.Fatal("the announce counted as the agent's bind")
+	}
+	r.HandleControl(bind(token, 2), agent6)
+	reply := r.HandleControl(bind(token, 1), viewer)
+	// Seen address (IPv6), then 1 more: the announced IPv4 one.
+	rest := reply[5+tokenLen+1:]
+	if rest[0] != 6 || rest[1+16+2] != 1 {
+		t.Fatalf("answer to the viewer: %v", reply)
+	}
+	extra := rest[1+16+2+1:]
+	if extra[0] != 4 || extra[1] != 203 || int(extra[5])<<8|int(extra[6]) != 2001 {
+		t.Fatalf("announced address: %v", extra)
+	}
+	// Forwarding unchanged: towards the bound address.
+	if dst := r.Destination(viewer, 10); dst.String() != agent6.String() {
+		t.Fatalf("viewer → %v", dst)
+	}
+	// Unknown token or bad role: ignored.
+	var other [tokenLen]byte
+	if r.HandleControl(bind(other, 1|roleAnnounce), agent4) != nil || r.HandleControl(bind(token, 3|roleAnnounce), agent4) != nil {
+		t.Fatal("announce not ignored")
+	}
+}
+
 func TestIsControlIgnoresQUIC(t *testing.T) {
 	// A QUIC packet always has the 0x40 bit in the first byte.
 	if IsControl([]byte{0x40, 'N', 'X', 'R', 1}) {

@@ -14,6 +14,13 @@
 // Address: family (4 or 6) | IP (4 or 16 bytes) | port (2 bytes, big endian);
 // family 0 (a single byte) if the other side is connected through WebSocket.
 //
+// Announce: a bind with the 0x80 bit set on the role, sent by a device to the
+// server's address of the other IP family (IPv6 next to IPv4). It does not bind:
+// the relay only notes the address it came from as one more candidate of that
+// side, given to the other side after its local addresses, and does not answer.
+// This way a device that talks IPv6 to the relay also gives its public IPv4
+// address (through its NAT), and the other way round.
+//
 // The other side's addresses are used to attempt a direct connection: the one
 // seen by the relay through NATs (hole punching) and the local ones, which work
 // when the two devices are in the same network behind the same router (where
@@ -33,7 +40,9 @@ var magic = []byte{0x00, 'N', 'X', 'R'}
 const (
 	typeBind  = 0x01
 	typeBound = 0x02
-	tokenLen  = 16
+	// On the role of a bind: announce only (see the package's notes).
+	roleAnnounce = 0x80
+	tokenLen     = 16
 	// Local addresses accepted per side (they limit the size of the answers).
 	maxLocals = 4
 
@@ -44,12 +53,14 @@ const (
 )
 
 type session struct {
-	token   [tokenLen]byte
-	peers   [2]net.Addr // [0] viewer, [1] agent (UDP or WebSocket)
-	locals  [2][]*net.UDPAddr
-	created time.Time
-	last    time.Time
-	bytes   uint64
+	token  [tokenLen]byte
+	peers  [2]net.Addr // [0] viewer, [1] agent (UDP or WebSocket)
+	locals [2][]*net.UDPAddr
+	// Address each side announced on the other IP family (nil: none).
+	announced [2]*net.UDPAddr
+	created   time.Time
+	last      time.Time
+	bytes     uint64
 }
 
 func (s *session) ready() bool { return s.peers[0] != nil && s.peers[1] != nil }
@@ -99,7 +110,21 @@ func (r *Relay) HandleControl(p []byte, from net.Addr) []byte {
 	var token [tokenLen]byte
 	copy(token[:], p[5:5+tokenLen])
 	role := int(p[5+tokenLen])
+	announce := role&roleAnnounce != 0
+	role &^= roleAnnounce
 	if role != 1 && role != 2 {
+		return nil
+	}
+	if announce {
+		udp, ok := from.(*net.UDPAddr)
+		if !ok {
+			return nil
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if s := r.sessions[token]; s != nil {
+			s.announced[role-1] = udp
+		}
 		return nil
 	}
 	locals, ok := parseAddrs(p[5+tokenLen+1:])
@@ -138,8 +163,12 @@ func (r *Relay) HandleControl(p []byte, from net.Addr) []byte {
 	}
 	reply = append(reply, 1)
 	reply = appendAddr(reply, r.reflexive(s.peers[1-i]))
-	reply = append(reply, byte(len(s.locals[1-i])))
-	for _, a := range s.locals[1-i] {
+	others := s.locals[1-i]
+	if a := s.announced[1-i]; a != nil && a.String() != s.peers[1-i].String() {
+		others = append(append([]*net.UDPAddr(nil), others...), r.reflexive(a).(*net.UDPAddr))
+	}
+	reply = append(reply, byte(len(others)))
+	for _, a := range others {
 		reply = appendAddr(reply, a)
 	}
 	return reply
