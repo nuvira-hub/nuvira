@@ -73,6 +73,30 @@ Unlike `rustdesk-server`, which recognises devices behind the same router by the
 
 Test: `NUVIRA_RELAY_FAKE_REFLEXIVE=1` on the server replaces the address seen by the relay with an unreachable one (203.0.113.1); the connection must still succeed directly through the local address.
 
+### IPv6 (0.21)
+
+- **One socket for both families.** The session's UDP socket is `[::]:0` with `IPV6_V6ONLY` off (dual-stack), so it reaches IPv4 addresses as IPv4-mapped ones (`::ffff:a.b.c.d`). Where the system has no IPv6 it is of the relay's family, as before. Addresses are compared in their plain form, so a mapped address and its IPv4 one are the same.
+- **Local addresses of both families.** Each side gives one IPv4 and one IPv6 local address: the interface towards the relay, or towards a public address of that family. Link-local addresses (`fe80::/10`) and mapped ones are left out. On IPv6 the local address is also the public one: there is no NAT.
+- **Announce on the second family.** When the server's name has both an A and an AAAA record, each side sends, before every bind, the same bind with the 0x80 bit on the role to the relay's address of the other family. The relay only notes the address it came from as one more candidate of that side, after its local ones, and does not answer. A side talking IPv6 to the relay so still gives its public IPv4 address (through its NAT), and the other way round. Servers before 0.21 ignore it.
+- **Only families this PC has.** Direct attempts go only to the families this side has a local address of: on an IPv4-only network an IPv6 candidate is skipped (sending there fails with "network unreachable").
+- **Logs.** The agent's log says "directly over IPv6" or "directly over IPv4"; the viewer's has `family` on its `path` line.
+- **Relay across families.** The relay forwards between an IPv4 side and an IPv6 one (one socket, dual-stack in Go).
+
+Tests of 2026-11-09, test server of this version on the Mac mini at Scaleway (public IPv4 and IPv6), agent with a synthetic picture on the Mac, viewer on PC-LABORATORIO (home network, IPv4 only, behind NAT):
+
+| Case | Path | fps | latency p50 |
+|---|---|---|---|
+| Mac on the relay over IPv4, announcing IPv6 | direct IPv4 | 30.2 | 33 ms |
+| Mac on the relay over IPv6, viewer over IPv4 | direct IPv4 (the Mac's local IPv4 address) | 29.8 | 37 ms |
+| The same with `NUVIRA_FORCE_RELAY=1` | relay, IPv4 ↔ IPv6 | 29.9 | 33 ms |
+| LAN, PC-LABORATORIO agent ↔ NUC viewer, NAS server 0.20 | direct IPv4 | 29.5 | 21 ms |
+| The same with `NUVIRA_FORCE_RELAY=1` | relay | 29.8 | 23 ms |
+| Linux viewer (Mint, package of the CI) → Mac agent | direct IPv4, 7 times out of 8 (once the relay: the direct attempt did not answer within the 1.5 s; the old viewer the same right after) | 29.9 | 30 ms |
+| Mint agent ↔ PC-LABORATORIO viewer, test server on the Mac | direct IPv4 (LAN) | 29.7 | 16 ms |
+| The same with `NUVIRA_FORCE_RELAY=1` | relay | 29.3 | 40 ms |
+
+The direct path over IPv6 between two networks was seen on 2026-11-07, between the Mac mini and the OVH VPS ([33-macos.md](33-macos.md)).
+
 ## Steps
 
 | # | Step | Status |
