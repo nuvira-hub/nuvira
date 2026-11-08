@@ -373,6 +373,12 @@ pub fn install(exe: &Path) -> Result<()> {
     if let Some(logs) = Path::new(LOG).parent() {
         std::fs::create_dir_all(logs)?;
     }
+    // The keyboard's type, as Karabiner-Elements writes it: without it macOS opens
+    // the Keyboard Setup Assistant at the virtual keyboard's first key. Key:
+    // "productID-vendorID-countryCode" (0x27db, 0x16c0, 0); 40 = ANSI.
+    let _ = Command::new("/usr/bin/defaults")
+        .args(["write", "/Library/Preferences/com.apple.keyboardtype", "keyboardtype", "-dict-add", "10203-5824-0", "-int", "40"])
+        .output();
     let plist = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
