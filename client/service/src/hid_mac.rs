@@ -58,11 +58,14 @@ pub fn available() -> bool {
 
 // ---------------------------------------------------------------- Karabiner's daemon
 
-/// A connection to Karabiner's daemon with the virtual keyboard opened.
+/// A connection to Karabiner's daemon with the virtual keyboard opened. A thread
+/// reads what the daemon sends: its status messages are requests that want an
+/// answer (unanswered for 15 s, the daemon closes the connection).
 struct Karabiner {
-    stream: UnixStream,
+    writer: Arc<Mutex<UnixStream>>,
     next_id: u64,
-    last_heartbeat: Instant,
+    /// False once the reading thread saw the connection end.
+    alive: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Frame of pqrs' unix_domain_stream: body size (u32 BE), type, request id (u64 BE), data.
@@ -81,24 +84,79 @@ fn frame(kind: u8, request_id: Option<u64>, data: &[u8]) -> Vec<u8> {
 
 const FRAME_HEARTBEAT: u8 = 0;
 const FRAME_REQUEST: u8 = 4;
+const FRAME_RESPONSE: u8 = 5;
 const REQ_KEYBOARD_INITIALIZE: u8 = 0;
 const REQ_POST_KEYBOARD: u8 = 6;
 const RESP_KEYBOARD_READY: u8 = 4;
 
+/// Reads the daemon's frames: answers its requests, reports the keyboard ready.
+fn read_frames(
+    mut reader: UnixStream,
+    writer: Arc<Mutex<UnixStream>>,
+    ready: std::sync::mpsc::Sender<()>,
+    alive: Arc<std::sync::atomic::AtomicBool>,
+) {
+    loop {
+        let mut header = [0u8; 4];
+        if reader.read_exact(&mut header).is_err() {
+            break;
+        }
+        let size = u32::from_be_bytes(header) as usize;
+        if size == 0 || size > 4096 {
+            warn!(size, "bad frame from Karabiner's daemon");
+            break;
+        }
+        let mut body = vec![0u8; size];
+        if reader.read_exact(&mut body).is_err() {
+            break;
+        }
+        if matches!(body[0], FRAME_REQUEST | FRAME_RESPONSE) && body.len() >= 9 {
+            if body[9..].chunks_exact(2).any(|pair| pair[0] == RESP_KEYBOARD_READY && pair[1] != 0) {
+                let _ = ready.send(());
+            }
+            if body[0] == FRAME_REQUEST {
+                let id = u64::from_be_bytes(body[1..9].try_into().expect("8 bytes"));
+                let answer = frame(FRAME_RESPONSE, Some(id), &[]);
+                if writer.lock().unwrap_or_else(|e| e.into_inner()).write_all(&answer).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    alive.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 impl Karabiner {
     fn connect() -> Result<Self> {
         let stream = UnixStream::connect(KV_SOCKET).context("Karabiner's virtual HID daemon")?;
-        stream.set_read_timeout(Some(Duration::from_millis(200)))?;
-        let mut kv = Self { stream, next_id: 1, last_heartbeat: Instant::now() };
+        let reader = stream.try_clone()?;
+        let writer = Arc::new(Mutex::new(stream));
+        let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (ready_tx, ready) = std::sync::mpsc::channel();
+        {
+            let (writer, alive) = (writer.clone(), alive.clone());
+            std::thread::spawn(move || read_frames(reader, writer, ready_tx, alive));
+        }
+        let mut kv = Self { writer, next_id: 1, alive };
         // vendor id, product id, country code (u64 each): its defaults, no country.
         let mut params = Vec::with_capacity(24);
         for v in [0x16c0u64, 0x27db, 0] {
             params.extend_from_slice(&v.to_le_bytes());
         }
         kv.request(REQ_KEYBOARD_INITIALIZE, &params)?;
-        kv.wait_keyboard_ready(Duration::from_secs(10))?;
+        if ready.recv_timeout(Duration::from_secs(10)).is_err() {
+            bail!("the virtual HID keyboard did not get ready (driver extension not allowed?)");
+        }
         info!("virtual HID keyboard ready");
         Ok(kv)
+    }
+
+    fn send(&self, bytes: &[u8]) -> Result<()> {
+        if !self.alive.load(std::sync::atomic::Ordering::Relaxed) {
+            bail!("connection with Karabiner's daemon closed");
+        }
+        self.writer.lock().unwrap_or_else(|e| e.into_inner()).write_all(bytes)?;
+        Ok(())
     }
 
     fn request(&mut self, request: u8, payload: &[u8]) -> Result<()> {
@@ -108,56 +166,15 @@ impl Karabiner {
         data.extend_from_slice(payload);
         let id = self.next_id;
         self.next_id += 1;
-        self.stream.write_all(&frame(FRAME_REQUEST, Some(id), &data))?;
-        Ok(())
-    }
-
-    /// Reads the daemon's messages until the keyboard is ready: pairs of
-    /// (response, value) in request and response frames.
-    fn wait_keyboard_ready(&mut self, timeout: Duration) -> Result<()> {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            let mut header = [0u8; 4];
-            match self.stream.read_exact(&mut header) {
-                Ok(()) => {}
-                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => continue,
-                Err(e) => return Err(e).context("reading from Karabiner's daemon"),
-            }
-            let size = u32::from_be_bytes(header) as usize;
-            if size == 0 || size > 4096 {
-                bail!("bad frame from Karabiner's daemon ({size} bytes)");
-            }
-            let mut body = vec![0u8; size];
-            self.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-            self.stream.read_exact(&mut body)?;
-            self.stream.set_read_timeout(Some(Duration::from_millis(200)))?;
-            if matches!(body[0], 4 | 5) && body.len() >= 9 {
-                for pair in body[9..].chunks_exact(2) {
-                    if pair[0] == RESP_KEYBOARD_READY && pair[1] != 0 {
-                        return Ok(());
-                    }
-                }
-            }
-        }
-        bail!("the virtual HID keyboard did not get ready (driver extension not allowed?)")
+        self.send(&frame(FRAME_REQUEST, Some(id), &data))
     }
 
     fn post(&mut self, report: &[u8; REPORT_SIZE]) -> Result<()> {
-        if self.last_heartbeat.elapsed() > Duration::from_secs(5) {
-            self.heartbeat()?;
-        }
         self.request(REQ_POST_KEYBOARD, report)
     }
 
     fn heartbeat(&mut self) -> Result<()> {
-        self.stream.write_all(&frame(FRAME_HEARTBEAT, None, &[]))?;
-        self.last_heartbeat = Instant::now();
-        // Whatever the daemon sent meanwhile: read and dropped.
-        self.stream.set_nonblocking(true)?;
-        let mut sink = [0u8; 1024];
-        while matches!(self.stream.read(&mut sink), Ok(n) if n > 0) {}
-        self.stream.set_nonblocking(false)?;
-        Ok(())
+        self.send(&frame(FRAME_HEARTBEAT, None, &[]))
     }
 }
 
