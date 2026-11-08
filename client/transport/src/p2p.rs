@@ -366,11 +366,14 @@ async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
         let candidates = bind_relay(&socket, &route, &locals)?;
         debug!(?candidates, "addresses of the other side");
         let relays = [Some(route.relay), route.relay_alt];
+        // Only families this PC has a route for (an IPv4-only network has no IPv6
+        // address of its own: sending there fails with "network unreachable").
+        let has_family = |a: &SocketAddr| locals.iter().any(|l| l.is_ipv6() == a.is_ipv6());
         let peers: Vec<SocketAddr> = candidates
             .all()
             .into_iter()
             .map(canonical)
-            .filter(|a| !relays.contains(&Some(*a)) && reachable(*a, local.is_ipv6()))
+            .filter(|a| !relays.contains(&Some(*a)) && reachable(*a, local.is_ipv6()) && has_family(a))
             .collect();
         for peer in &peers {
             punch(&socket, *peer, &route.token);
