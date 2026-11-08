@@ -58,12 +58,13 @@ pub fn uninstall() -> Result<()> {
     {
         errors.push(format!("printer: {e:#}"));
     }
-    if let Err(e) = crate::signin::uninstall() {
-        errors.push(format!("sign-in screen: {e:#}"));
-    }
+    // The keyboard first: the sign-in screen's removal deletes the data folder.
     #[cfg(target_os = "macos")]
     if let Err(e) = crate::hid::uninstall() {
         errors.push(format!("lock screen keyboard: {e:#}"));
+    }
+    if let Err(e) = crate::signin::uninstall() {
+        errors.push(format!("sign-in screen: {e:#}"));
     }
     if !errors.is_empty() {
         bail!("{}", errors.join("; "));

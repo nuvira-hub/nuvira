@@ -1485,6 +1485,8 @@ async fn uninstall_service(app: AppHandle) -> Result<String, String> {
             // packages keep their printer until they are removed).
             use nuvira_service::system;
             if system::installed() {
+                #[cfg(target_os = "macos")]
+                nuvira_service::hid::deactivate();
                 match system::run_as_admin(true, &t("install.printer_remove_reason"), "", None) {
                     Ok(true) => info!("system part of unattended access removed"),
                     Ok(false) => info!("system part kept: administrator prompt declined"),

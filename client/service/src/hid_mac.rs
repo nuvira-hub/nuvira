@@ -14,7 +14,8 @@
 //!
 //! Installed and removed with the rest of the system part (`nuvira service system`);
 //! the driver extension must be allowed once in System Settings (the app opens the
-//! page). A Karabiner already on the Mac (Karabiner-Elements) is used, never removed.
+//! page). A Karabiner already on the Mac is used; the driver is removed with
+//! unattended access unless Karabiner-Elements is there.
 
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -31,8 +32,6 @@ use tracing::{info, warn};
 pub const SOCKET: &str = "/var/run/nuvira-hid.sock";
 pub const LABEL: &str = "io.github.nuvira-hub.nuvira.hid";
 const LOG: &str = "/Library/Logs/NuviraHub/hid.log";
-/// Left when the system part installed Karabiner's package: removed with it.
-const INSTALLED_BY_US: &str = "/Library/Application Support/NuviraHub/karabiner-installed";
 
 const KV_ROOT: &str = "/Library/Application Support/org.pqrs/Karabiner-DriverKit-VirtualHIDDevice";
 const KV_DAEMON: &str = "/Library/Application Support/org.pqrs/Karabiner-DriverKit-VirtualHIDDevice/Applications/Karabiner-VirtualHIDDevice-Daemon.app/Contents/MacOS/Karabiner-VirtualHIDDevice-Daemon";
@@ -364,10 +363,6 @@ pub fn install(exe: &Path) -> Result<()> {
         if !out.status.success() {
             bail!("installing the virtual HID keyboard: {}", String::from_utf8_lossy(&out.stderr).trim());
         }
-        if let Some(dir) = Path::new(INSTALLED_BY_US).parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(INSTALLED_BY_US, b"")?;
         info!("Karabiner-DriverKit-VirtualHIDDevice installed");
     }
     if let Some(logs) = Path::new(LOG).parent() {
@@ -410,19 +405,41 @@ pub fn install(exe: &Path) -> Result<()> {
     bail!("launchctl bootstrap {plist}: {last}")
 }
 
-/// As root: our daemon, and Karabiner's package if we installed it.
+/// Karabiner-Elements is on this Mac: it uses the same driver, which then stays.
+fn karabiner_elements() -> bool {
+    Path::new("/Applications/Karabiner-Elements.app").exists()
+        || Path::new("/Library/Application Support/org.pqrs/Karabiner-Elements").exists()
+}
+
+/// As the person (the app, before the administrator prompt of the removal):
+/// unloads the driver extension that the removal will delete; root cannot.
+/// macOS finishes it at the next restart.
+pub fn deactivate() {
+    if !Path::new(KV_MANAGER).exists() || karabiner_elements() {
+        return;
+    }
+    if let Ok(mut child) = Command::new(KV_MANAGER).arg("deactivate").spawn() {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && child.try_wait().ok().flatten().is_none() {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let _ = child.kill();
+        info!("virtual HID keyboard driver deactivated");
+    }
+}
+
+/// As root: our daemon, and Karabiner's driver unless Karabiner-Elements uses it.
 pub fn uninstall() -> Result<()> {
     let _ = launchctl(&["bootout", &format!("system/{LABEL}")]);
     let _ = std::fs::remove_file(plist_path());
     let _ = std::fs::remove_file(SOCKET);
-    if Path::new(INSTALLED_BY_US).exists() {
+    if Path::new(KV_DAEMON).exists() && !karabiner_elements() {
         let _ = Command::new("/usr/bin/killall").arg("Karabiner-VirtualHIDDevice-Daemon").output();
         let script = format!("{KV_ROOT}/scripts/uninstall/remove_files.sh");
         let out = Command::new("/bin/bash").arg(&script).output()?;
         if !out.status.success() {
             warn!("{script}: {}", String::from_utf8_lossy(&out.stderr).trim());
         }
-        let _ = std::fs::remove_file(INSTALLED_BY_US);
         info!("Karabiner-DriverKit-VirtualHIDDevice removed");
     }
     Ok(())
