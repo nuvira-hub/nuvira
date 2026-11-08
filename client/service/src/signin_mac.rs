@@ -18,6 +18,9 @@
 //!
 //! The lock screen of a signed-in person is another matter: it belongs to their
 //! session, and no capture program sees it (see `nuvira_capture`).
+//!
+//! Installed for the whole Mac (`nuvira service deploy`, module `managed`) the
+//! data here is the Mac's own, not a copy of a person's.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -31,7 +34,7 @@ use tracing::{info, warn};
 pub const LABEL: &str = "io.github.nuvira-hub.nuvira.signin";
 const BUNDLE_ID: &str = "io.github.nuvira-hub.nuvira";
 /// Root's copy of the data the agent needs.
-const SYSTEM_DIR: &str = "/Library/Application Support/NuviraHub";
+pub(crate) const SYSTEM_DIR: &str = "/Library/Application Support/NuviraHub";
 const LOG: &str = "/Library/Logs/NuviraHub/signin.log";
 /// Files of the person's data folder the agent of the sign-in screen needs.
 const COPIED: [&str; 3] = ["device.key", "servers.txt", "service.env"];
@@ -41,14 +44,28 @@ pub fn plist_path() -> PathBuf {
 }
 
 /// What `signin-run` starts the agent with.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct Settings {
-    server: String,
-    server_key: Option<String>,
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
+pub(crate) struct Settings {
+    pub server: String,
+    pub server_key: Option<String>,
+    /// Installed for the whole Mac by an administrator (`nuvira service deploy`).
+    #[serde(default)]
+    pub managed: bool,
+    /// Profile of a customised installer of the Pro server (managed installations).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 fn settings_path() -> PathBuf {
     Path::new(SYSTEM_DIR).join("signin.json")
+}
+
+pub(crate) fn load_settings() -> Result<Settings> {
+    Ok(serde_json::from_str(&std::fs::read_to_string(settings_path()).context("signin.json")?)?)
+}
+
+pub(crate) fn save_settings(settings: &Settings) -> Result<()> {
+    crate::unix_shared::write_private(&settings_path(), &serde_json::to_string(settings)?)
 }
 
 pub fn installed() -> bool {
@@ -103,9 +120,16 @@ pub fn install(exe: &Path, user_data: &Path, server: &str, server_key: Option<&s
             Err(e) => return Err(e).with_context(|| from.display().to_string()),
         }
     }
-    let settings = Settings { server: server.to_string(), server_key: server_key.map(str::to_string) };
-    std::fs::write(settings_path(), serde_json::to_string(&settings)?)?;
-    std::fs::set_permissions(settings_path(), std::fs::Permissions::from_mode(0o600))?;
+    let settings =
+        Settings { server: server.to_string(), server_key: server_key.map(str::to_string), ..Default::default() };
+    install_job(exe, &settings)
+}
+
+/// As root: saves the settings and writes the job (it starts at the next sign-in
+/// screen).
+pub(crate) fn install_job(exe: &Path, settings: &Settings) -> Result<()> {
+    ensure_root()?;
+    save_settings(settings)?;
     if let Some(logs) = Path::new(LOG).parent() {
         std::fs::create_dir_all(logs)?;
     }
@@ -117,10 +141,20 @@ pub fn install(exe: &Path, user_data: &Path, server: &str, server_key: Option<&s
 
 /// As root: removes the job and root's copy of the data.
 pub fn uninstall() -> Result<()> {
+    remove(false)
+}
+
+/// As root: removes the job; with `keep_data` the data folder stays (the Mac's
+/// ID, password and server, for a managed installation installed again).
+pub(crate) fn remove(keep_data: bool) -> Result<()> {
     ensure_root()?;
     match std::fs::remove_file(plist_path()) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).context("removing the job"),
         _ => {}
+    }
+    if keep_data {
+        info!("sign-in screen agent removed");
+        return Ok(());
     }
     match std::fs::remove_dir_all(SYSTEM_DIR) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e).context(SYSTEM_DIR),
@@ -130,10 +164,10 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
-fn ensure_root() -> Result<()> {
+pub(crate) fn ensure_root() -> Result<()> {
     // SAFETY: geteuid cannot fail.
     if unsafe { libc::geteuid() } != 0 {
-        bail!("the sign-in screen's agent is installed by root");
+        bail!("this is done by root (sudo)");
     }
     Ok(())
 }
@@ -142,6 +176,12 @@ fn ensure_root() -> Result<()> {
 /// person, not `loginwindow`. (The owner of `/dev/console` stayed root after a
 /// sign-in at this screen.)
 fn someone_signed_in() -> bool {
+    console_uid().is_some()
+}
+
+/// The person signed in on the console (the one in front of the Mac, also with
+/// fast user switching), if any.
+pub(crate) fn console_uid() -> Option<u32> {
     use std::ffi::c_void;
     #[link(name = "SystemConfiguration", kind = "framework")]
     unsafe extern "C" {
@@ -155,16 +195,16 @@ fn someone_signed_in() -> bool {
     // SAFETY: NULL store is allowed; the name, when returned, is owned (+1).
     let name = unsafe { SCDynamicStoreCopyConsoleUser(std::ptr::null(), &mut uid, std::ptr::null_mut()) };
     if name.is_null() {
-        return false;
+        return None;
     }
     // SAFETY: released once.
     unsafe { CFRelease(name) };
     // At the sign-in screen the console user is "loginwindow", uid 0.
-    uid != 0
+    (uid != 0).then_some(uid)
 }
 
 /// The permanent password's hash, from root's copy of `service.env`.
-fn password_hash() -> Result<String> {
+pub(crate) fn password_hash() -> Result<String> {
     let text = std::fs::read_to_string(Path::new(SYSTEM_DIR).join("service.env")).context("service.env")?;
     text.lines()
         .find_map(|l| l.strip_prefix("NUVIRA_PASSWORD_HASH="))

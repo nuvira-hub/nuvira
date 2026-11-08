@@ -9,6 +9,11 @@
 //!   (Ansible, Puppet, Salt, Landscape…): `{"server": …, "server_key": …,
 //!   "password_hash": …, "profile": …}`. Only a file of root's that nobody else can
 //!   change counts.
+//! - macOS: preferences of `io.github.nuvira-hub.nuvira` for the whole Mac, from a
+//!   configuration profile of an MDM (`/Library/Managed Preferences`) or, without
+//!   one, written by an administrator (`sudo defaults write
+//!   /Library/Preferences/io.github.nuvira-hub.nuvira Server …`): keys `Server`,
+//!   `ServerKey`, `PasswordHash`, `Profile`, as the Windows policies.
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Policy {
@@ -116,7 +121,7 @@ fn read_file(path: &std::path::Path) -> Policy {
 
 /// The file and its folders belong to root and nobody else can write them
 /// (otherwise any user could choose the server and the password).
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn root_only(path: &std::path::Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     if !path.exists() {
@@ -139,15 +144,66 @@ fn root_only(path: &std::path::Path) -> bool {
     true
 }
 
-/// macOS: managed preferences (a `.mobileconfig` profile of an MDM) are not read yet.
+/// The profile's preferences on macOS (the MDM's win over the administrator's).
+#[cfg(target_os = "macos")]
+pub const MANAGED_PREFERENCES: &str = "/Library/Managed Preferences/io.github.nuvira-hub.nuvira.plist";
+#[cfg(target_os = "macos")]
+pub const LOCAL_PREFERENCES: &str = "/Library/Preferences/io.github.nuvira-hub.nuvira.plist";
+
+/// The policies in place.
 #[cfg(target_os = "macos")]
 pub fn read() -> Policy {
-    Policy::default()
+    let managed = read_plist(std::path::Path::new(MANAGED_PREFERENCES));
+    let local = read_plist(std::path::Path::new(LOCAL_PREFERENCES));
+    Policy {
+        server: managed.server.or(local.server),
+        server_key: managed.server_key.or(local.server_key),
+        password_hash: managed.password_hash.or(local.password_hash),
+        profile: managed.profile.or(local.profile),
+    }
+}
+
+/// A property list (binary or XML) through `plutil`, which turns it into JSON.
+#[cfg(target_os = "macos")]
+fn read_plist(path: &std::path::Path) -> Policy {
+    if !root_only(path) {
+        return Policy::default();
+    }
+    let Ok(out) = std::process::Command::new("/usr/bin/plutil").args(["-convert", "json", "-o", "-"]).arg(path).output()
+    else {
+        return Policy::default();
+    };
+    if !out.status.success() {
+        tracing::warn!("{} ignored: {}", path.display(), String::from_utf8_lossy(&out.stderr).trim());
+        return Policy::default();
+    }
+    from_keys(&serde_json::from_slice(&out.stdout).unwrap_or_default())
+}
+
+/// The keys of the Windows policies (and of the macOS profile).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn from_keys(value: &serde_json::Value) -> Policy {
+    let text = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    Policy {
+        server: text("Server"),
+        server_key: text("ServerKey"),
+        password_hash: text("PasswordHash"),
+        profile: text("Profile"),
+    }
+    .cleaned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_of_the_profile() {
+        let value = serde_json::json!({"Server": "nuvira.example.com", "ServerKey": "", "Other": 1});
+        let p = from_keys(&value);
+        assert_eq!(p.server.as_deref(), Some("nuvira.example.com"));
+        assert_eq!(p.server_key, None);
+    }
 
     #[test]
     fn empty_values_are_not_set() {

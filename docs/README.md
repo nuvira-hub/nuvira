@@ -31,3 +31,4 @@
 | 32 | [Session permissions](32-session-permissions.md) | What a session may do: settings of the computer, limits per technician (Pro), switches of the person at the computer during the session |
 | 33 | [macOS](33-macos.md) | Package, controlled Mac (ScreenCaptureKit, Quartz, permissions), keyboard, unattended access with a LaunchAgent |
 | 34 | [Linux: installation for the whole computer](34-linux-deployment.md) | `nuvira service deploy` and /etc/nuvira/policy.json: the computer's own ID, for Ansible, Puppet and scripts |
+| 35 | [macOS: installation for the whole Mac](35-macos-deployment.md) | `nuvira-macos.pkg` and a configuration profile (MDM): the Mac's own ID, settings from managed preferences |

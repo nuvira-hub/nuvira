@@ -473,7 +473,10 @@ pub fn service_installed() -> bool {
     #[cfg(not(target_os = "macos"))]
     const DEFINITION: &str = ".config/systemd/user/nuvira-agent.service";
     #[cfg(not(target_os = "macos"))]
-    if std::path::Path::new("/etc/nuvira/managed.json").exists() {
+    const MANAGED: &str = "/etc/nuvira/managed.json";
+    #[cfg(target_os = "macos")]
+    const MANAGED: &str = "/Library/Application Support/io.github.nuvira-hub.nuvira/managed.json";
+    if std::path::Path::new(MANAGED).exists() {
         return true;
     }
     std::env::var_os("HOME").is_some_and(|home| std::path::Path::new(&home).join(DEFINITION).exists())

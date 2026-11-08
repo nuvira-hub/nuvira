@@ -53,8 +53,14 @@ pub fn installed_path() -> PathBuf {
     PathBuf::from("/etc/nuvira/branding.json")
 }
 
+/// The installation for the whole Mac (`nuvira service deploy`).
+#[cfg(target_os = "macos")]
+pub fn installed_path() -> PathBuf {
+    PathBuf::from("/Library/Application Support/io.github.nuvira-hub.nuvira/branding.json")
+}
+
 /// Copy of the installation, next to the installed program.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn installed_path() -> PathBuf {
     std::env::var_os("ProgramFiles")
         .map(PathBuf::from)

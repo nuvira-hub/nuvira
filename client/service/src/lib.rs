@@ -45,6 +45,9 @@ pub mod user;
 #[cfg(target_os = "linux")]
 #[path = "managed_linux.rs"]
 pub mod managed;
+#[cfg(target_os = "macos")]
+#[path = "managed_mac.rs"]
+pub mod managed;
 /// The same interface as Linux's user service, with launchd.
 #[cfg(target_os = "macos")]
 #[path = "launchd.rs"]
@@ -63,7 +66,6 @@ mod launch;
 pub mod policy;
 #[cfg(windows)]
 mod printer;
-#[cfg(any(windows, target_os = "linux"))]
 mod profile;
 
 /// The program installed with the service (in Program Files).
@@ -302,11 +304,13 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         }
         Some("start") => user::start(),
         // As root: the installation for the whole computer (organisations).
-        #[cfg(target_os = "linux")]
         Some("deploy") if args.iter().any(|a| a == "--remove") => {
-            managed::remove().map(|()| println!("NuviraHub removed (the computer keeps its ID and settings in /var/lib/nuvira)"))
+            #[cfg(target_os = "macos")]
+            const KEPT: &str = "/Library/Application Support/NuviraHub";
+            #[cfg(not(target_os = "macos"))]
+            const KEPT: &str = "/var/lib/nuvira";
+            managed::remove().map(|()| println!("NuviraHub removed (the computer keeps its ID and settings in {KEPT})"))
         }
-        #[cfg(target_os = "linux")]
         Some("deploy") => {
             let password = match value("--password-file") {
                 Some(file) => {
@@ -331,8 +335,10 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
             Ok(())
         }
         // The agent of a person's session on a computer installed with `deploy`.
-        #[cfg(target_os = "linux")]
         Some("session-agent") => managed::session_agent(),
+        // macOS: launchd's daemon of the installation for the whole Mac.
+        #[cfg(target_os = "macos")]
+        Some("managed-run") => managed::run(),
         // For the policies: they hold only the hash.
         Some("password-hash") => password_hash_command(),
         #[cfg(target_os = "linux")]

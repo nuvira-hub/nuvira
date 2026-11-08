@@ -82,6 +82,31 @@ fi
 # tools/sign-unix-updates.sh); ditto keeps the bundle's signature intact.
 ditto -c -k --keepParent "$app" "$out/nuvira-macos-app.zip"
 
+# The package for organisations (MDM: Jamf, Intune, Kandji, Mosyle): the app into
+# /Applications, then `nuvira service deploy` for the whole Mac
+# (docs/35-macos-deployment.md). Signed with the Developer ID Installer
+# certificate when NUVIRA_INSTALLER_IDENTITY names it (MDMs want it signed).
+pkgroot="$stage/pkgroot"
+mkdir -p "$pkgroot/Applications" "$stage/pkg-scripts"
+ditto "$app" "$pkgroot/Applications/NuviraHub.app"
+cp deploy/macos/postinstall "$stage/pkg-scripts/postinstall"
+chmod 755 "$stage/pkg-scripts/postinstall"
+pkgbuild --analyze --root "$pkgroot" "$stage/component.plist"
+# Always into /Applications (not wherever a copy of the app was found), and never
+# over a newer app that the automatic updates put there.
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" -c "Set :0:BundleIsVersionChecked true" "$stage/component.plist"
+pkgbuild --root "$pkgroot" --component-plist "$stage/component.plist" --scripts "$stage/pkg-scripts" \
+    --identifier io.github.nuvira-hub.nuvira.pkg --version "$version" --install-location / "$stage/component.pkg"
+pkg="$out/nuvira-macos.pkg"
+rm -f "$pkg"
+if [ -n "${NUVIRA_INSTALLER_IDENTITY:-}" ]; then
+    productbuild --package "$stage/component.pkg" --sign "$NUVIRA_INSTALLER_IDENTITY" --timestamp "$pkg"
+    pkgutil --check-signature "$pkg"
+else
+    productbuild --package "$stage/component.pkg" "$pkg"
+fi
+ls -l "$pkg"
+
 ln -s /Applications "$stage/dmg/Applications"
 dmg="$out/nuvira-macos.dmg"
 rm -f "$dmg"

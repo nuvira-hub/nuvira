@@ -2,7 +2,8 @@ name: nuvira-macos
 
 # Builds NuviraHub for macOS: tests, then NuviraHub.app (universal) in
 # nuvira-macos.dmg, signed with the Developer ID certificate and notarized by
-# Apple. The .dmg is a workflow artifact; it goes into the release by hand.
+# Apple, and nuvira-macos.pkg for organisations (signed and notarized when the
+# Developer ID Installer certificate is in the secrets). The .dmg is a workflow artifact; it goes into the release by hand.
 # Started by hand, and at every tag.
 on:
   workflow_dispatch:
@@ -35,6 +36,9 @@ jobs:
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_INSTALLER_P12: ${{ secrets.MACOS_INSTALLER_P12 }}
+          MACOS_INSTALLER_PASSWORD: ${{ secrets.MACOS_INSTALLER_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           kc="$RUNNER_TEMP/signing.keychain-db"
           kcpw=$(openssl rand -hex 16)
@@ -44,6 +48,13 @@ jobs:
           echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
           rm "$RUNNER_TEMP/cert.p12"
+          # The Developer ID Installer certificate, for the .pkg (when it is there).
+          if [ -n "$MACOS_INSTALLER_P12" ]; then
+            echo "$MACOS_INSTALLER_P12" | base64 --decode > "$RUNNER_TEMP/installer.p12"
+            security import "$RUNNER_TEMP/installer.p12" -k "$kc" -P "$MACOS_INSTALLER_PASSWORD" -T /usr/bin/productbuild
+            rm "$RUNNER_TEMP/installer.p12"
+            echo "NUVIRA_INSTALLER_IDENTITY=Developer ID Installer: Alessandro Blason ($APPLE_TEAM_ID)" >> "$GITHUB_ENV"
+          fi
           security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" >/dev/null
           security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
 
@@ -70,6 +81,15 @@ jobs:
           rm "$key"
           xcrun stapler staple dist/nuvira-macos.dmg
           spctl --assess --type open --context context:primary-signature -v dist/nuvira-macos.dmg
+          # The .pkg only when signed (Apple notarizes no unsigned package).
+          if [ -n "${NUVIRA_INSTALLER_IDENTITY:-}" ]; then
+            echo "$APPLE_API_KEY_P8" | base64 --decode > "$key"
+            xcrun notarytool submit dist/nuvira-macos.pkg --key "$key" --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER_ID" --wait --timeout 30m
+            rm "$key"
+            xcrun stapler staple dist/nuvira-macos.pkg
+            spctl --assess --type install -v dist/nuvira-macos.pkg
+          fi
 
       - name: Remove the keychain
         if: always()
@@ -81,4 +101,5 @@ jobs:
           path: |
             dist/nuvira-macos.dmg
             dist/nuvira-macos-app.zip
+            dist/nuvira-macos.pkg
           if-no-files-found: error

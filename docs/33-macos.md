@@ -38,7 +38,7 @@ Keys are sent **by position**: the viewer sends the W3C code of its physical key
 - **Remove**, in the app or `nuvira service uninstall`, unloads it (`bootout`) and deletes the definition and the password. The ID stays.
 - `nuvira service start` restarts it (`kickstart -k`), or loads it if it is not loaded.
 
-Limits: see the sign-in screen and the locked screen below. With FileVault on, the disk is unlocked before macOS starts: nothing of NuviraHub runs there.
+Limits: see the sign-in screen and the locked screen below. For organisations it can be installed for the whole Mac instead, with the Mac's own ID: `nuvira-macos.pkg` and a configuration profile ([35-macos-deployment.md](35-macos-deployment.md)). With FileVault on, the disk is unlocked before macOS starts: nothing of NuviraHub runs there.
 
 ## Sign-in screen
 

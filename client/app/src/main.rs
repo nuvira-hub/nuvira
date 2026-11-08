@@ -295,25 +295,25 @@ fn apply_branding(settings: &mut Settings) {
 /// /etc/nuvira/policy.json or the installation for the whole computer), with its
 /// fingerprint.
 fn policy_server() -> Option<(String, Option<String>)> {
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, unix))]
     {
         let policy = nuvira_service::policy::read();
         if let Some(server) = policy.server {
             return Some((server, policy.server_key));
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     if let Some(state) = nuvira_service::managed::state() {
         return Some((state.server, state.server_key));
     }
     None
 }
 
-/// Installed for the whole computer by the organisation (Linux).
+/// Installed for the whole computer by the organisation (Linux, macOS).
 fn service_managed() -> bool {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     return nuvira_service::managed::installed();
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(unix))]
     false
 }
 

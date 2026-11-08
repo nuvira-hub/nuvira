@@ -1,0 +1,6 @@
+#!/bin/sh
+# After the .pkg put NuviraHub into /Applications: unattended access for the
+# whole Mac (docs/35-macos-deployment.md), with the settings of the
+# organisation's configuration profile, or those already in place. A failure
+# makes the installation fail, so that the MDM reports it.
+exec "/Applications/NuviraHub.app/Contents/MacOS/nuvira" service deploy

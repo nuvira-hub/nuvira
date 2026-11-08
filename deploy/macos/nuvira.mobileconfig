@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Example configuration profile for NuviraHub installed for the whole Mac
+  (docs/35-macos-deployment.md). Replace the values of the first payload, give
+  every PayloadUUID a new value (uuidgen), and deploy it with the MDM before or
+  with nuvira-macos.pkg. Four payloads:
+  1. NuviraHub's settings (managed preferences of io.github.nuvira-hub.nuvira);
+  2. privacy (PPPC): Accessibility allowed; Screen Recording cannot be allowed by
+     a profile (Apple), only left to a standard user to allow once;
+  3. the virtual keyboard's driver extension (lock screen), allowed beforehand;
+  4. the background items, so that nobody switches them off in Login Items.
+-->
+<plist version="1.0">
+<dict>
+	<key>PayloadDisplayName</key>
+	<string>NuviraHub</string>
+	<key>PayloadIdentifier</key>
+	<string>io.github.nuvira-hub.nuvira.profile</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadUUID</key>
+	<string>6E0F5D2A-6C55-4C59-9D7B-6B2E1D0A1001</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadType</key>
+			<string>io.github.nuvira-hub.nuvira</string>
+			<key>PayloadIdentifier</key>
+			<string>io.github.nuvira-hub.nuvira.profile.settings</string>
+			<key>PayloadUUID</key>
+			<string>6E0F5D2A-6C55-4C59-9D7B-6B2E1D0A1002</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<!-- All optional, as the Windows policies; remove what you do not set. -->
+			<key>Server</key>
+			<string>nuvira.example.com</string>
+			<key>ServerKey</key>
+			<string>certificate fingerprint of the server</string>
+			<key>PasswordHash</key>
+			<string>output of: nuvira service password-hash</string>
+			<key>Profile</key>
+			<string>code of a customised installer profile (Pro)</string>
+		</dict>
+		<dict>
+			<key>PayloadType</key>
+			<string>com.apple.TCC.configuration-profile-policy</string>
+			<key>PayloadIdentifier</key>
+			<string>io.github.nuvira-hub.nuvira.profile.privacy</string>
+			<key>PayloadUUID</key>
+			<string>6E0F5D2A-6C55-4C59-9D7B-6B2E1D0A1003</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>Services</key>
+			<dict>
+				<key>Accessibility</key>
+				<array>
+					<dict>
+						<key>Identifier</key>
+						<string>io.github.nuvira-hub.nuvira</string>
+						<key>IdentifierType</key>
+						<string>bundleID</string>
+						<key>CodeRequirement</key>
+						<string>identifier "io.github.nuvira-hub.nuvira" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "2T2G3ULLTF"</string>
+						<key>Authorization</key>
+						<string>Allow</string>
+					</dict>
+				</array>
+				<key>ScreenCapture</key>
+				<array>
+					<dict>
+						<key>Identifier</key>
+						<string>io.github.nuvira-hub.nuvira</string>
+						<key>IdentifierType</key>
+						<string>bundleID</string>
+						<key>CodeRequirement</key>
+						<string>identifier "io.github.nuvira-hub.nuvira" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "2T2G3ULLTF"</string>
+						<key>Authorization</key>
+						<string>AllowStandardUserToSetSystemService</string>
+					</dict>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>PayloadType</key>
+			<string>com.apple.system-extension-policy</string>
+			<key>PayloadIdentifier</key>
+			<string>io.github.nuvira-hub.nuvira.profile.extension</string>
+			<key>PayloadUUID</key>
+			<string>6E0F5D2A-6C55-4C59-9D7B-6B2E1D0A1004</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>AllowedSystemExtensions</key>
+			<dict>
+				<key>G43BCU2T37</key>
+				<array>
+					<string>org.pqrs.Karabiner-DriverKit-VirtualHIDDevice</string>
+				</array>
+			</dict>
+			<key>AllowedSystemExtensionTypes</key>
+			<dict>
+				<key>G43BCU2T37</key>
+				<array>
+					<string>DriverExtension</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>PayloadType</key>
+			<string>com.apple.servicemanagement</string>
+			<key>PayloadIdentifier</key>
+			<string>io.github.nuvira-hub.nuvira.profile.background</string>
+			<key>PayloadUUID</key>
+			<string>6E0F5D2A-6C55-4C59-9D7B-6B2E1D0A1005</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>Rules</key>
+			<array>
+				<dict>
+					<key>RuleType</key>
+					<string>TeamIdentifier</string>
+					<key>RuleValue</key>
+					<string>2T2G3ULLTF</string>
+					<key>Comment</key>
+					<string>NuviraHub</string>
+				</dict>
+				<dict>
+					<key>RuleType</key>
+					<string>TeamIdentifier</string>
+					<key>RuleValue</key>
+					<string>G43BCU2T37</string>
+					<key>Comment</key>
+					<string>Virtual keyboard for the lock screen (Karabiner-DriverKit-VirtualHIDDevice)</string>
+				</dict>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

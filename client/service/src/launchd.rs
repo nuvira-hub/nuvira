@@ -11,6 +11,10 @@
 //! What it cannot do: reach the Mac before someone logs in, or while the screen
 //! is locked. After a restart the Mac needs automatic login (not available with
 //! FileVault on).
+//!
+//! Installed for the whole Mac by an administrator (module `managed`) the job is
+//! the system's (`/Library/LaunchAgents`, its own label): a person cannot install
+//! or remove it, and their own earlier installation gives way.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -41,7 +45,8 @@ fn domain() -> String {
 }
 
 fn job() -> String {
-    format!("{}/{LABEL}", domain())
+    let label = if crate::managed::installed() { crate::managed::AGENT_LABEL } else { LABEL };
+    format!("{}/{label}", domain())
 }
 
 fn launchctl(args: &[&str]) -> Result<std::process::Output> {
@@ -110,6 +115,9 @@ fn definition(exe: &Path, opts: &InstallOptions, hash: &str, log: &Path) -> Stri
 /// Installs or updates the LaunchAgent and starts it. Returns the permanent
 /// password when it was generated, to show it once.
 pub fn install(opts: &InstallOptions) -> Result<Option<String>> {
+    if crate::managed::installed() {
+        bail!("@install.managed");
+    }
     let exe = std::env::current_exe().context("program path")?;
     check_location(&exe)?;
     let generated = store_password(opts)?;
@@ -141,6 +149,9 @@ fn bootstrap(plist: &Path) -> Result<()> {
 
 /// Removes the LaunchAgent; the ID and the address book stay.
 pub fn uninstall() -> Result<()> {
+    if crate::managed::installed() {
+        bail!("@install.managed");
+    }
     let _ = launchctl(&["bootout", &job()]);
     for path in [plist_path()?, env_path()] {
         if path.exists() {
@@ -156,6 +167,9 @@ pub fn uninstall() -> Result<()> {
 pub fn start() -> Result<()> {
     if launchctl(&["print", &job()])?.status.success() {
         launchctl_ok(&["kickstart", "-k", &job()])
+    } else if crate::managed::installed() {
+        // The system's job; the daemon hands it the ID.
+        bootstrap(Path::new(&format!("/Library/LaunchAgents/{}.plist", crate::managed::AGENT_LABEL)))
     } else {
         bootstrap(&plist_path()?)
     }
@@ -199,7 +213,7 @@ pub fn ask_folder_access() {
 }
 
 pub fn service_state() -> Result<ServiceState> {
-    if !plist_path()?.exists() {
+    if !crate::managed::installed() && !plist_path()?.exists() {
         return Ok(ServiceState::NotInstalled);
     }
     let out = launchctl(&["print", &job()])?;

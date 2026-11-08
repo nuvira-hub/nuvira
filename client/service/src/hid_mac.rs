@@ -474,6 +474,24 @@ pub fn activate() -> Result<bool> {
     Ok(false)
 }
 
+/// Installed for the whole Mac: asks macOS to load the driver extension, without
+/// opening System Settings. Allowed beforehand by the organisation's profile
+/// (MDM, system extensions) it loads by itself; otherwise it waits for someone
+/// to allow it there, as with the person's own installation.
+pub fn activate_quietly() {
+    if !Path::new(KV_MANAGER).exists() || driver_enabled() {
+        return;
+    }
+    match Command::new(KV_MANAGER).arg("activate").spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => tracing::warn!("virtual keyboard driver not activated: {e}"),
+    }
+}
+
 /// Karabiner's driver extension is allowed and running.
 pub fn driver_enabled() -> bool {
     Command::new("/usr/bin/systemextensionsctl").arg("list").output().is_ok_and(|o| {
