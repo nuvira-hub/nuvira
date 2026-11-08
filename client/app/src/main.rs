@@ -1195,6 +1195,8 @@ fn main() {
     // Before anything can replace the file (an update).
     started_as();
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    #[cfg(target_os = "macos")]
+    mac_keyboard_from_policy(args.get(1).and_then(|a| a.to_str()));
     if let Some(sub) = args.get(1).and_then(|a| a.to_str()).filter(|a| SUBCOMMANDS.contains(a)) {
         std::process::exit(run_subcommand(sub, &args[2..]));
     }
@@ -1706,6 +1708,22 @@ fn restart_app(app: AppHandle) -> Result<(), String> {
         .map_err(|e| tf("update.failed", &[("e", &e.to_string())]))?;
     app.exit(0);
     Ok(())
+}
+
+/// macOS: the kind of keyboard the organisation set for the whole Mac (the
+/// `Keyboard` key of the managed preferences, module `policy`) wins over
+/// `NUVIRA_MAC_KEYBOARD`, for every agent: the app's own, the person's
+/// installation (their LaunchAgent), the managed one and the sign-in screen's.
+/// Read once at start: a change counts from the agent's next start.
+#[cfg(target_os = "macos")]
+fn mac_keyboard_from_policy(sub: Option<&str>) {
+    if matches!(sub, Some("viewer" | "service")) {
+        return;
+    }
+    if let Some(keyboard) = nuvira_service::policy::read().keyboard {
+        // SAFETY: at the very start of main, before any other thread exists.
+        unsafe { std::env::set_var("NUVIRA_MAC_KEYBOARD", keyboard) };
+    }
 }
 
 fn run_subcommand(sub: &str, rest: &[std::ffi::OsString]) -> i32 {

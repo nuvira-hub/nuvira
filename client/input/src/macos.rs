@@ -41,7 +41,8 @@ impl QuartzInjector {
     pub fn new(screen: ScreenRect) -> Result<Self> {
         report_permission();
         let iso = iso_keyboard();
-        debug!(iso, "Mac keyboard type");
+        let forced = std::env::var("NUVIRA_MAC_KEYBOARD").ok();
+        info!(iso, forced = forced.as_deref().unwrap_or("no"), "Mac keyboard type");
         Ok(Self {
             screen: points(screen),
             keys: HashSet::new(),
