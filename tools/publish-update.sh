@@ -26,6 +26,7 @@ echo "== signing the update"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)
 ZIP="$ROOT/dist/nuvira-update-$VERSION.zip"
 rm -f "$ROOT"/dist/nuvira-update-*.zip
-(cd "$ROOT/dist/update" && powershell -NoProfile -Command \
-    "Compress-Archive -Path windows-x64.json, windows-x64 -DestinationPath '$(cygpath -w "$ZIP")'")
+# Windows' own bsdtar: Compress-Archive of PowerShell 5 writes the paths with "\",
+# which some Linux tools unpack as file names (a NAS's updates folder, 0.17.0).
+(cd "$ROOT/dist/update" && /c/Windows/System32/tar.exe -a -cf "$(cygpath -w "$ZIP")" windows-x64.json windows-x64)
 echo "== $ZIP"

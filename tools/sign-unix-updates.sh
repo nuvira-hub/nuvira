@@ -44,8 +44,9 @@ fi
 
 ZIP="$ROOT/dist/nuvira-update-$VERSION.zip"
 rm -f "$ZIP"
-if command -v powershell >/dev/null; then
-    (cd "$OUT" && powershell -NoProfile -Command "Compress-Archive -Path * -DestinationPath '$(cygpath -w "$ZIP")'")
+if [ -x /c/Windows/System32/tar.exe ]; then
+    # Windows' bsdtar writes "/" in the paths (see publish-update.sh).
+    (cd "$OUT" && /c/Windows/System32/tar.exe -a -cf "$(cygpath -w "$ZIP")" *)
 else
     (cd "$OUT" && zip -qr "$ZIP" .)
 fi
