@@ -319,6 +319,14 @@ const RETRY: Duration = Duration::from_secs(3600);
 /// Busy when the update was found: tried again soon.
 const BUSY_RETRY: Duration = Duration::from_secs(300);
 
+/// Exit code of an agent that ends to start again with its replaced program. Not 0:
+/// the Mac's LaunchAgents of the whole-Mac installation and of the sign-in screen
+/// restart only after an unsuccessful exit (`KeepAlive` → `SuccessfulExit` false),
+/// so that their agent can end for good where it has nothing to do; with 0 a Mac
+/// updated by its MDM stayed unreachable until the next sign-in. Not 75 either,
+/// which the Linux session unit keeps for "not handed over" (no restart).
+pub const RESTART_EXIT: i32 = 3;
+
 /// The unattended agent (user service): checks its server 2 minutes after start
 /// and every 6 hours, installs what this user can install, and ends the process
 /// when its program was replaced and no session is in progress (`busy` is the
@@ -342,7 +350,7 @@ pub fn spawn_agent_updates(base: String, busy: PathBuf, cache: PathBuf) {
             std::thread::sleep(Duration::from_secs(15));
             if replaced.happened() && !busy.exists() {
                 info!("the program was updated: restarting with the new one");
-                std::process::exit(0);
+                std::process::exit(RESTART_EXIT);
             }
             let Some(channel) = install.channel() else { continue };
             if Instant::now() < next || replaced.happened() {
