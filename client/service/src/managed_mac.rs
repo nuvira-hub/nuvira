@@ -83,6 +83,9 @@ struct SessionAgent {
     server: String,
     server_key: Option<String>,
     password_hash: String,
+    /// `NUVIRA_MAC_KEYBOARD` for the agent (the profile's `Keyboard`).
+    #[serde(default)]
+    keyboard: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -370,22 +373,27 @@ fn primary_gid(uid: u32) -> u32 {
     }
 }
 
-fn session_agent_for(settings: &Settings, hash: &str) -> SessionAgent {
-    SessionAgent { server: settings.server.clone(), server_key: settings.server_key.clone(), password_hash: hash.to_string() }
+fn session_agent_for(settings: &Settings, hash: &str, keyboard: Option<&str>) -> SessionAgent {
+    SessionAgent {
+        server: settings.server.clone(),
+        server_key: settings.server_key.clone(),
+        password_hash: hash.to_string(),
+        keyboard: keyboard.map(str::to_string),
+    }
 }
 
-fn up_to_date(uid: u32, settings: &Settings, hash: &str) -> bool {
+fn up_to_date(uid: u32, settings: &Settings, hash: &str, keyboard: Option<&str>) -> bool {
     let dir = session_dir(uid);
     let agent = std::fs::read_to_string(dir.join("agent.json"))
         .ok()
         .and_then(|t| serde_json::from_str::<SessionAgent>(&t).ok());
     let key = |path: &Path| std::fs::read(path).ok();
-    agent == Some(session_agent_for(settings, hash))
+    agent == Some(session_agent_for(settings, hash, keyboard))
         && key(&dir.join("device.key")).is_some()
         && key(&dir.join("device.key")) == key(&Path::new(SYSTEM_DIR).join("device.key"))
 }
 
-fn hand_over(uid: u32, settings: &Settings, hash: &str) -> Result<()> {
+fn hand_over(uid: u32, settings: &Settings, hash: &str, keyboard: Option<&str>) -> Result<()> {
     let gid = primary_gid(uid);
     let dir = session_dir(uid);
     let _ = std::fs::remove_dir_all(&dir);
@@ -394,7 +402,7 @@ fn hand_over(uid: u32, settings: &Settings, hash: &str) -> Result<()> {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
     let key = dir.join("device.key");
     std::fs::copy(Path::new(SYSTEM_DIR).join("device.key"), &key).context("device.key")?;
-    write_private(&dir.join("agent.json"), &serde_json::to_string(&session_agent_for(settings, hash))?)?;
+    write_private(&dir.join("agent.json"), &serde_json::to_string(&session_agent_for(settings, hash, keyboard))?)?;
     for path in [&key, &dir.join("agent.json"), &dir] {
         std::os::unix::fs::chown(path, Some(uid), Some(gid))?;
     }
@@ -430,6 +438,7 @@ pub fn run() -> Result<()> {
     apply_policy(&mut settings, &policy)?;
     spawn_profile(&settings);
     let hash = signin::password_hash()?;
+    let keyboard = policy.keyboard.as_deref();
     let mut leftovers = leftovers();
     let mut current: Option<u32> = None;
     let mut retry_at = Instant::now();
@@ -437,7 +446,7 @@ pub fn run() -> Result<()> {
     loop {
         let wanted = signin::console_uid();
         for uid in std::mem::take(&mut leftovers) {
-            if Some(uid) == wanted && current.is_none() && up_to_date(uid, &settings, &hash) {
+            if Some(uid) == wanted && current.is_none() && up_to_date(uid, &settings, &hash, keyboard) {
                 info!(uid, "the agent of the person in front keeps the Mac's ID");
                 current = Some(uid);
             } else {
@@ -452,7 +461,7 @@ pub fn run() -> Result<()> {
             if let Some(uid) = wanted
                 && Instant::now() >= retry_at
             {
-                match hand_over(uid, &settings, &hash) {
+                match hand_over(uid, &settings, &hash, keyboard) {
                     Ok(()) => {
                         info!(uid, "the Mac's ID handed to the agent of the person in front");
                         current = Some(uid);
@@ -521,6 +530,9 @@ pub fn session_agent() -> Result<()> {
         command.args(["--server-key", key]);
     }
     command.arg("--identity").arg(dir.join("device.key")).env("NUVIRA_PASSWORD_HASH", &agent.password_hash);
+    if let Some(keyboard) = &agent.keyboard {
+        command.env("NUVIRA_MAC_KEYBOARD", keyboard);
+    }
     // Into the person's log, as with their own installation.
     if let Some(home) = std::env::var_os("HOME") {
         let log = Path::new(&home).join("Library/Logs/NuviraHub/agent.log");

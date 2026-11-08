@@ -219,6 +219,10 @@ fn start_agent(exe: &Path, settings: &Settings, hash: &str) -> Result<Child> {
         command.args(["--server-key", key]);
     }
     command.env("NUVIRA_PASSWORD_HASH", hash).env("NUVIRA_DATA_DIR", SYSTEM_DIR);
+    // Read at every start: the profile may have changed since the job began.
+    if let Some(keyboard) = crate::policy::read().keyboard {
+        command.env("NUVIRA_MAC_KEYBOARD", keyboard);
+    }
     // Tests: variables for the agent (KEY=VALUE lines), read at every start.
     if let Ok(text) = std::fs::read_to_string(Path::new(SYSTEM_DIR).join("signin.env")) {
         for (key, value) in text.lines().filter_map(|l| l.split_once('=')) {

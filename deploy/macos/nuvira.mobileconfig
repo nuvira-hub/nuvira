@@ -45,6 +45,10 @@
 			<string>output of: nuvira service password-hash</string>
 			<key>Profile</key>
 			<string>code of a customised installer profile (Pro)</string>
+			<!-- iso, ansi or auto: iso for a Mac without a keyboard of its own
+			     (Mac mini, Mac Studio) used with an Italian, German, French... layout -->
+			<key>Keyboard</key>
+			<string>auto</string>
 		</dict>
 		<dict>
 			<key>PayloadType</key>

@@ -13,7 +13,8 @@
 //!   configuration profile of an MDM (`/Library/Managed Preferences`) or, without
 //!   one, written by an administrator (`sudo defaults write
 //!   /Library/Preferences/io.github.nuvira-hub.nuvira Server …`): keys `Server`,
-//!   `ServerKey`, `PasswordHash`, `Profile`, as the Windows policies.
+//!   `ServerKey`, `PasswordHash`, `Profile`, as the Windows policies, and
+//!   `Keyboard` (`auto`, `iso` or `ansi`, macOS only: see [`Policy::keyboard`]).
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Policy {
@@ -26,6 +27,12 @@ pub struct Policy {
     pub password_hash: Option<String>,
     /// Profile of a customised installer of the Pro server (logo, colours, contacts).
     pub profile: Option<String>,
+    /// macOS: the kind of keyboard of the Mac, `iso` or `ansi` (`auto` or not set:
+    /// what macOS reports). A Mac without a keyboard of its own (Mac mini, Mac
+    /// Studio in a rack) reports ANSI, and on an ISO layout (Italian, German,
+    /// French…) the key left of 1 and the one left of Z then come out swapped.
+    /// Given to the agent as `NUVIRA_MAC_KEYBOARD`.
+    pub keyboard: Option<String>,
 }
 
 impl Policy {
@@ -41,6 +48,9 @@ impl Policy {
             server_key: set(self.server_key),
             password_hash: set(self.password_hash).filter(|h| nuvira_secret::is_hash(h)),
             profile: set(self.profile),
+            keyboard: set(self.keyboard)
+                .map(|k| k.to_ascii_lowercase())
+                .filter(|k| matches!(k.as_str(), "iso" | "ansi")),
         }
     }
 }
@@ -53,6 +63,7 @@ pub fn read() -> Policy {
         server_key: windows_value("ServerKey"),
         password_hash: windows_value("PasswordHash"),
         profile: windows_value("Profile"),
+        keyboard: None,
     }
     .cleaned()
 }
@@ -110,8 +121,14 @@ fn read_file(path: &std::path::Path) -> Policy {
     }
     let Ok(text) = std::fs::read_to_string(path) else { return Policy::default() };
     match serde_json::from_str::<File>(&text) {
-        Ok(f) => Policy { server: f.server, server_key: f.server_key, password_hash: f.password_hash, profile: f.profile }
-            .cleaned(),
+        Ok(f) => Policy {
+            server: f.server,
+            server_key: f.server_key,
+            password_hash: f.password_hash,
+            profile: f.profile,
+            keyboard: None,
+        }
+        .cleaned(),
         Err(e) => {
             tracing::warn!("{} ignored: {e}", path.display());
             Policy::default()
@@ -160,6 +177,7 @@ pub fn read() -> Policy {
         server_key: managed.server_key.or(local.server_key),
         password_hash: managed.password_hash.or(local.password_hash),
         profile: managed.profile.or(local.profile),
+        keyboard: managed.keyboard.or(local.keyboard),
     }
 }
 
@@ -189,6 +207,7 @@ fn from_keys(value: &serde_json::Value) -> Policy {
         server_key: text("ServerKey"),
         password_hash: text("PasswordHash"),
         profile: text("Profile"),
+        keyboard: text("Keyboard"),
     }
     .cleaned()
 }
@@ -203,6 +222,15 @@ mod tests {
         let p = from_keys(&value);
         assert_eq!(p.server.as_deref(), Some("nuvira.example.com"));
         assert_eq!(p.server_key, None);
+    }
+
+    #[test]
+    fn keyboard_kind() {
+        let kind = |v: &str| from_keys(&serde_json::json!({ "Keyboard": v })).keyboard;
+        assert_eq!(kind("ISO").as_deref(), Some("iso"));
+        assert_eq!(kind(" ansi ").as_deref(), Some("ansi"));
+        assert_eq!(kind("auto"), None);
+        assert_eq!(kind("jis"), None);
     }
 
     #[test]
