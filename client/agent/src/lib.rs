@@ -1394,6 +1394,10 @@ async fn session(
                     if locked != screen_locked {
                         screen_locked = locked;
                         info!(locked, "screen lock state");
+                        #[cfg(target_os = "macos")]
+                        if locked {
+                            nuvira_input::lockhid::prepare();
+                        }
                         let input = nuvira_capture::lock_screen_takes_input();
                         let state = nuvira_proto::v1::ScreenState { locked, input };
                         ctrl_tx.send(&control(Msg::ScreenState(state))).await?;

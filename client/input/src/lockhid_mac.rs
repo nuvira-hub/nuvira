@@ -150,6 +150,17 @@ fn send(state: &mut State) -> bool {
     true
 }
 
+/// The screen just locked: the service is reached now, so that it opens the
+/// virtual keyboard before the first key.
+pub fn prepare() {
+    let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    if state.stream.is_none() && available() {
+        state.modifiers = 0;
+        state.keys.clear();
+        send(&mut state);
+    }
+}
+
 /// A key of the viewer while the screen is locked. False when it could not be
 /// typed this way (the service is missing: the caller posts it as usual).
 pub fn key(code: &str, down: bool) -> bool {

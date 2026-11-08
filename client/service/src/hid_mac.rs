@@ -230,11 +230,30 @@ fn peer_program(stream: &UnixStream) -> Option<PathBuf> {
     (n > 0).then(|| PathBuf::from(String::from_utf8_lossy(&buf[..n as usize]).into_owned()))
 }
 
+/// Opens the virtual keyboard if it is not open.
+fn open_keyboard(keyboard: &mut Option<Karabiner>, daemon: &Mutex<Option<Child>>) -> Result<()> {
+    if keyboard.is_none() {
+        ensure_daemon(&mut daemon.lock().unwrap_or_else(|e| e.into_inner()))?;
+        *keyboard = Some(Karabiner::connect()?);
+    }
+    Ok(())
+}
+
+/// Least time between two reports: queued while the keyboard was being opened,
+/// they came out in one burst and macOS lost keys.
+const REPORT_SPACING: Duration = Duration::from_millis(12);
+
 fn serve_agent(mut stream: UnixStream, keyboard: &Mutex<Option<Karabiner>>, daemon: &Mutex<Option<Child>>) {
+    // The agent connects when the screen locks: the keyboard is opened now, so
+    // that the first keys find it ready.
+    if let Err(e) = open_keyboard(&mut keyboard.lock().unwrap_or_else(|e| e.into_inner()), daemon) {
+        warn!("virtual HID keyboard not available: {e:#}");
+    }
     let mut report = [0u8; REPORT_SIZE];
     // After a failure the next attempt waits a little (a burst of connections
     // disturbs Karabiner's daemon).
     let mut retry_at = Instant::now();
+    let mut last_post = Instant::now();
     loop {
         if stream.read_exact(&mut report).is_err() {
             break;
@@ -248,10 +267,8 @@ fn serve_agent(mut stream: UnixStream, keyboard: &Mutex<Option<Karabiner>>, daem
             if Instant::now() < retry_at {
                 continue;
             }
-            let started = ensure_daemon(&mut daemon.lock().unwrap_or_else(|e| e.into_inner()))
-                .and_then(|()| Karabiner::connect());
-            match started {
-                Ok(k) => *kv = Some(k),
+            match open_keyboard(&mut kv, daemon) {
+                Ok(()) => {}
                 Err(e) => {
                     warn!("virtual HID keyboard not available: {e:#}");
                     retry_at = Instant::now() + Duration::from_secs(2);
@@ -259,6 +276,11 @@ fn serve_agent(mut stream: UnixStream, keyboard: &Mutex<Option<Karabiner>>, daem
                 }
             }
         }
+        let since = last_post.elapsed();
+        if since < REPORT_SPACING {
+            std::thread::sleep(REPORT_SPACING - since);
+        }
+        last_post = Instant::now();
         if let Some(k) = kv.as_mut()
             && let Err(e) = k.post(&report)
         {
