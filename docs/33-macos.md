@@ -38,7 +38,24 @@ Keys are sent **by position**: the viewer sends the W3C code of its physical key
 - **Remove**, in the app or `nuvira service uninstall`, unloads it (`bootout`) and deletes the definition and the password. The ID stays.
 - `nuvira service start` restarts it (`kickstart -k`), or loads it if it is not loaded.
 
-Limits: the Mac is reachable only while someone is logged in and the screen is not locked. After a restart it needs automatic login, which FileVault does not allow. The login screen would need a root LaunchDaemon (not done).
+Limits: see the sign-in screen and the locked screen below. With FileVault on, the disk is unlocked before macOS starts: nothing of NuviraHub runs there.
+
+## Sign-in screen
+
+After a restart without automatic login, or after logging out, the Mac shows its sign-in screen; NuviraHub is reachable there too, with the same ID and the permanent password (`client/service/src/signin_mac.rs`).
+
+- **Installed with the printer.** The app's Install runs `nuvira service system` after the single administrator prompt (`client/service/src/system.rs`): the NuviraHub printer and `/Library/LaunchAgents/io.github.nuvira-hub.nuvira.signin.plist`, a LaunchAgent limited to the `LoginWindow` session. launchd runs it as root while the sign-in screen is shown. It holds no secret: device key, server fingerprint and the password's hash are copied into `/Library/Application Support/NuviraHub` (root only, 0600). Remove takes them away with the printer (one prompt).
+- **`nuvira service signin-run`** starts `nuvira agent --signin-screen`: only the permanent password is accepted (nobody could confirm a temporary one), no automatic updates (the person's agent does them). At start-up the network may not be there yet: the agent is started again every 5 s.
+- **Same program, same permissions.** It is the program inside the app's bundle: Screen Recording and Accessibility hold for root too (`AXIsProcessTrusted` true, uid 0). macOS asks once more at the sign-in screen ("nuvira is requesting to bypass the system private window picker…"): the technician answers it with the mouse.
+- **Pre-login app.** WindowServer delivers synthetic input at the sign-in screen only to programs whose binary has a `__CGPreLoginApp` section (Apple's CGPreLoginApp sample): `client/app/build.rs` adds it (`-sectcreate __CGPreLoginApp __cgpreloginapp /dev/null`). Without it the screen was captured but every click and key was dropped silently, with every event source and tap.
+- **Input events without an event source.** A `HIDSystemState` source made for every event hung there (SkyLight's `CGSEventSourceForID` waiting on a lock): events are now made with a `NULL` source.
+- **One agent at a time.** The server keeps the last connection with an ID: launchd ends the sign-in screen's job when someone signs in (and `signin-run` ends its agent as soon as SystemConfiguration's console user is a person); the person's LaunchAgent then registers with the same ID. The viewer connects again by itself.
+
+## Locked screen
+
+macOS 27 shows no capture program the lock screen of a signed-in person: ScreenCaptureKit lists no display while it is locked and stops a running stream a few seconds after the lock (error -3815); `CGDisplayCreateImage` and `CGDisplayStream` give black, also as root. It takes no synthetic input either: `CGEventPost` with every source (none, HID, combined, private) and tap (HID, session, to loginwindow's pid), the old `CGPostKeyboardEvent`, as the person and as root, with and without the pre-login section; switching to the login window (`SACSwitchToLoginWindow`) was refused as well. Only Apple's Screen Sharing reaches it.
+
+So the session no longer ends when the Mac is locked: the capture sends a dark placeholder once a second and opens the stream again after the unlock; the agent tells the viewer (`ScreenState` with `input: false`, session protocol), which shows a notice. Someone must unlock it at the Mac, or the technician restarts it (toolbar) and signs in at the sign-in screen. For Macs used without anyone in front of them: System Settings → Lock Screen → "Require password after screen saver begins or display is turned off" set to Never.
 
 ## Remote restart
 
@@ -70,6 +87,15 @@ Scaleway Mac mini M4, macOS 27.2, SIP on, FileVault off, a 1920×1080 virtual di
 - With a **NuviraHub Pro** test server on the Mac itself (built for macOS from nuvira-pro, the test licence): **TCP tunnel** from the Fedora viewer to `127.0.0.1:8000` of the Mac (500 kB, same SHA-256), `8.8.8.8:53` refused by the agent; **RMM inventory** of the Mac in the console (macOS 27.2, Apple M4, 10 cores, 16 GB, disks, uptime; now with the build of macOS as the version, and the APFS volumes of /System/Volumes no longer counted twice); **address book sign-in with 2FA** in the Mac's app (password, then the TOTP code). Single sign-on not tried (no identity provider).
 - **The Mac as the viewer towards Windows** (a test agent on PC-LABORATORIO): picture at 1280×1024, the "Ctrl+Alt+Del" button in the toolbar (not pressed).
 - **IPv6**: an agent with a synthetic picture on the OVH VPS (Canada, in a Debian 12 container with the host's network) registered on the Mac's server by its IPv6 address; the Mac's viewer went **direct over IPv6** (`path=Direct remote=[2607:5300:…]`, agent "viewer connected directly ([2001:bc8:…])"): 29.9 fps, latency p50 55 ms, p95 60 ms; the viewer draws with Metal.
+
+## Tests of 2026-11-08 (sign-in screen)
+
+On the Mac mini M4 (macOS 27.2), viewer on PC-LABORATORIO (Windows) through the public server, with `--type-keys` and `--click-at` (hidden test options of the viewer: text typed at a person's pace, a click):
+
+- Installed with `sudo nuvira service system --user-data … --server ""` (what the app runs after the prompt); restart with automatic login switched off: the sign-in screen's agent registered with the Mac's own ID (470 150 788) about 8 s after the first attempt, which failed because DNS was not ready yet.
+- Sign-in screen seen with the permanent password; the macOS prompt for Screen Recording appeared on it once.
+- Before the pre-login section: no click or key reached it. With it: click in the password field, "abc" typed (three dots), then the Mac's password and Enter: signed in; launchd ended the sign-in screen's agent, the person's LaunchAgent registered with the same ID.
+- Locked screen: the session stays open with the placeholder and `locked=true` in the viewer; typing the password does not reach the lock screen (watched through Screen Sharing: the field stayed empty with every method above).
 
 ## Not tested yet
 

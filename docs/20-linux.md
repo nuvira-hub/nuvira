@@ -61,7 +61,23 @@ A systemd **user** service, `nuvira-agent.service`, runs the agent as the person
 - **Start.** An autostart entry (`~/.config/autostart/nuvira-agent.desktop`) runs `nuvira service start` at login: it imports the desktop session's variables (display, Wayland, D-Bus) into systemd and restarts the service, so the agent can read the screen. systemd restarts it if it ends.
 - **App.** With the service installed the app runs no agent of its own: it connects to the service's one through a Unix socket in `$XDG_RUNTIME_DIR/nuvira/` (folder 0700), and each side accepts only a process of the same user (`SO_PEERCRED`). It shows the service's ID and temporary password; the permanent one is accepted without confirmation.
 - **Wayland.** GNOME's permission is asked when installing, while the person is there, and the service then uses it (no dialog, also after a restart). GNOME ties a saved permission to the program that asked for it, telling programs apart by their systemd unit: asked from the app it was refused to the service (Fedora, 2026-11-06). So it is asked by `nuvira service portal`, started through `systemd-run` like the service.
-- **Limits.** Nothing runs before someone logs in: after a restart the computer needs automatic login. On GNOME with Wayland the screen must not lock, since GNOME refuses to share it while locked. The login screen itself cannot be reached.
+- **GNOME's own API.** The service's agent (`--ipc`, and the sign-in screen's) opens its sessions through `org.gnome.Mutter.RemoteDesktop` and `org.gnome.Mutter.ScreenCast` on the session bus (`client/portal/src/mutter.rs`), as gnome-remote-desktop does: no dialog, no saved permission; the portal stays the fallback (KDE, others). The app's own agent keeps the portal and its dialog.
+- **Limits.** See the sign-in screen and the locked screen below.
+
+## Sign-in screen
+
+The display manager's greeter (LightDM, GDM…) is reached by a systemd **system** service, `nuvira-signin.service`, which runs `nuvira service signin-run` as root (`client/service/src/signin_linux.rs`). It is installed with the printer by `nuvira service system`, after pkexec, from the app's Install; the packages remove it and restart it after an update.
+
+- It follows the active session of `seat0` (`loginctl`): while it is a greeter it keeps an agent there with `--signin-screen` (permanent password only), with the person's ID (device key, server fingerprint and password hash copied into `/var/lib/nuvira`, root only).
+- **X11 greeters (LightDM):** the agent runs as root on the greeter's display, with the X server's own `-auth` file read from its command line.
+- **Wayland greeters (GDM):** an agent as the greeter's user with its session bus, through GNOME's API: GNOME refuses it (see below).
+- **One agent at a time:** when the greeter appears, the user service of whoever installed it is stopped (`systemctl --user --machine=user@.host`: their systemd can outlive the session, kept by an SSH login for example, and the two agents took the ID from each other); when a person's session becomes active the greeter's agent ends and the autostart entry starts theirs.
+- The program must be one only root can change: from the packages `/usr/bin/nuvira`, otherwise a copy in `/usr/local/lib/nuvira`.
+
+## Locked screen
+
+- **X11** (Mint, Cinnamon): the lock screen is a window of the session's X server; captured and typed into like the desktop.
+- **GNOME on Wayland:** GNOME closes every remote desktop session the moment the screen locks (`Closed` signal) and refuses new ones until it is unlocked ("Session creation inhibited"), through the portal and through its own API alike; at GDM's sign-in screen too. The capture then sends a dark placeholder once a second and the agent tells the viewer (`ScreenState`, `input: false`): someone must unlock it at the computer. The way around it would be below GNOME, as root: the screen read from DRM/KMS and input through a `uinput` device (not done).
 
 ## Local address book
 
@@ -75,10 +91,15 @@ On Windows the saved passwords are protected with DPAPI. On Linux they are encry
 
 **Linux technician:** Ubuntu 26.04 (GNOME on Wayland, VM without GPU) controlling the NUC (Windows 11): direct path, 1920×1080, median latency 6 ms, decode 2.4 ms; the archive and the `.deb` from the workflow install and start, with their icons in the menu and in the dash.
 
+## Tests of 2026-11-08 (sign-in and locked screens)
+
+- **Mint 22.3 (LightDM, X11)**, `.deb` of the branch, viewer on PC-LABORATORIO: after logging the person out the greeter's agent started as root on `:0` with `/var/run/lightdm/root/:0`, same ID (780 221 705); greeter seen, password typed with `--type-keys` and Enter: signed in, the greeter's agent ended, the person's started by itself. Typing in a burst gave "wrong password" (the greeter's input method mixed the order): the test option now types at a person's pace. The lock screen of Cinnamon was captured by the person's agent as usual.
+- **Fedora 44 / Ubuntu 26.04 (GNOME 50)**: GNOME's API opens without a dialog; closed at the lock (2.1 s after), "Session creation inhibited" while locked and at GDM's greeter (user `gdm-greeter`, uid 60578).
+
 ## To do
 
 - **X11, faster capture**: MIT-SHM and XDamage instead of `GetImage` and comparing images.
-- **Unattended access, beyond the user session**: the login screen and a locked GNOME screen on Wayland; the way is probably Mutter's remote desktop API, as gnome-remote-desktop uses it.
+- **GNOME's sign-in and lock screens**: DRM/KMS capture and `uinput` input as root (GNOME allows no remote desktop session there).
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
 - **Other desktops**: tested with GNOME only; KDE Plasma to be tested; Sway and Hyprland have no remote desktop portal (screen without input).
