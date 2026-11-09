@@ -118,13 +118,29 @@ On Windows the saved passwords are protected with DPAPI. On Linux they are encry
 - **Fedora 44 (GNOME 50.0) with the extension**, agent 0.18.0, viewer on Mint: a session open before the lock stays open (no `Closed`), new ones open while locked; the viewer sees the lock screen and types into its password field. After logging out, GDM's greeter (extension active in mode `gdm`) seen from the viewer and a click on the user opened its password field. The sign-in screen's agent was first refused by SELinux (`init_t` writing to the greeter's bus socket): fixed with the `bin_t` label.
 - **Ubuntu 26.04 (GNOME 50.1) with the extension**: GDM's greeter seen and clicked (mode `gdm`), lock screen seen and typed into (mode `ubuntu`, child of `user`); removal gives back gdm3's compiled settings unchanged.
 
+## Tests of 2026-11-09 (KDE Plasma, Wayland)
+
+Kubuntu 26.04.1, Plasma 6.6 on Wayland, SDDM on Wayland, VM on the NAS; viewer on Mint (X11), agents through the NAS server.
+
+- **Packages and updates.** The 0.20.1 `.deb`, then `nuvira service deploy --server … --password-file …`: installed for the whole computer, the person's agent started by the system service. Root's timer installed 0.21.1 by itself, same ID. It asked NuviraHub's public server instead of the organisation's: fixed (59aae70, the server of `policy.json`, then `managed.json`, then a person's unit); with the main package it says "up to date (0.21.1, server 192.168.178.12)".
+- **Controlled computer.** The portal asks once ("Remote control": see the screen, control input, "allow restoring in future sessions" ticked); after OK the session starts, and later sessions and the session after a restart start with no question (restore token). Screen 1280x800 at about 20 fps, typing (letters, capitals, Enter), files both ways, terminal (bash, `XDG_SESSION_TYPE=wayland`, `exit 3` → 3), remote printing (`lp -d NuviraHub` → PDF at the viewer), recording, restart with reconnection. Privacy mode and the remote resolution are not offered (GNOME only, X11 only).
+- **Clipboard.** From the viewer to KDE yes; from KDE to the viewer no: KWin hands the clipboard of Wayland programs only to a focused X11 client, and the agent has no window. Fixed (8b9a9ea) with arboard's Wayland data control (KWin has `ext_data_control_v1`); GNOME has none and arboard falls back to X11 as before (tried both ways on the Ubuntu VM).
+- **Recordings** lacked the end of a still screen (34 s saved as 1 s): fixed in the same commit, the last picture lasts until the file is closed (30 s session → 28.9 s file).
+- **Sign-in screen after the restart:** SDDM on Wayland is not covered. The sign-in screen's agent is reached but cannot capture ("remote desktop portal not available": the greeter has no portal); the viewer keeps trying and connects by itself once the person signs in.
+- **Viewer on KDE.** Towards Mint: the toolbar, the remote resolution adapted (1280x800 → 1360x768 for 1280x718), put back when the viewer closed.
+- **KWallet.** Plasma 6.6's `ksecretd` gives `org.freedesktop.secrets`, but its wallet stays locked after sign-in until a program asks to unlock it (with the sign-in password it then opens with no dialog). NuviraHub does not ask at start, so the viewer key was written as `NVK1F` (file permissions); with the wallet open it moved to `NVK1S` by itself, same ID.
+- **App buttons with polkit.** Started from the menu, "Install on this computer" showed KDE's polkit window, and with the password installed the system part (sign-in service, printer); "Remove" asked again and removed it. Started from an ssh shell the app is outside the graphical session and polkit gives up at once: the user service is installed without the system part, as the app says. The polkit window shows pkexec's generic English text with the command line.
+
 ## To do
 
 - **X11, faster capture**: MIT-SHM and XDamage instead of `GetImage` and comparing images.
 - **GNOME's lock screen at once:** the extension works from the next sign-in; before it the lock still closes the session.
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
-- **Other desktops**: tested with GNOME only; KDE Plasma to be tested; Sway and Hyprland have no remote desktop portal (screen without input).
+- **Other desktops**: GNOME and KDE Plasma (2026-11-09) tested; Sway and Hyprland have no remote desktop portal (screen without input).
+- **SDDM on Wayland** (KDE's sign-in screen): no picture before someone signs in.
+- **KWallet**: ask `ksecretd` to unlock the wallet when it opens without a dialog (sign-in password), so that the keys go there at once.
+- **polkit**: an action of our own, with a translated message, instead of pkexec's text with the command line; the `.desktop` entry's description in the five languages.
 - **Performance**: DMA-BUF capture, the cursor as metadata; VA-API on Intel and AMD and NVENC on a Linux installed (both tried only through WSL).
 - **Ubuntu 22.04 and Mint 21**: dropped in 0.14.0 (PipeWire too old); possible by loading PipeWire at run time.
 
