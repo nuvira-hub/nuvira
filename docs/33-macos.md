@@ -53,7 +53,17 @@ After a restart without automatic login, or after logging out, the Mac shows its
 
 ## Locked screen
 
-macOS 27 shows no capture program the lock screen of a signed-in person: ScreenCaptureKit lists no display while it is locked and stops a running stream a few seconds after the lock (error -3815); `CGDisplayCreateImage` and `CGDisplayStream` give black, also as root. It takes no synthetic input either: `CGEventPost` with every source (none, HID, combined, private) and tap (HID, session, to loginwindow's pid), the old `CGPostKeyboardEvent`, as the person and as root, with and without the pre-login section; switching to the login window (`SACSwitchToLoginWindow`) was refused as well. Only Apple's Screen Sharing reaches it — and a **virtual HID keyboard**, which NuviraHub now uses (below).
+**Picture.** ScreenCaptureKit shows the lock screen of a signed-in person like any other screen, as long as the display is on. What hid it until 0.21: macOS turns the display off a few seconds after the lock (about 5 s on the Mac mini, also with `pmset displaysleep 0`); then ScreenCaptureKit lists no display and stops a running stream (error -3815, "Failed to find any displays or windows to capture"), and `CGDisplayCreateImage` gives black. The hint came from [LanternOps/breeze #10360 and #10874](https://github.com/LanternOps/breeze/issues/10874), where the same black screen turned out to be the display going off.
+
+So while a capture is open (`client/capture/src/macos.rs`, `DisplayAwake`):
+
+- a `PreventUserIdleDisplaySleep` power assertion is held (as `caffeinate -d`), named "NuviraHub remote session" in `pmset -g assertions`, released when the session ends;
+- while the screen is locked, `IOPMAssertionDeclareUserActivity` every 10 s and at the lock: it also turns on a display that is already off (in 0.5 s), which the assertion alone does not;
+- the stream stays open across lock and unlock; if ScreenCaptureKit stops it all the same (delegate `didStopWithError`), or no display is found at the start (display off, a closed laptop lid), the dark placeholder is sent once a second and the stream is opened again.
+
+Tested 2026-11-09 on the Mac mini (macOS 27.2) from the viewer on PC-LABORATORIO: connecting to a Mac locked for minutes, with the display off: display on, stream open 0.6 s later, the lock screen seen at 51 fps (clock, user picture, password field, "Your screen is being observed"); a 150 s session at 51 fps, the display off again as soon as the session ended. Before the change the same session saw only the placeholder.
+
+The lock screen takes no synthetic input: `CGEventPost` with every source (none, HID, combined, private) and tap (HID, session, to loginwindow's pid), the old `CGPostKeyboardEvent`, as the person and as root, with and without the pre-login section; switching to the login window (`SACSwitchToLoginWindow`) was refused as well. A **virtual HID keyboard** works (below).
 
 ### Typing the password: a virtual HID keyboard
 
@@ -62,11 +72,11 @@ The lock screen takes the input of a HID device. The DriverKit driver of [Karabi
 - **Installed with the system part** (`nuvira service system`, the administrator prompt): its package, unless a Karabiner is already on the Mac, the keyboard type of the virtual device (ANSI, in `com.apple.keyboardtype`: otherwise macOS opens the Keyboard Setup Assistant at its first key), and our LaunchDaemon `io.github.nuvira-hub.nuvira.hid` (`nuvira service hid-run`, root). Then the app asks macOS to load the driver extension and, the first time, opens System Settings → General → Login Items & Extensions → Driver Extensions, where the person turns it on (`@install.hid_allow_mac`). Removed with unattended access: the app first deactivates the driver extension as the person (root cannot; macOS finishes at the next restart), then the system part removes our daemon and Karabiner's files, unless Karabiner-Elements is on the Mac and uses the same driver.
 - **`hid-run`** listens on `/var/run/nuvira-hid.sock` and accepts only the program of this same bundle (the peer's path, `LOCAL_PEERPID` + `proc_pidpath`). It keeps Karabiner's daemon running and talks to it over its root-only socket in Rust (pqrs' unix_domain_stream frames: size u32 BE, type, request id u64 BE; requests carry the client protocol version 7; the daemon's status requests are answered, a heartbeat every 5 s). Two lessons from the Mac mini: a connection opened and closed at once makes that daemon's server close and bind again (so it is never probed by connecting), and unanswered status requests make it drop the client after 15 s.
 - **The agent**, while `CGSSessionScreenIsLocked`, sends HID keyboard reports (modifiers + up to 32 usages) instead of Quartz events; it connects as soon as the screen locks, so that the keyboard is open before the first key, and `hid-run` spaces the reports 12 ms (a burst lost keys).
-- `ScreenState.input` is true when the service is there: the viewer says to type the password and press Enter. The picture stays a placeholder until the Mac is unlocked; the stream then opens again by itself.
+- `ScreenState.input` is true when the service is there: the viewer says to type the password and press Enter, and the technician sees the lock screen while typing.
 
 Tested 2026-11-08 on the Mac mini (macOS 27.2): locked, the viewer on PC-LABORATORIO typed the password with Enter, the Mac unlocked 2 s later and the desktop came back in the same session.
 
-So the session no longer ends when the Mac is locked: the capture sends a dark placeholder once a second and opens the stream again after the unlock; the agent tells the viewer (`ScreenState`, `input` true when the virtual keyboard is installed), which shows a notice. Without the virtual keyboard (driver extension not allowed) someone must unlock it at the Mac, or the technician restarts it (toolbar) and signs in at the sign-in screen.
+So the session no longer ends when the Mac is locked: the technician sees the lock screen; the agent tells the viewer (`ScreenState`, `input` true when the virtual keyboard is installed), which shows a notice. Without the virtual keyboard (driver extension not allowed) someone must unlock it at the Mac, or the technician restarts it (toolbar) and signs in at the sign-in screen.
 
 ## Remote restart
 
