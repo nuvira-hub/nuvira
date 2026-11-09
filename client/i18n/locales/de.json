@@ -304,7 +304,7 @@
   "viewer.restarting": "Der entfernte Computer startet neu: die Sitzung verbindet sich von selbst wieder",
   "viewer.waiting_restart": "Warten auf den Neustart von {agent}…",
   "viewer.title_restarting": "NuviraHub — Neustart von {agent}…",
-  "viewer.screen_locked": "Der Bildschirm des entfernten Computers ist gesperrt: macOS lässt sein Bild nicht anzeigen. Geben Sie das Passwort ein und drücken Sie die Eingabetaste, um ihn zu entsperren.",
+  "viewer.screen_locked": "Der Bildschirm des entfernten Computers ist gesperrt. Geben Sie das Passwort ein und drücken Sie die Eingabetaste, um ihn zu entsperren.",
   "viewer.screen_locked_no_input": "Der Bildschirm des entfernten Computers ist gesperrt: Das System lässt kein Fernsteuerungsprogramm seinen Sperrbildschirm sehen oder bedienen. Jemand muss ihn am Computer entsperren; ein Mac kann auch von hier neu gestartet und am Anmeldebildschirm angemeldet werden.",
   "viewer.screen_unlocked": "Der Bildschirm des entfernten Computers ist entsperrt",
   "viewer.restart_back": "Der entfernte Computer wurde neu gestartet: wieder verbunden",

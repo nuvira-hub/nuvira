@@ -304,7 +304,7 @@
   "viewer.restarting": "The remote computer is restarting: the session will connect again by itself",
   "viewer.waiting_restart": "Waiting for {agent} to restart…",
   "viewer.title_restarting": "NuviraHub — waiting for {agent} to restart…",
-  "viewer.screen_locked": "The remote computer's screen is locked: macOS does not let its image be shown. Type the password and press Enter to unlock it.",
+  "viewer.screen_locked": "The remote computer's screen is locked. Type the password and press Enter to unlock it.",
   "viewer.screen_locked_no_input": "The remote computer's screen is locked: the system lets no remote control program see or use its lock screen. Someone must unlock it at the computer; a Mac can also be restarted from here and signed in at its sign-in screen.",
   "viewer.screen_unlocked": "The remote computer's screen is unlocked",
   "viewer.restart_back": "The remote computer restarted: connected again",

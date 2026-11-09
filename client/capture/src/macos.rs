@@ -10,18 +10,21 @@
 //! stream ([`hide_process`]); the filter is changed by the capture itself,
 //! between two frames.
 //!
-//! Locked screen: macOS shows no capture program the lock screen (ScreenCaptureKit
-//! lists no display and stops a running stream a few seconds after the lock;
-//! the older CoreGraphics captures are black, also as root). While the screen is
-//! locked the capture gives a dark placeholder image once a second, so the session
-//! goes on, and opens the stream again once it is unlocked. The viewer is told by
-//! the agent ([`screen_locked`]). The lock screen takes no synthetic input either
-//! (tried on macOS 27: CGEventPost with every source and tap, CGPostKeyboardEvent,
-//! as the user and as root, with the pre-login section): someone unlocks it at the
-//! Mac, or the Mac is restarted and signed in at the sign-in screen.
+//! Locked screen: ScreenCaptureKit shows the lock screen like any other screen,
+//! as long as the display is on. macOS turns the display off a few seconds after
+//! the lock (also with `displaysleep 0`), and then ScreenCaptureKit lists no
+//! display and stops the stream (error -3815). So during a capture the display
+//! is kept on ([`DisplayAwake`]), and woken up while the screen is locked
+//! (tested on macOS 27.2, Mac mini M4, 2026-11-09). When the stream stops all
+//! the same, or no display can be found (a closed laptop lid), the capture gives
+//! a dark placeholder image once a second, so the session goes on, and tries to
+//! open the stream again. The viewer is told by the agent ([`screen_locked`]).
+//! The lock screen takes no synthetic input: the password is typed through a
+//! virtual HID keyboard (`nuvira_input::lockhid`).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -29,6 +32,7 @@ use core_graphics::display::CGDisplay;
 use screencapturekit::cm::{CMSampleBufferExt, CMTime, SCFrameStatus};
 use screencapturekit::cv::CVPixelBufferLockFlags;
 use screencapturekit::prelude::*;
+use screencapturekit::stream::ErrorHandler;
 use tracing::info;
 
 use crate::{Capturer, Display, Frame};
@@ -197,6 +201,81 @@ impl SCStreamOutputTrait for Handler {
 struct Running {
     stream: SCStream,
     images: Receiver<Image>,
+    /// Set by ScreenCaptureKit when the stream stopped by itself.
+    stopped: Arc<AtomicBool>,
+}
+
+/// Keeps the display on while a capture is open: with the display off (as macOS
+/// does a few seconds after the lock) there is nothing to capture. An IOKit
+/// power assertion, as `caffeinate -d`; [`DisplayAwake::wake`] declares user
+/// activity, which also turns a display that is already off back on.
+struct DisplayAwake {
+    assertion: Option<u32>,
+    activity: u32,
+}
+
+#[link(name = "IOKit", kind = "framework")]
+unsafe extern "C" {
+    fn IOPMAssertionCreateWithName(
+        kind: core_foundation::string::CFStringRef,
+        level: u32,
+        name: core_foundation::string::CFStringRef,
+        id: *mut u32,
+    ) -> i32;
+    fn IOPMAssertionDeclareUserActivity(
+        name: core_foundation::string::CFStringRef,
+        user_type: u32,
+        id: *mut u32,
+    ) -> i32;
+    fn IOPMAssertionRelease(id: u32) -> i32;
+}
+
+const ASSERTION_NAME: &str = "NuviraHub remote session";
+
+impl DisplayAwake {
+    fn new() -> Self {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+        let kind = CFString::from_static_string("PreventUserIdleDisplaySleep");
+        let name = CFString::from_static_string(ASSERTION_NAME);
+        let mut id = 0;
+        // SAFETY: two valid strings and an out pointer; 255 = kIOPMAssertionLevelOn.
+        let ret = unsafe {
+            IOPMAssertionCreateWithName(kind.as_concrete_TypeRef(), 255, name.as_concrete_TypeRef(), &mut id)
+        };
+        if ret != 0 {
+            info!(ret, "display sleep assertion refused");
+        }
+        Self { assertion: (ret == 0).then_some(id), activity: 0 }
+    }
+
+    /// Declares local user activity: the display turns on, if it was off.
+    fn wake(&mut self) {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+        let name = CFString::from_static_string(ASSERTION_NAME);
+        // SAFETY: a valid string and an out pointer; 0 = kIOPMUserActiveLocal.
+        // The same id is passed again, so the system extends one assertion.
+        let ret =
+            unsafe { IOPMAssertionDeclareUserActivity(name.as_concrete_TypeRef(), 0, &mut self.activity) };
+        if ret != 0 {
+            info!(ret, "user activity not declared");
+        }
+    }
+}
+
+impl Drop for DisplayAwake {
+    fn drop(&mut self) {
+        // SAFETY: ids given by IOKit to this process.
+        unsafe {
+            if let Some(id) = self.assertion {
+                IOPMAssertionRelease(id);
+            }
+            if self.activity != 0 {
+                IOPMAssertionRelease(self.activity);
+            }
+        }
+    }
 }
 
 pub struct ScreenCaptureKitCapturer {
@@ -207,20 +286,27 @@ pub struct ScreenCaptureKitCapturer {
     display_id: u32,
     /// Generation of [`HIDDEN`] in the stream's filter.
     hidden_generation: u64,
-    /// `None` while the screen is locked.
+    /// `None` while there is no stream (display off or not found).
     running: Option<Running>,
     frame: Option<Frame>,
-    /// Last look at the lock state, and the next placeholder or reopening.
+    /// Last look at the lock state, and the next placeholder.
     lock_checked: Instant,
     next_try: Instant,
-    /// Next attempt to open the stream again after the unlock (separate from the
-    /// placeholder's clock, which moved it forward every second).
+    /// Next attempt to open the stream again (separate from the placeholder's
+    /// clock, which moved it forward every second).
     reopen_at: Instant,
+    awake: DisplayAwake,
+    /// Lock state at the last look, and the last user activity declared.
+    locked: bool,
+    woken_at: Option<Instant>,
 }
 
 /// How often the lock state is read, and the placeholder sent.
 const LOCK_CHECK: Duration = Duration::from_millis(500);
 const PLACEHOLDER_EVERY: Duration = Duration::from_secs(1);
+/// How often user activity is declared while the screen is locked (the lock
+/// screen turns the display off a few seconds after the last activity).
+const WAKE_EVERY: Duration = Duration::from_secs(10);
 /// Dark grey of the placeholder (BGRA).
 const PLACEHOLDER: [u8; 4] = [0x2a, 0x26, 0x24, 0xff];
 
@@ -237,13 +323,25 @@ impl ScreenCaptureKitCapturer {
             lock_checked: now,
             next_try: now,
             reopen_at: now,
+            awake: DisplayAwake::new(),
+            locked: screen_locked(),
+            woken_at: None,
         };
-        if screen_locked() {
-            info!("screen locked: placeholder until it is unlocked");
+        if capturer.locked {
+            // The display may already be off: turned on, then the stream opens
+            // within a second (placeholder until then).
+            info!("screen locked: waking the display");
+            capturer.wake();
+            capturer.reopen_at = now + Duration::from_millis(500);
             return Ok(capturer);
         }
         capturer.start()?;
         Ok(capturer)
+    }
+
+    fn wake(&mut self) {
+        self.awake.wake();
+        self.woken_at = Some(Instant::now());
     }
 
     fn start(&mut self) -> Result<()> {
@@ -267,31 +365,54 @@ impl ScreenCaptureKitCapturer {
             .with_queue_depth(3)
             .with_minimum_frame_interval(&CMTime { value: 1, timescale: 60, flags: 1, epoch: 0 });
         let (tx, images) = std::sync::mpsc::sync_channel(1);
-        let mut stream = SCStream::new(&filter, &config)?;
+        let stopped = Arc::new(AtomicBool::new(false));
+        let flag = stopped.clone();
+        let on_error = ErrorHandler::new(move |error| {
+            info!("ScreenCaptureKit stream stopped: {error}");
+            flag.store(true, Ordering::Relaxed);
+        });
+        let mut stream = SCStream::new_with_delegate(&filter, &config, on_error)?;
         stream.add_output_handler(Handler { images: Mutex::new(tx) }, SCStreamOutputType::Screen)?;
         stream.start_capture().map_err(|e| anyhow!("{e:?}")).context("@agent.screen_permission_mac")?;
         info!(name = screen.name, width = screen.width, height = screen.height, "ScreenCaptureKit capture");
         self.display_id = sc_display.display_id();
         self.display = screen;
         self.hidden_generation = hidden_generation;
-        self.running = Some(Running { stream, images });
+        self.running = Some(Running { stream, images, stopped });
         Ok(())
     }
 
-    /// Follows the lock state: the stream is closed when the screen locks and
-    /// opened again (once a second) after it is unlocked.
+    /// Follows the lock state and the stream: while locked the display is kept
+    /// on; a stream that stopped by itself (display off) is opened again, once a
+    /// second, with the placeholder in between.
     fn follow_lock(&mut self) {
         if self.lock_checked.elapsed() < LOCK_CHECK {
             return;
         }
         self.lock_checked = Instant::now();
         let locked = screen_locked();
-        if locked && let Some(running) = self.running.take() {
-            info!("screen locked: placeholder until it is unlocked");
-            let _ = running.stream.stop_capture();
-        } else if !locked && self.running.is_none() && Instant::now() >= self.reopen_at {
+        if locked != self.locked {
+            self.locked = locked;
+            info!(locked, "screen lock state");
+            if locked {
+                // Woken at once: the lock screen turns the display off soon.
+                self.woken_at = None;
+            }
+        }
+        if locked && self.woken_at.is_none_or(|t| t.elapsed() >= WAKE_EVERY) {
+            self.wake();
+        }
+        if self.running.as_ref().is_some_and(|r| r.stopped.load(Ordering::Relaxed)) {
+            self.running = None;
+            info!(locked, "capture stream lost: placeholder until it opens again");
+            if locked {
+                self.wake();
+            }
+            self.reopen_at = Instant::now() + Duration::from_millis(500);
+        }
+        if self.running.is_none() && Instant::now() >= self.reopen_at {
             match self.start() {
-                Ok(()) => info!("screen unlocked: capture resumed"),
+                Ok(()) => info!(locked, "capture resumed"),
                 Err(e) => {
                     info!("capture not resumed yet: {e:#}");
                     self.reopen_at = Instant::now() + PLACEHOLDER_EVERY;
@@ -300,7 +421,7 @@ impl ScreenCaptureKitCapturer {
         }
     }
 
-    /// The dark image sent while the screen is locked, once a second.
+    /// The dark image sent while there is no stream, once a second.
     fn placeholder(&mut self, timeout: Duration) -> Option<&Frame> {
         let now = Instant::now();
         if now < self.next_try {

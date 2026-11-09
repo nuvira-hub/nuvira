@@ -1462,7 +1462,8 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::ScreenLocked { locked, input } => {
                 info!(locked, input, "remote screen lock state");
-                // Kept on screen while locked: the image is only a dark placeholder.
+                // Kept on screen while locked: on a Mac the lock screen is seen (or a dark
+                // placeholder when there is no picture); the password is typed there.
                 let text = match (locked, input) {
                     (true, true) => "viewer.screen_locked",
                     (true, false) => "viewer.screen_locked_no_input",
