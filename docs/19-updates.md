@@ -89,6 +89,14 @@ nuvira-server of this branch on the Ubuntu VM (port 21316), test version 0.16.0.
 - Root's timer with the .deb on Mint: enabled and started by the postinstall; the server taken from the user's unattended access; with a `busy` file downloaded into `/var/cache/nuvira` and "session in progress: next time"; without, `apt-get` installed 0.16.0.1 (a repackaged .deb), the timer stayed active, the NuviraHub printer stayed, the download was removed.
 - Unit tests: channels and file names, program replaced only if the new one starts (a broken one leaves the old in place), bundle path, /etc/passwd and unit parsing; server: the new names served, others refused.
 
+## Test of 2026-11-09 (backup release key)
+
+The update path signed only with the backup key, end to end. nuvira-server on the Ubuntu VM (port 21316), Mint's agent: the published 0.21.1 Linux program, run with `--ipc` from a folder of the user by the systemd user unit, pointed at that server.
+- Manifest with one byte of the signature changed: "update check failed: the update signature is not valid", nothing downloaded.
+- The same program as 0.21.1.1, signed with `nuvira-release sign --key <backup>`: 2 minutes after start "version 0.21.1.1 available", downloaded and checked in 0.3 s, installed (new inode); 15 s later the agent ended, systemd started the new program, same ID.
+- `nuvira-release sign` with a key not built into the program refuses to sign.
+The test files and the unit change were removed afterwards; the backup key was only read on the NUC, not copied.
+
 Not tested yet: macOS (the bundle swap, signature and designated requirement check, the Screen Recording and Accessibility permissions after the swap, a standard user), the .rpm with dnf, the app's "Update" and "Restart" bars on Linux and macOS, an agent of a package install restarting after root's update.
 
 ## To do
