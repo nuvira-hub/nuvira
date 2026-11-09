@@ -43,6 +43,8 @@ The installation copies the program to `%ProgramFiles%\nuvira\nuvira.exe`, insta
 
 Updating over a running installation: a running program cannot be overwritten but can be renamed, so the installed one is moved aside (`nuvira.old.exe`, deleted at the next update) when the copy fails.
 
+The system tools the installation runs (`icacls`, `netsh`, `reg`, `schtasks`, `msiexec`) start with `CREATE_NO_WINDOW`. Started by the app through the administrator prompt, `nuvira.exe` has no console to share (it is a GUI program and attaches to its parent's console only when there is one), so up to 0.21.1 each tool opened a console window of its own. Measured on 2026-11-09 on PC-LABORATORIO, `service install` started by a program with no console (`rundll32 shell32.dll,ShellExec_RunDLL`, as the app's `ShellExecuteEx`), every new visible top-level window recorded: 0.21.1 showed 13 console windows in 3 s (icacls, netsh twice, reg ten times); main (a064719) none, with the firewall rule, the installed apps entry and the data folder's permissions in place. Started from a console (PowerShell, a scheduled task) neither version shows any: the tools share that console.
+
 ## Setup (NSIS)
 
 `tools/build-setup.sh` builds `dist/nuvira-setup.exe` (6.6 MB) from `deploy/windows/nuvira-setup.nsi`, downloading NSIS 3.08 once into `target/tools` (the archive Tauri uses, checked against its SHA-256).

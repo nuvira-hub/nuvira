@@ -131,6 +131,12 @@ Kubuntu 26.04.1, Plasma 6.6 on Wayland, SDDM on Wayland, VM on the NAS; viewer o
 - **Viewer on KDE.** Towards Mint: the toolbar, the remote resolution adapted (1280x800 → 1360x768 for 1280x718), put back when the viewer closed.
 - **KWallet.** Plasma 6.6's `ksecretd` gives `org.freedesktop.secrets`, but its wallet stays locked after sign-in until a program asks to unlock it (with the sign-in password it then opens with no dialog). NuviraHub does not ask at start, so the viewer key was written as `NVK1F` (file permissions); with the wallet open it moved to `NVK1S` by itself, same ID.
 - **App buttons with polkit.** Started from the menu, "Install on this computer" showed KDE's polkit window, and with the password installed the system part (sign-in service, printer); "Remove" asked again and removed it. Started from an ssh shell the app is outside the graphical session and polkit gives up at once: the user service is installed without the system part, as the app says. The polkit window shows pkexec's generic English text with the command line.
+- **Server change and the sign-in screen** (main, 4c581d7, the CI `.deb`). The managed installation set aside for the test (`deploy --remove`, then `deploy` again afterwards, same server and ID); the user's unattended access and the system part installed by hand on 192.168.178.12. The app in the Plasma session driven through AT-SPI (the server field focused) and ydotool (typing); a temporary polkit rule answered pkexec for `/usr/bin/nuvira` in place of the password window, removed afterwards.
+  - Save with `alexbn.ddns.net` (the same NAS by name): the user unit moved, pkexec ran `nuvira service system … --server alexbn.ddns.net`, `signin.json` changed and the sign-in unit restarted; `signin_server` saved in `app.json`; no note.
+  - Save with 192.168.178.12, the rule refusing: the user unit moved, `signin.json` stayed on alexbn.ddns.net, the note "Server salvato. L'accesso alla schermata di login resta sul server precedente: …" under the field.
+  - Save again with 192.168.178.12, the rule allowing: the user unit not rewritten, the sign-in screen moved, `signin_server` updated.
+  - Save once more, unchanged: no pkexec.
+  - Not seen: the greeter's agent registering on the new server after a sign-out (the settings it starts with were checked).
 
 ## To do
 

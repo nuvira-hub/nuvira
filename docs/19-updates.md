@@ -97,6 +97,14 @@ The update path signed only with the backup key, end to end. nuvira-server on th
 - `nuvira-release sign` with a key not built into the program refuses to sign.
 The test files and the unit change were removed afterwards; the backup key was only read on the NUC, not copied.
 
+## Test of 2026-11-09 (fixed download name)
+
+PC-LABORATORIO's service with main (f6448b5, built on the NUC), pointed at a nuvira-server on PC-LABORATORIO itself (127.0.0.1:21196) publishing the same program as 0.21.1.3, signed with the release key. The update folder still held `nuvira-0.21.1.exe` of the previous update.
+- 2 minutes after start: "version 0.21.1.3 available", downloaded and checked in 4 s as `update\nuvira-update.exe`, `nuvira-0.21.1.exe` removed, installed, service started again.
+- The program still says 0.21.1, so 2 minutes later it found 0.21.1.3 again: no download (same size and SHA-256), installed from the file already there; again 2 minutes later.
+- The file replaced with 18 bytes of text: at the next check downloaded again (33.8 MB) and installed.
+Afterwards the manifest was removed, the service put back on alexbn.ddns.net (ID 260 905 122 as before) and the test server and files removed.
+
 Not tested yet: macOS (the bundle swap, signature and designated requirement check, the Screen Recording and Accessibility permissions after the swap, a standard user), the .rpm with dnf, the app's "Update" and "Restart" bars on Linux and macOS, an agent of a package install restarting after root's update.
 
 ## To do
