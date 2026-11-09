@@ -3552,12 +3552,16 @@ dependencies = [
  "ring",
  "rustls",
  "rustls-webpki",
+ "security-framework",
  "sha2",
  "socket2",
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "tracing-subscriber",
  "webpki-roots 1.0.11",
+ "windows",
+ "zbus",
 ]
 
 [[package]]

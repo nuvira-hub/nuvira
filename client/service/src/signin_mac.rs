@@ -106,7 +106,8 @@ pub fn install(exe: &Path, user_data: &Path, server: &str, server_key: Option<&s
     let dir = Path::new(SYSTEM_DIR);
     std::fs::create_dir_all(dir)?;
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-    for name in COPIED {
+    crate::system::take_key(user_data, &dir.join("device.key"))?;
+    for name in COPIED.into_iter().filter(|n| *n != "device.key") {
         let from = user_data.join(name);
         let to = dir.join(name);
         match std::fs::copy(&from, &to) {

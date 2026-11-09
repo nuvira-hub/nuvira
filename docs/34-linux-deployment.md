@@ -90,4 +90,4 @@ Not tried: Ubuntu and Mint (sudo needs the password there: X11/LightDM and Ubunt
 ## Not yet
 
 - Macs: the same through a `.pkg` and a `.mobileconfig` profile (see nuvira-pro/docs/internal/30-platform-parity.md).
-- The device key is a file, as on the other systems (identity.rs TODO: TPM / Secret Service).
+- The device key in `/var/lib/nuvira` is protected with systemd-creds (TPM 2.0 when present, plus the host key); the copies handed to the sessions are plain files of that person only ([36](36-device-key.md)).

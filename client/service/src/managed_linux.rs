@@ -383,8 +383,12 @@ fn up_to_date(uid: u32, settings: &Settings, hash: &str) -> bool {
     let agent = std::fs::read_to_string(dir.join("agent.json"))
         .ok()
         .and_then(|t| serde_json::from_str::<SessionAgent>(&t).ok());
-    let key = |path: &Path| std::fs::read(path).ok();
+    let key = |path: &Path| nuvira_transport::identity::public_key_of(path);
     agent == Some(session_agent_for(settings, hash))
+        // A copy written before 0.21 (plain) is handed again, as a handed-over one,
+        // before the agent protects it for itself and root can no longer compare it.
+        && nuvira_transport::keystore::protection_of(&dir.join("device.key"))
+            == Some(nuvira_transport::keystore::Protection::Handed)
         && key(&dir.join("device.key")).is_some()
         && key(&dir.join("device.key")) == key(&Path::new(SYSTEM_DIR).join("device.key"))
 }
@@ -397,7 +401,7 @@ fn hand_over(uid: u32, settings: &Settings, hash: &str) -> Result<()> {
     std::fs::create_dir(&dir)?;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
     let key = dir.join("device.key");
-    std::fs::copy(Path::new(SYSTEM_DIR).join("device.key"), &key).context("device.key")?;
+    nuvira_transport::identity::hand_over(&Path::new(SYSTEM_DIR).join("device.key"), &key).context("device.key")?;
     let agent = session_agent_for(settings, hash);
     write_private(&dir.join("agent.json"), &serde_json::to_string(&agent)?)?;
     for path in [&key, &dir.join("agent.json"), &dir] {

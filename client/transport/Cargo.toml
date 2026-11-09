@@ -22,9 +22,20 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 webpki-roots = "1"
 tracing.workspace = true
 webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["alloc", "ring"] }
-
-[dev-dependencies]
 ring = "0.17"
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+tracing-subscriber.workspace = true

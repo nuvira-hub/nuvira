@@ -231,6 +231,11 @@
   "about.description": "Open-source remote control: your own server, end-to-end encrypted direct connections, unattended access.",
   "about.license": "Licensed under the AGPL-3.0 with additional terms on credits.",
   "about.source": "Source code",
+  "about.key.dpapi": "Device key protected by Windows (DPAPI): a copy cannot be used on another computer or by another account.",
+  "about.key.keychain": "Device key protected by the macOS Keychain.",
+  "about.key.secret_service": "Device key protected by the system keyring (Secret Service).",
+  "about.key.systemd_creds": "Device key protected by the system (systemd-creds, with the TPM when there is one).",
+  "about.key.file": "Device key protected by the file's permissions only: the system offers nothing better here (on Linux: no unlocked keyring, or automatic sign-in on).",
 
   "incoming.title": "Connection request",
   "incoming.text": "wants to see and control this computer.",

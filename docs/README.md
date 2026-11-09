@@ -32,3 +32,4 @@
 | 33 | [macOS](33-macos.md) | Package, controlled Mac (ScreenCaptureKit, Quartz, permissions), keyboard, unattended access with a LaunchAgent |
 | 34 | [Linux: installation for the whole computer](34-linux-deployment.md) | `nuvira service deploy` and /etc/nuvira/policy.json: the computer's own ID, for Ansible, Puppet and scripts |
 | 35 | [macOS: installation for the whole Mac](35-macos-deployment.md) | `nuvira-macos.pkg` and a configuration profile (MDM): the Mac's own ID, settings from managed preferences |
+| 36 | [Device key protected by the system](36-device-key.md) | DPAPI, Keychain, Secret Service, systemd-creds; migration of plain keys, hand-over to other accounts |

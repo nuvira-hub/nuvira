@@ -231,6 +231,11 @@
   "about.description": "Contrôle à distance open source : votre propre serveur, connexions directes chiffrées de bout en bout, accès sans surveillance.",
   "about.license": "Sous licence AGPL-3.0 avec des conditions supplémentaires sur les crédits.",
   "about.source": "Code source",
+  "about.key.dpapi": "Clé de l'appareil protégée par Windows (DPAPI) : une copie ne peut servir ni sur un autre ordinateur ni à un autre compte.",
+  "about.key.keychain": "Clé de l'appareil protégée par le trousseau de macOS.",
+  "about.key.secret_service": "Clé de l'appareil protégée par le trousseau du système (Secret Service).",
+  "about.key.systemd_creds": "Clé de l'appareil protégée par le système (systemd-creds, avec le TPM s'il y en a un).",
+  "about.key.file": "Clé de l'appareil protégée uniquement par les droits du fichier : le système n'offre pas mieux ici (sous Linux : aucun trousseau déverrouillé, ou connexion automatique activée).",
 
   "incoming.title": "Demande de connexion",
   "incoming.text": "souhaite voir et contrôler cet ordinateur.",

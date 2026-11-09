@@ -231,6 +231,11 @@
   "about.description": "Controllo remoto open source: server proprio, collegamenti diretti cifrati end-to-end, accesso non presidiato.",
   "about.license": "Licenza AGPL-3.0 con i termini aggiuntivi sui crediti.",
   "about.source": "Codice sorgente",
+  "about.key.dpapi": "Chiave del dispositivo protetta da Windows (DPAPI): una copia non si può usare su un altro computer né da un altro account.",
+  "about.key.keychain": "Chiave del dispositivo protetta dal Portachiavi di macOS.",
+  "about.key.secret_service": "Chiave del dispositivo protetta dal portachiavi del sistema (Secret Service).",
+  "about.key.systemd_creds": "Chiave del dispositivo protetta dal sistema (systemd-creds, con il TPM se c'è).",
+  "about.key.file": "Chiave del dispositivo protetta solo dai permessi del file: qui il sistema non offre di meglio (su Linux: nessun portachiavi sbloccato, o accesso automatico attivo).",
 
   "incoming.title": "Richiesta di collegamento",
   "incoming.text": "vuole vedere e controllare questo computer.",

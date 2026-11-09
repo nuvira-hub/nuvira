@@ -736,6 +736,28 @@ fn print_ask_again(app: AppHandle, state: State<NuviraApp>) -> Result<(), String
     Ok(())
 }
 
+/// How the key behind this computer's ID is kept, for the About page: "dpapi",
+/// "keychain", "secret-service", "systemd-creds", "file", or empty if unknown
+/// (a copy handed over by the organisation's installation).
+#[tauri::command]
+fn key_protection() -> String {
+    #[cfg(windows)]
+    let path = if nuvira_agent::ipc::service_installed() {
+        nuvira_service::service_identity_path()
+    } else {
+        nuvira_transport::identity::data_dir().join("device.key")
+    };
+    #[cfg(not(windows))]
+    let path = nuvira_transport::identity::data_dir().join("device.key");
+    match nuvira_transport::keystore::protection_of(&path) {
+        // The service's key on Windows, unreadable here, is always DPAPI's.
+        #[cfg(windows)]
+        None if nuvira_agent::ipc::service_installed() => "dpapi".into(),
+        Some(p) if p != nuvira_transport::keystore::Protection::Handed => p.name().into(),
+        _ => String::new(),
+    }
+}
+
 /// Server as shown in the settings: empty for the public one.
 #[cfg(any(windows, unix))]
 fn shown_server(server: &str) -> String {
@@ -1241,6 +1263,7 @@ fn main() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             get_state,
+            key_protection,
             set_server,
             new_password,
             set_privacy_allowed,

@@ -524,6 +524,13 @@ document.addEventListener("keydown", (e) => {
       $("app-version").textContent = t("about.version", { v });
     })
     .catch(() => {});
+  invoke("key_protection")
+    .then((p) => {
+      if (!p) return;
+      $("key-protection").textContent = t(`about.key.${p.replace("-", "_")}`);
+      $("key-protection").classList.remove("hidden");
+    })
+    .catch(() => {});
   applyBranding(await invoke("get_branding"));
   listen("state", (event) => render(event.payload));
   render(await invoke("get_state"));

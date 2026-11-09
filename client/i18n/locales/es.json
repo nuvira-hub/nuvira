@@ -231,6 +231,11 @@
   "about.description": "Control remoto de código abierto: servidor propio, conexiones directas cifradas de extremo a extremo, acceso desatendido.",
   "about.license": "Bajo licencia AGPL-3.0 con términos adicionales sobre los créditos.",
   "about.source": "Código fuente",
+  "about.key.dpapi": "Clave del dispositivo protegida por Windows (DPAPI): una copia no sirve en otro equipo ni para otra cuenta.",
+  "about.key.keychain": "Clave del dispositivo protegida por el llavero de macOS.",
+  "about.key.secret_service": "Clave del dispositivo protegida por el llavero del sistema (Secret Service).",
+  "about.key.systemd_creds": "Clave del dispositivo protegida por el sistema (systemd-creds, con el TPM si lo hay).",
+  "about.key.file": "Clave del dispositivo protegida solo por los permisos del archivo: el sistema no ofrece nada mejor aquí (en Linux: ningún llavero desbloqueado, o inicio de sesión automático activado).",
 
   "incoming.title": "Solicitud de conexión",
   "incoming.text": "quiere ver y controlar este equipo.",

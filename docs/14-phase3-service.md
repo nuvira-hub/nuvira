@@ -23,7 +23,7 @@ An agent started by the user cannot see Windows' **secure desktop**: administrat
 |---|---|---|
 | `%ProgramFiles%\nuvira\` | `nuvira.exe` | writable by administrators only (the service must not run files a user can replace) |
 | `%ProgramData%\nuvira\service.json` | server, permanent password, transport | SYSTEM and administrators only |
-| `%ProgramData%\nuvira\device.key` | device key: the ID stays the same even after reinstalling | same |
+| `%ProgramData%\nuvira\device.key` | device key, protected with SYSTEM's DPAPI ([36](36-device-key.md)): the ID stays the same even after reinstalling | same |
 | `%ProgramData%\nuvira\online` | "ID password" written by the agent once registered | same |
 | `%ProgramData%\nuvira\service.log`, `agent.log` | logs (rotated at 5 and 10 MB) | same |
 

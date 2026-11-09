@@ -231,6 +231,11 @@
   "about.description": "Open-Source-Fernsteuerung: eigener Server, Ende-zu-Ende-verschlüsselte Direktverbindungen, unbeaufsichtigter Zugriff.",
   "about.license": "Lizenziert unter der AGPL-3.0 mit zusätzlichen Bedingungen zu den Credits.",
   "about.source": "Quellcode",
+  "about.key.dpapi": "Geräteschlüssel durch Windows geschützt (DPAPI): eine Kopie ist auf einem anderen Computer oder für ein anderes Konto nutzlos.",
+  "about.key.keychain": "Geräteschlüssel durch den macOS-Schlüsselbund geschützt.",
+  "about.key.secret_service": "Geräteschlüssel durch den Schlüsselbund des Systems geschützt (Secret Service).",
+  "about.key.systemd_creds": "Geräteschlüssel durch das System geschützt (systemd-creds, mit dem TPM, falls vorhanden).",
+  "about.key.file": "Geräteschlüssel nur durch die Dateirechte geschützt: das System bietet hier nichts Besseres (unter Linux: kein entsperrter Schlüsselbund oder automatische Anmeldung aktiv).",
 
   "incoming.title": "Verbindungsanfrage",
   "incoming.text": "möchte diesen Computer sehen und steuern.",

@@ -54,6 +54,37 @@ pub fn install(user_data: &Path, server: &str, server_key: Option<&str>) -> Resu
     Ok(())
 }
 
+/// The copy of the person's device key the app leaves for root, next to their key,
+/// just for the administrator prompt: root cannot open the person's own (their
+/// login keychain or Secret Service).
+const HANDED_KEY: &str = "device.key.handed";
+
+/// As the person, before the prompt: their key, handed over for root.
+fn hand_key_to_root(user_data: &Path) -> Option<std::path::PathBuf> {
+    let handed = user_data.join(HANDED_KEY);
+    match nuvira_transport::identity::hand_over(&user_data.join("device.key"), &handed) {
+        Ok(()) => Some(handed),
+        Err(e) => {
+            warn!("device key not handed over for the sign-in screen: {e:#}");
+            None
+        }
+    }
+}
+
+/// As root: the person's key (the copy they handed over, or their key file if it
+/// is a plain one) into `to`, protected for root. The handed copy is removed.
+pub(crate) fn take_key(user_data: &Path, to: &Path) -> Result<()> {
+    let handed = user_data.join(HANDED_KEY);
+    let from = if handed.exists() { handed.clone() } else { user_data.join("device.key") };
+    let result = nuvira_transport::identity::import(&from, to);
+    let _ = std::fs::remove_file(&handed);
+    let protection = result.with_context(|| format!("the person's device key ({})", from.display()))?;
+    std::os::unix::fs::chown(to, Some(0), Some(0))?;
+    std::fs::set_permissions(to, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    info!("device key for the sign-in screen: {}", protection.name());
+    Ok(())
+}
+
 /// As root: removes the system's part (the packages keep their printer).
 pub fn uninstall() -> Result<()> {
     let mut errors = Vec::new();
@@ -108,6 +139,15 @@ fn arguments(remove: bool, server: &str, server_key: Option<&str>) -> Vec<String
 /// administrator prompt: pkexec shows the text of its own policy, macOS `reason`
 /// (macOS 27 only its own text). `Ok(false)`: the person did not give the password.
 pub fn run_as_admin(remove: bool, reason: &str, server: &str, server_key: Option<&str>) -> Result<bool> {
+    let handed = if remove { None } else { hand_key_to_root(&nuvira_transport::identity::data_dir()) };
+    let result = elevated(remove, reason, server, server_key);
+    if let Some(handed) = handed {
+        let _ = std::fs::remove_file(handed);
+    }
+    result
+}
+
+fn elevated(remove: bool, reason: &str, server: &str, server_key: Option<&str>) -> Result<bool> {
     let exe = std::env::current_exe().context("program path")?;
     let args = arguments(remove, server, server_key);
     #[cfg(target_os = "linux")]

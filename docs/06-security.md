@@ -2,7 +2,7 @@
 
 [← Index](README.md)
 
-- Every device generates its own key pair at first start; the private key never leaves the device (Windows DPAPI/TPM, macOS Keychain, Secret Service/TPM on Linux — for now it is a file in the user's or the service's protected data folder).
+- Every device generates its own key pair at first start; the private key never leaves the device and is kept protected by the system: Windows DPAPI, the macOS Keychain, the Secret Service or systemd-creds (TPM 2.0 when present) on Linux, the file's permissions only where the system offers nothing better ([36](36-device-key.md)).
 - The server only knows: ID, public key, presence, session metadata (who/when/how long). **Never** contents.
 - Sessions are TLS 1.3 end-to-end between the two devices' keys (D10); the session password travels only inside that channel and is checked by the agent (D13). Planned: unattended password checked with a **PAKE** (OPAQUE/SPAKE2), so that it does not travel at all, not even encrypted.
 - Attempt limits and progressive lock-out per ID (against brute force), with a warning to the remote user. Today: a 2-second pause after a wrong password and after a failed address book sign-in.

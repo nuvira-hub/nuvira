@@ -24,6 +24,7 @@ use tracing::warn;
 pub mod api;
 pub mod fec;
 pub mod identity;
+pub mod keystore;
 pub mod p2p;
 pub mod signal;
 pub mod ws;

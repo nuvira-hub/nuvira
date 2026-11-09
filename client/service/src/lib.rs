@@ -68,6 +68,12 @@ pub mod policy;
 mod printer;
 mod profile;
 
+/// The service's device key (in ProgramData; SYSTEM's, protected with DPAPI).
+#[cfg(windows)]
+pub fn service_identity_path() -> std::path::PathBuf {
+    config::identity_path()
+}
+
 /// The program installed with the service (in Program Files).
 #[cfg(windows)]
 pub fn installed_program() -> std::path::PathBuf {
