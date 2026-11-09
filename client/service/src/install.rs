@@ -82,14 +82,14 @@ fn schedule_rescue(delay: Duration) -> Result<()> {
     bytes.extend(xml.encode_utf16().flat_map(u16::to_le_bytes));
     std::fs::write(&path, bytes)?;
     let result =
-        run(Command::new("schtasks").args(["/create", "/tn", RESCUE_TASK, "/xml"]).arg(&path).arg("/f"));
+        run(hidden("schtasks").args(["/create", "/tn", RESCUE_TASK, "/xml"]).arg(&path).arg("/f"));
     let _ = std::fs::remove_file(&path);
     result
 }
 
 /// Removes [`RESCUE_TASK`], if there is one (also at every start of the service).
 pub fn remove_rescue() {
-    let _ = Command::new("schtasks").args(["/delete", "/tn", RESCUE_TASK, "/f"]).output();
+    let _ = hidden("schtasks").args(["/delete", "/tn", RESCUE_TASK, "/f"]).output();
 }
 
 /// Service manager handle, closed automatically.
@@ -206,7 +206,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     std::fs::create_dir_all(&data_dir).with_context(|| format!("creating {}", data_dir.display()))?;
     // The rules are set on the folder and the files inherit them: with /T applied to the
     // files too, (OI)(CI) is not valid for a file and on reinstall the files lost all permissions.
-    run(Command::new("icacls").arg(&data_dir).args([
+    run(hidden("icacls").arg(&data_dir).args([
         "/inheritance:r",
         "/grant:r",
         "*S-1-5-18:(OI)(CI)F",
@@ -215,7 +215,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     ]))
     .context("protecting the data folder")?;
     if std::fs::read_dir(&data_dir)?.next().is_some() {
-        run(Command::new("icacls").arg(data_dir.join("*")).args(["/reset", "/T", "/Q"]))
+        run(hidden("icacls").arg(data_dir.join("*")).args(["/reset", "/T", "/Q"]))
             .context("permissions of the files in the data folder")?;
     }
 
@@ -274,9 +274,9 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     // Inbound rule for the direct (UDP) path towards the agent.
     let agent = &program;
     let _ =
-        run(Command::new("netsh")
+        run(hidden("netsh")
             .raw_arg(format!("advfirewall firewall delete rule name=\"{FIREWALL_RULE}\"")));
-    run(Command::new("netsh").raw_arg(format!(
+    run(hidden("netsh").raw_arg(format!(
         "advfirewall firewall add rule name=\"{FIREWALL_RULE}\" dir=in action=allow program=\"{}\" enable=yes profile=any",
         agent.display()
     )))
@@ -343,7 +343,7 @@ fn register_app(program: &Path, msi_product: Option<&str>) -> Result<()> {
         ("NoRepair", "REG_DWORD", "1"),
     ];
     for (name, kind, data) in values {
-        run(Command::new("reg").args(["add", UNINSTALL_KEY, "/v", name, "/t", kind, "/d", data, "/f"]))
+        run(hidden("reg").args(["add", UNINSTALL_KEY, "/v", name, "/t", kind, "/d", data, "/f"]))
             .with_context(|| format!("installed apps entry ({name})"))?;
     }
     // Made once (the program path never changes), in this process: a shortcut made by
@@ -430,7 +430,7 @@ fn elevate_if_needed() -> Result<bool> {
 /// applications, 3 both. Services are added without removing the rest.
 fn allow_software_sas() -> Result<()> {
     const KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System";
-    let output = Command::new("reg").args(["query", KEY, "/v", "SoftwareSASGeneration"]).output()?;
+    let output = hidden("reg").args(["query", KEY, "/v", "SoftwareSASGeneration"]).output()?;
     let current = String::from_utf8_lossy(&output.stdout)
         .split_whitespace()
         .last()
@@ -438,7 +438,7 @@ fn allow_software_sas() -> Result<()> {
         .filter(|_| output.status.success())
         .unwrap_or(0);
     if current & 1 == 0 {
-        run(Command::new("reg").args([
+        run(hidden("reg").args([
             "add",
             KEY,
             "/v",
@@ -640,7 +640,7 @@ pub fn uninstall(remove_program: bool, from_msi: bool) -> Result<()> {
         && !from_msi
         && let Some(code) = ServiceConfig::load().ok().and_then(|c| c.msi_product)
     {
-        let status = Command::new("msiexec").args(["/x", &code, "/qn", "/norestart"]).status();
+        let status = hidden("msiexec").args(["/x", &code, "/qn", "/norestart"]).status();
         match status.map(|s| s.code()) {
             Ok(Some(0)) => {
                 println!("NuviraHub removed (MSI package {code})");
@@ -661,7 +661,7 @@ pub fn uninstall(remove_program: bool, from_msi: bool) -> Result<()> {
         None => println!("the service is not installed"),
     }
     let _ =
-        run(Command::new("netsh")
+        run(hidden("netsh")
             .raw_arg(format!("advfirewall firewall delete rule name=\"{FIREWALL_RULE}\"")));
     if let Err(e) = crate::printer::uninstall() {
         println!("NuviraHub printer not removed: {e:#}");
@@ -674,7 +674,7 @@ pub fn uninstall(remove_program: bool, from_msi: bool) -> Result<()> {
         );
         return Ok(());
     }
-    let _ = run(Command::new("reg").args(["delete", UNINSTALL_KEY, "/f"]));
+    let _ = run(hidden("reg").args(["delete", UNINSTALL_KEY, "/f"]));
     // The data stays (ID, password) for a later installation, the package does not.
     if let Ok(mut config) = ServiceConfig::load()
         && config.msi_product.take().is_some()
@@ -826,7 +826,7 @@ fn format_id(id: &str) -> String {
 
 /// The value the MSI package writes while it is installed (`HKLM\SOFTWARE\nuvira\Msi`).
 fn msi_registered(code: &str) -> bool {
-    Command::new("reg")
+    hidden("reg")
         .args(["query", r"HKLM\SOFTWARE\nuvira\Msi", "/v", "ProductCode", "/reg:64"])
         .output()
         .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains(code))
@@ -843,6 +843,16 @@ fn same_file(a: &Path, b: &Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
+}
+
+/// A system tool (icacls, netsh, reg, schtasks, msiexec) started with no console
+/// window: from the app's "Save" or an update this process has no console of its
+/// own, and every tool would otherwise flash a window of its own on the screen.
+fn hidden(program: &str) -> Command {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut command = Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
 }
 
 fn run(command: &mut Command) -> Result<()> {
