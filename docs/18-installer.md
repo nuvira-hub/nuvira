@@ -60,7 +60,8 @@ For deployment tools (Intune, Group Policy, RMM) there is also an MSI package wi
 
 ## Tests of 2026-10-27
 
-- PC-LABORATORIO, from an administrator prompt: install with password file and report, update over a running service (an earlier installation with separate programs is converted: service command changed, old programs removed), full uninstall and reinstall with the same ID; silent setup with the server from its file name and with `/SERVER=`, and without a server (exit code 2).
+- PC-LABORATORIO, from an administrator prompt: install with password file and report, update over a running service (an earlier installation with separate programs is converted: service command changed, old programs removed), full uninstall and reinstall with the same ID; silent setup with the server from its file name and with `/SERVER=`, and without a server (exit code 2, fixed the same day: empty means the public server).
+- 2026-11-09, PC-LABORATORIO: the signed 0.21.1 setup with `/S` and no server: exit code 0, service running with the public server, same ID and permanent password; then `nuvira.exe service install --server alexbn.ddns.net` put the previous server back, password kept.
 - Laptop (user): renamed program connected to the NAS server by itself; "Install on this computer" with UAC and a generated password.
 
 ## Customised programs (NuviraHub Pro)
