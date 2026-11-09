@@ -6,6 +6,7 @@
 //! - `vt`: H.264 with VideoToolbox (macOS);
 //! - `openh264`: software H.264, available everywhere (fallback);
 //! - `vaapi`: H.264 with VA-API, Intel and AMD graphics cards (Linux);
+//! - `nvenc`: H.264 with NVENC, NVIDIA graphics cards (Linux; preferred to VA-API);
 //!
 //! Intermediate format: YUV 4:2:0 BT.601 limited range (I420 for OpenH264,
 //! NV12 for hardware encoders), see [`convert`].
@@ -17,6 +18,12 @@ pub mod gpu;
 mod mf;
 #[cfg(windows)]
 mod mfdec;
+#[cfg(target_os = "linux")]
+mod nvenc;
+#[cfg(target_os = "linux")]
+#[rustfmt::skip]
+#[allow(dead_code)]
+mod nvenc_layout;
 mod openh264;
 mod select;
 #[cfg(target_os = "linux")]
@@ -28,6 +35,8 @@ mod vt;
 pub use crate::mf::{MfEncoder, hardware_encoders};
 #[cfg(windows)]
 pub use crate::mfdec::MfDecoder;
+#[cfg(target_os = "linux")]
+pub use crate::nvenc::NvencEncoder;
 pub use crate::openh264::{OpenH264Decoder, OpenH264Encoder};
 #[cfg(target_os = "linux")]
 pub use crate::vaapi::VaapiEncoder;
@@ -197,10 +206,31 @@ pub fn create_encoder(
             let _ = gpu;
             Ok(Box::new(VtEncoder::new(settings, true)?))
         }
+        // NVENC where there is an NVIDIA card with its driver, else VA-API;
+        // `NUVIRA_HW_ENCODER=vaapi` or `nvenc` keeps to one.
         #[cfg(target_os = "linux")]
         EncoderPlan::Hardware | EncoderPlan::HardwareGpu => {
             let _ = gpu;
-            Ok(Box::new(VaapiEncoder::new(settings)?))
+            let only = std::env::var("NUVIRA_HW_ENCODER").unwrap_or_default();
+            let nvenc_error = if only == "vaapi" {
+                None
+            } else {
+                match NvencEncoder::new(settings) {
+                    Ok(enc) => {
+                        tracing::info!("hardware encoder: NVENC on {}", enc.device_name());
+                        return Ok(Box::new(enc));
+                    }
+                    Err(e) if only == "nvenc" => return Err(e),
+                    Err(e) => Some(e),
+                }
+            };
+            match VaapiEncoder::new(settings) {
+                Ok(enc) => Ok(Box::new(enc)),
+                Err(e) => match nvenc_error {
+                    Some(nv) => Err(anyhow::anyhow!("NVENC: {nv:#}; VA-API: {e:#}")),
+                    None => Err(e),
+                },
+            }
         }
         #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         EncoderPlan::Hardware | EncoderPlan::HardwareGpu => {

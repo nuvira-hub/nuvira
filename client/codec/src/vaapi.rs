@@ -1156,7 +1156,7 @@ impl Bits {
 }
 
 /// NAL unit types present in Annex B data.
-fn nal_types(data: &[u8]) -> Vec<u8> {
+pub(crate) fn nal_types(data: &[u8]) -> Vec<u8> {
     data.windows(4).filter(|w| w[0] == 0 && w[1] == 0 && w[2] == 1).map(|w| w[3] & 0x1f).collect()
 }
 
