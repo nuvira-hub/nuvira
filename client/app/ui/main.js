@@ -403,7 +403,12 @@ $("server-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("server-message").classList.add("hidden");
   try {
-    await invoke("set_server", { server: $("server").value });
+    // A note when the server was saved but the sign-in screen stayed on the old one.
+    const note = await invoke("set_server", { server: $("server").value });
+    if (note) {
+      $("server-message").textContent = note;
+      $("server-message").classList.remove("hidden");
+    }
   } catch (err) {
     $("server-message").textContent = msg(String(err));
     $("server-message").classList.remove("hidden");
