@@ -140,6 +140,8 @@ Kubuntu 26.04.1, Plasma 6.6 on Wayland, SDDM on Wayland, VM on the NAS; viewer o
 
 ## To do
 
+- A viewer started by itself (not by the app) on Kubuntu after a restart waits for the locked KWallet for `viewer.key` without end (seen 2026-11-10, a 30 s test with no connection): it should fall back to the file after a few seconds, as the app does for `app.key`.
+
 - **X11, faster capture**: MIT-SHM and XDamage instead of `GetImage` and comparing images.
 - **GNOME's lock screen at once:** the extension works from the next sign-in; before it the lock still closes the session.
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.

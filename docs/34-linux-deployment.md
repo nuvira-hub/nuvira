@@ -85,7 +85,20 @@ Fedora 44 (GNOME, Wayland), alessandro's own installation in place (user service
 - App: connected to the service's agent with the computer's ID; Settings showed "Installed by your organisation…", the server fixed, no Install or Remove.
 - The packages' scripts run by hand (`preremove.sh 0`, `postinstall.sh 1`, no package built): removed everything but `/var/lib/nuvira` and the policy file; with the policy file there the script installed again by itself, same server and ID.
 
-Not tried: Ubuntu and Mint (sudo needs the password there: X11/LightDM and Ubuntu's GDM profile), a real `.deb`/`.rpm` built by the CI, two people switching user, KDE (portal dialog), a Pro profile.
+Not tried then: Ubuntu and Mint, a real `.deb`/`.rpm` built by the CI, two people switching user, KDE (portal dialog), a Pro profile. KDE was tried on 2026-11-09 (Kubuntu, see 20-linux.md).
+
+## Tests of 2026-11-10 (Ubuntu and Mint, the CI's `.deb`)
+
+The `.deb` of main (4c581d7, built by the CI) on Ubuntu 26.04 (GNOME on Wayland, GDM) and Linux Mint 22.3 (Cinnamon on X11, LightDM), both with automatic login. Before: Ubuntu with no package and the person's own installation of a test program on the public server (ID 905 783 888); Mint with the 0.21.1 package and the person's own installation plus the system part on alexbn.ddns.net (ID 780 221 705).
+- `apt-get install` of the package, no policy file: printer and root's timer installed, no installation for the whole computer by itself.
+- `sudo nuvira service deploy --server 192.168.178.12 --password-file …`: system service and the unit in `/etc/systemd/user` active, the person's own unit and autostart entry removed, the copy in `/run/nuvira-session-1000` (alessandro's, 0700), the agent running as alessandro with `--identity` there; `managed.json` with the server. Ubuntu registered as 300 633 898 (another server, so another ID), Mint kept 780 221 705.
+- With the permanent password, 12 s from the other VM: direct path, 1280x800, first picture in about 2 s, median latency 8 ms; Ubuntu's desktop through GNOME's API with no dialog.
+- Root's timer started by hand: "up to date (0.21.1, server 192.168.178.12)" on both.
+- Signed out (`loginctl terminate-session`): the copy removed, the greeter's agent registered with the same ID within a second (GDM's user on Ubuntu, root on LightDM's X display on Mint); GDM's and LightDM's forms seen from another VM.
+- Restarted: automatic login, the ID handed to the person's agent again about 10 s after the boot, same IDs.
+- Afterwards `deploy --remove` and the earlier installations put back (Ubuntu without the package), same IDs as before.
+
+Seen on the way, not about this: a viewer started on Kubuntu after a restart waited for the locked KWallet for its own key (`viewer.key`) for the whole test instead of falling back to the file as the app does (20-linux.md, "To do").
 
 ## Not yet
 

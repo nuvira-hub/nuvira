@@ -15,7 +15,7 @@ Only with unattended access, which brings the agent back by itself after the boo
 | System | How | Notes |
 |---|---|---|
 | Windows | `shutdown.exe /r /f /t 3 /d p:4:1` from the agent (SYSTEM) | The service starts the agent again at the boot, also before anyone signs in (lock screen). `/f` closes the programs without asking; 3 s let the answer reach the viewer |
-| Linux | `systemctl reboot --no-ask-password` as the signed-in user (logind) | logind allows it to the user of the active local session when no other user is signed in; otherwise it is refused and the viewer shows the reason. The computer comes back only with automatic login (see [20-linux.md](20-linux.md)) |
+| Linux | `systemctl reboot --no-ask-password` as the signed-in user (logind) | logind allows it to the user of the active local session. With another user signed in it depends on the distribution's polkit defaults for `org.freedesktop.login1.reboot-multiple-sessions`: systemd's own is `auth_admin_keep` (refused, the viewer shows the reason), Ubuntu 26.04 and its flavours have `yes` (the computer restarts and the other user's session is closed). The computer comes back only with automatic login (see [20-linux.md](20-linux.md)) |
 | macOS | Apple event "restart" (`kAERestart`) to loginwindow through `osascript`, 2 s after the answer | No administrator needed. The apps are asked to quit: one with unsaved work can stop the restart (the agent then accepts sessions again after 3 minutes, and the waiting viewer simply connects again). The Mac comes back only with automatic login, then the LaunchAgent starts the agent (see [33-macos.md](33-macos.md)) |
 
 ## Protocol
@@ -43,4 +43,6 @@ Toolbar button, same day, PC-LABORATORIO, viewer in Italian: the button "Riavvia
 
 Temporary password, same day, VM Fedora: a script on the agent's Unix socket in place of the app (reads the temporary password, accepts the request); viewer with that password and `--restart`: confirmation pending → connected → `RestartState { ok: true, reconnect: false }` at 21:29:57 → the viewer closed at once with "VM-Fedora-NuviraHub si sta riavviando. Ricollegati quando è di nuovo acceso, con la password che mostrerà allora." (`@closed` for the app); Fedora booted at 21:30:02 with the service active.
 
-Not tested yet: a Linux computer with another user signed in (logind refuses), a refusal `@agent.restarting` (the computers went down before the first attempt).
+Another user signed in, 2026-11-09: Kubuntu 26.04 (managed installation, main `.deb`), a second user `nvtest` signed in over SSH (logind session 151), viewer on Mint with `--restart`: `restart ok=true`, the VM restarted (uptime from 23:49:01), the SSH session of the other user closed. `pkaction` there: `reboot-multiple-sessions` implicit active `yes`, so logind does not refuse on Ubuntu; a distribution with systemd's default (Fedora: to be tried) should refuse.
+
+Not tested yet: the refusal on a distribution with systemd's default policy, a refusal `@agent.restarting` (the computers went down before the first attempt).
