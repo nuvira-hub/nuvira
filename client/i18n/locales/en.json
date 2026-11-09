@@ -305,6 +305,7 @@
   "viewer.privacy_failed": "Privacy mode not turned on: {reason}",
   "viewer.restart_title": "Restart the remote computer",
   "viewer.restart_confirm": "Restart {agent} now? Open programs are closed without asking: unsaved work there is lost. The session connects again by itself once the computer is back.",
+  "viewer.restart_others": "Other people are signed in there too: {users}. The restart closes their sessions as well, and their unsaved work is lost.",
   "viewer.restart_failed": "Restart not done: {reason}",
   "viewer.restarting": "The remote computer is restarting: the session will connect again by itself",
   "viewer.waiting_restart": "Waiting for {agent} to restart…",

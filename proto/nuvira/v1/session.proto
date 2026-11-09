@@ -52,6 +52,8 @@ message ControlMessage {
     ScreenState screen_state = 26;
     SetResolution set_resolution = 27;
     ResolutionState resolution_state = 28;
+    RestartCheck restart_check = 29;
+    RestartUsers restart_users = 30;
   }
 }
 
@@ -93,6 +95,18 @@ message RestartState {
   // The same password will work after the restart without anyone at the computer
   // (permanent password, no confirmation required): the viewer can reconnect.
   bool reconnect = 3;
+}
+
+// From the viewer (only when Hello.restart_users), before asking the technician to
+// confirm a restart: who else is signed in. Nothing is restarted. The agent answers
+// RestartUsers.
+message RestartCheck {}
+
+// From the agent: the other people signed in on the computer (user names, without
+// the one whose session this is). A restart closes their sessions too, losing their
+// unsaved work: the viewer says so in the confirmation.
+message RestartUsers {
+  repeated string others = 1;
 }
 
 // From the viewer: privacy mode on or off (only when Hello.privacy_mode). The screen
@@ -346,6 +360,8 @@ message Hello {
   // From the agent: it can change the resolution of the transmitted screen to the
   // viewer's area (SetResolution).
   bool resolution = 16;
+  // From the agent (with `restart`): it tells who else is signed in (RestartCheck).
+  bool restart_users = 17;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

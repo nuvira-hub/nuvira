@@ -41,6 +41,8 @@ pub enum NetEvent {
         tunnel: bool,
         /// The agent can restart the computer.
         restart: bool,
+        /// The agent tells who else is signed in before a restart (RestartCheck).
+        restart_users: bool,
         /// What is printed on the remote computer's NuviraHub printer arrives here.
         print: bool,
         /// The person at the remote computer allows recording the session.
@@ -141,6 +143,8 @@ pub enum NetEvent {
         error: String,
         reconnect: bool,
     },
+    /// Who else is signed in on the remote computer (answer to RestartCheck).
+    RestartUsers { others: Vec<String> },
     /// There is a new frame to show in the [`FrameSlot`].
     FrameReady,
     Clock {
@@ -538,6 +542,7 @@ async fn handshake(
             terminal: true,
             tunnel: agent.tunnel,
             restart: false,
+            restart_users: false,
             print: false,
             recording: false,
             recording_required: false,
@@ -569,6 +574,7 @@ async fn handshake(
         terminal: agent.terminal,
         tunnel: agent.tunnel,
         restart: agent.restart,
+        restart_users: agent.restart && agent.restart_users,
         print: agent.print,
         recording: agent.recording,
         recording_required: agent.recording_required,
@@ -927,6 +933,9 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::RecordingState(r)) }) => {
                         let _ = proxy.send_event(NetEvent::Recording { on: r.on, error: r.error });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::RestartUsers(u)) }) => {
+                        let _ = proxy.send_event(NetEvent::RestartUsers { others: u.others });
                     }
                     Some(ControlMessage { msg: Some(Msg::RestartState(r)) }) => {
                         let _ = proxy.send_event(NetEvent::Restart { ok: r.ok, error: r.error, reconnect: r.reconnect });

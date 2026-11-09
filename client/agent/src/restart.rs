@@ -18,6 +18,82 @@ pub fn available() -> bool {
     cfg!(any(windows, target_os = "linux", target_os = "macos"))
 }
 
+/// `other_users` knows who else is signed in (Hello.restart_users). Not on macOS:
+/// loginwindow does not restart with other people signed in anyway.
+pub fn knows_users() -> bool {
+    cfg!(any(windows, target_os = "linux"))
+}
+
+/// The other people signed in on this computer, whose sessions a restart closes
+/// too: user names, without this session's own, each once.
+#[cfg(windows)]
+pub fn other_users() -> Vec<String> {
+    use windows::Win32::System::RemoteDesktop::{
+        ProcessIdToSessionId, WTS_CURRENT_SERVER_HANDLE, WTS_SESSION_INFOW, WTSEnumerateSessionsW, WTSFreeMemory,
+        WTSQuerySessionInformationW, WTSUserName,
+    };
+    use windows::core::PWSTR;
+
+    let user_of = |id: u32| -> Option<String> {
+        let mut buffer = PWSTR::null();
+        let mut bytes = 0u32;
+        unsafe { WTSQuerySessionInformationW(Some(WTS_CURRENT_SERVER_HANDLE), id, WTSUserName, &mut buffer, &mut bytes) }
+            .ok()?;
+        // SAFETY: a NUL-terminated UTF-16 string until WTSFreeMemory.
+        let name = unsafe { buffer.to_string() }.unwrap_or_default();
+        unsafe { WTSFreeMemory(buffer.0.cast()) };
+        (!name.is_empty()).then_some(name)
+    };
+    let mut own = 0u32;
+    let _ = unsafe { ProcessIdToSessionId(std::process::id(), &mut own) };
+    let own_user = user_of(own);
+    let mut list: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
+    let mut count = 0u32;
+    if unsafe { WTSEnumerateSessionsW(Some(WTS_CURRENT_SERVER_HANDLE), 0, 1, &mut list, &mut count) }.is_err() {
+        return Vec::new();
+    }
+    // SAFETY: WTSEnumerateSessionsW returned `count` entries, freed below.
+    let ids: Vec<u32> = unsafe { std::slice::from_raw_parts(list, count as usize) }.iter().map(|s| s.SessionId).collect();
+    unsafe { WTSFreeMemory(list.cast()) };
+    // Active and disconnected sessions alike (fast user switching leaves the others
+    // disconnected): `shutdown /r /f` closes them all.
+    let mut names: Vec<String> =
+        ids.into_iter().filter(|&id| id != own).filter_map(user_of).filter(|n| Some(n) != own_user.as_ref()).collect();
+    names.sort_unstable_by_key(|n| n.to_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    names
+}
+
+#[cfg(target_os = "linux")]
+pub fn other_users() -> Vec<String> {
+    let own = std::env::var("USER").unwrap_or_default();
+    let Ok(out) = std::process::Command::new("loginctl").args(["list-sessions", "--no-legend"]).output() else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for id in String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.split_whitespace().next()) {
+        // People's sessions only: not the greeters' nor the user managers.
+        let Ok(info) =
+            std::process::Command::new("loginctl").args(["show-session", id, "-p", "Name", "-p", "Class"]).output()
+        else {
+            continue;
+        };
+        let info = String::from_utf8_lossy(&info.stdout);
+        let value = |key: &str| info.lines().find_map(|l| l.strip_prefix(key)).unwrap_or("").to_string();
+        let (name, class) = (value("Name="), value("Class="));
+        if class == "user" && !name.is_empty() && name != own && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    names
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn other_users() -> Vec<String> {
+    Vec::new()
+}
+
 /// Asks the system to restart; `Err` with the reason when it refused.
 #[cfg(windows)]
 pub fn restart() -> Result<()> {

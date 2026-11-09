@@ -143,6 +143,11 @@ struct Args {
     #[arg(long, hide = true)]
     restart: bool,
 
+    /// Tests: as soon as connected, asks who else is signed in and shows the restart
+    /// confirmation as the toolbar button does (nothing is restarted unless confirmed).
+    #[arg(long, hide = true)]
+    restart_check: bool,
+
     /// Terminal only: a shell of the remote computer, without its desktop.
     #[arg(long)]
     terminal: bool,
@@ -446,6 +451,9 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             required: false,
         },
         restart_at_start: args.restart,
+        restart_check_at_start: args.restart_check,
+        restart_users: false,
+        restart_check_pending: false,
         terminal_only: args.terminal,
         terminals: Default::default(),
         term_link: None,
@@ -597,6 +605,11 @@ struct App {
     recording: Recording,
     /// `--restart`: to ask as soon as connected.
     restart_at_start: bool,
+    restart_check_at_start: bool,
+    /// The agent tells who else is signed in (Hello.restart_users).
+    restart_users: bool,
+    /// RestartCheck sent: its answer opens the confirmation.
+    restart_check_pending: bool,
     /// `--terminal`: no session window, only terminals.
     terminal_only: bool,
     terminals: terminal::Terminals,
@@ -773,6 +786,39 @@ impl App {
         self.net_thread = Some(session.thread);
     }
 
+    /// Restart button: an agent that can tell is asked first who else is signed in,
+    /// and its answer opens the confirmation (an older agent: the confirmation at once).
+    fn ask_restart(&mut self) {
+        if self.restart_users {
+            self.restart_check_pending = true;
+            self.send_control(nuvira_proto::v1::control_message::Msg::RestartCheck(nuvira_proto::v1::RestartCheck {}));
+        } else {
+            self.confirm_restart(&[]);
+        }
+    }
+
+    /// The confirmation, with the other people signed in whose sessions a restart closes.
+    fn confirm_restart(&self, others: &[String]) {
+        let mut text = tf("viewer.restart_confirm", &[("agent", &self.agent)]);
+        if !others.is_empty() {
+            text += "\n\n";
+            text += &tf("viewer.restart_others", &[("users", &others.join(", "))]);
+        }
+        // The dialog blocks its own thread, not the session.
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let answer = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Warning)
+                .set_title(t("viewer.restart_title"))
+                .set_description(text)
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .show();
+            if answer == rfd::MessageDialogResult::Yes {
+                let _ = proxy.send_event(NetEvent::Toolbar(toolbar::Action::RestartConfirmed));
+            }
+        });
+    }
+
     /// The session ended while the remote computer restarts: the window stays open
     /// with a message, and a new attempt starts after a pause.
     fn wait_for_restart(&mut self, reason: &str, pause: Duration) {
@@ -896,22 +942,7 @@ impl App {
                 // The keyboard stays with the new window.
                 return;
             }
-            Action::Restart => {
-                // The dialog blocks its own thread, not the session.
-                let proxy = self.proxy.clone();
-                let text = tf("viewer.restart_confirm", &[("agent", &self.agent)]);
-                std::thread::spawn(move || {
-                    let answer = rfd::MessageDialog::new()
-                        .set_level(rfd::MessageLevel::Warning)
-                        .set_title(t("viewer.restart_title"))
-                        .set_description(text)
-                        .set_buttons(rfd::MessageButtons::YesNo)
-                        .show();
-                    if answer == rfd::MessageDialogResult::Yes {
-                        let _ = proxy.send_event(NetEvent::Toolbar(toolbar::Action::RestartConfirmed));
-                    }
-                });
-            }
+            Action::Restart => self.ask_restart(),
             Action::RestartConfirmed => {
                 info!("restart of the remote computer requested");
                 self.send_control(Msg::Restart(nuvira_proto::v1::Restart {}));
@@ -1208,12 +1239,14 @@ impl ApplicationHandler<NetEvent> for App {
                 terminal,
                 tunnel,
                 restart,
+                restart_users,
                 print,
                 recording,
                 recording_required,
                 resolution,
             } => {
                 self.remote_mac = remote_mac;
+                self.restart_users = restart_users;
                 // A new session: the agent put the screen back when the last one ended.
                 self.adapt.available = resolution;
                 self.adapt.allowed = resolution;
@@ -1284,6 +1317,9 @@ impl ApplicationHandler<NetEvent> for App {
                         )),
                         false => warn!("restart not available on this agent"),
                     }
+                }
+                if std::mem::take(&mut self.restart_check_at_start) && restart {
+                    self.ask_restart();
                 }
                 if std::mem::take(&mut self.privacy_at_start) {
                     match privacy {
@@ -1661,6 +1697,12 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             NetEvent::Toolbar(action) => self.handle_toolbar(event_loop, action),
+            NetEvent::RestartUsers { others } => {
+                info!(?others, "other people signed in on the remote computer");
+                if std::mem::take(&mut self.restart_check_pending) {
+                    self.confirm_restart(&others);
+                }
+            }
             NetEvent::Restart { ok, error, reconnect } => {
                 info!(ok, error, reconnect, "restart");
                 if !ok {

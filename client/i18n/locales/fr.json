@@ -305,6 +305,7 @@
   "viewer.privacy_failed": "Mode confidentialité non activé : {reason}",
   "viewer.restart_title": "Redémarrer l'ordinateur distant",
   "viewer.restart_confirm": "Redémarrer {agent} maintenant ? Les programmes ouverts sont fermés sans demander : le travail non enregistré est perdu. La session se reconnecte toute seule quand l'ordinateur est de retour.",
+  "viewer.restart_others": "D'autres personnes y sont aussi connectées : {users}. Le redémarrage ferme aussi leurs sessions, et leur travail non enregistré est perdu.",
   "viewer.restart_failed": "Redémarrage non effectué : {reason}",
   "viewer.restarting": "L'ordinateur distant redémarre : la session se reconnectera toute seule",
   "viewer.waiting_restart": "En attente du redémarrage de {agent}…",

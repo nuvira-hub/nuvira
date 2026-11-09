@@ -305,6 +305,7 @@
   "viewer.privacy_failed": "Modalità privacy non attivata: {reason}",
   "viewer.restart_title": "Riavvia il computer remoto",
   "viewer.restart_confirm": "Riavviare ora {agent}? I programmi aperti vengono chiusi senza chiedere: il lavoro non salvato va perso. La sessione si ricollega da sola quando il computer è di nuovo acceso.",
+  "viewer.restart_others": "Sul computer sono collegate anche altre persone: {users}. Il riavvio chiude anche le loro sessioni e il loro lavoro non salvato va perso.",
   "viewer.restart_failed": "Riavvio non eseguito: {reason}",
   "viewer.restarting": "Il computer remoto si sta riavviando: la sessione si ricollegherà da sola",
   "viewer.waiting_restart": "In attesa che {agent} si riavvii…",

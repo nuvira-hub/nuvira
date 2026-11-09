@@ -1147,6 +1147,7 @@ async fn session(
         terminal: terminal_refused().is_none(),
         tunnel: tunnel_refused().is_none(),
         restart: restart_available && !terminal_only,
+        restart_users: restart_available && !terminal_only && restart::knows_users(),
         print: printer.is_some(),
         recording: !terminal_only && recording_allowed(),
         recording_required,
@@ -1719,6 +1720,18 @@ async fn session(
                     let state = nuvira_proto::v1::RecordingState { on: recording, error };
                     ctrl_tx.send(&control(Msg::RecordingState(state))).await?;
                 }
+                Some(Msg::RestartCheck(_)) => {
+                    // Asked before the confirmation: the technician is told whose
+                    // sessions a restart would close.
+                    let others = if restart_available {
+                        tokio::task::spawn_blocking(restart::other_users).await.unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    info!(others = others.len(), "other people signed in, asked before a restart");
+                    let users = nuvira_proto::v1::RestartUsers { others };
+                    ctrl_tx.send(&control(Msg::RestartUsers(users))).await?;
+                }
                 Some(Msg::Restart(_)) => {
                     let mut state = nuvira_proto::v1::RestartState::default();
                     if !restart_available {
@@ -2246,6 +2259,7 @@ fn local_hello() -> Hello {
         terminal_only: false,
         tunnel: false,
         restart: false,
+        restart_users: false,
         print: false,
         recording: false,
         recording_required: false,

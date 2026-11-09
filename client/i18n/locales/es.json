@@ -305,6 +305,7 @@
   "viewer.privacy_failed": "Modo privacidad no activado: {reason}",
   "viewer.restart_title": "Reiniciar el equipo remoto",
   "viewer.restart_confirm": "¿Reiniciar {agent} ahora? Los programas abiertos se cierran sin preguntar: el trabajo no guardado se pierde. La sesión se vuelve a conectar sola cuando el equipo vuelva.",
+  "viewer.restart_others": "En ese equipo también hay otras personas con la sesión iniciada: {users}. El reinicio cierra también sus sesiones y su trabajo no guardado se pierde.",
   "viewer.restart_failed": "Reinicio no realizado: {reason}",
   "viewer.restarting": "El equipo remoto se está reiniciando: la sesión se volverá a conectar sola",
   "viewer.waiting_restart": "Esperando a que {agent} se reinicie…",

@@ -305,6 +305,7 @@
   "viewer.privacy_failed": "Datenschutzmodus nicht eingeschaltet: {reason}",
   "viewer.restart_title": "Entfernten Computer neu starten",
   "viewer.restart_confirm": "{agent} jetzt neu starten? Offene Programme werden ohne Rückfrage geschlossen: nicht gespeicherte Arbeit geht verloren. Die Sitzung verbindet sich von selbst, sobald der Computer wieder da ist.",
+  "viewer.restart_others": "Dort sind auch andere Personen angemeldet: {users}. Der Neustart schließt auch ihre Sitzungen, und ihre nicht gespeicherte Arbeit geht verloren.",
   "viewer.restart_failed": "Neustart nicht ausgeführt: {reason}",
   "viewer.restarting": "Der entfernte Computer startet neu: die Sitzung verbindet sich von selbst wieder",
   "viewer.waiting_restart": "Warten auf den Neustart von {agent}…",
