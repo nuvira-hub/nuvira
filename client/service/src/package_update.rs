@@ -60,7 +60,7 @@ pub fn run() -> Result<()> {
     let base = nuvira_update::base_url(&server, None, nuvira_update::DEFAULT_PORT);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let Some(manifest) =
-        rt.block_on(nuvira_update::check_channel(&base, &nuvira_update::PUBLIC_KEY, kind.channel()))?
+        rt.block_on(nuvira_update::check_channel(&base, &nuvira_update::PUBLIC_KEYS, kind.channel()))?
     else {
         println!("up to date ({}, server {server})", nuvira_update::CURRENT);
         return Ok(());

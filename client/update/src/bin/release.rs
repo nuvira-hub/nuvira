@@ -10,8 +10,9 @@
 //!
 //! The private key stays on the machine that builds the releases, outside the
 //! repository: whoever has it can get any program installed on every NuviraHub
-//! device, and without it no further update can be published (devices would need
-//! a new program with the new public key, installed by hand). Back it up offline.
+//! device. The program also trusts a backup key, kept offline: if the key in use is
+//! lost or stolen, sign with the backup (`--key`), and that release brings a new
+//! pair (`nuvira_update::PUBLIC_KEYS`).
 
 use std::path::PathBuf;
 
@@ -77,7 +78,7 @@ fn main() -> Result<()> {
             let public = public_key_of(pkcs8.as_ref())?;
             println!("release key written to {} (back it up offline)", path.display());
             println!("public key: {}", hex(&public));
-            println!("PUBLIC_KEY for client/update/src/lib.rs:");
+            println!("for PUBLIC_KEYS in client/update/src/lib.rs:");
             for row in public.chunks(16) {
                 println!("    {},", row.iter().map(|b| format!("0x{b:02x}")).collect::<Vec<_>>().join(", "));
             }
@@ -88,9 +89,9 @@ fn main() -> Result<()> {
                 .with_context(|| format!("reading the release key {}", path.display()))?;
             let key = Ed25519KeyPair::from_pkcs8(&pkcs8)
                 .map_err(|_| anyhow::anyhow!("not an Ed25519 PKCS#8 key"))?;
-            if public_key_of(&pkcs8)? != nuvira_update::PUBLIC_KEY {
+            if !nuvira_update::PUBLIC_KEYS.contains(&public_key_of(&pkcs8)?) {
                 bail!(
-                    "this key does not match the public key built into the program (client/update/src/lib.rs)"
+                    "this key does not match the public keys built into the program (client/update/src/lib.rs)"
                 );
             }
             let version = version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());

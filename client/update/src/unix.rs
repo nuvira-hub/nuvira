@@ -379,7 +379,7 @@ fn check_and_apply(
     cache: &Path,
 ) -> Result<Duration> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    let Some(manifest) = rt.block_on(crate::check_channel(base, &crate::PUBLIC_KEY, channel))? else {
+    let Some(manifest) = rt.block_on(crate::check_channel(base, &crate::PUBLIC_KEYS, channel))? else {
         return Ok(INTERVAL);
     };
     info!("version {} available (this is {})", manifest.version, crate::CURRENT);

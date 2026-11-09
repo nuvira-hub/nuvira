@@ -184,7 +184,9 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 				}
 			}
 		default:
-			_ = c.send(errorMsg("unexpected message", ""))
+			// A message of a newer app (or a Register sent again): ignored, so
+			// that new kinds of messages need no new server.
+			s.log.Debug("unknown message ignored", "id", c.device.ID)
 		}
 	}
 }

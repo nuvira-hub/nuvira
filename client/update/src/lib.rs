@@ -14,8 +14,11 @@
 //!
 //! The manifest is signed with the NuviraHub release key (Ed25519, kept by whoever
 //! builds the releases; `nuvira-release` makes and uses it) and the program is
-//! checked against the size and SHA-256 in it. The public key is built into the
-//! program: a tampered server or download cannot get anything installed.
+//! checked against the size and SHA-256 in it. The public keys are built into the
+//! program: a tampered server or download cannot get anything installed. There are
+//! two: the one in use and a backup kept offline, so that losing the first does not
+//! leave the installed copies without updates (sign with the backup, then ship a
+//! program with a new pair).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -27,11 +30,21 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Public half of the NuviraHub release key (see `nuvira-release keygen`).
-/// 59fbcd29526e30ef3b4ad1b44eea9c4393eab3f5affa45baf3d0375da95df7a8
-pub const PUBLIC_KEY: [u8; 32] = [
-    0x59, 0xfb, 0xcd, 0x29, 0x52, 0x6e, 0x30, 0xef, 0x3b, 0x4a, 0xd1, 0xb4, 0x4e, 0xea, 0x9c, 0x43, //
-    0x93, 0xea, 0xb3, 0xf5, 0xaf, 0xfa, 0x45, 0xba, 0xf3, 0xd0, 0x37, 0x5d, 0xa9, 0x5d, 0xf7, 0xa8,
+/// Public halves of the NuviraHub release keys (see `nuvira-release keygen`): an
+/// update signed by either is accepted.
+#[rustfmt::skip]
+pub const PUBLIC_KEYS: [[u8; 32]; 2] = [
+    // In use: 59fbcd29526e30ef3b4ad1b44eea9c4393eab3f5affa45baf3d0375da95df7a8
+    [
+        0x59, 0xfb, 0xcd, 0x29, 0x52, 0x6e, 0x30, 0xef, 0x3b, 0x4a, 0xd1, 0xb4, 0x4e, 0xea, 0x9c, 0x43,
+        0x93, 0xea, 0xb3, 0xf5, 0xaf, 0xfa, 0x45, 0xba, 0xf3, 0xd0, 0x37, 0x5d, 0xa9, 0x5d, 0xf7, 0xa8,
+    ],
+    // Backup, kept offline (2026-11-09):
+    // ce51cc85140e851c6c2971afcdae190220a29cfdc592dcb429062cadfa890f73
+    [
+        0xce, 0x51, 0xcc, 0x85, 0x14, 0x0e, 0x85, 0x1c, 0x6c, 0x29, 0x71, 0xaf, 0xcd, 0xae, 0x19, 0x02,
+        0x20, 0xa2, 0x9c, 0xfd, 0xc5, 0x92, 0xdc, 0xb4, 0x29, 0x06, 0x2c, 0xad, 0xfa, 0x89, 0x0f, 0x73,
+    ],
 ];
 
 /// Port of nuvira-server when the address has none.
@@ -118,6 +131,15 @@ impl Manifest {
             .verify(&self.signed_message(), &signature)
             .map_err(|_| anyhow::anyhow!("the update signature is not valid"))
     }
+
+    /// Checks the signature against any of `keys`.
+    pub fn verify_any(&self, keys: &[[u8; 32]]) -> Result<()> {
+        if keys.iter().any(|key| self.verify(key).is_ok()) {
+            Ok(())
+        } else {
+            bail!("the update signature is not valid")
+        }
+    }
 }
 
 /// Public key of a key pair in PKCS#8 (as written by `nuvira-release keygen`).
@@ -155,19 +177,19 @@ pub fn base_url(server: &str, server_ws: Option<&str>, default_port: u16) -> Str
 
 /// The version offered by the server, if newer than this program and correctly
 /// signed with `public_key`. `Ok(None)`: nothing to install.
-pub async fn check(base: &str, public_key: &[u8]) -> Result<Option<Manifest>> {
-    check_channel(base, public_key, platform()).await
+pub async fn check(base: &str, keys: &[[u8; 32]]) -> Result<Option<Manifest>> {
+    check_channel(base, keys, platform()).await
 }
 
 /// Like [`check`], for the channel `platform` (e.g. a Linux package's).
-pub async fn check_channel(base: &str, public_key: &[u8], platform: &str) -> Result<Option<Manifest>> {
+pub async fn check_channel(base: &str, keys: &[[u8; 32]], platform: &str) -> Result<Option<Manifest>> {
     let url = format!("{base}/{platform}.json");
     let Some(body) = get(&url, MAX_MANIFEST, None).await? else { return Ok(None) };
     let manifest: Manifest = serde_json::from_slice(&body).with_context(|| format!("{url} is not valid"))?;
     if manifest.platform != platform {
         bail!("{url} is for {}", manifest.platform);
     }
-    manifest.verify(public_key)?;
+    manifest.verify_any(keys)?;
     Ok(newer(&manifest.version, CURRENT).then_some(manifest))
 }
 
@@ -340,6 +362,20 @@ mod tests {
     fn test_key() -> Ed25519KeyPair {
         let pkcs8 = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).expect("key");
         Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).expect("key")
+    }
+
+    #[test]
+    fn either_release_key() {
+        let (first, second) = (test_key(), test_key());
+        let keys: [[u8; 32]; 2] = [
+            first.public_key().as_ref().try_into().expect("32"),
+            second.public_key().as_ref().try_into().expect("32"),
+        ];
+        for key in [&first, &second] {
+            Manifest::sign(key, "0.2.0", "windows-x64", b"program").verify_any(&keys).expect("trusted key");
+        }
+        assert!(Manifest::sign(&test_key(), "0.2.0", "windows-x64", b"program").verify_any(&keys).is_err());
+        assert_ne!(PUBLIC_KEYS[0], PUBLIC_KEYS[1]);
     }
 
     #[test]

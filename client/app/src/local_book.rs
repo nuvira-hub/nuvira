@@ -204,38 +204,88 @@ fn unprotect(stored: &str) -> String {
     }
 }
 
-/// Without DPAPI: AES-256-GCM with a random key in a file readable only by this
-/// user (`book.key`, next to the address book). A copy of the address book alone
-/// does not reveal the passwords.
+/// Without DPAPI: AES-256-GCM with a random key in `book.key`, next to the address
+/// book, kept like the device key (`nuvira_transport::keystore`: the Keychain on
+/// macOS, the Secret Service on Linux, otherwise the file's permissions). Before
+/// 0.21.1 it was the 32 bytes alone, protected by the file's permissions: such a file
+/// is protected at the first use. A copy of the address book alone does not reveal
+/// the passwords.
 #[cfg(not(windows))]
 fn book_key() -> Result<ring::aead::LessSafeKey, String> {
     use ring::aead::{AES_256_GCM, LessSafeKey, UnboundKey};
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::Mutex;
 
-    let path = nuvira_transport::identity::data_dir().join("book.key");
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let mut bytes = vec![0u8; 32];
-            ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes)
-                .map_err(|_| t("err.unexpected"))?;
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            }
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&path)
-                .and_then(|mut f| f.write_all(&bytes))
-                .map_err(|e| e.to_string())?;
+    static CACHE: Mutex<Option<[u8; 32]>> = Mutex::new(None);
+    let mut cache = CACHE.lock().expect("book key");
+    let bytes = match *cache {
+        Some(bytes) => bytes,
+        None => {
+            let path = nuvira_transport::identity::data_dir().join("book.key");
+            let bytes = load_book_key(&path)?;
+            *cache = Some(bytes);
             bytes
         }
-        Err(e) => return Err(e.to_string()),
     };
     let key = UnboundKey::new(&AES_256_GCM, &bytes).map_err(|_| t("err.unexpected"))?;
     Ok(LessSafeKey::new(key))
+}
+
+#[cfg(not(windows))]
+fn load_book_key(path: &std::path::Path) -> Result<[u8; 32], String> {
+    use nuvira_transport::keystore::{self, Protection, ReadError};
+
+    let write = |bytes: &[u8; 32]| {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        keystore::write(path, bytes).map_err(|e| format!("{e:#}"))
+    };
+    let new_key = || -> Result<[u8; 32], String> {
+        let mut bytes = [0u8; 32];
+        ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes)
+            .map_err(|_| t("err.unexpected"))?;
+        write(&bytes)?;
+        Ok(bytes)
+    };
+    let data = match std::fs::read(path) {
+        Ok(data) => data,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return new_key(),
+        Err(e) => return Err(e.to_string()),
+    };
+    // The file of older versions: the key alone.
+    if data.len() == 32 && !data.starts_with(b"NVK1") {
+        let bytes: [u8; 32] = data.try_into().expect("32 bytes");
+        match write(&bytes) {
+            Ok(p) if p.by_the_system() => {
+                tracing::info!("address book key: now protected by the system ({})", p.name())
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("address book key: left as it is: {e}"),
+        }
+        return Ok(bytes);
+    }
+    match keystore::read(path) {
+        Ok(Some((bytes, protection))) => {
+            let bytes: [u8; 32] = bytes.try_into().map_err(|_| t("err.unexpected"))?;
+            // The computer now signs in by itself: the keyring would stay locked.
+            if protection == Protection::SecretService && keystore::preferred() == Protection::File {
+                let _ = write(&bytes);
+            }
+            Ok(bytes)
+        }
+        Ok(None) => new_key(),
+        // Keyring locked: the passwords cannot be read now, nothing is lost.
+        Err(ReadError::Unavailable(e)) => Err(format!("{e:#}")),
+        Err(ReadError::Io(e)) => Err(e.to_string()),
+        // Another computer's or a lost wrapping key: the saved passwords are gone
+        // (as with a copy of the address book); the file is kept aside.
+        Err(ReadError::Unreadable(e)) => {
+            let aside = path.with_extension("unreadable");
+            tracing::error!("address book key {} {e:#}: kept as {}", path.display(), aside.display());
+            std::fs::rename(path, &aside).map_err(|e| e.to_string())?;
+            new_key()
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -304,6 +354,25 @@ mod tests {
         assert_eq!(unprotect(&stored), "pàssword");
         assert_eq!(unprotect("key:00"), "");
         assert_eq!(unprotect(""), "");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn old_book_key_is_protected() {
+        let dir = std::env::temp_dir().join(format!("nuvira-book-key-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("book.key");
+        let old = [7u8; 32];
+        std::fs::write(&path, old).unwrap();
+        assert_eq!(load_book_key(&path).unwrap(), old);
+        assert!(std::fs::read(&path).unwrap().starts_with(b"NVK1"));
+        assert_eq!(load_book_key(&path).unwrap(), old);
+        // Missing: a new one.
+        std::fs::remove_file(&path).unwrap();
+        let new = load_book_key(&path).unwrap();
+        assert_ne!(new, old);
+        assert_eq!(load_book_key(&path).unwrap(), new);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(windows)]
