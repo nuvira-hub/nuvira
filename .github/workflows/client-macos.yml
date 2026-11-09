@@ -30,6 +30,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Tests
+        # Keys as plain files: the runner's login keychain may be locked, and the
+        # Keychain then waits for a password dialog nobody answers (the tests of
+        # v0.21.1 hung there for an hour). The Keychain is tried on real Macs.
+        env:
+          NUVIRA_KEY_STORE: file
         run: cargo test --release --workspace
 
       - name: Certificate into a temporary keychain
