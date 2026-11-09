@@ -11,9 +11,11 @@
 //! from any thread, with or without a runtime of its own.
 //!
 //! For unattended access on GNOME the session is opened through GNOME's own API
-//! instead ([`mutter`]), see [`set_direct`].
+//! instead ([`mutter`]), and at the sign-in screen of SDDM on Wayland through
+//! KWin's own protocols ([`kwin`]), see [`set_direct`].
 #![cfg(target_os = "linux")]
 
+mod kwin;
 mod mutter;
 
 use std::os::fd::OwnedFd;
@@ -105,7 +107,11 @@ impl Session {
         if DIRECT.load(Ordering::Relaxed) {
             match Self::spawn("mutter", mutter::run) {
                 Ok(session) => return Ok(session),
-                Err(e) => info!("GNOME's remote desktop API not used ({e:#}): through the portal"),
+                Err(e) => info!("GNOME's remote desktop API not used ({e:#})"),
+            }
+            match Self::spawn("kwin", kwin::run) {
+                Ok(session) => return Ok(session),
+                Err(e) => info!("KWin's remote control protocols not used ({e:#}): through the portal"),
             }
         }
         Self::spawn("portal", move |ready, rx, open| run(token_file, ask, ready, rx, open))

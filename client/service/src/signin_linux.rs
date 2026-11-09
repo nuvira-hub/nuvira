@@ -43,6 +43,13 @@ pub(crate) const SYSTEM_DIR: &str = "/var/lib/nuvira";
 const PROGRAM_COPY: &str = "/usr/local/lib/nuvira/nuvira";
 /// Files of the person's data folder the greeter's agent needs.
 const COPIED: [&str; 3] = ["device.key", "servers.txt", "service.env"];
+/// SDDM on Wayland: the program the greeter's agent runs as, a link to root's
+/// program under a path of its own. KWin offers its screen cast and fake input
+/// protocols only to the executable named in [`KWIN_DESKTOP`]; a path of its own
+/// keeps that authorisation away from `nuvira` itself (docs: nuvira-pro
+/// docs/internal/36-sddm-wayland-greeter.md).
+const KWIN_PROGRAM: &str = "/usr/local/lib/nuvira/nuvira-greeter";
+const KWIN_DESKTOP: &str = "/usr/local/share/applications/nuvira-greeter.desktop";
 
 fn unit_path() -> PathBuf {
     Path::new("/etc/systemd/system").join(UNIT)
@@ -234,6 +241,7 @@ pub(crate) fn remove(keep_identity: bool) -> Result<()> {
     if Path::new("/sys/fs/selinux/enforce").exists() {
         let _ = Command::new("semanage").args(["fcontext", "-d", PROGRAM_COPY]).output();
     }
+    let _ = std::fs::remove_file(KWIN_DESKTOP);
     info!("sign-in screen agent removed");
     Ok(())
 }
@@ -412,8 +420,122 @@ pub(crate) fn primary_gid(uid: u32) -> u32 {
     }
 }
 
+/// The greeter's compositor is KWin (SDDM on Wayland): the pid of a `kwin_wayland`
+/// of its user.
+fn kwin_greeter(uid: u32) -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::read_dir("/proc").into_iter().flatten().flatten().find_map(|entry| {
+        let dir = entry.path();
+        let pid: u32 = dir.file_name()?.to_str()?.parse().ok()?;
+        (std::fs::read_to_string(dir.join("comm")).is_ok_and(|c| c.trim() == "kwin_wayland")
+            && std::fs::metadata(&dir).is_ok_and(|m| m.uid() == uid))
+        .then_some(pid)
+    })
+}
+
+/// KWin's authorisation for the greeter's agent: the program under its own path
+/// (a hard link to root's program, a copy across file systems, renewed when the
+/// program changes) and the `.desktop` file that names it.
+fn prepare_kwin_program(exe: &Path) -> Result<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let program = Path::new(KWIN_PROGRAM);
+    let source = std::fs::metadata(exe).with_context(|| exe.display().to_string())?;
+    let current = std::fs::metadata(program).ok();
+    let same = current.as_ref().is_some_and(|m| m.dev() == source.dev() && m.ino() == source.ino())
+        || current.as_ref().is_some_and(|m| m.len() == source.len() && m.mtime() == source.mtime());
+    if !same {
+        std::fs::create_dir_all(program.parent().context("program folder")?)?;
+        let partial = program.with_extension("new");
+        let _ = std::fs::remove_file(&partial);
+        if std::fs::hard_link(exe, &partial).is_err() {
+            std::fs::copy(exe, &partial).with_context(|| exe.display().to_string())?;
+            std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755))?;
+        }
+        std::fs::rename(&partial, program)?;
+        label_as_program(program);
+    }
+    // `NoDisplay` keeps it out of the menus; KWin still takes it. Not `OnlyShowIn`
+    // or `NotShowIn=KDE`: KWin then ignores the entry (tried on Plasma 6.6).
+    let desktop = format!(
+        "[Desktop Entry]\nType=Application\nName=NuviraHub at the sign-in screen\nExec={KWIN_PROGRAM}\n\
+         NoDisplay=true\nX-KDE-Wayland-Interfaces=zkde_screencast_unstable_v1,org_kde_kwin_fake_input\n"
+    );
+    if std::fs::read_to_string(KWIN_DESKTOP).ok().as_deref() != Some(desktop.as_str()) {
+        std::fs::create_dir_all(Path::new(KWIN_DESKTOP).parent().context("applications folder")?)?;
+        std::fs::write(KWIN_DESKTOP, desktop).context(KWIN_DESKTOP)?;
+    }
+    Ok(program.to_path_buf())
+}
+
+/// KWin finds the `.desktop` file in the KDE service cache of its user, which at
+/// the greeter has no applications: `kbuildsycoca6` looks for the menu of the
+/// applications, which on Plasma systems needs `XDG_MENU_PREFIX=plasma-` (set by a
+/// Plasma session, not by SDDM). The cache's file name depends on the language,
+/// so it is built with KWin's own environment (`LANG`, the XDG folders). Built
+/// again at every start of the greeter's agent: a few seconds, and an update of
+/// packages may have rebuilt it without our entry. KWin reads the new cache a few
+/// seconds later: the agent's KWin session tries again meanwhile (`nuvira_portal`).
+fn rebuild_kde_cache(uid: u32, gid: u32, kwin: u32) {
+    const TAKEN: [&str; 12] = [
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_MESSAGES",
+        "HOME",
+        "XDG_RUNTIME_DIR",
+        "XDG_DATA_DIRS",
+        "XDG_CONFIG_DIRS",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "DBUS_SESSION_BUS_ADDRESS",
+    ];
+    let environ = std::fs::read(format!("/proc/{kwin}/environ")).unwrap_or_default();
+    let mut command = Command::new("kbuildsycoca6");
+    command
+        .arg("--noincremental")
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .env("HOME", home_of(uid).unwrap_or_else(|| "/run".into()))
+        .env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .uid(uid)
+        .gid(gid);
+    for pair in environ.split(|b| *b == 0) {
+        let pair = String::from_utf8_lossy(pair);
+        if let Some((key, value)) = pair.split_once('=')
+            && TAKEN.contains(&key)
+        {
+            command.env(key, value);
+        }
+    }
+    if Path::new("/etc/xdg/menus/plasma-applications.menu").exists() {
+        command.env("XDG_MENU_PREFIX", "plasma-");
+    }
+    match command.status() {
+        Ok(status) if status.success() => info!("KDE service cache of the sign-in screen rebuilt"),
+        Ok(status) => warn!(%status, "kbuildsycoca6 failed: KWin may not authorise the sign-in screen's agent"),
+        Err(e) => warn!("kbuildsycoca6: {e}: KWin may not authorise the sign-in screen's agent"),
+    }
+}
+
 fn start_agent(exe: &Path, settings: &Settings, hash: &str, session: &SessionInfo) -> Result<Child> {
-    let mut command = Command::new(exe);
+    // SDDM on Wayland: the agent runs as the authorised program (see KWIN_PROGRAM).
+    let kwin_program = match (session.kind == "wayland").then(|| kwin_greeter(session.uid)).flatten() {
+        Some(kwin) => match prepare_kwin_program(exe) {
+            Ok(program) => {
+                rebuild_kde_cache(session.uid, primary_gid(session.uid), kwin);
+                Some(program)
+            }
+            Err(e) => {
+                warn!("KWin's sign-in screen not prepared: {e:#}");
+                None
+            }
+        },
+        None => None,
+    };
+    let mut command = Command::new(kwin_program.as_deref().unwrap_or(exe));
     command.args(["agent", "--signin-screen", "--server", &settings.server]);
     if let Some(key) = &settings.server_key {
         command.args(["--server-key", key]);

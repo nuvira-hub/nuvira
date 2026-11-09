@@ -80,8 +80,8 @@ async fn open() -> Result<Opened> {
     Ok(Opened { remote, stream_path: stream_path.to_string(), screen, closed })
 }
 
-/// The user's PipeWire daemon: Mutter's stream is a node of it.
-fn pipewire_socket() -> Result<OwnedFd> {
+/// The user's PipeWire daemon: Mutter's (and KWin's) stream is a node of it.
+pub(crate) fn pipewire_socket() -> Result<OwnedFd> {
     let path = match std::env::var_os("PIPEWIRE_REMOTE") {
         Some(remote) if std::path::Path::new(&remote).is_absolute() => remote.into(),
         remote => {

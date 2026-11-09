@@ -3494,8 +3494,11 @@ dependencies = [
  "anyhow",
  "ashpd 0.13.13",
  "futures-util",
+ "libc",
  "tokio",
  "tracing",
+ "wayland-client",
+ "wayland-protocols-plasma",
 ]
 
 [[package]]

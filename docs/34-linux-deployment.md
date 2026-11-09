@@ -30,7 +30,7 @@ Unlike the person's own installation (a systemd user service, docs/20), the ID b
 | GNOME extension, printer | as with the person's installation | lock and sign-in screens, remote printing |
 
 **One agent at a time.** The system service follows who is at the computer (the active session of `seat0`, from logind):
-- sign-in screen: its agent as root (X11) or as GDM's user (Wayland), as before;
+- sign-in screen: its agent as root (X11), as GDM's user (Wayland) or as SDDM's user through KWin (Wayland), as before;
 - a person's graphical session: a copy of the key, the server and the hash in `/run/nuvira-session-<uid>` (that person's only, in memory), then `nuvira service start` as that person, in their systemd: the agent runs as them, so it sees their screen, their files, and opens their terminal;
 - another session becomes active (switch user, sign out): that agent stops and its copy is removed.
 
