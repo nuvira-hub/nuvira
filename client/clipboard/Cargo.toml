@@ -8,7 +8,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-arboard = { version = "3.4", default-features = false, features = ["image-data"] }
+arboard = { version = "3.4", default-features = false, features = ["image-data", "wayland-data-control"] }
 png.workspace = true
 tracing.workspace = true
 

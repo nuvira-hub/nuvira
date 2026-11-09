@@ -342,9 +342,17 @@ impl<W: Write + Seek> Mp4Writer<W> {
     }
 
     /// Writes what is left, the total duration and the keyframe index.
-    pub fn finish(mut self) -> Result<W> {
+    #[cfg(test)]
+    pub fn finish(self) -> Result<W> {
+        self.finish_at(0)
+    }
+
+    /// As [`finish`](Self::finish), the last picture lasting until `end` (ticks):
+    /// a still screen sends no frames, and without this the time from the last
+    /// change to the end of the recording was missing from the file.
+    pub fn finish_at(mut self, end: u64) -> Result<W> {
         if let Some(last) = self.pending.last() {
-            let next = last.time + u64::from(self.last_duration.max(1));
+            let next = (last.time + u64::from(self.last_duration.max(1))).max(end);
             self.flush(next)?;
         }
         let mfra = mfra(&self.keyframes);
@@ -616,6 +624,21 @@ mod tests {
             let info = parse_sps(&param_sets(&frames[0]).0).unwrap();
             assert_eq!((info.width, info.height), (w, h));
         }
+    }
+
+    #[test]
+    fn still_picture_lasts_until_the_end() {
+        // 1 s of frames, then a still screen (no frames) until 10 s.
+        let keys: Vec<bool> = (0..10).map(|i| i == 0).collect();
+        let frames = encode(320, 240, &keys);
+        let (sps, pps) = param_sets(&frames[0]);
+        let mut w = Mp4Writer::create(std::io::Cursor::new(Vec::new()), &sps, &pps).unwrap();
+        for (i, frame) in frames.iter().enumerate() {
+            w.push(frame, i as u64 * 9000, keys[i]).unwrap();
+        }
+        let file = w.finish_at(10 * u64::from(TIMESCALE)).unwrap().into_inner();
+        let mehd = find(&file, b"mehd").unwrap();
+        assert_eq!(u64::from_be_bytes(file[mehd + 12..mehd + 20].try_into().unwrap()), 10_000);
     }
 
     #[test]

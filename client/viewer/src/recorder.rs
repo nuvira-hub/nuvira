@@ -24,6 +24,10 @@ struct Part {
     size: (u32, u32),
     /// Agent clock (µs) of the first frame.
     start_us: u64,
+    /// Agent clock (µs) of the last frame written, and when it arrived here: the
+    /// last picture lasts until the file is closed.
+    last_us: u64,
+    last_at: std::time::Instant,
 }
 
 pub struct Recorder {
@@ -63,6 +67,8 @@ impl Recorder {
         let Some(part) = self.part.as_mut() else { return Ok(()) };
         // 90 kHz ticks from the first frame of the part.
         let time = frame.capture_us.saturating_sub(part.start_us) * 9 / 100;
+        part.last_us = part.last_us.max(frame.capture_us);
+        part.last_at = std::time::Instant::now();
         part.writer.push(&frame.data, time, frame.keyframe)
     }
 
@@ -103,14 +109,24 @@ impl Recorder {
         let writer = Mp4Writer::create(BufWriter::with_capacity(1 << 20, file), sps, pps)?;
         info!(w = size.0, h = size.1, "recording to {}", path.display());
         self.files.push(path.clone());
-        self.part = Some(Part { writer, path, size, start_us: frame.capture_us });
+        self.part = Some(Part {
+            writer,
+            path,
+            size,
+            start_us: frame.capture_us,
+            last_us: frame.capture_us,
+            last_at: std::time::Instant::now(),
+        });
         Ok(())
     }
 
     fn close_part(&mut self) -> Result<()> {
         if let Some(part) = self.part.take() {
-            let seconds = part.writer.duration() / u64::from(crate::mp4::TIMESCALE);
-            part.writer.finish().with_context(|| format!("closing {}", part.path.display()))?;
+            // Now, on the agent's clock: the still picture since the last frame counts.
+            let now_us = part.last_us + part.last_at.elapsed().as_micros() as u64;
+            let end = now_us.saturating_sub(part.start_us) * 9 / 100;
+            let seconds = part.writer.duration().max(end) / u64::from(crate::mp4::TIMESCALE);
+            part.writer.finish_at(end).with_context(|| format!("closing {}", part.path.display()))?;
             info!(seconds, "recording saved: {}", part.path.display());
             // For the NuviraHub app, which reads the output (also while the window closes).
             println!("@recorded\t{}", part.path.display());
