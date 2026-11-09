@@ -344,6 +344,23 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
     Ok(Some(body))
 }
 
+/// True if `path` is already the program of `manifest` (same size and SHA-256): a
+/// download kept under a fixed name is used again only when it is the right version.
+pub fn file_matches(path: &Path, manifest: &Manifest) -> bool {
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    if file.metadata().map(|m| m.len()).ok() != Some(manifest.size) {
+        return false;
+    }
+    let mut hash = Sha256::new();
+    let mut reader = std::io::BufReader::new(file);
+    if std::io::copy(&mut reader, &mut hash).is_err() {
+        return false;
+    }
+    hex(&hash.finalize()) == manifest.sha256
+}
+
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -362,6 +379,20 @@ mod tests {
     fn test_key() -> Ed25519KeyPair {
         let pkcs8 = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).expect("key");
         Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).expect("key")
+    }
+
+    #[test]
+    fn file_matches_only_the_same_program() {
+        let path = std::env::temp_dir().join(format!("nuvira-file-matches-{}", std::process::id()));
+        let manifest = Manifest::sign(&test_key(), "0.2.0", "windows-x64", b"program");
+        assert!(!file_matches(&path, &manifest), "missing file");
+        std::fs::write(&path, b"program").expect("write");
+        assert!(file_matches(&path, &manifest));
+        std::fs::write(&path, b"programs").expect("write");
+        assert!(!file_matches(&path, &manifest), "other size");
+        std::fs::write(&path, b"PROGRAM").expect("write");
+        assert!(!file_matches(&path, &manifest), "same size, other content");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

@@ -22,6 +22,8 @@ use crate::config::{self, ServiceConfig};
 const FIRST_CHECK: Duration = Duration::from_secs(120);
 const INTERVAL: Duration = Duration::from_secs(6 * 3600);
 const RETRY: Duration = Duration::from_secs(3600);
+/// The downloaded program, in the update folder, whatever its version.
+const UPDATE_EXE: &str = "nuvira-update.exe";
 
 /// Checks for updates until `stop` is set.
 pub fn spawn(stop: &'static AtomicBool) -> Option<std::thread::JoinHandle<()>> {
@@ -59,9 +61,12 @@ fn check_and_apply(stop: &AtomicBool) -> Result<()> {
 
     let dir = config::update_dir();
     std::fs::create_dir_all(&dir)?;
-    let program = dir.join(format!("nuvira-{}.exe", manifest.version));
+    // Always the same name: an antivirus that trusts programs by path (Kaspersky
+    // Anti-Ransomware Tool takes single files only) can be told once for every version.
+    let program = dir.join(UPDATE_EXE);
     clean(&dir, &program);
-    if !program.exists() {
+    if !nuvira_update::file_matches(&program, &manifest) {
+        let _ = std::fs::remove_file(&program);
         rt.block_on(nuvira_update::download(&base, &manifest, &program))?;
         info!("version {} downloaded and checked", manifest.version);
     }
