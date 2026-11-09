@@ -108,6 +108,8 @@ impl Pipeline {
                     return;
                 }
             };
+            #[cfg(target_os = "macos")]
+            precise_timers();
             encode_loop(&s, encoder, &frames, &controls);
         })?);
 
@@ -203,6 +205,41 @@ pub fn encoded_size(width: u32, height: u32, view: u64) -> (u32, u32) {
     let scale = (vw as f64 / width as f64).min(vh as f64 / height as f64);
     let fit = |n: u32| (((n as f64 * scale).round() as u32) & !1).max(64).min(n);
     (fit(width), fit(height))
+}
+
+/// macOS gives an ordinary thread's timers a leeway of about half the time asked
+/// (Mac mini M4, macOS 27: 12 ms of sleep lasted 17), so the pause between frames
+/// became 17.8 ms instead of 12 and sessions stayed at 47 fps with any encoder.
+/// A time-constraint thread (Apple's policy for audio and video) sleeps exactly;
+/// one that exceeds its computation is only demoted by the kernel.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)] // libc's mach items point to the mach2 crate; these few are enough here.
+fn precise_timers() {
+    let mut timebase = libc::mach_timebase_info { numer: 0, denom: 0 };
+    // SAFETY: plain calls on this thread with a filled policy of the right count.
+    unsafe {
+        libc::mach_timebase_info(&mut timebase);
+        if timebase.numer == 0 {
+            return;
+        }
+        let ticks = |ms: f64| (ms * 1e6 * timebase.denom as f64 / timebase.numer as f64) as u32;
+        let mut policy = libc::thread_time_constraint_policy {
+            period: ticks(1000.0 / 60.0),
+            computation: ticks(8.0),
+            constraint: ticks(1000.0 / 60.0),
+            preemptible: 1,
+        };
+        let thread = libc::mach_thread_self();
+        let result = libc::thread_policy_set(
+            thread,
+            libc::THREAD_TIME_CONSTRAINT_POLICY as libc::thread_policy_flavor_t,
+            (&raw mut policy).cast(),
+            libc::THREAD_TIME_CONSTRAINT_POLICY_COUNT,
+        );
+        if result != 0 {
+            warn!("encoding thread: time-constraint policy refused ({result}), the frame pace may be slower");
+        }
+    }
 }
 
 fn encode_loop(
