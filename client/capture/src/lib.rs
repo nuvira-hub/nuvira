@@ -17,6 +17,7 @@ mod gdi;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+pub mod resolution;
 mod synthetic;
 #[cfg(windows)]
 mod windows;

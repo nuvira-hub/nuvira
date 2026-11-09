@@ -178,13 +178,14 @@ func MergeLimits(a, b *pb.Policy) *pb.Policy {
 	a.NoInput = a.NoInput || b.NoInput
 	a.NoRestart = a.NoRestart || b.NoRestart
 	a.NoRecord = a.NoRecord || b.NoRecord
+	a.NoResolution = a.NoResolution || b.NoResolution
 	return a
 }
 
 // AnyLimit tells whether at least one limit is on.
 func AnyLimit(p *pb.Policy) bool {
 	return p != nil && (p.ConfirmAlways || p.NoFiles || p.NoClipboard || p.NoPrivacy || p.NoTerminal ||
-		p.NoTunnel || p.NoPrint || p.RecordAlways || p.NoInput || p.NoRestart || p.NoRecord)
+		p.NoTunnel || p.NoPrint || p.RecordAlways || p.NoInput || p.NoRestart || p.NoRecord || p.NoResolution)
 }
 
 // UploadDesk is implemented by modules that take files from the devices (session

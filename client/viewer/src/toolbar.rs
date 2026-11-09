@@ -24,7 +24,7 @@ const HTML: &str = include_str!("toolbar.html");
 const CHAT_HTML: &str = include_str!("chat.html");
 const NOTICE_HTML: &str = include_str!("notice.html");
 /// Sizes in logical pixels: open toolbar and the tab to reopen it.
-const BAR: (f64, f64) = (900.0, 38.0);
+const BAR: (f64, f64) = (940.0, 38.0);
 /// Chat panel: width and maximum height, distance from the edges.
 const CHAT: (f64, f64) = (340.0, 440.0);
 const CHAT_MARGIN: f64 = 12.0;
@@ -50,6 +50,9 @@ pub enum Action {
     RestartConfirmed,
     /// Real size (1:1) or fitted to the window.
     ActualSize,
+    /// The remote screen takes the window's size (as close as its modes allow), or
+    /// goes back to its own.
+    AdaptResolution,
     Fullscreen,
     /// Stream the screen with this index.
     Display(u32),
@@ -92,6 +95,7 @@ impl Action {
             "tunnels" => Self::Tunnels,
             "restart" => Self::Restart,
             "actual" => Self::ActualSize,
+            "resolution" => Self::AdaptResolution,
             "fullscreen" => Self::Fullscreen,
             "collapse" => Self::Collapse,
             "expand" => Self::Expand,
@@ -385,6 +389,7 @@ mod tests {
     fn actions_and_escaping() {
         assert_eq!(Action::parse("sas"), Some(Action::SecureAttention));
         assert_eq!(Action::parse("privacy"), Some(Action::Privacy));
+        assert_eq!(Action::parse("resolution"), Some(Action::AdaptResolution));
         assert_eq!(Action::parse("record"), Some(Action::Record));
         assert_eq!(Action::parse("terminal"), Some(Action::Terminal));
         assert_eq!(Action::parse("altro"), None);

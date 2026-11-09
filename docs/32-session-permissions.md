@@ -6,13 +6,13 @@ What a session may do is decided in three places, each of which can only take so
 
 1. **The settings of the controlled computer** (app → Settings → This computer): privacy mode, terminal, tunnels, printing, recordings. They hold for every session.
 2. **The server's rules and the permissions of the technician** (NuviraHub Pro): the rules for every device, the limits of the technician's account, of its membership in the shared address books that hold the computer, or of the sessions started without an account. The server sends them to the agent with the connection request.
-3. **The person at the computer, during the session**: from the strip of the app they switch off (and back on) keyboard and mouse, clipboard, files, terminal, tunnels and printing, for that session only.
+3. **The person at the computer, during the session**: from the strip of the app they switch off (and back on) keyboard and mouse, clipboard, files, terminal, tunnels, printing and the change of the screen resolution, for that session only.
 
 Whatever one of them takes away is not available, and nothing the earlier ones do not allow can be switched on later.
 
 ## At the controlled computer: the strip
 
-While a session is in progress the strip at the top of the app has a second row, "Allowed in this session:", with a button for each thing the session has: Keyboard and mouse, Clipboard, Files, Terminal, Tunnels, Printing (only those the session offers: a terminal-only session shows Terminal and Tunnels). A click switches it off (the button is crossed out), another click allows it again. The choice is for that session only: the next one starts with everything the rules allow.
+While a session is in progress the strip at the top of the app has a second row, "Allowed in this session:", with a button for each thing the session has: Keyboard and mouse, Clipboard, Files, Terminal, Tunnels, Printing, Screen resolution (only those the session offers: a terminal-only session shows Terminal and Tunnels). A click switches it off (the button is crossed out), another click allows it again. The choice is for that session only: the next one starts with everything the rules allow.
 
 Switching off acts at once:
 
@@ -22,12 +22,13 @@ Switching off acts at once:
 - **Terminal**: open terminals end, with everything the shell started; new ones are refused.
 - **Tunnels**: open connections through the tunnels are cut; new ones are refused.
 - **Printing**: documents printed during the session are no longer sent to the technician.
+- **Screen resolution**: a screen the session had adapted to the technician's window goes back to its own resolution, and new requests are refused ([37-remote-resolution.md](37-remote-resolution.md)).
 
 The app sends `AgentCommand::Switch { name, on }` to its agent (or to the service's one, through the local channel); the agent answers with `AgentEvent::Permissions { offered, off }`, also repeated to an app opened during the session.
 
 ## At the technician's: the viewer
 
-The agent tells the viewer what the session may do with `Permissions` (`proto/nuvira/v1/session.proto`), after the video format and at every change: `input`, `clipboard`, `files`, `terminal`, `tunnel`, `print`, and `switched_off` with what the person at the computer switched off. The viewer then:
+The agent tells the viewer what the session may do with `Permissions` (`proto/nuvira/v1/session.proto`), after the video format and at every change: `input`, `clipboard`, `files`, `terminal`, `tunnel`, `print`, `resolution`, and `switched_off` with what the person at the computer switched off. The viewer then:
 
 - without keyboard and mouse, sends no input (the "view only" button is pressed and locked, as is Ctrl+Alt+Del: "Keyboard and mouse are not allowed in this session");
 - hides the buttons of the file manager, of sending files, of the terminal and of the tunnels when they are not allowed;

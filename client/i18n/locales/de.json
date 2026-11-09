@@ -571,5 +571,19 @@
   "limits.of_account": "Was die Sitzungen von {name} nicht dürfen",
   "limits.of_member": "Was {name} auf den Computern von {book} nicht darf",
   "limits.of_anonymous": "Was Sitzungen ohne angemeldetes Konto nicht dürfen",
-  "limits.saved": "Berechtigungen gespeichert: sie gelten ab der nächsten Sitzung."
+  "limits.saved": "Berechtigungen gespeichert: sie gelten ab der nächsten Sitzung.",
+  "admin.policy_resolution": "Keine Änderung der Bildschirmauflösung",
+  "perm.resolution": "Bildschirmauflösung",
+  "agent.resolution_disabled": "der entfernte Computer erlaubt keine Änderung der Bildschirmauflösung",
+  "agent.resolution_switched_off": "die Person am entfernten PC hat die Änderung der Auflösung ausgeschaltet: der Bildschirm ist wie vorher",
+  "agent.resolution_all_screens": "die Auflösung wird nicht geändert, solange alle Bildschirme angezeigt werden",
+  "agent.resolution_unavailable": "die Auflösung dieses Bildschirms kann nicht geändert werden",
+  "agent.resolution_several_screens": "am entfernten Computer sind mehrere Bildschirme an: die Auflösung wird nur bei einem geändert",
+  "agent.resolution_busy": "eine andere Sitzung hat die Auflösung dieses Bildschirms bereits geändert",
+  "agent.resolution_failed": "die Bildschirmauflösung konnte nicht geändert werden",
+  "tb.adapt_resolution": "Entfernte Auflösung an dieses Fenster anpassen",
+  "tb.adapt_resolution_on": "Entfernte Auflösung an das Fenster angepasst: klicken, um sie zurückzusetzen",
+  "viewer.resolution_now": "Entfernter Bildschirm auf {size}",
+  "viewer.resolution_back": "Entfernter Bildschirm wieder in seiner eigenen Auflösung",
+  "viewer.resolution_failed": "Entfernte Auflösung nicht geändert: {reason}"
 }

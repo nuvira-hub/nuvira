@@ -116,6 +116,15 @@ fn content() -> Result<SCShareableContent> {
     SCShareableContent::get().map_err(|e| anyhow!("{e:?}")).context("@agent.screen_permission_mac")
 }
 
+/// CoreGraphics ID of the screen at `index` in [`displays`].
+pub fn display_id(index: usize) -> Result<u32> {
+    let list = displays_of(&content()?);
+    if list.is_empty() && screen_locked() && index == 0 {
+        return Ok(CGDisplay::main().id);
+    }
+    list.into_iter().nth(index).map(|(d, _)| d.display_id()).context("the screen is gone")
+}
+
 pub fn displays() -> Result<Vec<Display>> {
     let list: Vec<Display> = displays_of(&content()?).into_iter().map(|(_, d)| d).collect();
     if list.is_empty() && screen_locked() {

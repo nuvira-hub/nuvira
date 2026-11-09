@@ -858,7 +858,9 @@ type Policy struct {
 	// No restart of the computer from the session.
 	NoRestart bool `protobuf:"varint,10,opt,name=no_restart,json=noRestart,proto3" json:"no_restart,omitempty"`
 	// The viewer may not record the session (record_always wins over it).
-	NoRecord      bool `protobuf:"varint,11,opt,name=no_record,json=noRecord,proto3" json:"no_record,omitempty"`
+	NoRecord bool `protobuf:"varint,11,opt,name=no_record,json=noRecord,proto3" json:"no_record,omitempty"`
+	// The resolution of the controlled screen is never changed by a session.
+	NoResolution  bool `protobuf:"varint,12,opt,name=no_resolution,json=noResolution,proto3" json:"no_resolution,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -966,6 +968,13 @@ func (x *Policy) GetNoRestart() bool {
 func (x *Policy) GetNoRecord() bool {
 	if x != nil {
 		return x.NoRecord
+	}
+	return false
+}
+
+func (x *Policy) GetNoResolution() bool {
+	if x != nil {
+		return x.NoResolution
 	}
 	return false
 }
@@ -5236,7 +5245,7 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"Registered\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12)\n" +
 	"\x06policy\x18\x02 \x01(\v2\x11.nuvira.v1.PolicyR\x06policy\x12\x1a\n" +
-	"\bfeatures\x18\x03 \x03(\tR\bfeatures\"\xe1\x02\n" +
+	"\bfeatures\x18\x03 \x03(\tR\bfeatures\"\x86\x03\n" +
 	"\x06Policy\x12%\n" +
 	"\x0econfirm_always\x18\x01 \x01(\bR\rconfirmAlways\x12\x19\n" +
 	"\bno_files\x18\x02 \x01(\bR\anoFiles\x12!\n" +
@@ -5252,7 +5261,8 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\n" +
 	"no_restart\x18\n" +
 	" \x01(\bR\tnoRestart\x12\x1b\n" +
-	"\tno_record\x18\v \x01(\bR\bnoRecord\"c\n" +
+	"\tno_record\x18\v \x01(\bR\bnoRecord\x12#\n" +
+	"\rno_resolution\x18\f \x01(\bR\fnoResolution\"c\n" +
 	"\x06Upload\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x1d\n" +
 	"\n" +

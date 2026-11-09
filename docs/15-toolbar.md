@@ -26,6 +26,7 @@ Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs`
 | Prompt | Opens a remote terminal window (see [25-remote-terminal.md](25-remote-terminal.md)); only when the agent offers it | agent: terminal stream |
 | Chat, Send file | See [16-clipboard-chat-files.md](16-clipboard-chat-files.md) | viewer, agent |
 | Power | Restarts the remote computer after a confirmation, then waits for it and connects again (see [27-remote-restart.md](27-remote-restart.md)); only with unattended access | agent: `Restart` |
+| Screen with two corners | The remote screen takes the window's size, as close as its modes allow, and goes back at the end (see [37-remote-resolution.md](37-remote-resolution.md)); off at the start, remembered; only when the agent can | agent: `SetResolution` |
 | Real size | 1:1 instead of fitting the window; the image follows the mouse, so moving it from one edge of the window to the other crosses the whole remote screen. `--actual-size` starts in this mode | viewer |
 | Full screen | Enters and leaves | viewer |
 | Arrow | Shrinks the bar to a tab; a click opens it again | viewer |

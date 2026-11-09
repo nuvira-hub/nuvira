@@ -127,6 +127,8 @@ message Policy {
   bool no_restart = 10;
   // The viewer may not record the session (record_always wins over it).
   bool no_record = 11;
+  // The resolution of the controlled screen is never changed by a session.
+  bool no_resolution = 12;
 }
 
 // ---------------------------------------------------------------------------

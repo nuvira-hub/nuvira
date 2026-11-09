@@ -319,6 +319,7 @@ pub async fn serve_direct(
     fingerprint_file: Option<PathBuf>,
 ) -> Result<()> {
     nuvira_input::privacy::recover();
+    recover_screens(&nuvira_transport::identity::data_dir());
     let bind: SocketAddr = ([0, 0, 0, 0], port).into();
     let (endpoint, fingerprint) = nuvira_transport::server_endpoint(bind)?;
     info!("waiting for the viewer on UDP {bind}");
@@ -367,6 +368,8 @@ pub async fn serve_via_server(
 ) -> Result<()> {
     // A privacy mode left on by a killed agent (Linux: local devices still off).
     nuvira_input::privacy::recover();
+    // Screens left at a session's resolution by a killed agent.
+    recover_screens(opts.identity_path.parent().unwrap_or(&nuvira_transport::identity::data_dir()));
     let server = nuvira_transport::resolve_addr(&opts.server_name, nuvira_transport::signal::DEFAULT_PORT)?;
     let identity = Arc::new(nuvira_transport::identity::Identity::load_or_create(&opts.identity_path)?);
     let permissions = Permissions::load();
@@ -540,6 +543,7 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
         no_tunnel = policy.no_tunnel,
         no_print = policy.no_print,
         record_always = policy.record_always,
+        no_resolution = policy.no_resolution,
         "rules of the server"
     );
     // The app shows the setting of the recordings locked when the rules want them.
@@ -569,6 +573,7 @@ fn merge_limits(a: nuvira_proto::v1::Policy, b: &nuvira_proto::v1::Policy) -> nu
         no_input: a.no_input || b.no_input,
         no_restart: a.no_restart || b.no_restart,
         no_record: a.no_record || b.no_record,
+        no_resolution: a.no_resolution || b.no_resolution,
     }
 }
 
@@ -1122,6 +1127,12 @@ async fn session(
         true => printer::listen(),
         false => None,
     };
+    // Adapting the screen's resolution to the viewer's window.
+    let resolution_offered = !terminal_only
+        && !config.view_only
+        && config.synthetic.is_none()
+        && !policy.no_resolution
+        && nuvira_capture::resolution::supported();
     // Video as datagrams with error correction, when the viewer asks for it.
     let video_datagrams = hello.video_datagrams && conn.max_datagram_size().is_some();
     let hello = Hello {
@@ -1139,6 +1150,7 @@ async fn session(
         print: printer.is_some(),
         recording: !terminal_only && recording_allowed(),
         recording_required,
+        resolution: resolution_offered,
         ..local_hello()
     };
     // What the person at the PC can switch off: what this session has.
@@ -1150,6 +1162,7 @@ async fn session(
         (switches::TERMINAL, hello.terminal),
         (switches::TUNNEL, hello.tunnel),
         (switches::PRINT, hello.print),
+        (switches::RESOLUTION, hello.resolution),
     ] {
         if has {
             offered |= bit;
@@ -1189,6 +1202,9 @@ async fn session(
     }
     // Cleared at the end, however the session ends.
     let _clear = ClearSwitches(gate.map(|g| g.ctx));
+    // The screens this session changed are put back however it ends.
+    let owner = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
+    let _screens = RestoreScreens(owner);
     let tell_permissions = |off: u8| {
         if let Some(g) = gate {
             let _ = g.ctx.events.send(AgentEvent::Permissions {
@@ -1365,6 +1381,24 @@ async fn session(
                 },
                 now = changes.changed() => {
                     ctrl_tx.send(&tell_permissions(now)).await?;
+                    // Switched off by the person at the PC: the screen goes back at once.
+                    if now & switches::RESOLUTION != 0 && nuvira_capture::resolution::adapted(owner, &display) {
+                        let d = display.clone();
+                        tokio::task::spawn_blocking(move || nuvira_capture::resolution::restore(owner, Some(&d))).await?;
+                        display = reopen(&source, &pipeline, display.index, display.index).await?;
+                        ctrl_tx.send(&video_format(&display)).await?;
+                        if let Some(msg) = displays_message(config, &display) {
+                            ctrl_tx.send(&msg).await?;
+                        }
+                        let _ = screen_tx.send(screen_rect(&display));
+                        let state = nuvira_proto::v1::ResolutionState {
+                            width: display.width,
+                            height: display.height,
+                            adapted: false,
+                            error: "@agent.resolution_switched_off".into(),
+                        };
+                        ctrl_tx.send(&control(Msg::ResolutionState(state))).await?;
+                    }
                     continue;
                 }
                 Some(content) = clip_rx.recv() => {
@@ -1565,23 +1599,61 @@ async fn session(
                     if index == display.index {
                         continue;
                     }
-                    // First the current capture is stopped, then the new one is opened.
-                    let old = pipeline.lock().expect("pipeline").take();
-                    let _ = tokio::task::spawn_blocking(move || drop(old)).await;
-                    let (new_display, new_pipeline) = match source.start(Some(index)).await {
-                        Ok(started) => started,
-                        Err(e) => {
-                            warn!("screen {index} not available: {e:#}; staying on the previous one");
-                            source.start(Some(display.index)).await?
-                        }
-                    };
-                    *pipeline.lock().expect("pipeline") = Some(new_pipeline);
-                    display = new_display;
+                    // The screen left goes back to its own resolution.
+                    let d = display.clone();
+                    tokio::task::spawn_blocking(move || nuvira_capture::resolution::restore(owner, Some(&d))).await?;
+                    display = reopen(&source, &pipeline, index, display.index).await?;
                     ctrl_tx.send(&video_format(&display)).await?;
                     if let Some(msg) = displays_message(config, &display) {
                         ctrl_tx.send(&msg).await?;
                     }
                     let _ = screen_tx.send(screen_rect(&display));
+                }
+                Some(Msg::SetResolution(set)) => {
+                    let refused = if !resolution_offered {
+                        Some("@agent.resolution_disabled")
+                    } else if !off.is_on(switches::RESOLUTION) {
+                        Some("@agent.resolution_switched_off")
+                    } else if display.index == nuvira_capture::ALL_DISPLAYS {
+                        Some("@agent.resolution_all_screens")
+                    } else {
+                        None
+                    };
+                    let mut error = refused.map(String::from).unwrap_or_default();
+                    if refused.is_none() {
+                        let d = display.clone();
+                        let target = nuvira_capture::resolution::Size { width: set.width, height: set.height };
+                        let before = (display.width, display.height);
+                        let result = tokio::task::spawn_blocking(move || match target.width == 0 || target.height == 0 {
+                            true => Ok(nuvira_capture::resolution::restore(owner, Some(&d))),
+                            false => nuvira_capture::resolution::fit(owner, &d, target).map(|s| (s.width, s.height) != before),
+                        })
+                        .await?;
+                        match result {
+                            // The capture starts again at the new size.
+                            Ok(true) => {
+                                display = reopen(&source, &pipeline, display.index, display.index).await?;
+                                ctrl_tx.send(&video_format(&display)).await?;
+                                if let Some(msg) = displays_message(config, &display) {
+                                    ctrl_tx.send(&msg).await?;
+                                }
+                                let _ = screen_tx.send(screen_rect(&display));
+                            }
+                            Ok(false) => {}
+                            Err(e) => {
+                                warn!("screen resolution not changed: {e:#}");
+                                error = e.chain().map(|c| c.to_string()).find(|m| m.starts_with('@'))
+                                    .unwrap_or_else(|| "@agent.resolution_failed".into());
+                            }
+                        }
+                    }
+                    let state = nuvira_proto::v1::ResolutionState {
+                        width: display.width,
+                        height: display.height,
+                        adapted: nuvira_capture::resolution::adapted(owner, &display),
+                        error,
+                    };
+                    ctrl_tx.send(&control(Msg::ResolutionState(state))).await?;
                 }
                 Some(Msg::Clipboard(clip)) => {
                     if let Some(clipboard) = clipboard.as_ref().filter(|_| off.is_on(switches::CLIPBOARD)) {
@@ -2105,8 +2177,48 @@ fn permissions(offered: u8, off: u8) -> nuvira_proto::v1::Permissions {
         terminal: on(switches::TERMINAL),
         tunnel: on(switches::TUNNEL),
         print: on(switches::PRINT),
+        resolution: on(switches::RESOLUTION),
         switched_off: switches::names(off & offered),
     }
+}
+
+/// Sessions, told apart by the screens they change.
+static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+
+/// Puts back the screens a session changed, however it ends.
+struct RestoreScreens(u64);
+
+impl Drop for RestoreScreens {
+    fn drop(&mut self) {
+        nuvira_capture::resolution::restore(self.0, None);
+    }
+}
+
+fn recover_screens(dir: &std::path::Path) {
+    nuvira_capture::resolution::recover(&dir.join("resolution.txt"));
+}
+
+/// Stops the capture and opens screen `index` (`fallback` if it cannot be opened):
+/// after a change of screen or of its resolution.
+async fn reopen(
+    source: &VideoSource,
+    pipeline: &std::sync::Mutex<Option<Pipeline>>,
+    index: usize,
+    fallback: usize,
+) -> Result<nuvira_capture::Display> {
+    // First the current capture is stopped, then the new one is opened.
+    let old = pipeline.lock().expect("pipeline").take();
+    let _ = tokio::task::spawn_blocking(move || drop(old)).await;
+    let (display, started) = match source.start(Some(index)).await {
+        Ok(started) => started,
+        Err(e) if index != fallback => {
+            warn!("screen {index} not available: {e:#}; staying on the previous one");
+            source.start(Some(fallback)).await?
+        }
+        Err(e) => return Err(e),
+    };
+    *pipeline.lock().expect("pipeline") = Some(started);
+    Ok(display)
 }
 
 /// At the end of a session its switches are gone: the app's commands find nothing.
@@ -2137,6 +2249,7 @@ fn local_hello() -> Hello {
         print: false,
         recording: false,
         recording_required: false,
+        resolution: false,
     }
 }
 

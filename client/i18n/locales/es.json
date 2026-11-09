@@ -571,5 +571,19 @@
   "limits.of_account": "Lo que no pueden hacer las sesiones de {name}",
   "limits.of_member": "Lo que {name} no puede hacer en los equipos de {book}",
   "limits.of_anonymous": "Lo que no pueden hacer las sesiones sin cuenta",
-  "limits.saved": "Permisos guardados: se aplican desde la próxima sesión."
+  "limits.saved": "Permisos guardados: se aplican desde la próxima sesión.",
+  "admin.policy_resolution": "Sin cambio de la resolución de la pantalla",
+  "perm.resolution": "Resolución de la pantalla",
+  "agent.resolution_disabled": "el equipo remoto no permite cambiar la resolución de la pantalla",
+  "agent.resolution_switched_off": "la persona del PC remoto desactivó el cambio de resolución: la pantalla volvió a como estaba",
+  "agent.resolution_all_screens": "la resolución no se cambia mientras se muestran todas las pantallas",
+  "agent.resolution_unavailable": "la resolución de esta pantalla no se puede cambiar",
+  "agent.resolution_several_screens": "el equipo remoto tiene varias pantallas encendidas: la resolución solo se cambia con una",
+  "agent.resolution_busy": "otra sesión ya cambió la resolución de esta pantalla",
+  "agent.resolution_failed": "no se pudo cambiar la resolución de la pantalla",
+  "tb.adapt_resolution": "Adaptar la resolución remota a esta ventana",
+  "tb.adapt_resolution_on": "Resolución remota adaptada a la ventana: clic para dejarla como estaba",
+  "viewer.resolution_now": "Pantalla remota a {size}",
+  "viewer.resolution_back": "Pantalla remota de vuelta a su propia resolución",
+  "viewer.resolution_failed": "Resolución remota no cambiada: {reason}"
 }

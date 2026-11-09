@@ -19,15 +19,17 @@ pub const FILES: u8 = 4;
 pub const TERMINAL: u8 = 8;
 pub const TUNNEL: u8 = 16;
 pub const PRINT: u8 = 32;
+pub const RESOLUTION: u8 = 64;
 
 /// The switches with their names (in the app's commands and in `Permissions`).
-pub const ALL: [(u8, &str); 6] = [
+pub const ALL: [(u8, &str); 7] = [
     (INPUT, "input"),
     (CLIPBOARD, "clipboard"),
     (FILES, "files"),
     (TERMINAL, "terminal"),
     (TUNNEL, "tunnel"),
     (PRINT, "print"),
+    (RESOLUTION, "resolution"),
 ];
 
 pub fn bit(name: &str) -> Option<u8> {

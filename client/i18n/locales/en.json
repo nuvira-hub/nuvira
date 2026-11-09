@@ -571,5 +571,19 @@
   "limits.of_account": "What the sessions of {name} may not do",
   "limits.of_member": "What {name} may not do on the computers of {book}",
   "limits.of_anonymous": "What sessions without a signed-in account may not do",
-  "limits.saved": "Permissions saved: they hold from the next session."
+  "limits.saved": "Permissions saved: they hold from the next session.",
+  "admin.policy_resolution": "No change of the screen resolution",
+  "perm.resolution": "Screen resolution",
+  "agent.resolution_disabled": "the remote computer does not allow changing its screen resolution",
+  "agent.resolution_switched_off": "the person at the remote PC switched the change of resolution off: the screen is back as it was",
+  "agent.resolution_all_screens": "the resolution is not changed while all the screens are shown",
+  "agent.resolution_unavailable": "the resolution of this screen cannot be changed",
+  "agent.resolution_several_screens": "the remote computer has several screens turned on: the resolution is changed only with one",
+  "agent.resolution_busy": "another session has already changed the resolution of this screen",
+  "agent.resolution_failed": "the screen resolution could not be changed",
+  "tb.adapt_resolution": "Adapt the remote resolution to this window",
+  "tb.adapt_resolution_on": "Remote resolution adapted to the window: click to put it back as it was",
+  "viewer.resolution_now": "Remote screen at {size}",
+  "viewer.resolution_back": "Remote screen back to its own resolution",
+  "viewer.resolution_failed": "Remote resolution not changed: {reason}"
 }

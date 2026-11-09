@@ -21,6 +21,7 @@ const LIMITS = [
   ["no_tunnel", "admin.policy_tunnel"],
   ["no_print", "admin.policy_print"],
   ["no_restart", "admin.policy_restart"],
+  ["no_resolution", "admin.policy_resolution"],
   ["no_record", "admin.policy_no_record"],
   ["record_always", "admin.policy_record"],
 ];
@@ -506,6 +507,7 @@ function showPolicy(policy) {
   $("policy-print").checked = policy.no_print;
   $("policy-input").checked = policy.no_input;
   $("policy-restart").checked = policy.no_restart;
+  $("policy-resolution").checked = policy.no_resolution;
   $("policy-no-record").checked = policy.no_record;
   $("policy-record").checked = policy.record_always;
 }
@@ -522,6 +524,7 @@ $("policy-form").addEventListener("submit", async (e) => {
     no_print: $("policy-print").checked,
     no_input: $("policy-input").checked,
     no_restart: $("policy-restart").checked,
+    no_resolution: $("policy-resolution").checked,
     no_record: $("policy-no-record").checked,
     record_always: $("policy-record").checked,
   };

@@ -124,6 +124,11 @@ struct Args {
     #[arg(long)]
     privacy: bool,
 
+    /// The remote screen takes the size of the window, as close as its modes allow
+    /// (also from the toolbar, which remembers the choice).
+    #[arg(long)]
+    adapt_resolution: bool,
+
     /// Records the session from the start, when the person at the remote computer
     /// allows it (also from the toolbar). The video is saved as MP4 files.
     #[arg(long)]
@@ -430,6 +435,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         view_only: args.view_only,
         privacy: false,
         privacy_at_start: args.privacy,
+        adapt: Adapt { wanted: args.adapt_resolution || prefs::load().adapt_resolution, ..Default::default() },
         recording: Recording {
             switch: Default::default(),
             dir: args.record_dir.clone().unwrap_or_else(recorder::default_dir),
@@ -586,6 +592,8 @@ struct App {
     privacy: bool,
     /// `--privacy`: to turn on as soon as connected.
     privacy_at_start: bool,
+    /// The remote resolution adapted to the window.
+    adapt: Adapt,
     recording: Recording,
     /// `--restart`: to ask as soon as connected.
     restart_at_start: bool,
@@ -701,6 +709,52 @@ impl App {
         }));
     }
 
+    /// The size to ask the agent for: the window's when adapting, 0x0 (its own)
+    /// otherwise; `None` while the window has no size (minimised).
+    fn adapt_target(&self) -> Option<(u32, u32)> {
+        let a = &self.adapt;
+        if !(a.wanted && a.allowed && a.display != ALL_DISPLAYS) {
+            return Some((0, 0));
+        }
+        let s = self.window.as_ref()?.inner_size();
+        (s.width > 0 && s.height > 0).then_some((s.width, s.height))
+    }
+
+    /// Asks the agent for the remote resolution, if it changed since the last request.
+    fn send_adapt(&mut self) {
+        if !self.adapt.available {
+            return;
+        }
+        let Some(target) = self.adapt_target() else { return };
+        // Nothing to put back if the session never changed it.
+        let unchanged = self.adapt.sent == Some(target) || (target == (0, 0) && self.adapt.sent.is_none());
+        if unchanged {
+            self.adapt.asked_by_click = false;
+            return;
+        }
+        info!("remote resolution for a {}x{} area asked", target.0, target.1);
+        self.adapt.sent = Some(target);
+        self.adapt.waiting = true;
+        self.send_control(nuvira_proto::v1::control_message::Msg::SetResolution(nuvira_proto::v1::SetResolution {
+            width: target.0,
+            height: target.1,
+        }));
+    }
+
+    /// The request leaves once the window has stopped changing size (while it is
+    /// dragged, the remote screen would change at every step).
+    fn schedule_adapt(&mut self) {
+        if !self.adapt.wanted || !self.adapt.available {
+            return;
+        }
+        self.adapt.generation += 1;
+        let (generation, proxy) = (self.adapt.generation, self.proxy.clone());
+        std::thread::spawn(move || {
+            std::thread::sleep(ADAPT_SETTLE);
+            let _ = proxy.send_event(NetEvent::AdaptSettled(generation));
+        });
+    }
+
     /// Connects to the agent (again, after a restart) with the window already open.
     fn start_session(&mut self) {
         let Some((target, password)) = self.connect.clone() else { return };
@@ -812,6 +866,14 @@ impl App {
                     r.set_view(self.view);
                     r.render();
                 }
+                self.update_toolbar_state();
+            }
+            Action::AdaptResolution => {
+                self.adapt.wanted = !self.adapt.wanted;
+                info!("remote resolution adapted to the window: {}", self.adapt.wanted);
+                prefs::save(&prefs::Prefs { adapt_resolution: self.adapt.wanted });
+                self.adapt.asked_by_click = true;
+                self.send_adapt();
                 self.update_toolbar_state();
             }
             Action::Fullscreen => {
@@ -950,7 +1012,7 @@ impl App {
     fn update_toolbar_state(&self) {
         let (Some(toolbar), Some(window)) = (&self.toolbar, &self.window) else { return };
         toolbar.update(&format!(
-            "{{viewOnly:{},inputBlocked:{},privacy:{},recording:{},recordingRequired:{},actualSize:{},fullscreen:{},quality:{}}}",
+            "{{viewOnly:{},inputBlocked:{},privacy:{},recording:{},recordingRequired:{},actualSize:{},fullscreen:{},quality:{},resolutionAvailable:{},adaptResolution:{}}}",
             self.view_only || self.input_blocked,
             self.input_blocked,
             self.privacy,
@@ -958,8 +1020,66 @@ impl App {
             self.recording.required,
             self.view.actual,
             window.fullscreen().is_some(),
-            toolbar::js_string(toolbar::quality_name(self.quality))
+            toolbar::js_string(toolbar::quality_name(self.quality)),
+            self.adapt.available && self.adapt.allowed,
+            self.adapt.wanted
         ));
+    }
+}
+
+/// "All the screens" in SelectDisplay and Displays.
+const ALL_DISPLAYS: u32 = 65535;
+/// How long the window must keep its size before the remote resolution follows it.
+const ADAPT_SETTLE: Duration = Duration::from_millis(800);
+
+/// The remote resolution adapted to the window (toolbar button, `--adapt-resolution`).
+#[derive(Default)]
+struct Adapt {
+    /// The technician wants it (remembered in the preferences).
+    wanted: bool,
+    /// The agent can do it (Hello.resolution).
+    available: bool,
+    /// The session allows it now (Permissions: the person there may switch it off).
+    allowed: bool,
+    /// Last size asked for (0x0: put back), `None` if nothing was asked in this session
+    /// or on this screen.
+    sent: Option<(u32, u32)>,
+    /// Screen being shown.
+    display: u32,
+    /// Latest scheduled request (see [`App::schedule_adapt`]).
+    generation: u64,
+    /// A request is waiting for its answer: what comes back is said on screen.
+    waiting: bool,
+    /// The last request came from the button: going back is said on screen too.
+    asked_by_click: bool,
+}
+
+/// Choices of the viewer kept between sessions (`viewer.json` in the data folder).
+mod prefs {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Default, Serialize, Deserialize)]
+    #[serde(default)]
+    pub struct Prefs {
+        pub adapt_resolution: bool,
+    }
+
+    fn path() -> std::path::PathBuf {
+        nuvira_transport::identity::data_dir().join("viewer.json")
+    }
+
+    pub fn load() -> Prefs {
+        std::fs::read(path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+
+    pub fn save(prefs: &Prefs) {
+        let path = path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = serde_json::to_vec_pretty(prefs).map(|b| std::fs::write(&path, b)) {
+            tracing::warn!("{}: {e}", path.display());
+        }
     }
 }
 
@@ -1091,8 +1211,14 @@ impl ApplicationHandler<NetEvent> for App {
                 print,
                 recording,
                 recording_required,
+                resolution,
             } => {
                 self.remote_mac = remote_mac;
+                // A new session: the agent put the screen back when the last one ended.
+                self.adapt.available = resolution;
+                self.adapt.allowed = resolution;
+                self.adapt.sent = None;
+                self.adapt.display = 0;
                 if self.restarting.take().is_some() {
                     info!("connected again after the restart");
                     self.notice(&t("viewer.restart_back"), false);
@@ -1148,6 +1274,8 @@ impl ApplicationHandler<NetEvent> for App {
                         "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal},tunnel:{tunnel},restart:{restart},recordingAvailable:{recording}}}"
                     ));
                 }
+                self.update_toolbar_state();
+                self.schedule_adapt();
 
                 if std::mem::take(&mut self.restart_at_start) {
                     match restart {
@@ -1306,6 +1434,12 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.update(&toolbar::displays_state(&displays, current, all_available));
                 }
+                // Another screen: the agent put the previous one back; this one is adapted now.
+                if current != self.adapt.display {
+                    self.adapt.display = current;
+                    self.adapt.sent = None;
+                    self.schedule_adapt();
+                }
             }
             NetEvent::Fs(answer) => self.fm.response(answer),
             NetEvent::Transfer { id, done, total } => self.fm.progress(id, done, total),
@@ -1427,7 +1561,17 @@ impl ApplicationHandler<NetEvent> for App {
                     None => {}
                 }
             }
-            NetEvent::Permissions { input, files, terminal, tunnel, switched_off } => {
+            NetEvent::Permissions { input, files, terminal, tunnel, resolution, switched_off } => {
+                // Switched off there: the agent put the screen back; on again: asked again.
+                if resolution != self.adapt.allowed && self.adapt.available {
+                    self.adapt.allowed = resolution;
+                    if resolution {
+                        self.adapt.sent = None;
+                        self.schedule_adapt();
+                    } else if self.adapt.sent.is_some() {
+                        self.adapt.sent = Some((0, 0));
+                    }
+                }
                 if !input && !self.input_blocked {
                     // Whatever is pressed is released before sending stops.
                     self.release_keys();
@@ -1470,6 +1614,30 @@ impl ApplicationHandler<NetEvent> for App {
                     (false, _) => "viewer.screen_unlocked",
                 };
                 self.notice(&t(text), locked);
+            }
+            NetEvent::AdaptSettled(generation) => {
+                if generation == self.adapt.generation {
+                    self.send_adapt();
+                }
+            }
+            NetEvent::Resolution { width, height, adapted, error } => {
+                info!(width, height, adapted, error, "remote resolution");
+                let clicked = std::mem::take(&mut self.adapt.asked_by_click);
+                let waiting = std::mem::take(&mut self.adapt.waiting);
+                if !error.is_empty() {
+                    // Switched off there: the permissions already said so.
+                    if waiting && error != "@agent.resolution_switched_off" || clicked {
+                        let reason = nuvira_i18n::message(&error);
+                        self.notice(&tf("viewer.resolution_failed", &[("reason", &reason)]), false);
+                    }
+                } else if self.adapt.sent == Some((0, 0)) {
+                    if clicked {
+                        self.notice(&t("viewer.resolution_back"), false);
+                    }
+                } else if waiting && (adapted || clicked) {
+                    // Also when the screen already had the best size for the window.
+                    self.notice(&tf("viewer.resolution_now", &[("size", &format!("{width}x{height}"))]), false);
+                }
             }
             NetEvent::Privacy { on, error } => {
                 info!(on, error, "privacy mode");
@@ -1583,6 +1751,7 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 self.update_toolbar_state();
                 self.send_view_size();
+                self.schedule_adapt();
             }
             WindowEvent::RedrawRequested => {
                 if let Some(r) = self.renderer.as_mut() {

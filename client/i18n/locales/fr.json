@@ -571,5 +571,19 @@
   "limits.of_account": "Ce que les sessions de {name} ne peuvent pas faire",
   "limits.of_member": "Ce que {name} ne peut pas faire sur les ordinateurs de {book}",
   "limits.of_anonymous": "Ce que les sessions sans compte ne peuvent pas faire",
-  "limits.saved": "Autorisations enregistrées : elles s'appliquent dès la prochaine session."
+  "limits.saved": "Autorisations enregistrées : elles s'appliquent dès la prochaine session.",
+  "admin.policy_resolution": "Pas de changement de la résolution de l'écran",
+  "perm.resolution": "Résolution de l'écran",
+  "agent.resolution_disabled": "l'ordinateur distant ne permet pas de changer la résolution de l'écran",
+  "agent.resolution_switched_off": "la personne devant le PC distant a désactivé le changement de résolution : l'écran est revenu comme avant",
+  "agent.resolution_all_screens": "la résolution n'est pas changée tant que tous les écrans sont affichés",
+  "agent.resolution_unavailable": "la résolution de cet écran ne peut pas être changée",
+  "agent.resolution_several_screens": "l'ordinateur distant a plusieurs écrans allumés : la résolution n'est changée qu'avec un seul",
+  "agent.resolution_busy": "une autre session a déjà changé la résolution de cet écran",
+  "agent.resolution_failed": "la résolution de l'écran n'a pas pu être changée",
+  "tb.adapt_resolution": "Adapter la résolution distante à cette fenêtre",
+  "tb.adapt_resolution_on": "Résolution distante adaptée à la fenêtre : cliquer pour la remettre comme avant",
+  "viewer.resolution_now": "Écran distant en {size}",
+  "viewer.resolution_back": "Écran distant revenu à sa propre résolution",
+  "viewer.resolution_failed": "Résolution distante non changée : {reason}"
 }

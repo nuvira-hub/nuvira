@@ -50,6 +50,8 @@ message ControlMessage {
     RecordingState recording_state = 24;
     Permissions permissions = 25;
     ScreenState screen_state = 26;
+    SetResolution set_resolution = 27;
+    ResolutionState resolution_state = 28;
   }
 }
 
@@ -105,6 +107,26 @@ message SetPrivacy {
 message PrivacyState {
   bool on = 1;
   string error = 2;
+}
+
+// From the viewer (only when Hello.resolution): the size of its drawing area in
+// pixels, to make the transmitted screen of the controlled computer that size, as
+// close as one of the screen's own modes allows (the one that fills the area best,
+// possibly a little larger). Sent again when the area settles on a new size. 0x0 puts the
+// screen back as it was. The agent puts every screen back at the end of the session.
+message SetResolution {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
+// From the agent, after every SetResolution: the size the screen has now, and
+// whether it was changed by the session (`adapted`). On failure `error` says why
+// ("@key" messages are translated) and the screen stays as it was.
+message ResolutionState {
+  uint32 width = 1;
+  uint32 height = 2;
+  bool adapted = 3;
+  string error = 4;
 }
 
 // File manager (viewer -> agent, on the control channel). On the agent the
@@ -321,6 +343,9 @@ message Hello {
   // The viewer records from the start and cannot stop; a viewer that does not
   // record is refused, and the session ends if the recording stops.
   bool recording_required = 15;
+  // From the agent: it can change the resolution of the transmitted screen to the
+  // viewer's area (SetResolution).
+  bool resolution = 16;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do
@@ -335,6 +360,8 @@ message Permissions {
   bool terminal = 4;
   bool tunnel = 5;
   bool print = 6;
+  // Adapting the screen's resolution to the viewer (SetResolution).
+  bool resolution = 8;
   // What the person at the PC switched off themselves (the rest is by the rules).
   repeated string switched_off = 7;
 }

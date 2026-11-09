@@ -47,6 +47,8 @@ pub enum NetEvent {
         recording: bool,
         /// The server's rules want the session recorded: from the start, no stopping.
         recording_required: bool,
+        /// It can adapt its screen's resolution to the window (SetResolution).
+        resolution: bool,
     },
     /// A document printed on the remote computer (PDF).
     PrintJob {
@@ -97,12 +99,25 @@ pub enum NetEvent {
         files: bool,
         terminal: bool,
         tunnel: bool,
+        /// Adapting the remote resolution to the window.
+        resolution: bool,
         /// Switched off by the person there ("input", "clipboard", "files", …).
         switched_off: Vec<String>,
     },
     /// The remote screen is locked and cannot be shown (macOS, GNOME), or no longer;
     /// whether the keyboard still reaches it.
     ScreenLocked { locked: bool, input: bool },
+    /// Answer of the agent to SetResolution: the remote screen's size now, whether
+    /// the session changed it; `error` ("@key" or text) when it could not.
+    Resolution {
+        width: u32,
+        height: u32,
+        adapted: bool,
+        error: String,
+    },
+    /// The window kept its size for a while: time to ask for the remote resolution
+    /// (only if `0` is still the latest request).
+    AdaptSettled(u64),
     /// Privacy mode reached by the agent; `error` ("@key" or text) when it did not turn on.
     Privacy {
         on: bool,
@@ -526,6 +541,7 @@ async fn handshake(
             print: false,
             recording: false,
             recording_required: false,
+            resolution: false,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None));
     }
@@ -556,6 +572,7 @@ async fn handshake(
         print: agent.print,
         recording: agent.recording,
         recording_required: agent.recording_required,
+        resolution: agent.resolution,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -885,6 +902,14 @@ async fn session(
                     Some(ControlMessage { msg: Some(Msg::ScreenState(s)) }) => {
                         let _ = proxy.send_event(NetEvent::ScreenLocked { locked: s.locked, input: s.input });
                     }
+                    Some(ControlMessage { msg: Some(Msg::ResolutionState(r)) }) => {
+                        let _ = proxy.send_event(NetEvent::Resolution {
+                            width: r.width,
+                            height: r.height,
+                            adapted: r.adapted,
+                            error: r.error,
+                        });
+                    }
                     Some(ControlMessage { msg: Some(Msg::PrivacyState(p)) }) => {
                         let _ = proxy.send_event(NetEvent::Privacy { on: p.on, error: p.error });
                     }
@@ -896,6 +921,7 @@ async fn session(
                             files: p.files,
                             terminal: p.terminal,
                             tunnel: p.tunnel,
+                            resolution: p.resolution,
                             switched_off: p.switched_off,
                         });
                     }
