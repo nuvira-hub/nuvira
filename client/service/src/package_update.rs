@@ -1,7 +1,9 @@
 //! Linux, installed from the .deb or .rpm: `nuvira service update-package`, run
 //! as root by the `nuvira-update.timer` of the package (docs/19-updates.md). The
 //! users' agents cannot replace a program of root's, so root does it:
-//! - the server is the one of a user's unattended access (the `--server` of
+//! - the server is the organisation's (`/etc/nuvira/policy.json`, then the
+//!   installation for the whole computer, `/etc/nuvira/managed.json`), otherwise
+//!   the one of a user's unattended access (the `--server` of
 //!   `~/.config/systemd/user/nuvira-agent.service`), otherwise NuviraHub's public
 //!   one;
 //! - a newer package correctly signed with the release key is downloaded into
@@ -49,11 +51,18 @@ pub fn run() -> Result<()> {
         bail!("NuviraHub is not installed from a .deb or .rpm package");
     };
     let homes = homes(&std::fs::read_to_string("/etc/passwd").unwrap_or_default());
-    let server = homes
-        .iter()
-        .find_map(|h| {
-            let unit = std::fs::read_to_string(h.join(".config/systemd/user/nuvira-agent.service")).ok()?;
-            server_of_unit(&unit)
+    // Installed for the whole computer there is no user unit: without this the
+    // timer asked the public server instead of the organisation's (Kubuntu,
+    // 2026-11-09).
+    let server = crate::policy::read()
+        .server
+        .filter(|s| !s.is_empty())
+        .or_else(|| crate::managed::state().map(|s| s.server))
+        .or_else(|| {
+            homes.iter().find_map(|h| {
+                let unit = std::fs::read_to_string(h.join(".config/systemd/user/nuvira-agent.service")).ok()?;
+                server_of_unit(&unit)
+            })
         })
         .unwrap_or_default();
     let server = nuvira_transport::signal::server_or_public(&server).to_string();

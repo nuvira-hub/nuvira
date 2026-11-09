@@ -497,7 +497,7 @@ mod platform {
                 on.push((output, info));
             }
         }
-        let (output, info) = match name {
+        let (_, info) = match name {
             Some(name) => {
                 on.into_iter().find(|(_, i)| i.name == name.as_bytes()).context("the screen is gone")?
             }
