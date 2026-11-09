@@ -12,12 +12,18 @@
 //!   frame in, no reordering.
 //! - CBR rate control (VBR if missing), bitrate changed during the session with a
 //!   new rate-control parameter.
-//! - Headers (SPS, PPS, slice) are written by the driver: no packed headers. The
-//!   first keyframe is checked to carry SPS and PPS, otherwise the encoder is
-//!   refused at start.
+//! - Headers: SPS and PPS written here and given as packed headers when the
+//!   driver takes them (as FFmpeg and GStreamer do). Mesa's drivers (AMD
+//!   radeonsi, D3D12 under WSL) need them: their VA layer reads the profile and
+//!   level only from a packed SPS (Mesa 26: level 0 and a crash in the D3D12
+//!   driver without it). Otherwise the driver writes them. Slice headers are
+//!   always the driver's. The first keyframe is checked to carry SPS and PPS,
+//!   otherwise the encoder is refused at start.
 //! - Input: BGRA converted to NV12 (BT.601 limited, like the other encoders) on
 //!   the CPU, copied into the surface through `vaDeriveImage`, or `vaPutImage`
 //!   where the surface cannot be mapped.
+//! - The display is opened once for the process and never terminated (see
+//!   `shared_display`).
 //! - If the driver fails during the session (screen too large, GPU reset) the
 //!   encoder goes on with OpenH264, since the pipeline does not recreate it.
 
@@ -46,6 +52,11 @@ const ENTRY_ENC_SLICE_LP: c_int = 8;
 
 const ATTRIB_RT_FORMAT: c_int = 0;
 const ATTRIB_RATE_CONTROL: c_int = 5;
+const ATTRIB_ENC_PACKED_HEADERS: c_int = 10;
+/// `VA_ENC_PACKED_HEADER_SEQUENCE` and `_PICTURE`; also the packed header types
+/// `VAEncPackedHeaderSequence` (1) and `VAEncPackedHeaderPicture` (2).
+const PACKED_SEQUENCE: u32 = 1;
+const PACKED_PICTURE: u32 = 2;
 const ATTRIB_NOT_SUPPORTED: u32 = 0x8000_0000;
 const RT_FORMAT_YUV420: u32 = 1;
 const RC_CBR: u32 = 2;
@@ -56,6 +67,8 @@ const BUF_CODED: c_int = 21;
 const BUF_SEQUENCE: c_int = 22;
 const BUF_PICTURE: c_int = 23;
 const BUF_SLICE: c_int = 24;
+const BUF_PACKED_HEADER_PARAMETER: c_int = 25;
+const BUF_PACKED_HEADER_DATA: c_int = 26;
 const BUF_MISC: c_int = 27;
 const MISC_FRAME_RATE: u32 = 0;
 const MISC_RATE_CONTROL: u32 = 1;
@@ -78,6 +91,15 @@ const INTRA_PERIOD: u32 = 3600;
 struct VAConfigAttrib {
     type_: c_int,
     value: u32,
+}
+
+/// `VAEncPackedHeaderParameterBuffer`.
+#[repr(C)]
+struct PackedHeaderParams {
+    type_: u32,
+    bit_length: u32,
+    has_emulation_bytes: u8,
+    reserved: [u32; 4],
 }
 
 #[repr(C)]
@@ -275,6 +297,7 @@ struct Image {
 
 // Sizes of libva 2.x (checked against the C headers).
 const _: () = assert!(size_of::<VAPictureH264>() == 36);
+const _: () = assert!(size_of::<PackedHeaderParams>() == 28);
 const _: () = assert!(size_of::<SequenceParams>() == 1132);
 const _: () = assert!(size_of::<PictureParams>() == 648);
 const _: () = assert!(size_of::<SliceParams>() == 3140);
@@ -303,12 +326,21 @@ struct Va {
     vendor: unsafe extern "C" fn(VADisplay) -> *const c_char,
     max_entrypoints: unsafe extern "C" fn(VADisplay) -> c_int,
     query_entrypoints: unsafe extern "C" fn(VADisplay, c_int, *mut c_int, *mut c_int) -> VAStatus,
-    get_config_attributes: unsafe extern "C" fn(VADisplay, c_int, c_int, *mut VAConfigAttrib, c_int) -> VAStatus,
+    get_config_attributes:
+        unsafe extern "C" fn(VADisplay, c_int, c_int, *mut VAConfigAttrib, c_int) -> VAStatus,
     create_config:
         unsafe extern "C" fn(VADisplay, c_int, c_int, *mut VAConfigAttrib, c_int, *mut VAId) -> VAStatus,
     destroy_config: unsafe extern "C" fn(VADisplay, VAId) -> VAStatus,
-    create_surfaces:
-        unsafe extern "C" fn(VADisplay, c_uint, c_uint, c_uint, *mut VAId, c_uint, *mut c_void, c_uint) -> VAStatus,
+    create_surfaces: unsafe extern "C" fn(
+        VADisplay,
+        c_uint,
+        c_uint,
+        c_uint,
+        *mut VAId,
+        c_uint,
+        *mut c_void,
+        c_uint,
+    ) -> VAStatus,
     destroy_surfaces: unsafe extern "C" fn(VADisplay, *mut VAId, c_int) -> VAStatus,
     create_context:
         unsafe extern "C" fn(VADisplay, VAId, c_int, c_int, c_int, *mut VAId, c_int, *mut VAId) -> VAStatus,
@@ -324,8 +356,19 @@ struct Va {
     sync_surface: unsafe extern "C" fn(VADisplay, VAId) -> VAStatus,
     derive_image: unsafe extern "C" fn(VADisplay, VAId, *mut Image) -> VAStatus,
     create_image: unsafe extern "C" fn(VADisplay, *mut ImageFormat, c_int, c_int, *mut Image) -> VAStatus,
-    put_image: unsafe extern "C" fn(VADisplay, VAId, VAId, c_int, c_int, c_uint, c_uint, c_int, c_int, c_uint, c_uint)
-        -> VAStatus,
+    put_image: unsafe extern "C" fn(
+        VADisplay,
+        VAId,
+        VAId,
+        c_int,
+        c_int,
+        c_uint,
+        c_uint,
+        c_int,
+        c_int,
+        c_uint,
+        c_uint,
+    ) -> VAStatus,
     destroy_image: unsafe extern "C" fn(VADisplay, VAId) -> VAStatus,
 }
 
@@ -396,19 +439,31 @@ struct Display {
     profile: c_int,
     entrypoint: c_int,
     rate_control: u32,
+    /// The driver takes SPS and PPS from us.
+    packed_headers: bool,
     vendor: String,
     path: String,
 }
 
-// SAFETY: a VA display may be used from any thread, one at a time (the encoder is
-// owned by one thread).
+// SAFETY: a VA display may be used from any thread. The drivers serialise the
+// calls on one display (Mesa holds a lock for each call, iHD one for each context),
+// and every encoder has its own configuration, context and surfaces.
 unsafe impl Send for Display {}
+unsafe impl Sync for Display {}
 
-impl Drop for Display {
-    fn drop(&mut self) {
-        // SAFETY: the display was initialised and nothing uses it any more.
-        unsafe { (self.va.terminate)(self.dpy) };
+/// The display of this process, opened at the first encoder and never closed
+/// (`vaTerminate`): Mesa's D3D12 driver (WSL) leaves a destructor for the thread
+/// that used it, which crashes when the thread ends if the driver was unloaded in
+/// the meantime. Only a display that opened is kept: a later encoder tries again.
+fn shared_display() -> Result<&'static Display> {
+    static DISPLAY: std::sync::Mutex<Option<&'static Display>> = std::sync::Mutex::new(None);
+    let mut slot = DISPLAY.lock().expect("VA display");
+    if let Some(display) = *slot {
+        return Ok(display);
     }
+    let display: &'static Display = Box::leak(Box::new(Display::open()?));
+    *slot = Some(display);
+    Ok(display)
 }
 
 impl Display {
@@ -449,8 +504,11 @@ impl Display {
                 return Err(va.check(status, "vaInitialize").unwrap_err());
             }
             let vendor_ptr = (va.vendor)(dpy);
-            let vendor =
-                if vendor_ptr.is_null() { String::new() } else { CStr::from_ptr(vendor_ptr).to_string_lossy().into() };
+            let vendor = if vendor_ptr.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(vendor_ptr).to_string_lossy().into()
+            };
             let mut display = Self {
                 va,
                 dpy,
@@ -458,6 +516,7 @@ impl Display {
                 profile: 0,
                 entrypoint: 0,
                 rate_control: 0,
+                packed_headers: false,
                 vendor,
                 path: path.into(),
             };
@@ -485,8 +544,10 @@ impl Display {
                     let mut attribs = [
                         VAConfigAttrib { type_: ATTRIB_RT_FORMAT, value: 0 },
                         VAConfigAttrib { type_: ATTRIB_RATE_CONTROL, value: 0 },
+                        VAConfigAttrib { type_: ATTRIB_ENC_PACKED_HEADERS, value: 0 },
                     ];
-                    let status = (va.get_config_attributes)(self.dpy, profile, entrypoint, attribs.as_mut_ptr(), 2);
+                    let status =
+                        (va.get_config_attributes)(self.dpy, profile, entrypoint, attribs.as_mut_ptr(), 3);
                     if status != VA_STATUS_SUCCESS
                         || attribs[0].value == ATTRIB_NOT_SUPPORTED
                         || attribs[0].value & RT_FORMAT_YUV420 == 0
@@ -506,6 +567,9 @@ impl Display {
                     self.profile = profile;
                     self.entrypoint = entrypoint;
                     self.rate_control = rate_control;
+                    let packed = attribs[2].value;
+                    let both = PACKED_SEQUENCE | PACKED_PICTURE;
+                    self.packed_headers = packed != ATTRIB_NOT_SUPPORTED && packed & both == both;
                     return Ok(());
                 }
             }
@@ -565,6 +629,12 @@ impl Session {
                 let mut attribs = vec![VAConfigAttrib { type_: ATTRIB_RT_FORMAT, value: RT_FORMAT_YUV420 }];
                 if d.rate_control != 0 {
                     attribs.push(VAConfigAttrib { type_: ATTRIB_RATE_CONTROL, value: d.rate_control });
+                }
+                if d.packed_headers {
+                    attribs.push(VAConfigAttrib {
+                        type_: ATTRIB_ENC_PACKED_HEADERS,
+                        value: PACKED_SEQUENCE | PACKED_PICTURE,
+                    });
                 }
                 va.check(
                     (va.create_config)(
@@ -664,15 +734,16 @@ impl Session {
         // SAFETY: the mapped image is written within its pitches and planes.
         unsafe {
             let mut img = Image::default();
-            let mut derived =
-                self.put_image.is_none() && (va.derive_image)(d.dpy, self.input, &mut img) == VA_STATUS_SUCCESS;
+            let mut derived = self.put_image.is_none()
+                && (va.derive_image)(d.dpy, self.input, &mut img) == VA_STATUS_SUCCESS;
             if derived && img.format.fourcc != FOURCC_NV12 {
                 (va.destroy_image)(d.dpy, img.image_id);
                 derived = false;
             }
             if !derived {
                 if self.put_image.is_none() {
-                    let mut format = ImageFormat { fourcc: FOURCC_NV12, bits_per_pixel: 12, ..Default::default() };
+                    let mut format =
+                        ImageFormat { fourcc: FOURCC_NV12, bits_per_pixel: 12, ..Default::default() };
                     let mut created = Image::default();
                     va.check(
                         (va.create_image)(d.dpy, &mut format, w as c_int, h as c_int, &mut created),
@@ -705,7 +776,19 @@ impl Session {
                 (va.destroy_image)(d.dpy, img.image_id);
             } else {
                 va.check(
-                    (va.put_image)(d.dpy, self.input, img.image_id, 0, 0, w as c_uint, h as c_uint, 0, 0, w as c_uint, h as c_uint),
+                    (va.put_image)(
+                        d.dpy,
+                        self.input,
+                        img.image_id,
+                        0,
+                        0,
+                        w as c_uint,
+                        h as c_uint,
+                        0,
+                        0,
+                        w as c_uint,
+                        h as c_uint,
+                    ),
                     "vaPutImage",
                 )?;
             }
@@ -713,7 +796,13 @@ impl Session {
         Ok(())
     }
 
-    fn encode(&mut self, d: &Display, settings: &EncoderSettings, keyframe: bool, new_rate: bool) -> Result<Vec<u8>> {
+    fn encode(
+        &mut self,
+        d: &Display,
+        settings: &EncoderSettings,
+        keyframe: bool,
+        new_rate: bool,
+    ) -> Result<Vec<u8>> {
         let va = d.va;
         let key = keyframe || self.last.is_none() || self.frame_num >= MAX_FRAME_NUM;
         if key {
@@ -743,7 +832,7 @@ impl Session {
             reserved: [0; 4],
         });
 
-        let mut buffers: Vec<VAId> = Vec::with_capacity(6);
+        let mut buffers: Vec<VAId> = Vec::with_capacity(10);
         let bits = settings.bitrate_bps;
         let fps = settings.max_fps.max(1);
         // SAFETY: parameter buffers copied by libva at creation; all destroyed below.
@@ -751,7 +840,10 @@ impl Session {
             (|| -> Result<()> {
                 let mut add = |kind: c_int, data: *mut c_void, size: usize, what: &str| -> Result<()> {
                     let mut id = VA_INVALID_ID;
-                    va.check((va.create_buffer)(d.dpy, self.context, kind, size as c_uint, 1, data, &mut id), what)?;
+                    va.check(
+                        (va.create_buffer)(d.dpy, self.context, kind, size as c_uint, 1, data, &mut id),
+                        what,
+                    )?;
                     buffers.push(id);
                     Ok(())
                 };
@@ -776,7 +868,38 @@ impl Session {
                     }
                     seq.num_units_in_tick = 1;
                     seq.time_scale = fps * 2;
+                    // VUI as in our SPS: timing, bitstream restriction (no reordering:
+                    // decoders show every frame at once), log2_max_mv_length 15 and 15,
+                    // motion vectors over the picture's boundaries.
+                    seq.vui_parameters_present_flag = 1;
+                    seq.vui_fields = (1 << 1) | (1 << 2) | (15 << 3) | (15 << 8) | (1 << 15);
                     add(BUF_SEQUENCE, (&raw mut seq).cast(), size_of::<SequenceParams>(), "sequence")?;
+                    if d.packed_headers {
+                        let sets = ParameterSets {
+                            profile: d.profile,
+                            level: seq.level_idc,
+                            mbs_w: self.mbs_w,
+                            mbs_h: self.mbs_h,
+                            crop_right: seq.frame_crop_right_offset,
+                            crop_bottom: seq.frame_crop_bottom_offset,
+                            time_scale: seq.time_scale,
+                            cabac,
+                        };
+                        for (kind, mut nal, what) in [
+                            (PACKED_SEQUENCE, sets.sps(), "packed SPS"),
+                            (PACKED_PICTURE, sets.pps(), "packed PPS"),
+                        ] {
+                            let mut params = PackedHeaderParams {
+                                type_: kind,
+                                bit_length: (nal.len() * 8) as u32,
+                                has_emulation_bytes: 1,
+                                reserved: [0; 4],
+                            };
+                            let size = size_of::<PackedHeaderParams>();
+                            add(BUF_PACKED_HEADER_PARAMETER, (&raw mut params).cast(), size, what)?;
+                            add(BUF_PACKED_HEADER_DATA, nal.as_mut_ptr().cast(), nal.len(), what)?;
+                        }
+                    }
                 }
                 if key || new_rate {
                     let mut rc = Misc {
@@ -794,10 +917,17 @@ impl Session {
                     let mut hrd = Misc {
                         type_: MISC_HRD,
                         // One second of buffer, half full at start.
-                        data: Hrd { initial_buffer_fullness: bits / 2, buffer_size: bits, ..Default::default() },
+                        data: Hrd {
+                            initial_buffer_fullness: bits / 2,
+                            buffer_size: bits,
+                            ..Default::default()
+                        },
                     };
                     add(BUF_MISC, (&raw mut hrd).cast(), size_of::<Misc<Hrd>>(), "HRD")?;
-                    let mut rate = Misc { type_: MISC_FRAME_RATE, data: FrameRate { framerate: fps, ..Default::default() } };
+                    let mut rate = Misc {
+                        type_: MISC_FRAME_RATE,
+                        data: FrameRate { framerate: fps, ..Default::default() },
+                    };
                     add(BUF_MISC, (&raw mut rate).cast(), size_of::<Misc<FrameRate>>(), "frame rate")?;
                 }
 
@@ -874,13 +1004,164 @@ fn level(mbs: u32) -> u8 {
     }
 }
 
+/// SPS and PPS matching the parameters given to the driver, as Annex B NAL units
+/// (start code, emulation prevention bytes).
+struct ParameterSets {
+    profile: c_int,
+    level: u8,
+    mbs_w: u32,
+    mbs_h: u32,
+    crop_right: u32,
+    crop_bottom: u32,
+    time_scale: u32,
+    cabac: bool,
+}
+
+impl ParameterSets {
+    fn sps(&self) -> Vec<u8> {
+        let mut b = Bits::default();
+        let (profile_idc, constraints) = match self.profile {
+            PROFILE_HIGH => (100, 0),
+            PROFILE_CONSTRAINED_BASELINE => (66, 0b11_0000), // constraint_set0 and set1
+            _ => (77, 0),
+        };
+        b.u(8, profile_idc);
+        b.u(6, constraints);
+        b.u(2, 0);
+        b.u(8, u32::from(self.level));
+        b.ue(0); // seq_parameter_set_id
+        if profile_idc == 100 {
+            b.ue(1); // chroma_format_idc 4:2:0
+            b.ue(0); // bit_depth_luma_minus8
+            b.ue(0); // bit_depth_chroma_minus8
+            b.u(1, 0); // qpprime_y_zero_transform_bypass_flag
+            b.u(1, 0); // seq_scaling_matrix_present_flag
+        }
+        b.ue(LOG2_MAX_FRAME_NUM_MINUS4);
+        b.ue(2); // pic_order_cnt_type
+        b.ue(1); // max_num_ref_frames
+        b.u(1, 0); // gaps_in_frame_num_value_allowed_flag
+        b.ue(self.mbs_w - 1);
+        b.ue(self.mbs_h - 1);
+        b.u(1, 1); // frame_mbs_only_flag
+        b.u(1, 1); // direct_8x8_inference_flag
+        let crop = self.crop_right != 0 || self.crop_bottom != 0;
+        b.u(1, u32::from(crop));
+        if crop {
+            b.ue(0);
+            b.ue(self.crop_right);
+            b.ue(0);
+            b.ue(self.crop_bottom);
+        }
+        b.u(1, 1); // vui_parameters_present_flag
+        b.u(1, 0); // aspect_ratio_info_present_flag
+        b.u(1, 0); // overscan_info_present_flag
+        b.u(1, 0); // video_signal_type_present_flag
+        b.u(1, 0); // chroma_loc_info_present_flag
+        b.u(1, 1); // timing_info_present_flag
+        b.u(32, 1); // num_units_in_tick
+        b.u(32, self.time_scale);
+        b.u(1, 0); // fixed_frame_rate_flag
+        b.u(1, 0); // nal_hrd_parameters_present_flag
+        b.u(1, 0); // vcl_hrd_parameters_present_flag
+        b.u(1, 0); // pic_struct_present_flag
+        b.u(1, 1); // bitstream_restriction_flag
+        b.u(1, 1); // motion_vectors_over_pic_boundaries_flag
+        b.ue(0); // max_bytes_per_pic_denom
+        b.ue(0); // max_bits_per_mb_denom
+        b.ue(15); // log2_max_mv_length_horizontal
+        b.ue(15); // log2_max_mv_length_vertical
+        b.ue(0); // max_num_reorder_frames
+        b.ue(1); // max_dec_frame_buffering
+        b.nal(0x67) // nal_ref_idc 3, SPS
+    }
+
+    fn pps(&self) -> Vec<u8> {
+        let mut b = Bits::default();
+        b.ue(0); // pic_parameter_set_id
+        b.ue(0); // seq_parameter_set_id
+        b.u(1, u32::from(self.cabac)); // entropy_coding_mode_flag
+        b.u(1, 0); // bottom_field_pic_order_in_frame_present_flag
+        b.ue(0); // num_slice_groups_minus1
+        b.ue(0); // num_ref_idx_l0_default_active_minus1
+        b.ue(0); // num_ref_idx_l1_default_active_minus1
+        b.u(1, 0); // weighted_pred_flag
+        b.u(2, 0); // weighted_bipred_idc
+        b.se(0); // pic_init_qp_minus26 (pic_init_qp 26)
+        b.se(0); // pic_init_qs_minus26
+        b.se(0); // chroma_qp_index_offset
+        b.u(1, 1); // deblocking_filter_control_present_flag
+        b.u(1, 0); // constrained_intra_pred_flag
+        b.u(1, 0); // redundant_pic_cnt_present_flag
+        b.nal(0x68) // nal_ref_idc 3, PPS
+    }
+}
+
+/// Bit writer for parameter sets (RBSP).
+#[derive(Default)]
+struct Bits {
+    bytes: Vec<u8>,
+    acc: u8,
+    n: u32,
+}
+
+impl Bits {
+    fn u(&mut self, bits: u32, value: u32) {
+        for i in (0..bits).rev() {
+            self.acc = (self.acc << 1) | ((value >> i) & 1) as u8;
+            self.n += 1;
+            if self.n == 8 {
+                self.bytes.push(self.acc);
+                self.acc = 0;
+                self.n = 0;
+            }
+        }
+    }
+
+    /// Unsigned Exp-Golomb.
+    fn ue(&mut self, value: u32) {
+        let v = u64::from(value) + 1;
+        let len = 64 - v.leading_zeros();
+        self.u(len - 1, 0);
+        for i in (0..len).rev() {
+            self.u(1, ((v >> i) & 1) as u32);
+        }
+    }
+
+    /// Signed Exp-Golomb.
+    fn se(&mut self, value: i32) {
+        let mapped = if value > 0 { 2 * value.unsigned_abs() - 1 } else { 2 * value.unsigned_abs() };
+        self.ue(mapped);
+    }
+
+    /// Ends the RBSP (stop bit, alignment) and wraps it in a NAL unit with this
+    /// header byte: start code and emulation prevention bytes.
+    fn nal(mut self, header: u8) -> Vec<u8> {
+        self.u(1, 1);
+        while self.n != 0 {
+            self.u(1, 0);
+        }
+        let mut out = vec![0, 0, 0, 1, header];
+        let mut zeros = 0;
+        for byte in self.bytes {
+            if zeros == 2 && byte <= 3 {
+                out.push(3);
+                zeros = 0;
+            }
+            zeros = if byte == 0 { zeros + 1 } else { 0 };
+            out.push(byte);
+        }
+        out
+    }
+}
+
 /// NAL unit types present in Annex B data.
 fn nal_types(data: &[u8]) -> Vec<u8> {
     data.windows(4).filter(|w| w[0] == 0 && w[1] == 0 && w[2] == 1).map(|w| w[3] & 0x1f).collect()
 }
 
 pub struct VaapiEncoder {
-    display: Display,
+    display: &'static Display,
     settings: EncoderSettings,
     session: Option<Session>,
     force_key: bool,
@@ -891,13 +1172,14 @@ pub struct VaapiEncoder {
 
 impl VaapiEncoder {
     pub fn new(settings: EncoderSettings) -> Result<Self> {
-        let display = Display::open()?;
+        let display = shared_display()?;
         let mut enc =
             Self { display, settings, session: None, force_key: true, new_rate: false, fallback: None };
-        // The driver must write the parameter sets itself (no packed headers here).
+        // The keyframe must carry the parameter sets (ours or the driver's).
         let (w, h) = (320u32, 180u32);
         let data = vec![128u8; (w * h * 4) as usize];
-        let first = enc.encode_va(&BgraImage { width: w, height: h, stride: w as usize * 4, data: &data }, true)?;
+        let first =
+            enc.encode_va(&BgraImage { width: w, height: h, stride: w as usize * 4, data: &data }, true)?;
         let types = nal_types(&first.data);
         if !(types.contains(&7) && types.contains(&8) && types.contains(&5)) {
             bail!("the driver gives no SPS/PPS (NAL units {types:?})");
@@ -909,6 +1191,7 @@ impl VaapiEncoder {
             profile = enc.display.profile,
             low_power = enc.display.entrypoint == ENTRY_ENC_SLICE_LP,
             rate_control = enc.display.rate_control,
+            packed_headers = enc.display.packed_headers,
             "VA-API encoder"
         );
         Ok(enc)
@@ -920,7 +1203,7 @@ impl VaapiEncoder {
 
     fn session_drop(&mut self) {
         if let Some(mut s) = self.session.take() {
-            s.destroy(&self.display);
+            s.destroy(self.display);
         }
     }
 
@@ -929,15 +1212,17 @@ impl VaapiEncoder {
         let (w, h) = (w as u32, h as u32);
         if self.session.as_ref().is_none_or(|s| (s.width, s.height) != (w, h)) {
             self.session_drop();
-            self.session = Some(Session::new(&self.display, w, h)?);
+            self.session = Some(Session::new(self.display, w, h)?);
             debug!(w, h, "VA-API session");
             self.force_key = true;
         }
-        let key = force_keyframe || std::mem::take(&mut self.force_key);
+        // Both taken: a keyframe asked for also satisfies the pending one.
+        let pending = std::mem::take(&mut self.force_key);
+        let key = force_keyframe || pending;
         let new_rate = std::mem::take(&mut self.new_rate);
         let session = self.session.as_mut().context("VA-API session")?;
-        session.upload(&self.display, image)?;
-        let data = session.encode(&self.display, &self.settings, key, new_rate)?;
+        session.upload(self.display, image)?;
+        let data = session.encode(self.display, &self.settings, key, new_rate)?;
         let keyframe = nal_types(&data).contains(&5);
         Ok(EncodedFrame { data, keyframe, ..Default::default() })
     }
@@ -992,6 +1277,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exp_golomb_and_nal() {
+        let mut b = Bits::default();
+        b.ue(0); // 1
+        b.ue(1); // 010
+        b.ue(2); // 011
+        b.se(-1); // ue(2) 011
+        b.se(1); // ue(1) 010
+        assert_eq!(b.bytes, [0b1010_0110]);
+        assert_eq!(b.n, 5);
+        // Emulation prevention after two zero bytes.
+        let mut b = Bits::default();
+        b.u(24, 1);
+        assert_eq!(b.nal(0x67), [0, 0, 0, 1, 0x67, 0, 0, 3, 1, 0x80]);
+    }
+
+    #[test]
+    fn sps_of_1080p() {
+        let sets = ParameterSets {
+            profile: PROFILE_MAIN,
+            level: 41,
+            mbs_w: 120,
+            mbs_h: 68,
+            crop_right: 0,
+            crop_bottom: 4,
+            time_scale: 120,
+            cabac: true,
+        };
+        let sps = sets.sps();
+        assert_eq!(&sps[..8], [0, 0, 0, 1, 0x67, 77, 0, 41]);
+        assert_eq!(nal_types(&sps), [7]);
+        let pps = sets.pps();
+        assert_eq!(nal_types(&pps), [8]);
+        // pps_id 0, sps_id 0, CABAC: 1 1 1 ...
+        assert_eq!(pps[5] >> 5, 0b111);
+    }
+
+    #[test]
     fn levels() {
         assert_eq!(level(120 * 68), 41); // 1080p
         assert_eq!(level(240 * 135), 51); // 4K
@@ -1013,7 +1335,12 @@ mod tests {
         let mut data = vec![0u8; stride * h as usize];
         for y in 0..h as usize {
             for x in 0..w as usize {
-                data[y * stride + x * 4..][..4].copy_from_slice(&[(x % 256) as u8, (y % 256) as u8, 128, 255]);
+                data[y * stride + x * 4..][..4].copy_from_slice(&[
+                    (x % 256) as u8,
+                    (y % 256) as u8,
+                    128,
+                    255,
+                ]);
             }
         }
         let image = BgraImage { width: w, height: h, stride, data: &data };
@@ -1024,6 +1351,7 @@ mod tests {
                 enc.set_bitrate(2_000_000);
             }
             let frame = enc.encode(&image, i == 0).unwrap().expect("a frame for every frame");
+            eprintln!("frame {i}: {} bytes, NAL units {:?}", frame.data.len(), nal_types(&frame.data));
             assert_eq!(frame.keyframe, i == 0, "frame {i}");
             if let Some(yuv) = crate::VideoDecoder::decode(&mut dec, &frame.data).unwrap() {
                 decoded = Some((yuv.width, yuv.height, yuv.y[yuv.width as usize * 90 + 100]));

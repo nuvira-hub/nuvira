@@ -83,18 +83,7 @@ fn main() {
         Err(e) => println!("hardware encoder enumeration failed: {e:#}"),
     }
     match nuvira_codec::create_encoder(EncoderPlan::Hardware, settings, None) {
-        Ok(enc) => run(
-            if cfg!(target_os = "macos") {
-                "hardware (VideoToolbox)"
-            } else if cfg!(target_os = "linux") {
-                "hardware (VA-API)"
-            } else {
-                "hardware (Media Foundation)"
-            },
-            enc,
-            w,
-            h,
-        ),
+        Ok(enc) => run(&format!("hardware ({})", enc.name()), enc, w, h),
         Err(e) => println!("hardware not available: {e:#}"),
     }
     run(
