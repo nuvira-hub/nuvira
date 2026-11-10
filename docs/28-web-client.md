@@ -35,6 +35,7 @@ Nothing changes in the server's protocol, in the relay or in the agents. The sig
 ## Limits
 
 - **Always through the relay.** A browser has no UDP: no direct path between the two computers. On the same LAN the cost is small (round trip of a few milliseconds through the server); over the Internet it is that of the relay.
+- **Keys as in the desktop viewer.** Every key goes to the remote computer, shortcuts included (Ctrl+C, Ctrl+X, Ctrl+V; Ctrl+V first sends the local clipboard). From a Mac towards Windows or Linux Cmd and Ctrl are swapped, so Cmd+C copies there; Mac to Mac they stay. AltGr from Windows towards a Mac becomes Option, as in the viewer.
 - **Keys the browser keeps.** Ctrl+W, Ctrl+T, Ctrl+N and the Windows key stay with the browser, except in full screen on Chrome and Edge (Keyboard Lock API). Ctrl+Alt+Del has its button.
 - **Files.** A download is held by the browser until it is complete, then saved: very large files need the memory for them. No resuming an interrupted transfer (the app has it), no folders.
 - **Not in the page yet:** privacy mode, remote restart and TCP tunnels (the last one cannot exist in a browser: it would need a local port).
