@@ -3404,6 +3404,7 @@ dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
  "core-graphics 0.25.0",
+ "foreign-types",
  "libc",
  "nuvira-portal",
  "nuvira-proto",

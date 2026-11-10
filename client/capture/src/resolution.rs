@@ -344,13 +344,50 @@ mod platform {
 #[cfg(target_os = "macos")]
 mod platform {
     use anyhow::{Result, anyhow, bail};
+    use core_foundation::array::{CFArray, CFArrayRef};
+    use core_foundation::base::{CFRetain, TCFType};
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::string::{CFString, CFStringRef};
     use core_graphics::display::{CGConfigureOption, CGDisplay, CGDisplayMode};
+    use foreign_types::ForeignType;
 
     use super::Size;
     use crate::Display;
 
-    /// kDisplayModeValidFlag
-    const VALID: u32 = 0x1;
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGDisplayCopyAllDisplayModes(display: u32, options: CFDictionaryRef) -> CFArrayRef;
+        static kCGDisplayShowDuplicateLowResolutionModes: CFStringRef;
+    }
+
+    /// The screen's modes, each with a reference of its own. core-graphics 0.25's
+    /// `all_display_modes` takes none: dropping its list released every mode once
+    /// too many, and the next call got a damaged list (only the current mode), so
+    /// the mode chosen from the first list was "not found" when applied.
+    /// With the Retina (HiDPI) modes: without the option the list has none, and a
+    /// Mac in a Retina mode, as most are, found no mode of its own scale at all.
+    fn display_modes(id: u32) -> Option<Vec<CGDisplayMode>> {
+        // SAFETY: a CFArray of CGDisplayMode under the create rule; each mode is
+        // retained before it is wrapped, the array released when dropped. The
+        // option key is a constant string of CoreGraphics.
+        unsafe {
+            let key = CFString::wrap_under_get_rule(kCGDisplayShowDuplicateLowResolutionModes);
+            let options = CFDictionary::from_CFType_pairs(&[(key, CFBoolean::true_value())]);
+            let array = CGDisplayCopyAllDisplayModes(id, options.as_concrete_TypeRef());
+            if array.is_null() {
+                return None;
+            }
+            let array: CFArray = CFArray::wrap_under_create_rule(array);
+            Some(array.iter().map(|mode| CGDisplayMode::from_ptr(CFRetain(*mode) as *mut _)).collect())
+        }
+    }
+
+    /// kDisplayModeValidFlag | kDisplayModeSafeFlag: a mode for the desktop. The
+    /// list also has valid modes without the safe flag, not usable for the desktop
+    /// (macOS 27 on the Mac mini's 1080p screen: 1280x720 at 60 Hz twice); setting
+    /// one of those fails with kCGErrorFailure (1001).
+    const DESKTOP: u32 = 0x1 | 0x2;
 
     pub struct Screen {
         id: u32,
@@ -387,11 +424,11 @@ mod platform {
         /// Usable modes with the same pixels per point as now.
         fn all(&self) -> Result<Vec<CGDisplayMode>> {
             let current = self.current_mode()?;
-            let modes = CGDisplayMode::all_display_modes(self.id, std::ptr::null())
+            let modes = display_modes(self.id)
                 .ok_or_else(|| anyhow!("the modes of screen {} cannot be read", self.id))?;
             Ok(modes
                 .into_iter()
-                .filter(|m| m.io_flags() & VALID != 0 && scale(m) == scale(&current))
+                .filter(|m| m.io_flags() & DESKTOP == DESKTOP && scale(m) == scale(&current))
                 .collect())
         }
 

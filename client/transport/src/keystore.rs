@@ -363,8 +363,12 @@ mod sys {
     const ACCOUNT: &str = "device-keys";
     const SYSTEM_KEYCHAIN: &str = "/Library/Keychains/System.keychain";
     const NOT_FOUND: i32 = -25300;
-    /// errSecInteractionNotAllowed, errSecNoSuchKeychain, errSecNotAvailable.
-    const LATER: [i32; 3] = [-25308, -25294, -25291];
+    /// errSecInteractionNotAllowed, errSecNoSuchKeychain, errSecNotAvailable,
+    /// errSecAuthFailed (what an item answers with interaction disabled when it
+    /// would have asked to allow this program: another build or signature) and
+    /// errSecUserCanceled (Cancel in the keychain window). Never "unreadable":
+    /// that would set the key aside and change the computer's ID.
+    const LATER: [i32; 5] = [-25308, -25294, -25291, -25293, -128];
 
     pub fn preferred() -> Protection {
         Protection::Keychain
@@ -384,12 +388,13 @@ mod sys {
             let err = anyhow!("keychain: {e} ({})", e.code());
             if LATER.contains(&e.code()) { ReadError::Unavailable(err) } else { ReadError::Unreadable(err) }
         };
-        // Never a window: a locked keychain, or one that would ask whether NuviraHub
-        // may use the item, answers errSecInteractionNotAllowed at once instead of
-        // waiting for someone to click (an agent with nobody at the Mac, a CI
-        // runner). A new key then falls back to the file; an existing one is tried
-        // again later. Process-wide while this call lasts.
-        let _no_window = SecKeychain::disable_user_interaction();
+        // A new key never waits for a window: a locked keychain, or an item that
+        // would ask whether this program may use it, answers at once and the key
+        // goes to the file (an agent with nobody at the Mac, a CI runner). An
+        // existing key keeps the window, as before: someone can unlock or allow
+        // it, and meanwhile the key is only waited for, never replaced.
+        // Process-wide while this call lasts.
+        let _no_window = create.then(SecKeychain::disable_user_interaction);
         let keychain = keychain().map_err(classify)?;
         match keychain.find_generic_password(SERVICE, ACCOUNT) {
             Ok((password, _)) => {

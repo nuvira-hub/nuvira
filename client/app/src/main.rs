@@ -573,6 +573,7 @@ fn start_service_link(app: &AppHandle) {
                             // (empty = public), also for outgoing connections.
                             ToApp::Info { server, version } => {
                                 *state.service_server.lock().expect("service server") = Some(server.clone());
+                                keep_service_server(&server);
                                 state.update(&app, |ui| {
                                     ui.server = shown_server(&server);
                                     ui.installed = nuvira_update::newer(&version, nuvira_update::CURRENT)
@@ -763,6 +764,26 @@ fn key_protection() -> String {
 
 /// Server as shown in the settings: empty for the public one.
 #[cfg(any(windows, unix))]
+/// The app's settings take the server of the service's agent: the field shows that
+/// one, so it is the one a later installation must use. Without it, unattended
+/// access installed with another server (`service install --server`, the MSI, an
+/// older app) moved to the app's own server, often the public one, with a new ID,
+/// when the person removed it and installed it again from the app.
+fn keep_service_server(server: &str) {
+    let shown = shown_server(server);
+    let mut settings = load_settings();
+    if settings.server.trim().eq_ignore_ascii_case(&shown) {
+        return;
+    }
+    info!(server = %shown, "the service's server kept in the app's settings");
+    settings.server = shown;
+    // The fingerprint went with the old server: the new one is checked on first use.
+    settings.server_key = None;
+    if let Err(e) = save_settings(&settings) {
+        warn!("settings not saved: {e:#}");
+    }
+}
+
 fn shown_server(server: &str) -> String {
     if server.trim().eq_ignore_ascii_case(nuvira_transport::signal::PUBLIC_SERVER) {
         String::new()
