@@ -22,19 +22,30 @@ const NOTCH: i32 = 120;
 /// X key codes are the Linux ones plus 8.
 const KEYCODE_OFFSET: u16 = 8;
 
-/// After changing the spare key's symbol, before pressing it: the programs read
-/// the change (MappingNotify) and input methods such as IBus catch up.
-const MAPPING_SETTLE: Duration = Duration::from_millis(5);
+/// After giving a spare key a symbol, before pressing it: the programs read the
+/// change (MappingNotify) and input methods such as IBus catch up.
+const MAPPING_SETTLE: Duration = Duration::from_millis(10);
+
+/// Most spare keys used in turn (see [`Spare`]).
+const MAX_SPARES: usize = 16;
 
 /// A key code borrowed to type characters of any layout: XTest sends only key
-/// codes, so for each character the key gets its symbol, then is pressed. One
-/// without symbols if there is one (most layouts leave several free), put back
-/// as it was after the text.
+/// codes, so a character's key first gets its symbol. Several free key codes are
+/// used in turn, and a character keeps its key while it has one: GTK reads the
+/// new map some time after the change, and a key changed again (or put back)
+/// right after being pressed lost its character ("P" missing in "Più"). They
+/// are put back as they were when the session ends.
 struct Spare {
     keycode: u8,
-    per_keycode: u8,
     original: Vec<u32>,
-    changed: bool,
+    keysym: Option<u32>,
+    used: u64,
+}
+
+struct Spares {
+    keys: Vec<Spare>,
+    per_keycode: u8,
+    clock: u64,
 }
 
 pub struct XTestInjector {
@@ -45,7 +56,7 @@ pub struct XTestInjector {
     keys: HashSet<u8>,
     buttons: HashSet<u8>,
     wheel: (i32, i32),
-    spare: Option<Spare>,
+    spares: Option<Spares>,
 }
 
 impl XTestInjector {
@@ -55,7 +66,7 @@ impl XTestInjector {
         let root = &conn.setup().roots[screen];
         let (root, width, height) = (root.root, root.width_in_pixels, root.height_in_pixels);
         let (keys, buttons) = (HashSet::new(), HashSet::new());
-        Ok(Self { conn, root, width, height, keys, buttons, wheel: (0, 0), spare: None })
+        Ok(Self { conn, root, width, height, keys, buttons, wheel: (0, 0), spares: None })
     }
 
     fn fake(&self, kind: u8, detail: u8, x: i16, y: i16) {
@@ -78,7 +89,7 @@ impl XTestInjector {
         self.fake(if down { KEY_PRESS_EVENT } else { KEY_RELEASE_EVENT }, keycode, 0, 0);
     }
 
-    /// Characters through the spare key, control characters as their keys.
+    /// Characters through the spare keys, control characters as their keys.
     fn text(&mut self, text: &str) {
         for piece in crate::pieces(text) {
             match piece {
@@ -93,30 +104,40 @@ impl XTestInjector {
                 }
             }
         }
-        // Waits for the last key to be read before taking its symbol away.
-        std::thread::sleep(MAPPING_SETTLE);
-        self.restore_spare();
     }
 
     fn type_char(&mut self, c: char) -> Result<()> {
-        if self.spare.is_none() {
-            self.spare = Some(self.find_spare()?);
+        if self.spares.is_none() {
+            self.spares = Some(self.find_spares()?);
         }
-        let Some(spare) = self.spare.as_mut() else { return Ok(()) };
+        let Some(spares) = self.spares.as_mut() else { return Ok(()) };
         let keysym = keys::keysym(c);
-        let keycode = spare.keycode;
-        spare.changed = true;
-        self.conn.change_keyboard_mapping(1, keycode, 2, &[keysym, keysym])?;
-        // A round trip: the server applied the change before the key arrives.
-        self.conn.get_input_focus()?.reply()?;
-        std::thread::sleep(MAPPING_SETTLE);
+        spares.clock += 1;
+        let clock = spares.clock;
+        let slot = match spares.keys.iter().position(|k| k.keysym == Some(keysym)) {
+            Some(i) => i,
+            None => {
+                // The key unused for the longest time gets the symbol.
+                let i = (0..spares.keys.len()).min_by_key(|&i| spares.keys[i].used).unwrap_or(0);
+                spares.keys[i].keysym = Some(keysym);
+                let keycode = spares.keys[i].keycode;
+                self.conn.change_keyboard_mapping(1, keycode, 2, &[keysym, keysym])?;
+                // A round trip: the server applied the change before the key arrives.
+                self.conn.get_input_focus()?.reply()?;
+                std::thread::sleep(MAPPING_SETTLE);
+                i
+            }
+        };
+        let Some(spares) = self.spares.as_mut() else { return Ok(()) };
+        spares.keys[slot].used = clock;
+        let keycode = spares.keys[slot].keycode;
         self.fake(KEY_PRESS_EVENT, keycode, 0, 0);
         self.fake(KEY_RELEASE_EVENT, keycode, 0, 0);
         Ok(())
     }
 
-    /// The highest key code without symbols; failing that, the highest one.
-    fn find_spare(&self) -> Result<Spare> {
+    /// The highest key codes without symbols; failing that, the highest one.
+    fn find_spares(&self) -> Result<Spares> {
         let setup = self.conn.setup();
         let (min, max) = (setup.min_keycode, setup.max_keycode);
         let map = self.conn.get_keyboard_mapping(min, max - min + 1)?.reply()?;
@@ -125,22 +146,30 @@ impl XTestInjector {
             let start = usize::from(keycode - min) * per;
             map.keysyms.get(start..start + per).unwrap_or_default().to_vec()
         };
-        let keycode = (min..=max).rev().find(|&k| syms(k).iter().all(|&s| s == 0)).unwrap_or(max);
-        debug!(keycode, "spare key for text");
-        Ok(Spare { keycode, per_keycode: per as u8, original: syms(keycode), changed: false })
+        let mut free: Vec<u8> =
+            (min..=max).rev().filter(|&k| syms(k).iter().all(|&s| s == 0)).take(MAX_SPARES).collect();
+        if free.is_empty() {
+            free.push(max);
+        }
+        debug!(?free, "spare keys for text");
+        let keys = free.into_iter().map(|k| Spare { keycode: k, original: syms(k), keysym: None, used: 0 }).collect();
+        Ok(Spares { keys, per_keycode: per as u8, clock: 0 })
     }
 
-    fn restore_spare(&mut self) {
-        let Some(spare) = self.spare.as_mut().filter(|s| s.changed) else { return };
-        spare.changed = false;
-        let restored = self
-            .conn
-            .change_keyboard_mapping(1, spare.keycode, spare.per_keycode, &spare.original)
-            .map(|_| ())
-            .and_then(|()| self.conn.flush());
-        if let Err(e) = restored {
-            debug!("spare key not put back: {e}");
+    fn restore_spares(&mut self) {
+        let Some(spares) = self.spares.take() else { return };
+        for key in spares.keys.iter().filter(|k| k.keysym.is_some()) {
+            let restored = self
+                .conn
+                .change_keyboard_mapping(1, key.keycode, spares.per_keycode, &key.original)
+                .map_err(anyhow::Error::from)
+                .and_then(|cookie| cookie.check().map_err(anyhow::Error::from));
+            if let Err(e) = restored {
+                debug!(keycode = key.keycode, "spare key not put back: {e}");
+            }
         }
+        let _ = self.conn.flush();
+        debug!("spare keys put back");
     }
 
     fn button(&mut self, button: Button, down: bool) {
@@ -210,12 +239,13 @@ impl InputInjector for XTestInjector {
             self.fake(BUTTON_RELEASE_EVENT, button, 0, 0);
         }
         self.wheel = (0, 0);
-        self.restore_spare();
+        self.restore_spares();
     }
 }
 
 impl Drop for XTestInjector {
     fn drop(&mut self) {
+        debug!("X11 input closed");
         self.release_all();
     }
 }
