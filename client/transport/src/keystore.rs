@@ -384,6 +384,12 @@ mod sys {
             let err = anyhow!("keychain: {e} ({})", e.code());
             if LATER.contains(&e.code()) { ReadError::Unavailable(err) } else { ReadError::Unreadable(err) }
         };
+        // Never a window: a locked keychain, or one that would ask whether NuviraHub
+        // may use the item, answers errSecInteractionNotAllowed at once instead of
+        // waiting for someone to click (an agent with nobody at the Mac, a CI
+        // runner). A new key then falls back to the file; an existing one is tried
+        // again later. Process-wide while this call lasts.
+        let _no_window = SecKeychain::disable_user_interaction();
         let keychain = keychain().map_err(classify)?;
         match keychain.find_generic_password(SERVICE, ACCOUNT) {
             Ok((password, _)) => {
