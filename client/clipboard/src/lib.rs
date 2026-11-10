@@ -26,6 +26,19 @@ pub enum Content {
     Image(Vec<u8>),
 }
 
+/// Content to write, and what to do once it is in the clipboard (with `true`) or
+/// the write failed (`false`): the agent presses the paste keys only then.
+pub struct Incoming {
+    pub content: Content,
+    pub then: Option<Box<dyn FnOnce(bool) + Send>>,
+}
+
+impl From<Content> for Incoming {
+    fn from(content: Content) -> Self {
+        Self { content, then: None }
+    }
+}
+
 pub struct Clipboard {
     inner: arboard::Clipboard,
     /// Last state seen: sequence number (Windows), text and image (hash of the pixels).
@@ -150,9 +163,9 @@ pub fn decode_png(png: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
 /// channel is written to the clipboard. Closing the channel ends the thread.
 pub fn spawn_sync(
     mut outgoing: impl FnMut(Content) -> bool + Send + 'static,
-) -> Result<std::sync::mpsc::Sender<Content>> {
+) -> Result<std::sync::mpsc::Sender<Incoming>> {
     use std::sync::mpsc::{RecvTimeoutError, channel};
-    let (incoming_tx, incoming_rx) = channel::<Content>();
+    let (incoming_tx, incoming_rx) = channel::<Incoming>();
     let (ready_tx, ready_rx) = channel();
     std::thread::Builder::new().name("clipboard".into()).spawn(move || {
         // The clipboard is opened in the thread that uses it.
@@ -168,9 +181,10 @@ pub fn spawn_sync(
         };
         loop {
             match incoming_rx.recv_timeout(std::time::Duration::from_millis(400)) {
-                Ok(content) => {
-                    if let Err(e) = clipboard.set(content) {
-                        debug!("{e:#}");
+                Ok(Incoming { content, then }) => {
+                    let written = clipboard.set(content).inspect_err(|e| debug!("{e:#}")).is_ok();
+                    if let Some(then) = then {
+                        then(written);
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {

@@ -235,6 +235,21 @@ message Chat {
 // (FileChunk with clipboard_image), not to hold up the control channel.
 message Clipboard {
   string text = 1;
+  // From the viewer, towards agents with Hello.paste: the keys the agent presses
+  // once the text is in its clipboard (two streams have no order between them,
+  // so the viewer cannot send them itself right after). Nothing is pressed while
+  // keyboard and mouse are off.
+  Paste paste = 2;
+}
+
+enum Paste {
+  PASTE_NONE = 0;
+  // V only: the viewer holds its own Ctrl or Cmd already (Ctrl+V in the viewer).
+  PASTE_V = 1;
+  // The system's paste: Cmd+V on macOS, Ctrl+V elsewhere.
+  PASTE_SHORTCUT = 2;
+  // Ctrl+Shift+V, the paste of Linux terminals.
+  PASTE_TERMINAL = 3;
 }
 
 // From the agent, at the start of the session and at every change: the available
@@ -364,6 +379,8 @@ message Hello {
   bool restart_users = 17;
   // From the agent: it types InputEvent.text (Unicode characters).
   bool text = 18;
+  // From the agent: it presses Clipboard.paste once the text is in its clipboard.
+  bool paste = 19;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

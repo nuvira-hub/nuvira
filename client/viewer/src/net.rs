@@ -810,7 +810,7 @@ async fn session(
                     {
                         Ok(png) => {
                             if let Some(clipboard) = clipboard {
-                                let _ = clipboard.send(nuvira_clipboard::Content::Image(png));
+                                let _ = clipboard.send(nuvira_clipboard::Content::Image(png).into());
                             }
                         }
                         Err(e) => warn!("clipboard image not received: {e:#}"),
@@ -860,7 +860,7 @@ async fn session(
                 }
                 Some(content) = clip_rx.recv(), if clipboard_allowed => match content {
                     nuvira_clipboard::Content::Text(text) => {
-                        ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text }))).await?;
+                        ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text, ..Default::default() }))).await?;
                     }
                     // On its own stream, not to hold up the control channel.
                     nuvira_clipboard::Content::Image(png) => {
@@ -942,7 +942,7 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::Clipboard(clip)) }) => {
                         if let Some(clipboard) = &clipboard {
-                            let _ = clipboard.send(nuvira_clipboard::Content::Text(clip.text));
+                            let _ = clipboard.send(nuvira_clipboard::Content::Text(clip.text).into());
                         }
                     }
                     Some(ControlMessage { msg: Some(Msg::VideoFormat(f)) }) => {

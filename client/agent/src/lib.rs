@@ -1154,6 +1154,8 @@ async fn session(
         resolution: resolution_offered,
         // Characters as they are (InputEvent.text), with the keyboard.
         text: !terminal_only && !config.view_only,
+        // Clipboard.paste: with the clipboard and the keyboard.
+        paste: !terminal_only && !config.view_only && config.synthetic.is_none() && !policy.no_clipboard,
         ..local_hello()
     };
     // What the person at the PC can switch off: what this session has.
@@ -1291,6 +1293,8 @@ async fn session(
     let (fs_tx, mut fs_rx) = mpsc::unbounded_channel::<nuvira_proto::v1::FsResponse>();
     // Shared clipboard: what is copied here goes to the viewer, what is copied there arrives here.
     let (clip_tx, mut clip_rx) = mpsc::unbounded_channel::<nuvira_clipboard::Content>();
+    // Clipboard.paste: the keys go to the input once the text is in the clipboard.
+    let (paste_tx, mut paste_rx) = mpsc::unbounded_channel::<nuvira_proto::v1::Paste>();
     let clipboard = if offered & switches::CLIPBOARD == 0 {
         None
     } else {
@@ -1410,7 +1414,7 @@ async fn session(
                     }
                     match content {
                         nuvira_clipboard::Content::Text(text) => {
-                            ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text }))).await?;
+                            ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text, ..Default::default() }))).await?;
                         }
                         // On its own stream, not to hold up the control channel.
                         nuvira_clipboard::Content::Image(png) => {
@@ -1660,7 +1664,20 @@ async fn session(
                 }
                 Some(Msg::Clipboard(clip)) => {
                     if let Some(clipboard) = clipboard.as_ref().filter(|_| off.is_on(switches::CLIPBOARD)) {
-                        let _ = clipboard.send(nuvira_clipboard::Content::Text(clip.text));
+                        let paste = clip.paste();
+                        let then: Option<Box<dyn FnOnce(bool) + Send>> = match paste {
+                            nuvira_proto::v1::Paste::None => None,
+                            _ => {
+                                let paste_tx = paste_tx.clone();
+                                Some(Box::new(move |written| {
+                                    if written {
+                                        let _ = paste_tx.send(paste);
+                                    }
+                                }))
+                            }
+                        };
+                        let content = nuvira_clipboard::Content::Text(clip.text);
+                        let _ = clipboard.send(nuvira_clipboard::Incoming { content, then });
                     }
                 }
                 Some(Msg::Chat(chat)) => match &events {
@@ -1820,6 +1837,13 @@ async fn session(
                     let screen = *screen_rx.borrow_and_update();
                     injector.send(InputCmd::Screen(screen)).map_err(|_| closed())?;
                 },
+                // The text of a Clipboard.paste is in the clipboard: its keys now.
+                Some(paste) = paste_rx.recv() => if let Some(injector) = &injector {
+                    tracing::debug!(?paste, "clipboard written: paste keys");
+                    for event in paste_keys(paste) {
+                        injector.send(InputCmd::Event(event)).map_err(|_| closed())?;
+                    }
+                },
                 // After the input one, every unidirectional stream of the viewer is a file
                 // or an image copied to the clipboard.
                 stream = conn.accept_uni() => {
@@ -1887,7 +1911,7 @@ async fn session(
                         if first.clipboard_image {
                             match nuvira_transport::read_stream(&mut rx, &first, nuvira_clipboard::MAX_IMAGE_PNG as u64).await {
                                 Ok(png) => if let Some(clipboard) = clipboard {
-                                    let _ = clipboard.send(nuvira_clipboard::Content::Image(png));
+                                    let _ = clipboard.send(nuvira_clipboard::Content::Image(png).into());
                                 },
                                 Err(e) => warn!("clipboard image not received: {e:#}"),
                             }
@@ -2143,6 +2167,24 @@ fn quality_limits(config: &AgentConfig, quality: Quality) -> (u32, u32) {
     }
 }
 
+/// The keys of a Clipboard.paste, pressed and released in order.
+fn paste_keys(paste: nuvira_proto::v1::Paste) -> Vec<InputEvent> {
+    use nuvira_proto::v1::Paste;
+    let combo: &[&str] = match paste {
+        Paste::None => &[],
+        Paste::V => &["KeyV"],
+        Paste::Shortcut if cfg!(target_os = "macos") => &["MetaLeft", "KeyV"],
+        Paste::Shortcut => &["ControlLeft", "KeyV"],
+        Paste::Terminal => &["ControlLeft", "ShiftLeft", "KeyV"],
+    };
+    let key = |code: &str, down| InputEvent {
+        event: Some(nuvira_proto::v1::input_event::Event::Key(nuvira_proto::v1::Key { code: code.into(), down })),
+    };
+    let downs = combo.iter().map(|c| key(c, true));
+    let ups = combo.iter().rev().map(|c| key(c, false));
+    downs.chain(ups).collect()
+}
+
 /// What the input thread receives.
 enum InputCmd {
     Event(InputEvent),
@@ -2263,6 +2305,7 @@ fn local_hello() -> Hello {
         restart: false,
         restart_users: false,
         text: false,
+        paste: false,
         print: false,
         recording: false,
         recording_required: false,
