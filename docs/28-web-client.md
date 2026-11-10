@@ -69,7 +69,7 @@ From a Mac mini in a data centre (Scaleway, Paris; macOS 27.2) to the page serve
 | Clipboard, local → remote ("Paste" button) | **the session drops** (see below) | yes: Firefox shows its own "Paste" bubble, the session stays up, the text reached the remote clipboard |
 | Clipboard, remote → local | did not arrive | did not arrive |
 
-The right click did not open Cinnamon's desktop menu that day, but neither did a right click made on Mint itself with XTest, without NuviraHub: a matter of that desktop, not of the page.
+The right click reaches the remote computer as button 3; Cinnamon's desktop menu did not open in that first test (nor with a right click made on Mint with XTest), but it did later the same day with the touch long press below, so the first tests' clicks, not the page, were the matter.
 
 ### Problems found (fixed the same day)
 
@@ -80,4 +80,17 @@ What was seen before the fix:
 - **Safari: reading the clipboard drops the session.** The "Paste" button and Cmd+V on the video call `navigator.clipboard.readText()`. Safari answers with its own "Paste" bubble, and while the bubble is open the page stops driving the connection: about 10 seconds later (the QUIC idle timeout of the page) the session ends with "connection lost: timed out". Seen three times out of three (button twice, Cmd+V once). Firefox shows a similar bubble but keeps the page running.
 - **Remote clipboard does not reach the local one on Safari and Firefox.** The page writes it with `navigator.clipboard.writeText()` when the remote clipboard changes, outside a user gesture; Safari and Firefox refuse that (Chrome and Edge allow it while the page has focus), and the page ignores the error, so nothing tells the technician.
 
-Still to try: a phone on mobile data, a Windows PC with a user signed in (files and terminal on Windows), a long session over the Internet; the chat from Firefox.
+## Touch screens (2026-11-10)
+
+A first try from the owner's Android phone on mobile data (Chrome, page of the NAS) connected and showed the screen at 32 fps, but the finger acted as a mouse with the button held: moving it drew a selection rectangle. Since then, as remote control apps on a phone:
+
+- **tap**: left click where the finger is; **long press** (half a second): right click;
+- **one finger moving**: the pointer follows it, no button;
+- **double tap, keep the finger down and move**: drag with the left button (selecting, moving windows);
+- **two fingers**: wheel, the content following the fingers;
+- **Keyboard** button (shown only where the main pointer is a finger): opens the on-screen keyboard; what is typed becomes key presses. Letters, digits, space, Enter and Backspace go through on any layout, other symbols as on a US keyboard; letters with accents and emoji have no physical key and are left out;
+- on narrow screens the toolbar is one row that scrolls sideways.
+
+Mouse and pen keep the direct handling. Tried with a headless Edge emulating a phone (touch events through the DevTools protocol) towards Mint, the events read on Mint with `xinput test-xi2`: tap = button 1, long press = button 3 (the desktop menu opened), one finger = motion only, double tap and drag = button 1 held over 10 motions, two fingers up = wheel down, keyboard `Ab1`, Backspace, Enter = Shift+A, B, 1, Backspace, Enter.
+
+Still to try: the phone again with these changes, a phone on mobile data, a Windows PC with a user signed in (files and terminal on Windows), a long session over the Internet; the chat from Firefox.
