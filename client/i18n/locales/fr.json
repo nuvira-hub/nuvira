@@ -204,7 +204,7 @@
   "settings.change_password": "Changer le mot de passe",
   "settings.pw_mismatch": "Les deux nouveaux mots de passe ne correspondent pas",
   "settings.language": "Langue",
-  "settings.language_auto": "Automatique (langue de Windows)",
+  "settings.language_auto": "Automatique (langue du système)",
   "settings.language_hint": "S'applique aussi à la fenêtre de session.",
   "settings.this_pc": "Cet ordinateur",
   "settings.privacy_allowed": "Autoriser le mode confidentialité",
