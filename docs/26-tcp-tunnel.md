@@ -36,4 +36,10 @@ The agent connects only to addresses of its local networks: loopback (127.0.0.0/
 | 18053 → 8.8.8.8:53 | refused: "only addresses of the remote local network can be reached" |
 | Rule "No TCP tunnels" on | "tunnels not available on this agent" |
 
-Not tested yet: a full Remote Desktop session through the tunnel, the "Tunnels" window and its buttons, the app setting, throughput with large transfers, Linux and macOS as the controlled computer.
+Full Remote Desktop session, 2026-11-10: 0.22.0, the owner's Pro server (NAS), agent of the service on PC-LABORATORIO, viewer on the Fedora VM with `--terminal --tunnel 13389:192.168.178.197:3389` (xrdp on the Mint VM, a test user), FreeRDP on Fedora to 127.0.0.1:13389: xrdp saw the client at 192.168.178.97 (PC-LABORATORIO), signed the user in and started an Xorg session at 1024x768; the client was still connected after 45 s, when it was closed.
+
+A tunnel to the Remote Desktop of the controlled PC itself (localhost:3389) only makes sense for the same user who is signed in there: Windows client editions have one active session, so another user's sign-in disconnects the console, the service moves the agent to the new session and the NuviraHub session carrying the tunnel ends. Remote Desktop of other computers of that network is the case tunnels are for.
+
+The "Tunnels" window, 2026-11-10, on a Mac (0.22.0) towards Kubuntu: Add, Open in the browser and Remove work ([33-macos.md](33-macos.md)). A router that redirects HTTP to HTTPS on the same port does not open through a tunnel to port 80 (the browser is sent to https://localhost:PORT): add a tunnel to 443 as well.
+
+Not tested yet: the app setting, throughput with large transfers, Linux and macOS as the controlled computer.

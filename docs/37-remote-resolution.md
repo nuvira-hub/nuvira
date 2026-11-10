@@ -47,4 +47,6 @@ On PC-LABORATORIO (Windows 10, a 1280x1024 monitor with modes up to that), Mint 
 - Rule "No change of the screen resolution" set through the console API of the Pro test server: the agent received it while connected; the next session had no button and the screen stayed as it was.
 - Web client in Chrome on PC-LABORATORIO towards Mint, through the Pro test server: off at the start; button on with a page of about 1264x840: "Remote screen at 1280x800" (already the best mode); full screen in the page (1280x985): 1280x960; button off: back to 1280x800.
 
-Not tried yet: macOS (needs a Mac: the modes, Retina, the restore by macOS when the agent ends), a Windows PC with two monitors, an NVIDIA or AMD driver on Windows, a laptop panel (few modes, often only the native one).
+macOS, 2026-11-10 (Mac mini M2 Pro, macOS 27.2.1): it did not work before three fixes, then the change, the end of the session, `kill -9` of the agent and a Retina mode all worked; see [33-macos.md](33-macos.md), "Tests of 2026-11-10". The modes are read with `kCGDisplayShowDuplicateLowResolutionModes` (the Retina ones), only valid and safe modes are used, and each mode is retained (core-graphics 0.25 does not).
+
+Not tried yet: a Windows PC with two monitors, an NVIDIA or AMD driver on Windows, a laptop panel (few modes, often only the native one).

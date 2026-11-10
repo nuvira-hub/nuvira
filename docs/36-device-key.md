@@ -48,7 +48,8 @@ An `H` file is used as it is and never protected in place: the account that hand
 ## macOS Keychain notes
 
 - The wrapping key's item (service `io.github.nuvira-hub.nuvira`, account `device-keys`) opens without a prompt for the program that made it, which for NuviraHub is the signed `nuvira` of the app (updates keep the same signature). An item made by another program (an unsigned build, `key-probe`) is refused to the app: the key then stays a file. Delete it with `security delete-generic-password -s io.github.nuvira-hub.nuvira -a device-keys [/Library/Keychains/System.keychain]`.
-- Over SSH the login keychain is not reachable (`errSecInteractionNotAllowed`): a person's protected key waits there; a plain one stays plain. Root's System keychain works everywhere, the sign-in screen included.
+- Over SSH the login keychain is not reachable (`errSecInteractionNotAllowed`): a person's protected key waits there; a plain one stays plain.
+- Windows of the keychain (2026-11-10): creating a key never shows one (user interaction is disabled for that call: a locked keychain, or an item asking to allow another build, sends the new key to the file at once); reading an existing key keeps it, so a person can unlock or allow it. errSecAuthFailed and errSecUserCanceled count as "not now": the key is waited for, never set aside (that changed the Mac's ID). Root's System keychain works everywhere, the sign-in screen included.
 
 ## Tests
 

@@ -42,4 +42,6 @@ A command prompt of the remote computer in a window of the viewer: Windows Power
 | PC-LABORATORIO with "Allow the remote terminal" off, then Pro rule "No remote terminal" on | NUC | both times "the remote computer does not offer the terminal" |
 | PC-LABORATORIO, app with the service | — | the setting unticked and ticked through UI Automation: the service's agent logged it and wrote `permissions.json` |
 
-Not tested yet: macOS, nobody signed in on Windows, the "Terminal only" and address book buttons of the app (the same viewer option as the tests), very large outputs.
+Nobody at the console, 2026-11-10: PC-LABORATORIO with the service of 0.22.0, mrbla's session disconnected (`tsdiscon`), so the service's agent on the sign-in screen of the console; viewer on the Mint VM with `--terminal`: the terminal opened and ended at once with code 0 and "nessun utente collegato al computer remoto" (`@agent.terminal_no_user`), as decided. A session left disconnected counts as nobody: the shell is started only with the user of the session the agent is in.
+
+Not tested yet: macOS, the "Terminal only" and address book buttons of the app (the same viewer option as the tests), very large outputs.

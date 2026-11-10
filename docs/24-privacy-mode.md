@@ -52,7 +52,7 @@ Module `nuvira_input::privacy` (`privacy_wayland.rs`) and `nuvira_input::local_i
 - **Ctrl+Alt+Del** cannot be blocked by any program: the person at the PC can always lock it (said on the black screen). The **secure desktop** (UAC prompt, lock screen) is not covered: the person at the PC sees it.
 - Some shell surfaces have their own layer above every topmost window and are expected to show through: the Start menu, notifications, the volume indicator (not verified yet).
 - The **mouse pointer** stays visible on the black screen and moves with the technician's mouse.
-- Started by the user, without nuvira-service, the hooks may not see the input going to elevated windows (UIPI); with the service (SYSTEM) this does not apply. Not verified yet.
+- Started by the user, without nuvira-service, the hooks may not see the input going to elevated windows (UIPI); with the service (SYSTEM) this does not apply (verified on 2026-11-10, see Tests). Without the service: not verified yet.
 - **macOS:** the black screens are not rebuilt when screens are added or removed during privacy mode. Keys handled below the session (power button, Touch ID, the lock key) cannot be blocked. Not tested on a real Mac yet.
 - **Linux (X11):** no message on the black screen (the gamma is zero). Drivers without a working gamma ramp keep the image on the monitor: virtual machines (virtio-gpu reports a ramp but ignores it) and some DisplayLink adapters; the local input is blocked anyway. A device switched on again from another program (`xinput enable`) is switched off within 500 ms. Laptop backlight is not touched. **Linux (Wayland):** GNOME only, with the system part of unattended access; the black screen not seen on a real monitor yet (the test VMs have no gamma ramp). If the child process is killed the agent does not notice: the viewer still shows privacy mode on, with the local input free again (also on X11).
 
@@ -78,7 +78,15 @@ Rule "No privacy mode", same day, with the Pro test server on the Ubuntu VM and 
 Setting "Allow privacy mode", same day, on PC-LABORATORIO with this build installed as the service: unticked through UI Automation, the app saved `no_privacy`, the service's agent logged "privacy mode allowed by the person at the PC allow=false" and wrote `{"privacy":false}` in `C:\ProgramData
 uvira\permissions.json`; ticked again, `{"privacy":true}`. An agent started with a `permissions.json` that does not allow it (through the Pro test server) was reached with `--privacy`: privacy mode not available.
 
-Not tested yet: turning it off from the button or unticking the setting while privacy mode is on, two screens, an elevated window in front, privacy mode in a session of the service's agent.
+Elevated window, 2026-11-10: PC-LABORATORIO with the service (SYSTEM) of 0.22.0, viewer on the Mint VM with `--privacy`. A probe started as administrator in mrbla's session (scheduled task, highest level) opened Notepad, so elevated too, brought it in front and sent three key presses with `SendInput` without NuviraHub's tag, as a physical keyboard would:
+
+| | before | during | after |
+|---|---|---|---|
+| Black windows (`NuviraPrivacy`) | 0 | 1 | 0 |
+| Elevated Notepad in front | yes | yes | yes |
+| Keys received of 3 | 3 | 0 | 3 |
+
+Not tested yet: turning it off from the button or unticking the setting while privacy mode is on, two screens, an elevated window with the agent started by the user (no service).
 
 Linux, 2026-11-07, agent on the Mint 22.3 VM (Cinnamon, X11, through the Pro test server), viewer on the Fedora 44 VM with `--privacy --input-test`. The VM's own mouse and keyboard were driven through its VNC console on the NAS (QEMU USB tablet), the pointer read with `XQueryPointer`:
 
