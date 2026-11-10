@@ -51,4 +51,29 @@ With a test bench that served the page on `localhost` and forwarded the WebSocke
 
 Then, the same day, the page served by the Pro server on the NAS behind its HTTPS proxy (Nginx Proxy Manager with Let's Encrypt, WebSocket on): `config.json` says HTTPS and licensed, `/nuvira` upgrades to a WebSocket; from Edge on that page Mint again (video, terminal, file manager up and down with the same content) and LAB (video).
 
-Still to try: the page from outside the home network (phone on mobile data), Firefox and Safari, a Windows PC with a user signed in (files and terminal on Windows), a long session over the Internet.
+## Tests (2026-11-10): Safari and Firefox from outside the home network
+
+From a Mac mini in a data centre (Scaleway, Paris; macOS 27.2) to the page served by the Pro server on the NAS behind its HTTPS proxy (`nuvira.alexbn.ddns.net/web/`, so through the Internet and the home router), towards Mint 22.3 X11 (a test agent registered on the NAS server with a permanent password):
+
+| | Safari 27 | Firefox 159 |
+|---|---|---|
+| Page, connection by ID and password | yes | yes (a wrong ID length is caught by the page: "The ID has 9 digits") |
+| Video through the relay | yes, round trip 27–30 ms | yes, round trip 27–34 ms |
+| Mouse (moves and left click land at the right place on the remote screen) | yes | yes |
+| Right click | reaches the remote computer as X button 3 (seen with `xinput test-xi2`) | the same |
+| Keyboard | yes | yes |
+| Terminal | yes (`echo safari-$((6*7)); uname -n` → `safari-42`, `VM-Mint-NuviraHub`) | yes (`firefox-42`) |
+| File manager: download | yes, same MD5 (Safari asks once whether the site may download) | yes, same MD5 (500 KB) |
+| File manager: upload | yes, same MD5 (300 KB) | yes, same MD5 (400 KB) |
+| Chat | message sent and shown in the page | not tried |
+| Clipboard, local → remote ("Paste" button) | **the session drops** (see below) | yes: Firefox shows its own "Paste" bubble, the session stays up, the text reached the remote clipboard |
+| Clipboard, remote → local | did not arrive | did not arrive |
+
+The right click did not open Cinnamon's desktop menu that day, but neither did a right click made on Mint itself with XTest, without NuviraHub: a matter of that desktop, not of the page.
+
+### Problems found
+
+- **Safari: reading the clipboard drops the session.** The "Paste" button and Cmd+V on the video call `navigator.clipboard.readText()`. Safari answers with its own "Paste" bubble, and while the bubble is open the page stops driving the connection: about 10 seconds later (the QUIC idle timeout of the page) the session ends with "connection lost: timed out". Seen three times out of three (button twice, Cmd+V once). Firefox shows a similar bubble but keeps the page running.
+- **Remote clipboard does not reach the local one on Safari and Firefox.** The page writes it with `navigator.clipboard.writeText()` when the remote clipboard changes, outside a user gesture; Safari and Firefox refuse that (Chrome and Edge allow it while the page has focus), and the page ignores the error, so nothing tells the technician.
+
+Still to try: a phone on mobile data, a Windows PC with a user signed in (files and terminal on Windows), a long session over the Internet; the chat from Firefox.
