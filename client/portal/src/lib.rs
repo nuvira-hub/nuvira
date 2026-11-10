@@ -27,8 +27,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use ashpd::desktop::remote_desktop::{
-    Axis, DeviceType, KeyState, NotifyKeyboardKeycodeOptions, NotifyPointerAxisDiscreteOptions,
-    NotifyPointerAxisOptions, NotifyPointerButtonOptions, NotifyPointerMotionAbsoluteOptions, RemoteDesktop,
+    Axis, DeviceType, KeyState, NotifyKeyboardKeycodeOptions, NotifyKeyboardKeysymOptions,
+    NotifyPointerAxisDiscreteOptions, NotifyPointerAxisOptions, NotifyPointerButtonOptions, NotifyPointerMotionAbsoluteOptions, RemoteDesktop,
     SelectDevicesOptions, StartOptions,
 };
 use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
@@ -58,6 +58,7 @@ enum Cmd {
     Wheel(Axis, i32),
     Scroll(f64, f64),
     Key(i32, bool),
+    Keysym(i32, bool),
 }
 
 /// An open session. It closes when the last `Arc` is dropped.
@@ -178,6 +179,12 @@ impl Session {
     pub fn key(&self, keycode: i32, down: bool) {
         let _ = self.cmds.send(Cmd::Key(keycode, down));
     }
+
+    /// An X keysym (a Unicode character is 0x01000000 + its code point): the
+    /// compositor finds or makes a key for it, whatever the layout.
+    pub fn keysym(&self, keysym: i32, down: bool) {
+        let _ = self.cmds.send(Cmd::Keysym(keysym, down));
+    }
 }
 
 impl Drop for Session {
@@ -261,6 +268,10 @@ fn run(
                 Cmd::Key(keycode, down) => {
                     let options = NotifyKeyboardKeycodeOptions::default();
                     remote.notify_keyboard_keycode(&session, keycode, state(down), options).await
+                }
+                Cmd::Keysym(keysym, down) => {
+                    let options = NotifyKeyboardKeysymOptions::default();
+                    remote.notify_keyboard_keysym(&session, keysym, state(down), options).await
                 }
             };
             // Once is enough in the log: the same error comes for every event.

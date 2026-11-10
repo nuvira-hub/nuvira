@@ -1152,6 +1152,8 @@ async fn session(
         recording: !terminal_only && recording_allowed(),
         recording_required,
         resolution: resolution_offered,
+        // Characters as they are (InputEvent.text), with the keyboard.
+        text: !terminal_only && !config.view_only,
         ..local_hello()
     };
     // What the person at the PC can switch off: what this session has.
@@ -2260,6 +2262,7 @@ fn local_hello() -> Hello {
         tunnel: false,
         restart: false,
         restart_users: false,
+        text: false,
         print: false,
         recording: false,
         recording_required: false,

@@ -362,6 +362,8 @@ message Hello {
   bool resolution = 16;
   // From the agent (with `restart`): it tells who else is signed in (RestartCheck).
   bool restart_users = 17;
+  // From the agent: it types InputEvent.text (Unicode characters).
+  bool text = 18;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do
@@ -478,7 +480,17 @@ message InputEvent {
     MouseWheel mouse_wheel = 3;
     Key key = 4;
     SecureAttention secure_attention = 5;
+    Text text = 6;
   }
+}
+
+// Characters typed as they are, whatever the keyboard layout of the controlled
+// computer: a phone's keyboard gives characters, not keys (the web client's
+// on-screen keyboard). Only towards agents with Hello.text. Line feed (or carriage
+// return and line feed), tab and backspace are typed as Enter, Tab and Backspace;
+// other control characters are left out.
+message Text {
+  string text = 1;
 }
 
 // Ctrl+Alt+Del on the controlled device. It cannot be sent as keys: the viewer's

@@ -43,6 +43,38 @@ pub trait InputInjector: Send {
     fn set_screen(&mut self, screen: ScreenRect);
 }
 
+/// Most characters typed from one [`nuvira_proto::v1::Text`]: a longer one is cut.
+pub const MAX_TEXT_CHARS: usize = 10_000;
+
+/// A piece of a [`nuvira_proto::v1::Text`]: a character to type as it is, or the
+/// key of one of its control characters (W3C code).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Piece {
+    Char(char),
+    Key(&'static str),
+}
+
+/// The pieces of a text: "\n" or "\r\n" is Enter, "\t" Tab, "\u{8}" Backspace;
+/// other control characters are left out.
+pub fn pieces(text: &str) -> Vec<Piece> {
+    let mut out = Vec::new();
+    let mut chars = text.chars().take(MAX_TEXT_CHARS).peekable();
+    while let Some(c) = chars.next() {
+        out.push(match c {
+            '\r' => {
+                chars.next_if_eq(&'\n');
+                Piece::Key("Enter")
+            }
+            '\n' => Piece::Key("Enter"),
+            '\t' => Piece::Key("Tab"),
+            '\u{8}' => Piece::Key("Backspace"),
+            c if c.is_control() => continue,
+            c => Piece::Char(c),
+        });
+    }
+    out
+}
+
 /// Opens input injection on the given screen.
 pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
     #[cfg(windows)]
@@ -76,4 +108,26 @@ pub fn set_dpi_awareness() {
 #[cfg(target_os = "linux")]
 pub(crate) fn wayland_session() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Piece, pieces};
+
+    #[test]
+    fn text_pieces() {
+        assert_eq!(
+            pieces("è€\r\nA\t\u{8}\u{7}\n😀"),
+            [
+                Piece::Char('è'),
+                Piece::Char('€'),
+                Piece::Key("Enter"),
+                Piece::Char('A'),
+                Piece::Key("Tab"),
+                Piece::Key("Backspace"),
+                Piece::Key("Enter"),
+                Piece::Char('😀'),
+            ]
+        );
+    }
 }

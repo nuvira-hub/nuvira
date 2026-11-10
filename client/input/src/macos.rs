@@ -21,7 +21,7 @@ use nuvira_proto::v1::input_event::Event;
 use nuvira_proto::v1::{Button, InputEvent};
 use tracing::{debug, info, warn};
 
-use crate::{InputInjector, ScreenRect};
+use crate::{InputInjector, Piece, ScreenRect};
 
 /// Units of one wheel notch in [`nuvira_proto::v1::MouseWheel`].
 const NOTCH: i32 = 120;
@@ -139,6 +139,33 @@ impl QuartzInjector {
             return;
         }
         self.post_key(keycode, down);
+    }
+
+    /// Characters as they are, carried by the event (`CGEventKeyboardSetUnicodeString`)
+    /// whatever the Mac's layout; control characters as their keys. The lock screen
+    /// takes only keys (lockhid_mac.rs): there the characters are left out.
+    fn text(&mut self, text: &str) {
+        let locked = crate::lockhid::screen_locked();
+        for piece in crate::pieces(text) {
+            match piece {
+                Piece::Key(code) => {
+                    self.key(code, true);
+                    self.key(code, false);
+                }
+                Piece::Char(_) if locked => debug!("text left out on the lock screen"),
+                Piece::Char(c) => {
+                    let mut units = [0u16; 2];
+                    let units = c.encode_utf16(&mut units);
+                    for down in [true, false] {
+                        let event = events::keyboard(0, down);
+                        if let Ok(event) = &event {
+                            event.set_string_from_utf16_unchecked(units);
+                        }
+                        self.post(event);
+                    }
+                }
+            }
+        }
     }
 
     /// A modifier key changes the flags (`FlagsChanged`, as a real keyboard does);
@@ -341,6 +368,7 @@ impl InputInjector for QuartzInjector {
             Some(Event::MouseWheel(w)) => self.wheel(w.dx, w.dy),
             Some(Event::Key(k)) => self.key(&k.code, k.down),
             Some(Event::SecureAttention(_)) => debug!("Ctrl+Alt+Del ignored on macOS"),
+            Some(Event::Text(t)) => self.text(&t.text),
             None => {}
         }
         Ok(())

@@ -145,6 +145,9 @@ pub(crate) fn run(
                 Cmd::Key(keycode, down) => {
                     remote.call::<_, _, ()>("NotifyKeyboardKeycode", &(keycode as u32, down)).await
                 }
+                Cmd::Keysym(keysym, down) => {
+                    remote.call::<_, _, ()>("NotifyKeyboardKeysym", &(keysym as u32, down)).await
+                }
             };
             if let Err(e) = result
                 && !std::mem::replace(&mut failed, true)

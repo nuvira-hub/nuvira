@@ -171,6 +171,15 @@ pub fn evdev_code(code: &str) -> Option<u16> {
     })
 }
 
+/// The X keysym of a character: Latin-1 ones are their own code, the others
+/// 0x01000000 + the code point (X11 and the Wayland compositors understand both).
+pub fn keysym(c: char) -> u32 {
+    match u32::from(c) {
+        cp @ (0x20..=0x7E | 0xA0..=0xFF) => cp,
+        cp => 0x0100_0000 | cp,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,5 +202,13 @@ mod tests {
         assert_eq!(evdev_code("MetaLeft"), Some(125));
         assert_eq!(evdev_code("Pause"), Some(119));
         assert_eq!(evdev_code("Sconosciuto"), None);
+    }
+
+    #[test]
+    fn keysyms() {
+        assert_eq!(keysym('a'), 0x61);
+        assert_eq!(keysym('è'), 0xE8);
+        assert_eq!(keysym('€'), 0x0100_20AC);
+        assert_eq!(keysym('😀'), 0x0101_F600);
     }
 }

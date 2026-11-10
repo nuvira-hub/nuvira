@@ -10,7 +10,7 @@ use nuvira_proto::v1::input_event::Event;
 use nuvira_proto::v1::{Button, InputEvent};
 use tracing::debug;
 
-use crate::{InputInjector, ScreenRect, keys};
+use crate::{InputInjector, Piece, ScreenRect, keys};
 
 /// Units of one wheel notch in [`nuvira_proto::v1::MouseWheel`].
 const NOTCH: i32 = 120;
@@ -40,6 +40,24 @@ impl PortalInjector {
             return;
         }
         self.session.key(keycode.into(), down);
+    }
+
+    /// Characters as keysyms (the compositor finds or makes a key for each one),
+    /// control characters as their keys.
+    fn text(&mut self, text: &str) {
+        for piece in crate::pieces(text) {
+            match piece {
+                Piece::Key(code) => {
+                    self.key(code, true);
+                    self.key(code, false);
+                }
+                Piece::Char(c) => {
+                    let keysym = keys::keysym(c) as i32;
+                    self.session.keysym(keysym, true);
+                    self.session.keysym(keysym, false);
+                }
+            }
+        }
     }
 
     fn button(&mut self, button: Button, down: bool) {
@@ -100,6 +118,7 @@ impl InputInjector for PortalInjector {
             Some(Event::Key(k)) => self.key(&k.code, k.down),
             // The portal has no Ctrl+Alt+Del; it would mean nothing on Linux anyway.
             Some(Event::SecureAttention(_)) => debug!("Ctrl+Alt+Del ignored on Linux"),
+            Some(Event::Text(t)) => self.text(&t.text),
             None => {}
         }
         Ok(())

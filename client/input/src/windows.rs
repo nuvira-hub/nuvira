@@ -10,7 +10,7 @@ use windows::Win32::System::Threading::{EVENT_MODIFY_STATE, OpenEventW, SetEvent
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
+    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
     MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL,
     MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_NUMLOCK, VK_PAUSE,
@@ -22,7 +22,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::HSTRING;
 
 use crate::privacy::INJECTED_TAG;
-use crate::{InputInjector, ScreenRect, keys};
+use crate::{InputInjector, Piece, ScreenRect, keys};
 
 pub fn set_dpi_awareness() {
     if let Err(e) = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) } {
@@ -115,6 +115,26 @@ impl SendInputInjector {
         send(input);
     }
 
+    /// Characters as they are (`KEYEVENTF_UNICODE`: Windows gives the window a
+    /// VK_PACKET, whatever the layout); control characters as their keys.
+    fn text(&mut self, text: &str) {
+        for piece in crate::pieces(text) {
+            match piece {
+                Piece::Key(code) => {
+                    self.key(code, true);
+                    self.key(code, false);
+                }
+                Piece::Char(c) => {
+                    let mut units = [0u16; 2];
+                    for &unit in c.encode_utf16(&mut units).iter() {
+                        send(keyboard(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE));
+                        send(keyboard(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
+                    }
+                }
+            }
+        }
+    }
+
     fn track(&mut self, held: Held, down: bool) {
         if down {
             self.held.insert(held);
@@ -176,6 +196,7 @@ impl InputInjector for SendInputInjector {
             }
             Some(Event::Key(k)) => self.key(&k.code, k.down),
             Some(Event::SecureAttention(_)) => secure_attention(),
+            Some(Event::Text(t)) => self.text(&t.text),
             None => {}
         }
         Ok(())

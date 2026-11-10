@@ -277,6 +277,8 @@ pub(crate) fn run(
                         // keyboard_key since version 4.
                         Cmd::Key(keycode, down) if version >= 4 => fake.keyboard_key(keycode as u32, u32::from(down)),
                         Cmd::Key(..) => {}
+                        // fake_input has no keysyms: text is left out on this sign-in screen.
+                        Cmd::Keysym(..) => {}
                     }
                     if let Err(e) = conn.flush() {
                         warn!("KWin input: {e}");

@@ -1,6 +1,7 @@
 //! X11 input: mouse and keyboard through the XTest extension.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use nuvira_proto::v1::input_event::Event;
@@ -8,18 +9,33 @@ use nuvira_proto::v1::{Button, InputEvent};
 use tracing::debug;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
+    BUTTON_PRESS_EVENT, ConnectionExt as _, BUTTON_RELEASE_EVENT, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
 
-use crate::{InputInjector, ScreenRect, keys};
+use crate::{InputInjector, Piece, ScreenRect, keys};
 
 /// Units of one wheel notch in [`nuvira_proto::v1::MouseWheel`].
 const NOTCH: i32 = 120;
 
 /// X key codes are the Linux ones plus 8.
 const KEYCODE_OFFSET: u16 = 8;
+
+/// After changing the spare key's symbol, before pressing it: the programs read
+/// the change (MappingNotify) and input methods such as IBus catch up.
+const MAPPING_SETTLE: Duration = Duration::from_millis(5);
+
+/// A key code borrowed to type characters of any layout: XTest sends only key
+/// codes, so for each character the key gets its symbol, then is pressed. One
+/// without symbols if there is one (most layouts leave several free), put back
+/// as it was after the text.
+struct Spare {
+    keycode: u8,
+    per_keycode: u8,
+    original: Vec<u32>,
+    changed: bool,
+}
 
 pub struct XTestInjector {
     conn: RustConnection,
@@ -29,6 +45,7 @@ pub struct XTestInjector {
     keys: HashSet<u8>,
     buttons: HashSet<u8>,
     wheel: (i32, i32),
+    spare: Option<Spare>,
 }
 
 impl XTestInjector {
@@ -37,7 +54,8 @@ impl XTestInjector {
         conn.xtest_get_version(2, 2)?.reply().context("XTest extension not available")?;
         let root = &conn.setup().roots[screen];
         let (root, width, height) = (root.root, root.width_in_pixels, root.height_in_pixels);
-        Ok(Self { conn, root, width, height, keys: HashSet::new(), buttons: HashSet::new(), wheel: (0, 0) })
+        let (keys, buttons) = (HashSet::new(), HashSet::new());
+        Ok(Self { conn, root, width, height, keys, buttons, wheel: (0, 0), spare: None })
     }
 
     fn fake(&self, kind: u8, detail: u8, x: i16, y: i16) {
@@ -58,6 +76,71 @@ impl XTestInjector {
             return;
         }
         self.fake(if down { KEY_PRESS_EVENT } else { KEY_RELEASE_EVENT }, keycode, 0, 0);
+    }
+
+    /// Characters through the spare key, control characters as their keys.
+    fn text(&mut self, text: &str) {
+        for piece in crate::pieces(text) {
+            match piece {
+                Piece::Key(code) => {
+                    self.key(code, true);
+                    self.key(code, false);
+                }
+                Piece::Char(c) => {
+                    if let Err(e) = self.type_char(c) {
+                        debug!("character not typed: {e:#}");
+                    }
+                }
+            }
+        }
+        // Waits for the last key to be read before taking its symbol away.
+        std::thread::sleep(MAPPING_SETTLE);
+        self.restore_spare();
+    }
+
+    fn type_char(&mut self, c: char) -> Result<()> {
+        if self.spare.is_none() {
+            self.spare = Some(self.find_spare()?);
+        }
+        let Some(spare) = self.spare.as_mut() else { return Ok(()) };
+        let keysym = keys::keysym(c);
+        let keycode = spare.keycode;
+        spare.changed = true;
+        self.conn.change_keyboard_mapping(1, keycode, 2, &[keysym, keysym])?;
+        // A round trip: the server applied the change before the key arrives.
+        self.conn.get_input_focus()?.reply()?;
+        std::thread::sleep(MAPPING_SETTLE);
+        self.fake(KEY_PRESS_EVENT, keycode, 0, 0);
+        self.fake(KEY_RELEASE_EVENT, keycode, 0, 0);
+        Ok(())
+    }
+
+    /// The highest key code without symbols; failing that, the highest one.
+    fn find_spare(&self) -> Result<Spare> {
+        let setup = self.conn.setup();
+        let (min, max) = (setup.min_keycode, setup.max_keycode);
+        let map = self.conn.get_keyboard_mapping(min, max - min + 1)?.reply()?;
+        let per = usize::from(map.keysyms_per_keycode.max(1));
+        let syms = |keycode: u8| {
+            let start = usize::from(keycode - min) * per;
+            map.keysyms.get(start..start + per).unwrap_or_default().to_vec()
+        };
+        let keycode = (min..=max).rev().find(|&k| syms(k).iter().all(|&s| s == 0)).unwrap_or(max);
+        debug!(keycode, "spare key for text");
+        Ok(Spare { keycode, per_keycode: per as u8, original: syms(keycode), changed: false })
+    }
+
+    fn restore_spare(&mut self) {
+        let Some(spare) = self.spare.as_mut().filter(|s| s.changed) else { return };
+        spare.changed = false;
+        let restored = self
+            .conn
+            .change_keyboard_mapping(1, spare.keycode, spare.per_keycode, &spare.original)
+            .map(|_| ())
+            .and_then(|()| self.conn.flush());
+        if let Err(e) = restored {
+            debug!("spare key not put back: {e}");
+        }
     }
 
     fn button(&mut self, button: Button, down: bool) {
@@ -109,6 +192,7 @@ impl InputInjector for XTestInjector {
             Some(Event::MouseWheel(w)) => self.wheel(w.dx, w.dy),
             Some(Event::Key(k)) => self.key(&k.code, k.down),
             Some(Event::SecureAttention(_)) => debug!("Ctrl+Alt+Del ignored on Linux"),
+            Some(Event::Text(t)) => self.text(&t.text),
             None => {}
         }
         Ok(())
@@ -126,6 +210,7 @@ impl InputInjector for XTestInjector {
             self.fake(BUTTON_RELEASE_EVENT, button, 0, 0);
         }
         self.wheel = (0, 0);
+        self.restore_spare();
     }
 }
 

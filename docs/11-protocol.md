@@ -45,7 +45,7 @@ Technician (A)           Server                      Remote (B)
 | Channel | Type | Content |
 |---|---|---|
 | `control` | reliable stream | hello, authentication, video format, screens, quality, feedback for the adaptive bitrate, clipboard, chat, file outcome, privacy mode, remote restart, close |
-| `input` | reliable stream | mouse, keyboard, wheel, Ctrl+Alt+Del |
+| `input` | reliable stream | mouse, keyboard (physical keys by W3C code), wheel, Ctrl+Alt+Del; text typed as characters (`Text`, only towards agents with `Hello.text`, from 0.22.2) |
 | `video` | QUIC datagrams with forward error correction (`Hello.video_datagrams`), or a reliable stream with older devices | encoded frames, keyframe requests on the control channel |
 | `file` | one stream per file | name and size, then data; from the agent also clipboard images, downloads and printed documents (see [29-remote-printing.md](29-remote-printing.md)) |
 | `audio` | datagrams (planned) | Opus |
