@@ -1,7 +1,6 @@
 //! X11 input: mouse and keyboard through the XTest extension.
 
 use std::collections::HashSet;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use nuvira_proto::v1::input_event::Event;
@@ -21,10 +20,6 @@ const NOTCH: i32 = 120;
 
 /// X key codes are the Linux ones plus 8.
 const KEYCODE_OFFSET: u16 = 8;
-
-/// After giving a spare key a symbol, before pressing it: the programs read the
-/// change (MappingNotify) and input methods such as IBus catch up.
-const MAPPING_SETTLE: Duration = Duration::from_millis(10);
 
 /// Most spare keys used in turn (see [`Spare`]).
 const MAX_SPARES: usize = 16;
@@ -122,9 +117,9 @@ impl XTestInjector {
                 spares.keys[i].keysym = Some(keysym);
                 let keycode = spares.keys[i].keycode;
                 self.conn.change_keyboard_mapping(1, keycode, 2, &[keysym, keysym])?;
-                // A round trip: the server applied the change before the key arrives.
+                // A round trip: the server applied the change, and sent the programs
+                // its MappingNotify, before the key, which comes after it in their queue.
                 self.conn.get_input_focus()?.reply()?;
-                std::thread::sleep(MAPPING_SETTLE);
                 i
             }
         };
