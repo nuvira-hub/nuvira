@@ -8,8 +8,11 @@
 //!   `linux-x64-deb` / `linux-x64-rpm`, by root's timer (`nuvira service
 //!   update-package`), never by the user;
 //! - macOS: the whole NuviraHub.app (program, CUPS backend, signature), channel
-//!   `macos`, a zip made with `ditto`, when the user can write the folder holding it
-//!   (an administrator, for /Applications).
+//!   `macos`, a zip made with `ditto`, when the user can write the app and the
+//!   folder holding it (an administrator, for an app dragged into /Applications);
+//! - macOS, installed for the whole Mac by the `.pkg` (an app of root's): by the
+//!   root service of that installation (`nuvira service managed-run`), never by the
+//!   user: moving a folder elsewhere needs write access to the folder itself.
 //!
 //! A replaced program is tried (`agent --version`) before it takes the old one's
 //! place, and the old one comes back if anything fails. Programs already running
@@ -32,6 +35,9 @@ pub enum Install {
     Bundle(PathBuf),
     /// Linux: installed by a package, updated by root's timer.
     Package(PackageKind),
+    /// macOS: the app bundle is root's (the `.pkg` for the whole Mac): the root
+    /// service of that installation updates it.
+    RootBundle(PathBuf),
     /// This user cannot replace it (e.g. /Applications for a standard user).
     ReadOnly(PathBuf),
 }
@@ -75,7 +81,7 @@ impl Install {
     pub fn channel(&self) -> Option<&'static str> {
         match self {
             Install::Program(_) | Install::Bundle(_) => Some(crate::platform()),
-            Install::Package(_) | Install::ReadOnly(_) => None,
+            Install::Package(_) | Install::RootBundle(_) | Install::ReadOnly(_) => None,
         }
     }
 }
@@ -84,8 +90,13 @@ impl Install {
 pub fn this_install(exe: &Path) -> Install {
     #[cfg(target_os = "macos")]
     {
+        use std::os::unix::fs::MetadataExt;
         match bundle_of(exe) {
-            Some(bundle) if bundle.parent().is_some_and(writable) => Install::Bundle(bundle),
+            // The bundle itself too: it is moved aside into another folder, which
+            // needs write access to it (an app of root's: "Permission denied",
+            // Mac mini 2026-11-10).
+            Some(bundle) if bundle.parent().is_some_and(writable) && writable(&bundle) => Install::Bundle(bundle),
+            Some(bundle) if std::fs::metadata(&bundle).is_ok_and(|m| m.uid() == 0) => Install::RootBundle(bundle),
             Some(bundle) => Install::ReadOnly(bundle),
             None => Install::ReadOnly(exe.to_path_buf()),
         }
@@ -150,6 +161,7 @@ pub fn apply(install: &Install, downloaded: &Path) -> Result<()> {
         Install::Program(exe) => apply_program(exe, downloaded),
         Install::Bundle(bundle) => apply_bundle(bundle, downloaded),
         Install::Package(_) => bail!("installed from a package: root's timer updates it"),
+        Install::RootBundle(_) => bail!("installed for the whole Mac: the NuviraHub service updates it"),
         Install::ReadOnly(path) => bail!("{} cannot be replaced by this user", path.display()),
     }
 }
@@ -316,6 +328,8 @@ fn identity(path: &Path) -> Option<(u64, u64, i64)> {
 const FIRST_CHECK: Duration = Duration::from_secs(120);
 const INTERVAL: Duration = Duration::from_secs(6 * 3600);
 const RETRY: Duration = Duration::from_secs(3600);
+/// The root service of a whole-Mac installation checks every hour, as Linux root's timer.
+const ROOT_INTERVAL: Duration = Duration::from_secs(3600);
 /// Busy when the update was found: tried again soon.
 const BUSY_RETRY: Duration = Duration::from_secs(300);
 
@@ -340,6 +354,7 @@ pub fn spawn_agent_updates(base: String, busy: PathBuf, cache: PathBuf) {
         let replaced = Replaced::watch(&exe);
         match &install {
             Install::Package(kind) => info!("installed from the {kind:?} package: root's timer updates it"),
+            Install::RootBundle(_) => info!("installed for the whole Mac: the NuviraHub service updates it"),
             Install::ReadOnly(path) => {
                 warn!("automatic updates off: {} cannot be replaced by this user", path.display())
             }
@@ -357,7 +372,7 @@ pub fn spawn_agent_updates(base: String, busy: PathBuf, cache: PathBuf) {
                 continue;
             }
             next = Instant::now()
-                + match check_and_apply(&base, &install, channel, &busy, &cache) {
+                + match check_and_apply(&base, &install, channel, &|| busy.exists(), &cache) {
                     Ok(wait) => wait,
                     Err(e) => {
                         warn!("update check failed: {e:#}");
@@ -375,7 +390,7 @@ fn check_and_apply(
     base: &str,
     install: &Install,
     channel: &str,
-    busy: &Path,
+    busy: &dyn Fn() -> bool,
     cache: &Path,
 ) -> Result<Duration> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
@@ -390,7 +405,7 @@ fn check_and_apply(
         info!("version {} downloaded and checked", manifest.version);
     }
     // Not in the middle of someone's work.
-    if busy.exists() {
+    if busy() {
         info!("session in progress: the update waits for it to end");
         return Ok(BUSY_RETRY);
     }
@@ -401,6 +416,48 @@ fn check_and_apply(
         info!("version {} installed", manifest.version);
         INTERVAL
     })
+}
+
+/// macOS, installed for the whole Mac: the root service updates the app of root's
+/// as the users' agents update their own, 2 minutes after it starts and then every
+/// hour (as Linux root's timer). `busy` tells whether a session is in progress on
+/// the Mac; `restarted` is called once the app was replaced (the service then ends
+/// and launchd starts the new program; the agents restart by themselves).
+pub fn spawn_root_bundle_updates(
+    base: String,
+    busy: Box<dyn Fn() -> bool + Send>,
+    cache: PathBuf,
+    restarted: Box<dyn Fn() + Send>,
+) {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let spawned = std::thread::Builder::new().name("updates".into()).spawn(move || {
+        let install = this_install(&exe);
+        let Install::Bundle(_) = &install else {
+            warn!("automatic updates off: {install:?} cannot be replaced by the service");
+            return;
+        };
+        clean(&install);
+        let replaced = Replaced::watch(&exe);
+        std::thread::sleep(FIRST_CHECK);
+        loop {
+            let wait = match check_and_apply(&base, &install, crate::platform(), &*busy, &cache) {
+                Ok(wait) => wait.min(ROOT_INTERVAL),
+                Err(e) => {
+                    warn!("update check failed: {e:#}");
+                    RETRY
+                }
+            };
+            if replaced.happened() {
+                info!("the app was updated: starting again with the new one");
+                restarted();
+                return;
+            }
+            std::thread::sleep(wait);
+        }
+    });
+    if let Err(e) = spawned {
+        warn!("no automatic updates: {e}");
+    }
 }
 
 #[cfg(test)]

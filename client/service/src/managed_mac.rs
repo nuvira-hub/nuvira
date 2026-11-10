@@ -441,6 +441,7 @@ pub fn run() -> Result<()> {
     let policy = crate::policy::read();
     apply_policy(&mut settings, &policy)?;
     spawn_profile(&settings);
+    spawn_updates(&settings);
     let hash = signin::password_hash()?;
     let keyboard = policy.keyboard.as_deref();
     let mut leftovers = leftovers();
@@ -488,6 +489,36 @@ pub fn run() -> Result<()> {
         }
         std::thread::sleep(Duration::from_secs(1));
     }
+}
+
+/// Downloads of the root service's updates (root only).
+const UPDATE_CACHE: &str = "/Library/Caches/NuviraHub/update";
+
+/// The app installed by the `.pkg` is root's: the people's agents cannot replace
+/// it, so this service does (nuvira_update::unix::spawn_root_bundle_updates), from
+/// the installation's server, never during someone's session.
+fn spawn_updates(settings: &Settings) {
+    let server = nuvira_transport::signal::server_or_public(&settings.server).to_string();
+    let base = nuvira_update::base_url(&server, None, nuvira_update::DEFAULT_PORT);
+    // The agent of the person in front keeps `busy` in their data folder during a session.
+    let busy = Box::new(|| {
+        std::fs::read_dir("/Users").into_iter().flatten().flatten().any(|home| {
+            home.path().join("Library/Application Support/nuvira/busy").exists()
+        })
+    });
+    let restarted = Box::new(|| {
+        // The virtual keyboard's daemon runs the same program: started again too.
+        let _ = launchctl(&["kickstart", "-k", &format!("system/{}", crate::hid::LABEL)]);
+        // launchd (KeepAlive) starts this service again with the new program, which
+        // hands the agent back to the person in front; their agent restarts by itself.
+        std::process::exit(nuvira_update::unix::RESTART_EXIT);
+    });
+    let cache = PathBuf::from(UPDATE_CACHE);
+    if let Some(parent) = cache.parent() {
+        let _ = std::fs::create_dir_all(parent);
+        let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+    }
+    nuvira_update::unix::spawn_root_bundle_updates(base, busy, cache, restarted);
 }
 
 fn spawn_profile(settings: &Settings) {
