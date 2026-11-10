@@ -10,7 +10,10 @@
 //! Desktop their session leaves the console, which is left on the sign-in screen:
 //! following only the console, NuviraHub showed that screen instead of their desktop.
 //! The agent is in a job object: if the service ends, even abruptly, Windows
-//! closes the agent instead of leaving an orphan copy behind.
+//! closes the agent instead of leaving an orphan copy behind. One job for each
+//! agent started: a job belongs to the session of the first process put in it,
+//! so one job for the service's whole life refused the agent of any other session
+//! (user switch, sign-out, Remote Desktop) with "access denied" until a restart.
 
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
@@ -107,11 +110,11 @@ impl Drop for Owned {
     }
 }
 
-/// Job object that closes the agents when the service ends.
-pub struct Job(Owned);
+/// Job object that closes its agent when the service ends (or drops it).
+struct Job(Owned);
 
 impl Job {
-    pub fn new() -> Result<Self> {
+    fn new() -> Result<Self> {
         let job = Owned(unsafe { CreateJobObjectW(None, None) }.context("CreateJobObject")?);
         let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -130,13 +133,16 @@ impl Job {
 
 pub struct AgentProcess {
     process: Owned,
+    /// Its own job, closed with it (see the module documentation).
+    _job: Job,
     pub session: u32,
     pub started: Instant,
 }
 
 impl AgentProcess {
     /// Starts `exe` with `args` in the given session. Output and errors go to `log`.
-    pub fn spawn(job: &Job, session: u32, exe: &Path, args: &str, log: &Path, cwd: &Path) -> Result<Self> {
+    pub fn spawn(session: u32, exe: &Path, args: &str, log: &Path, cwd: &Path) -> Result<Self> {
+        let job = Job::new()?;
         let token = system_token_for(session)?;
 
         // The agent inherits the log file as stdout and stderr.
@@ -185,7 +191,7 @@ impl AgentProcess {
             return Err(e).context("AssignProcessToJobObject");
         }
         unsafe { ResumeThread(thread.0) };
-        Ok(Self { process, session, started: Instant::now() })
+        Ok(Self { process, _job: job, session, started: Instant::now() })
     }
 
     /// Waits up to `timeout` for the agent to end; returns its exit code.

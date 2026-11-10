@@ -24,7 +24,7 @@ use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::core::{HSTRING, PWSTR};
 
 use crate::config::{self, ServiceConfig};
-use crate::launch::{AgentProcess, Job};
+use crate::launch::AgentProcess;
 
 /// Exit code of a process closed by the system at the end of its session.
 const DBG_TERMINATE_PROCESS: u32 = 0x4001_0004;
@@ -196,7 +196,6 @@ fn run() -> Result<()> {
     let args = format!("agent {}", agent_args(&config));
     let exe = std::env::current_exe()?;
     let data = config::data_dir();
-    let job = Job::new()?;
     let _sas = sas_listener();
     let _updates = crate::update::spawn(&STOP);
     watch_policies();
@@ -245,7 +244,7 @@ fn run() -> Result<()> {
         match session {
             Some(session) if Instant::now() >= next_start => {
                 config::rotate_log(&config::agent_log(), 10 << 20);
-                match AgentProcess::spawn(&job, session, &exe, &args, &config::agent_log(), &data) {
+                match AgentProcess::spawn(session, &exe, &args, &config::agent_log(), &data) {
                     Ok(started) => {
                         info!("agent started in session {session}");
                         agent = Some(started);

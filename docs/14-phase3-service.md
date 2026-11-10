@@ -13,7 +13,7 @@ An agent started by the user cannot see Windows' **secure desktop**: administrat
   - the agent starts with a copy of the service's SYSTEM token moved into the session (`SetTokenInformation(TokenSessionId)` + `CreateProcessAsUserW`, desktop `winsta0\default`);
   - at every session change (disconnection, user switch) the agent is closed and restarted in the new one;
   - if the agent exits by itself it is restarted, with a growing delay up to 30 s if it keeps failing right away;
-  - the agent runs in a job object with `KILL_ON_JOB_CLOSE`: if the service dies, Windows closes the agent too (no orphan copies with the same ID).
+  - the agent runs in a job object with `KILL_ON_JOB_CLOSE`: if the service dies, Windows closes the agent too (no orphan copies with the same ID). One job for each agent started: a job belongs to the session of the first process put in it. Up to 0.21.1 there was one job for the service's whole life, so after the first session change (user switch, sign-out and sign-in again, Remote Desktop) every start failed with `AssignProcessToJobObject: access denied` and the computer stayed unreachable until the service was restarted (found 2026-11-10 on PC-LABORATORIO).
 - **Secure desktop**: the capture and input threads follow the desktop that receives input (`OpenInputDesktop` + `SetThreadDesktop`, in `nuvira-capture/src/desktop.rs`). When DXGI duplication stops because of a desktop switch, it is recreated on the new one. Input goes through a dedicated thread that checks the desktop before every event. Only a SYSTEM process can open `Winlogon`: as a user the switch fails and capture resumes when the normal desktop comes back.
 - As SYSTEM, input also reaches windows opened as administrator (no UIPI block).
 

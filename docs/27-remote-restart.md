@@ -48,6 +48,10 @@ Another user signed in, 2026-11-09: Kubuntu 26.04 (managed installation, main `.
 
 The warning, 2026-11-10 (branch restart-users, the CI's `.deb`; the CI's macOS build passed too):
 - Kubuntu (managed installation) with `nvtest` signed in over SSH, viewer on Mint with `--restart-check` (the confirmation as the toolbar button shows it): the agent answered `others=["nvtest"]`, the dialog said "Sul computer sono collegate anche altre persone: nvtest. Il riavvio chiude anche le loro sessioni e il loro lavoro non salvato va perso." after the usual text; closed without answering, nothing restarted. With `nvtest` signed out: `others=[]`, the usual text only.
-- PC-LABORATORIO (Windows 10, service, only mrbla at the console): `others=[]`, its own user, the services' session and the SSH logons not counted. Another person signed in on Windows (fast user switching, Remote Desktop) not tried: it needs someone to sign in at that PC.
+- PC-LABORATORIO (Windows 10, service, only mrbla at the console): `others=[]`, its own user, the services' session and the SSH logons not counted.
+- PC-LABORATORIO, 2026-11-10, a second local user `nvtest` signed in with Remote Desktop from the NUC (mrbla's console session disconnected first, so that Windows did not ask), viewer on Fedora with `--restart-check`:
+  - the agent in nvtest's Remote Desktop session (1024×768): `others=["mrbla"]` (mrbla disconnected, still signed in);
+  - nvtest disconnected too, the agent on the sign-in screen of the console: `others=["mrbla", "nvtest"]`.
+  The first try found a service bug: after the session change the service could no longer start the agent (`AssignProcessToJobObject: access denied`, see [14-phase3-service.md](14-phase3-service.md)); fixed with one job per agent, then the service followed 3 → 2 → 1 without being restarted.
 
 Not tested yet: the refusal on a distribution with systemd's default policy, a refusal `@agent.restarting` (the computers went down before the first attempt).
