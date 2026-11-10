@@ -71,7 +71,11 @@ From a Mac mini in a data centre (Scaleway, Paris; macOS 27.2) to the page serve
 
 The right click did not open Cinnamon's desktop menu that day, but neither did a right click made on Mint itself with XTest, without NuviraHub: a matter of that desktop, not of the page.
 
-### Problems found
+### Problems found (fixed the same day)
+
+Both are fixed in the page: Ctrl/Cmd+V takes the text from the browser's paste event (no clipboard request, no bubble), Safari's Paste button opens a small field to press Cmd+V in, and text copied on the remote computer that the browser does not let the page copy by itself comes with a "Copy" button (or, if even that is refused, a field to copy it by hand). Tried on Safari 27, Firefox 159 and Chrome 157 towards Mint: the text went both ways and the session stayed up.
+
+What was seen before the fix:
 
 - **Safari: reading the clipboard drops the session.** The "Paste" button and Cmd+V on the video call `navigator.clipboard.readText()`. Safari answers with its own "Paste" bubble, and while the bubble is open the page stops driving the connection: about 10 seconds later (the QUIC idle timeout of the page) the session ends with "connection lost: timed out". Seen three times out of three (button twice, Cmd+V once). Firefox shows a similar bubble but keeps the page running.
 - **Remote clipboard does not reach the local one on Safari and Firefox.** The page writes it with `navigator.clipboard.writeText()` when the remote clipboard changes, outside a user gesture; Safari and Firefox refuse that (Chrome and Edge allow it while the page has focus), and the page ignores the error, so nothing tells the technician.
