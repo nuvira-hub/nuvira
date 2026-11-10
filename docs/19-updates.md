@@ -44,6 +44,7 @@ There is no separate service process: the user service (systemd user unit on Lin
 | Linux, `install.sh` of the tar.gz (`~/.local/share/nuvira`) or any copy the user can write | the user's agent, or the app without unattended access | `linux-x64` | the program is copied beside the old one, started once (`agent --version`), then renamed into place; the old one is kept as `nuvira.old` until the next start |
 | Linux, .deb or .rpm (`/usr/bin/nuvira`) | root's `nuvira-update.timer` of the package | `linux-x64-deb` / `-rpm` | `nuvira service update-package`: `apt-get install` / `dnf install` of the downloaded package |
 | macOS, NuviraHub.app in a folder the user can write (/Applications for an administrator) | the user's agent, or the app without unattended access | `macos` | the zip is unpacked with `ditto` beside the app (`.NuviraHub-update`), its signature checked (`codesign --verify --deep --strict`, same designated requirement as the running app: macOS keeps the Screen Recording and Accessibility permissions only for that), started once, then the bundles are swapped |
+| macOS for the whole Mac (the `.pkg`, an MDM): NuviraHub.app is root's | the installation's root service (`nuvira service managed-run`), since 0.22.2 | `macos` | as above, run by root, from the installation's server, 2 minutes after the service starts and then every hour, not during a session; the new app is made root's again (`chown -R root:wheel`), then the virtual keyboard daemon is started again and the service ends: launchd starts the new program and the person's agent follows |
 | macOS for a standard user, a program in a folder of root's | nobody (logged once by the agent) | — | updated by hand |
 
 - **The agent** (user service only) checks 2 minutes after starting and every 6 hours (1 hour after an error). During a session it keeps `busy` in the data folder (`~/.config/nuvira`, `~/Library/Application Support/nuvira`): an update found then is downloaded and installed 5 minutes after the session ends. Every 15 s it looks whether its program file was replaced (by itself, by root's timer or by hand): if so and no session is in progress it ends, and systemd (`Restart=always`) or launchd (`KeepAlive`) starts the new program.
@@ -106,6 +107,16 @@ PC-LABORATORIO's service with main (f6448b5, built on the NUC), pointed at a nuv
 Afterwards the manifest was removed, the service put back on alexbn.ddns.net (ID 260 905 122 as before) and the test server and files removed.
 
 Not tested yet: macOS (the bundle swap, signature and designated requirement check, the Screen Recording and Accessibility permissions after the swap, a standard user), the .rpm with dnf, the app's "Update" and "Restart" bars on Linux and macOS, an agent of a package install restarting after root's update.
+
+## Test of 2026-11-10 (Mac installed with the .pkg)
+
+Mac mini M2 Pro, NuviraHub 0.22.0 from the `.pkg` (app of root's), server the NAS publishing 0.22.1. The person's agent: "version 0.22.1 available", downloaded and checked, then "moving the old app aside: Permission denied (os error 13)": a folder moved into another needs write access to the folder itself, and the app is root's. So Macs deployed by the package or an MDM never updated by themselves. (The earlier macOS test, 2026-11-07, had the app dragged from the dmg, the person's.)
+
+Fixed in main (0d56212, 0b3d0e5): the agent sees an app of root's (`RootBundle`) and leaves it to the root service, which updates it. Tried with the CI's signed and notarized package of main installed by `sudo installer`, a test nuvira-server on the Mac (127.0.0.1:21316) publishing that app as 0.22.1.1 and then 0.22.1.2 signed with the release key, the organisation's profile pointing at it:
+- 2 minutes after the service started: available, downloaded and checked in 0.1 s, installed in 1.1 s, "the app was updated: starting again with the new one"; the service, the virtual keyboard daemon and the person's agent came back with the new program, same ID on the server;
+- the first try left the app owned by the archive's user (`m1:staff`): `chown -R root:wheel` added; the second try kept it `root:wheel`;
+- `codesign --verify --deep --strict` valid and Gatekeeper "Notarized Developer ID" after the swap.
+Afterwards the profile and the server were put back (NAS) and the test files removed.
 
 ## To do
 
