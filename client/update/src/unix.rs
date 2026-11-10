@@ -221,6 +221,13 @@ fn apply_bundle(bundle: &Path, downloaded: &Path) -> Result<()> {
             bail!("the new app is not signed like this one");
         }
         try_program(&new.join("Contents/MacOS/nuvira"))?;
+        // Unpacked by root (the service of a whole-Mac installation) the files keep
+        // the owner of the archive: the app must stay root's, as the .pkg left it,
+        // or the people's agents would take it for theirs.
+        // SAFETY: geteuid cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            run("/usr/sbin/chown", &["-R", "root:wheel"], &[&new]).context("owner of the new app")?;
+        }
         let aside = work.join("previous.app");
         std::fs::rename(bundle, &aside).context("moving the old app aside")?;
         if let Err(e) = std::fs::rename(&new, bundle) {
