@@ -363,11 +363,12 @@ mod sys {
     const ACCOUNT: &str = "device-keys";
     const SYSTEM_KEYCHAIN: &str = "/Library/Keychains/System.keychain";
     const NOT_FOUND: i32 = -25300;
-    /// errSecInteractionNotAllowed, errSecNoSuchKeychain, errSecNotAvailable, and
-    /// errSecAuthFailed: what an item answers with interaction disabled when it
-    /// would have asked to allow this program (another build or signature). Never
-    /// "unreadable": that would set the key aside and change the computer's ID.
-    const LATER: [i32; 4] = [-25308, -25294, -25291, -25293];
+    /// errSecInteractionNotAllowed, errSecNoSuchKeychain, errSecNotAvailable,
+    /// errSecAuthFailed (what an item answers with interaction disabled when it
+    /// would have asked to allow this program: another build or signature) and
+    /// errSecUserCanceled (Cancel in the keychain window). Never "unreadable":
+    /// that would set the key aside and change the computer's ID.
+    const LATER: [i32; 5] = [-25308, -25294, -25291, -25293, -128];
 
     pub fn preferred() -> Protection {
         Protection::Keychain
