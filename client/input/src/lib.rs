@@ -13,6 +13,10 @@ pub mod privacy;
 pub mod local_input;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod keymap_wayland;
+#[cfg(target_os = "linux")]
+mod ibus_watch;
 #[cfg(target_os = "macos")]
 pub mod macos;
 /// Keys typed into the macOS lock screen by a virtual HID keyboard.

@@ -29,6 +29,12 @@ features = [
 nuvira-portal = { path = "../portal" }
 libc = "0.2"
 x11rb = { version = "0.13", features = ["randr", "xinput", "xtest"] }
+# Text on Wayland: the compositor's keymap (wl_keyboard), compiled with libxkbcommon
+# loaded at run time (the same crates winit uses).
+wayland-client = "0.31"
+xkbcommon-dl = "0.4"
+# IBus's signals for the Unicode entry (ibus_watch.rs).
+futures-util = "0.3"
 # Privacy mode on Wayland: Mutter's DisplayConfig (zbus as ashpd builds it, on tokio).
 tokio = { workspace = true, features = ["rt"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
