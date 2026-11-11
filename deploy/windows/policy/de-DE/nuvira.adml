@@ -12,7 +12,7 @@
       <string id="PasswordHash">Dauerhaftes Passwort</string>
       <string id="PasswordHash_Help">Das dauerhafte Passwort für den unbeaufsichtigten Zugriff, als Hash: nie das Passwort selbst, denn jeder Benutzer des PCs kann die Richtlinien lesen. Den Hash erzeugst du mit: nuvira.exe service password-hash (fragt nach dem Passwort). Verwende ein langes, zufälliges Passwort: Wer den Hash lesen kann, kann offline Passwörter ausprobieren.</string>
       <string id="Profile">Profil des angepassten Installationsprogramms (Pro)</string>
-      <string id="Profile_Help">NuviraHub Pro: der Code eines Profils für angepasste Installationsprogramme Ihres Servers (Webkonsole, Installationsprogramme). Die PCs übernehmen Logo, Farben, Kontakte und Sprache dieses Profils vom Server.</string>
+      <string id="Profile_Help">NuviraHub Pro: der Code eines Profils für angepasste Installationsprogramme deines Servers (Webkonsole, Installationsprogramme). Die PCs übernehmen Logo, Farben, Kontakte und Sprache dieses Profils vom Server.</string>
     </stringTable>
     <presentationTable>
       <presentation id="Server">
