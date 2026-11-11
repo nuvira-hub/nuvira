@@ -56,7 +56,7 @@ fn update_blocked() -> Option<String> {
 }
 
 /// How often the agent looks at that file while an app is connected.
-const UPDATE_BLOCKED_EVERY: Duration = Duration::from_secs(60);
+const UPDATE_BLOCKED_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Messages from the agent to the app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
