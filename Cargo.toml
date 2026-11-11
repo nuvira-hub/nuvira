@@ -20,7 +20,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.22.5"
+version = "0.22.6"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 authors = ["Alessandro Blason"]
