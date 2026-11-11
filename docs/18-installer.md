@@ -36,6 +36,10 @@ Settings → Unattended access → "Install on this computer": permanent passwor
 - the outcome comes back as JSON in another file (`--report`): the app cannot see the output of a process started as administrator;
 - once installed the app switches to the service's agent (same ID and passwords as the service).
 
+### Changing the permanent password (from 0.22.5)
+
+The permanent password cannot be read back (only its hash is stored), so a forgotten one is replaced. With unattended access installed from here (not by an organisation, whose password comes from its policy or deployment), Settings → Unattended access → "Change the permanent password" installs again with the new password and the server already in use, so the ID stays: on Windows `service install --server <current> --password-file`, with the administrator prompt; on Linux and macOS the user service again, then the system's part (administrator password) so that the sign-in screen takes the new hash too. The service restarts, so a session in progress is closed. Without the app, as administrator: `nuvira.exe service install --server <current server> --password <new>` (without `--server` the PC moves to the public server and its ID may change). Tried on PC-LABORATORIO on 2026-11-11 (service on the NAS's server): same ID, the temporary password renewed, the old password refused and the new one accepted from the web client.
+
 The installation copies the program to `%ProgramFiles%\nuvira\nuvira.exe`, installs the service, opens the firewall for the direct path, enables Ctrl+Alt+Del for services and adds:
 
 - a Start menu shortcut (all users);

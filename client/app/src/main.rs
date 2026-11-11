@@ -1450,8 +1450,16 @@ fn attach_console() {
 /// started as administrator (UAC prompt). The password travels in a temporary file,
 /// not on the command line, and the outcome comes back the same way. Returns the
 /// message to show, with the permanent password if it was generated.
+///
+/// With `change` it is already installed and only the permanent password changes:
+/// installed again with the same server, so the ID stays (on Linux and macOS the
+/// system's part takes the new password's hash too).
 #[tauri::command]
-async fn install_service(app: AppHandle, password: String) -> Result<String, String> {
+async fn install_service(app: AppHandle, password: String, change: Option<bool>) -> Result<String, String> {
+    let change = change.unwrap_or(false);
+    if change && password.chars().count() < 8 {
+        return Err(t("settings.install_pw_short"));
+    }
     // Quick support runs and goes: it does not install.
     if branding::get().is_some_and(branding::Branding::quick) {
         return Err(t("err.locked"));
@@ -1475,6 +1483,7 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
             let generated = nuvira_service::user::install(&opts).map_err(|e| format!("{e:#}"))?;
             Ok(match generated {
                 Some(generated) => tf("install.done_password", &[("password", &generated)]),
+                None if change => t("settings.pw_changed"),
                 None => t("install.done"),
             })
         })
@@ -1505,7 +1514,7 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
     }
     #[cfg(not(any(windows, unix)))]
     {
-        let _ = (app, password);
+        let _ = (app, password, change);
         Err(t("install.windows_only"))
     }
     #[cfg(windows)]
@@ -1528,6 +1537,7 @@ async fn install_service(app: AppHandle, password: String) -> Result<String, Str
             // Present only if the installation generated it.
             Ok(match report["password"].as_str() {
                 Some(generated) => tf("install.done_password", &[("password", generated)]),
+                None if change => t("settings.pw_changed"),
                 None => t("install.done"),
             })
         })

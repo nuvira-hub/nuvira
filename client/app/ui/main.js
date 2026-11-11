@@ -260,6 +260,8 @@ function render(state) {
   $("uninstall-row").classList.toggle("hidden", !((linux || mac) && state.service && !state.service_managed));
   // Installed by the organisation: nothing to install from here either.
   if (state.service_managed) $("install-off").classList.add("hidden");
+  // Installed from here (not by the organisation, whose password comes from its policy).
+  $("change-pw").classList.toggle("hidden", !state.service || Boolean(state.service_managed));
   $("password-label").textContent = t(state.service ? "connect.temp_password" : "connect.password");
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password || "—";
@@ -487,6 +489,30 @@ $("install-form").addEventListener("submit", async (e) => {
     show(String(err), false);
   } finally {
     $("install-button").disabled = false;
+  }
+});
+
+// A new permanent password: installed again with the same server, so the ID stays.
+$("change-pw-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const message = $("install-message");
+  const show = (text, ok) => {
+    message.textContent = msg(text);
+    message.classList.toggle("ok", ok);
+    message.classList.remove("hidden");
+  };
+  const password = $("change-pw1").value;
+  if (password !== $("change-pw2").value) return show(t("settings.pw_mismatch"), false);
+  if (password.length < 8) return show(t("settings.install_pw_short"), false);
+  $("change-pw-button").disabled = true;
+  show(t("settings.changing_pw"), true);
+  try {
+    show(await invoke("install_service", { password, change: true }), true);
+    $("change-pw-form").reset();
+  } catch (err) {
+    show(String(err), false);
+  } finally {
+    $("change-pw-button").disabled = false;
   }
 });
 

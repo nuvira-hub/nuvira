@@ -266,6 +266,18 @@
           </form>
         </div>
         <p id="install-on" class="hint hidden" data-i18n="settings.installed">Installed: this computer can be reached even when nobody is in front of it. To remove NuviraHub use the installed apps in Windows settings.</p>
+        <div id="change-pw" class="hidden">
+          <h3 data-i18n="settings.change_pw">Change the permanent password</h3>
+          <p class="hint" data-i18n="settings.change_pw_hint">A new permanent password for unattended access: the ID and the server stay the same. The old one cannot be read, only replaced. An administrator's confirmation may be asked, and a session in progress is closed.</p>
+          <form id="change-pw-form" class="stack">
+            <input id="change-pw1" type="password" autocomplete="new-password" required data-i18n-placeholder="settings.pw_new" placeholder="New password (at least 8 characters)">
+            <input id="change-pw2" type="password" autocomplete="new-password" required data-i18n-placeholder="settings.pw_confirm" placeholder="Repeat the new password">
+            <div class="actions">
+              <span class="spacer"></span>
+              <button type="submit" id="change-pw-button" data-i18n="settings.change_pw">Change the permanent password</button>
+            </div>
+          </form>
+        </div>
         <div id="uninstall-row" class="actions hidden">
           <span class="spacer"></span>
           <button type="button" id="uninstall-button" data-i18n="settings.uninstall">Remove unattended access</button>
