@@ -53,6 +53,12 @@ pub const DEFAULT_PORT: u16 = 21116;
 /// Version of this program.
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
+/// File in the service's data folder (Windows) holding the version whose
+/// installation keeps failing, as text: something on the PC (an antivirus or
+/// anti-ransomware program) stops it. Written by the service, read by its agent,
+/// which tells the app.
+pub const BLOCKED_FILE: &str = "update-blocked";
+
 #[cfg(unix)]
 pub mod unix;
 

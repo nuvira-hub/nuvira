@@ -40,6 +40,24 @@ use windows::core::{HSTRING, PCWSTR};
 
 use crate::{AgentCommand, AgentEvent};
 
+/// The service's file naming a version whose installation keeps failing
+/// ([`nuvira_update::BLOCKED_FILE`]), set by the service's agent on Windows.
+static UPDATE_BLOCKED: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Tells the apps when the service's updates keep failing (see [`UPDATE_BLOCKED`]).
+pub fn watch_update_blocked(path: std::path::PathBuf) {
+    let _ = UPDATE_BLOCKED.set(path);
+}
+
+/// The version the service cannot install, if any.
+fn update_blocked() -> Option<String> {
+    let text = std::fs::read_to_string(UPDATE_BLOCKED.get()?).ok()?;
+    Some(text.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// How often the agent looks at that file while an app is connected.
+const UPDATE_BLOCKED_EVERY: Duration = Duration::from_secs(60);
+
 /// Messages from the agent to the app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -50,6 +68,10 @@ pub enum ToApp {
         server: String,
         #[serde(default)]
         version: String,
+        /// A version the service keeps failing to install: an antivirus or
+        /// anti-ransomware program on the PC stops it. Sent again when it changes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        update_blocked: Option<String>,
     },
     Event {
         event: AgentEvent,
@@ -253,11 +275,15 @@ async fn serve_app(
 ) -> Result<()> {
     let (read, mut write) = tokio::io::split(pipe);
     let mut lines = BufReader::new(read).lines();
-    send_line(
-        &mut write,
-        &ToApp::Info { server: server.to_string(), version: env!("CARGO_PKG_VERSION").into() },
-    )
-    .await?;
+    let info = |update_blocked| ToApp::Info {
+        server: server.to_string(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        update_blocked,
+    };
+    let mut blocked = update_blocked();
+    send_line(&mut write, &info(blocked.clone())).await?;
+    let mut blocked_check = tokio::time::interval(UPDATE_BLOCKED_EVERY);
+    blocked_check.tick().await;
     for event in snapshot.events() {
         send_line(&mut write, &ToApp::Event { event: event.clone() }).await?;
     }
@@ -276,6 +302,13 @@ async fn serve_app(
                 let Some(event) = event else { return Ok(()) };
                 snapshot.apply(&event);
                 send_line(&mut write, &ToApp::Event { event }).await?;
+            }
+            _ = blocked_check.tick(), if UPDATE_BLOCKED.get().is_some() => {
+                let now = update_blocked();
+                if now != blocked {
+                    blocked = now;
+                    send_line(&mut write, &info(blocked.clone())).await?;
+                }
             }
         }
     }
@@ -561,6 +594,15 @@ mod tests {
             r#"{"type":"event","event":{"event":"online","device_id":"123456789","websocket":false}}"#
         );
         assert!(matches!(serde_json::from_str::<ToApp>(&json).unwrap(), ToApp::Event { .. }));
+        // Info of an older agent (no update_blocked), and no field when there is
+        // nothing to say (older apps read it as before).
+        let old: ToApp = serde_json::from_str(r#"{"type":"info","server":"s","version":"0.22.2"}"#).unwrap();
+        assert!(matches!(old, ToApp::Info { update_blocked: None, .. }));
+        let none = serde_json::to_string(&ToApp::Info { server: "s".into(), version: "1".into(), update_blocked: None }).unwrap();
+        assert!(!none.contains("update_blocked"));
+        let some = ToApp::Info { server: "s".into(), version: "1".into(), update_blocked: Some("0.22.4".into()) };
+        let back: ToApp = serde_json::from_str(&serde_json::to_string(&some).unwrap()).unwrap();
+        assert!(matches!(back, ToApp::Info { update_blocked: Some(v), .. } if v == "0.22.4"));
         let command: AgentCommand =
             serde_json::from_str(r#"{"command":"respond","session_id":"s","accept":true}"#).unwrap();
         assert!(matches!(command, AgentCommand::Respond { accept: true, .. }));

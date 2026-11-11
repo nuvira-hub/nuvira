@@ -224,7 +224,7 @@ function render(state) {
   $("record-dir").textContent = state.record_dir;
   $("print-auto").classList.toggle("hidden", !state.print_auto);
   $("print-auto-text").textContent = state.print_auto ? t("settings.print_auto", { printer: state.print_auto }) : "";
-  $("update-bar").classList.toggle("hidden", !state.update && !state.installed && !state.service_stopped);
+  $("update-bar").classList.toggle("hidden", !state.update && !state.installed && !state.service_stopped && !state.update_blocked);
   if (!$("update-button").disabled) {
     if (!state.service_stopped) repairError = null;
     if (state.service_stopped) {
@@ -237,7 +237,14 @@ function render(state) {
     } else if (state.update) {
       $("update-text").textContent = t("update.available", { version: state.update });
       $("update-button").textContent = t("update.button");
+    } else if (state.update_blocked) {
+      $("update-text").textContent = t("update.blocked", { version: state.update_blocked });
     }
+    // Only a notice: nothing the app could do about it.
+    $("update-button").classList.toggle(
+      "hidden",
+      Boolean(state.update_blocked) && !state.service_stopped && !state.installed && !state.update,
+    );
   }
   $("install-on").classList.toggle("hidden", !state.service);
   // Linux and macOS: a user service (systemd, launchd), removed from here;

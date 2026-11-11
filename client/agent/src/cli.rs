@@ -269,6 +269,12 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             }
             (_, given) => given,
         };
+        // Windows: the service's agent has its data folder next to the busy file,
+        // where the service says which update keeps failing.
+        #[cfg(windows)]
+        if let (true, Some(dir)) = (ipc, busy_file.as_ref().and_then(|f| f.parent())) {
+            crate::ipc::watch_update_blocked(dir.join(nuvira_update::BLOCKED_FILE));
+        }
         if let Some(file) = &busy_file {
             // Left over by an agent that did not end cleanly.
             let _ = std::fs::remove_file(file);

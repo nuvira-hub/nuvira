@@ -113,6 +113,8 @@ struct UiState {
     update: Option<String>,
     /// Newer version installed by the service while this app was open: restart it.
     installed: Option<String>,
+    /// A version the service keeps failing to install (something on the PC stops it).
+    update_blocked: Option<String>,
     /// The service is installed but stopped: this PC is not reachable.
     service_stopped: bool,
     /// Version of the stopped service's program, when older than this app (starting
@@ -571,13 +573,14 @@ fn start_service_link(app: &AppHandle) {
                         match msg {
                             // With the service the server in the settings is the service's
                             // (empty = public), also for outgoing connections.
-                            ToApp::Info { server, version } => {
+                            ToApp::Info { server, version, update_blocked } => {
                                 *state.service_server.lock().expect("service server") = Some(server.clone());
                                 keep_service_server(&server);
                                 state.update(&app, |ui| {
                                     ui.server = shown_server(&server);
                                     ui.installed = nuvira_update::newer(&version, nuvira_update::CURRENT)
                                         .then_some(version);
+                                    ui.update_blocked = update_blocked;
                                 })
                             }
                             ToApp::Event { event } => on_agent_event(&app, event),

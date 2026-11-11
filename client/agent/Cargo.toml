@@ -25,6 +25,7 @@ nuvira-i18n.workspace = true
 nuvira-input.workspace = true
 nuvira-proto.workspace = true
 nuvira-transport.workspace = true
+nuvira-update = { path = "../update" }
 prost.workspace = true
 quinn.workspace = true
 ring = "0.17"
@@ -41,7 +42,6 @@ libc = "0.2"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 nuvira-cups.workspace = true
-nuvira-update = { path = "../update" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nuvira-portal = { path = "../portal" }

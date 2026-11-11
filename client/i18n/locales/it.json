@@ -429,6 +429,7 @@
   "update.failed": "Aggiornamento non riuscito: {e}",
   "update.none": "Sul server non c'è una versione più recente.",
   "update.installed": "NuviraHub {version} è stato installato: riavvia l'app per usarlo.",
+  "update.blocked": "Non è stato possibile installare NuviraHub {version}: probabilmente un programma di sicurezza di questo PC (antivirus o anti-ransomware) blocca l'aggiornamento. Consenti in quel programma C:\\Program Files\\nuvira\\nuvira.exe, C:\\ProgramData\\nuvira\\backup\\nuvira.exe e C:\\ProgramData\\nuvira\\update\\nuvira-update.exe, oppure installa la nuova versione a mano da nuvirahub.dev.",
   "update.restart": "Riavvia",
   "service.stopped": "Il servizio NuviraHub è fermo: finché non riparte questo PC non è raggiungibile da remoto.",
   "service.stopped_old": "Il servizio NuviraHub {version} è fermo: finché non riparte questo PC non è raggiungibile da remoto. Ripartendo verrà aggiornato a questa versione.",

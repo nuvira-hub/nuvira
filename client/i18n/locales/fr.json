@@ -429,6 +429,7 @@
   "update.failed": "La mise à jour a échoué : {e}",
   "update.none": "Aucune version plus récente sur le serveur.",
   "update.installed": "NuviraHub {version} a été installé : redémarrez l'application pour l'utiliser.",
+  "update.blocked": "NuviraHub {version} n'a pas pu être installé : un logiciel de sécurité de ce PC (antivirus ou anti-ransomware) bloque probablement la mise à jour. Autorisez-y C:\\Program Files\\nuvira\\nuvira.exe, C:\\ProgramData\\nuvira\\backup\\nuvira.exe et C:\\ProgramData\\nuvira\\update\\nuvira-update.exe, ou installez la nouvelle version à la main depuis nuvirahub.dev.",
   "update.restart": "Redémarrer",
   "service.stopped": "Le service NuviraHub est arrêté : tant qu'il ne redémarre pas, ce PC n'est pas joignable à distance.",
   "service.stopped_old": "Le service NuviraHub {version} est arrêté : tant qu'il ne redémarre pas, ce PC n'est pas joignable à distance. En redémarrant, il sera mis à jour vers cette version.",

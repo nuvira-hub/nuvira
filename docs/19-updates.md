@@ -29,6 +29,10 @@ Before stopping the service the update registers the system task "NuviraHub upda
 
 Why (2026-11-01): Kaspersky Anti-Ransomware Tool took the unsigned program installing the service for malware (`PDM:Trojan.Win32.Generic`), stopped it and rolled back what it had done: it deleted every file the update had written or renamed, the new program and the old one moved aside, so the service had nothing to start. With the backup the NUC was back on the previous version within a minute, with no one at the PC. The real fix is signing the program (see `tools/sign-code.sh`); this keeps a PC reachable whatever stops an update.
 
+### When something keeps stopping it (from 0.22.4)
+
+An antivirus or anti-ransomware program can stop every update without anything showing on the PC: on the NUC Kaspersky Anti-Ransomware Tool refused each one for days, and only `service.log` said so ("Access denied", every hour). Now the service counts its installations per version in `%ProgramData%\nuvira\update-attempts` ("0.22.4 2"). Starting the same version a second time means the first did not go through, so it writes that version to `update-blocked` in the same folder. The service's agent reads that file when an app connects and every minute after, and sends it in its `Info` message (`update_blocked`; older apps ignore the field). The app shows a notice with no button: a security program on the PC is probably stopping the update, allow the three files above in it, or install the new version by hand from nuvirahub.dev. Once the service finds no newer version (the update went through, or the person installed it), it removes both files, and the notice goes away within a minute. Tried on 2026-11-11 on PC-LABORATORIO with a test build: the file written by hand, the notice shown in the open app, then gone a minute after the service's check removed the file.
+
 The Start menu shortcut is made by the program itself (no PowerShell: a script started by the update was the first thing Kaspersky flagged), only when missing, and after the service has started.
 
 ### The open app
