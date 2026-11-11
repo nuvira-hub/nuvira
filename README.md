@@ -22,14 +22,14 @@
 ## Why NuviraHub
 
 - **Your server, one container.** Signalling, relay and app updates in a single Docker image on one port (21116, UDP and TCP), for a NAS, a home server or a small VPS. Templates for Unraid included. Without a server of your own, the app uses the free public one.
-- **End-to-end encrypted.** Sessions are QUIC/TLS between the two devices, authenticated with their Ed25519 keys. The server never sees the screen, the input, the clipboard or the files, not even when it relays the traffic.
-- **Fast.** The two devices connect directly whenever the network allows it, and through the server's relay otherwise; on networks that block UDP, over WebSocket. Capture and H.264 encoding stay on the graphics card. On a local network at 1920×1080: 16 ms median latency from capture to display with an NVIDIA RTX 4060 Ti, 27 ms with Intel Quick Sync ([how it was measured](https://nuvirahub.dev/en/features/)).
+- **End-to-end encrypted.** Sessions are QUIC/TLS between the two devices, authenticated with their Ed25519 keys, which the system protects where it can (DPAPI on Windows, the Keychain on macOS, Secret Service or systemd-creds on Linux). The server never sees the screen, the input, the clipboard or the files, not even when it relays the traffic.
+- **Fast.** The two devices connect directly whenever the network allows it, over IPv4 or IPv6, and through the server's relay otherwise; on networks that block UDP, over WebSocket. Capture and H.264 encoding stay on the graphics card. On a local network at 1920×1080: 16 ms median latency from capture to display with an NVIDIA RTX 4060 Ti, 27 ms with Intel Quick Sync ([how it was measured](https://nuvirahub.dev/en/features/)).
 - **Windows, Linux and macOS.**
   - Attended support, with the person at the computer confirming.
-  - Unattended access on all three, also at the sign-in screen after a restart; on Windows including administrator prompts (UAC), the lock screen and Ctrl+Alt+Del.
+  - Unattended access on all three, also at the sign-in screen after a restart; on Windows including administrator prompts (UAC), the lock screen and Ctrl+Alt+Del; the locked screen on GNOME, and on macOS by typing the password.
   - Signed program (Certum on Windows, Developer ID and notarization on macOS) and signed automatic updates.
   - Installation on many computers: MSI and Group Policy or Intune on Windows, a package and an MDM profile on macOS, `.deb`/`.rpm` and one command on Linux.
-- **Everything a session needs.** Multiple screens, clipboard with text and images, chat, a file manager with resumable transfers, remote terminal, printing on the technician's printer, session recording (always announced to the person at the computer), privacy mode, remote restart, and a local address book.
+- **Everything a session needs.** Multiple screens, the remote resolution adapted to the window, clipboard with text and images, chat, a file manager with resumable transfers, remote terminal, printing on the technician's printer, session recording (always announced to the person at the computer), privacy mode, remote restart, and a local address book.
 - **Five languages**: English, Italian, French, German, Spanish.
 - **Free software** under the AGPL.
 
