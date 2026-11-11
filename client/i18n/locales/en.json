@@ -218,6 +218,7 @@
   "settings.change_pw": "Change the permanent password",
   "settings.change_pw_hint": "A new permanent password for unattended access: the ID and the server stay the same. The old one cannot be read, only replaced. An administrator's confirmation may be asked, and a session in progress is closed.",
   "settings.changing_pw": "Changing the password: confirm the administrator prompt if it appears…",
+  "settings.pw_managed": "The permanent password is set by the organisation's policies: it is changed there.",
   "settings.pw_changed": "Permanent password changed: from now on this computer is reached with the new one.",
   "settings.install_pw": "Permanent password (empty: one is generated)",
   "settings.install_pw_short": "The permanent password must have at least 8 characters.",

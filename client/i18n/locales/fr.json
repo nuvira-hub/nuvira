@@ -218,6 +218,7 @@
   "settings.change_pw": "Changer le mot de passe permanent",
   "settings.change_pw_hint": "Un nouveau mot de passe permanent pour l'accès sans surveillance : l'ID et le serveur restent les mêmes. L'ancien ne peut pas être lu, seulement remplacé. La confirmation d'un administrateur peut être demandée, et une session en cours est fermée.",
   "settings.changing_pw": "Changement du mot de passe : confirmez la demande d'administrateur si elle apparaît…",
+  "settings.pw_managed": "Le mot de passe permanent est fixé par les stratégies de l'organisation : il se change là.",
   "settings.pw_changed": "Mot de passe permanent changé : désormais cet ordinateur se joint avec le nouveau.",
   "settings.install_pw": "Mot de passe permanent (vide : il est généré)",
   "settings.install_pw_short": "Le mot de passe permanent doit comporter au moins 8 caractères.",

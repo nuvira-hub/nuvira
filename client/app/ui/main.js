@@ -261,7 +261,7 @@ function render(state) {
   // Installed by the organisation: nothing to install from here either.
   if (state.service_managed) $("install-off").classList.add("hidden");
   // Installed from here (not by the organisation, whose password comes from its policy).
-  $("change-pw").classList.toggle("hidden", !state.service || Boolean(state.service_managed));
+  $("change-pw").classList.toggle("hidden", !state.service || Boolean(state.service_managed || state.password_managed));
   $("password-label").textContent = t(state.service ? "connect.temp_password" : "connect.password");
   $("device-id").textContent = formatId(state.device_id);
   $("password").textContent = state.password || "—";

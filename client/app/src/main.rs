@@ -89,6 +89,9 @@ struct UiState {
     /// Unattended access installed for the whole computer by the organisation
     /// (Linux: `nuvira service deploy`): no Install or Remove here.
     service_managed: bool,
+    /// The organisation's policies set the permanent password: not changed here
+    /// (the service would put the policy's back).
+    password_managed: bool,
     password: String,
     error: Option<String>,
     incoming: Option<IncomingUi>,
@@ -315,6 +318,14 @@ fn policy_server() -> Option<(String, Option<String>)> {
 }
 
 /// Installed for the whole computer by the organisation (Linux, macOS).
+/// The permanent password comes from the organisation's policies.
+fn password_managed() -> bool {
+    #[cfg(any(windows, unix))]
+    return nuvira_service::policy::read().password_hash.is_some();
+    #[cfg(not(any(windows, unix)))]
+    false
+}
+
 fn service_managed() -> bool {
     #[cfg(unix)]
     return nuvira_service::managed::installed();
@@ -1319,6 +1330,7 @@ fn main() {
             record_dir: recordings,
             server_managed: policy_server().is_some(),
             service_managed: service_managed(),
+            password_managed: password_managed(),
             ..Default::default()
         }),
         password: Arc::new(Mutex::new(password)),
@@ -1459,6 +1471,9 @@ async fn install_service(app: AppHandle, password: String, change: Option<bool>)
     let change = change.unwrap_or(false);
     if change && password.chars().count() < 8 {
         return Err(t("settings.install_pw_short"));
+    }
+    if change && password_managed() {
+        return Err(t("settings.pw_managed"));
     }
     // Quick support runs and goes: it does not install.
     if branding::get().is_some_and(branding::Branding::quick) {
