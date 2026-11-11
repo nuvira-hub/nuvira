@@ -1518,10 +1518,16 @@ async fn install_service(app: AppHandle, password: String, change: Option<bool>)
         }
         let done = result?;
         let settings = load_settings();
+        // Changing the password: the sign-in screen keeps a copy of the old one until
+        // the system's part is brought up to date.
+        let signin_before = change && nuvira_service::system::installed();
         let note = tauri::async_runtime::spawn_blocking(move || install_system(&settings.server, settings.server_key.as_deref()))
             .await
             .ok()
             .flatten();
+        // Not brought up to date (no administrator password, or an error): said plainly.
+        let hid_note = t("install.hid_allow_mac");
+        let note = note.map(|n| if signin_before && n != hid_note { t("settings.pw_signin_old") } else { n });
         Ok(match note {
             Some(note) => format!("{done} {note}"),
             None => done,

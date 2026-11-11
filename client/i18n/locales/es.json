@@ -219,6 +219,7 @@
   "settings.change_pw_hint": "Una nueva contraseña permanente para el acceso desatendido: el ID y el servidor siguen siendo los mismos. La anterior no se puede leer, solo sustituir. Puede pedirse la confirmación de un administrador, y una sesión en curso se cierra.",
   "settings.changing_pw": "Cambiando la contraseña: confirme la solicitud de administrador si aparece…",
   "settings.pw_managed": "La contraseña permanente la fijan las directivas de la organización: se cambia allí.",
+  "settings.pw_signin_old": "Atención: la pantalla de inicio de sesión sigue usando la contraseña anterior, porque no se dio la contraseña de administrador. Cambie de nuevo la contraseña y confirme la solicitud de administrador.",
   "settings.pw_changed": "Contraseña permanente cambiada: desde ahora este ordenador se alcanza con la nueva.",
   "settings.install_pw": "Contraseña permanente (vacía: se genera una)",
   "settings.install_pw_short": "La contraseña permanente debe tener al menos 8 caracteres.",
