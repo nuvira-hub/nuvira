@@ -218,7 +218,7 @@
   "settings.change_pw": "Dauerhaftes Passwort ändern",
   "settings.change_pw_hint": "Ein neues dauerhaftes Passwort für den unbeaufsichtigten Zugriff: ID und Server bleiben gleich. Das alte lässt sich nicht lesen, nur ersetzen. Eine Bestätigung als Administrator kann verlangt werden, und eine laufende Sitzung wird geschlossen.",
   "settings.changing_pw": "Passwort wird geändert: Bestätigen Sie die Administrator-Anfrage, falls sie erscheint…",
-  "settings.pw_managed": "Das feste Passwort legen die Richtlinien der Organisation fest: Es wird dort geändert.",
+  "settings.pw_managed": "Das dauerhafte Passwort legen die Richtlinien der Organisation fest: Es wird dort geändert.",
   "settings.pw_signin_old": "Achtung: Der Anmeldebildschirm verwendet noch das alte Passwort, weil das Administratorpasswort nicht eingegeben wurde. Ändern Sie das Passwort erneut und bestätigen Sie die Administrator-Anfrage.",
   "settings.pw_changed": "Dauerhaftes Passwort geändert: Ab jetzt ist dieser Computer mit dem neuen erreichbar.",
   "settings.install_pw": "Dauerhaftes Passwort (leer: wird erzeugt)",
