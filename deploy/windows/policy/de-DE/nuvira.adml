@@ -10,7 +10,7 @@
       <string id="Server">Server</string>
       <string id="Server_Help">Der NuviraHub-Server, bei dem sich die PCs registrieren, als Host oder Host:Port (zum Beispiel nuvira.example.com), und optional der Fingerabdruck seines Zertifikats (wie im Protokoll des Servers). Dienst und App verwenden ihn anstelle ihrer eigenen Einstellungen, und die App zeigt den Server als von der Organisation festgelegt. Ohne diese Richtlinie behalten die PCs den Server, mit dem sie installiert wurden; ohne jeden Server verwenden sie den öffentlichen NuviraHub-Server.</string>
       <string id="PasswordHash">Dauerhaftes Passwort</string>
-      <string id="PasswordHash_Help">Das dauerhafte Passwort für den unbeaufsichtigten Zugriff, als Hash: nie das Passwort selbst, denn jeder Benutzer des PCs kann die Richtlinien lesen. Den Hash erzeugen Sie mit: nuvira.exe service password-hash (fragt nach dem Passwort). Verwenden Sie ein langes, zufälliges Passwort: Wer den Hash lesen kann, kann offline Passwörter ausprobieren.</string>
+      <string id="PasswordHash_Help">Das dauerhafte Passwort für den unbeaufsichtigten Zugriff, als Hash: nie das Passwort selbst, denn jeder Benutzer des PCs kann die Richtlinien lesen. Den Hash erzeugst du mit: nuvira.exe service password-hash (fragt nach dem Passwort). Verwende ein langes, zufälliges Passwort: Wer den Hash lesen kann, kann offline Passwörter ausprobieren.</string>
       <string id="Profile">Profil des angepassten Installationsprogramms (Pro)</string>
       <string id="Profile_Help">NuviraHub Pro: der Code eines Profils für angepasste Installationsprogramme Ihres Servers (Webkonsole, Installationsprogramme). Die PCs übernehmen Logo, Farben, Kontakte und Sprache dieses Profils vom Server.</string>
     </stringTable>

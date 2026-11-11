@@ -89,9 +89,9 @@ LangString SettingsSubtitle ${LANG_SPANISH} "Se podrá acceder a este equipo aun
 
 LangString ServerLabel ${LANG_ENGLISH} "NuviraHub server (leave it empty for the NuviraHub public server):"
 LangString ServerLabel ${LANG_ITALIAN} "Server NuviraHub (lascialo vuoto per il server pubblico NuviraHub):"
-LangString ServerLabel ${LANG_FRENCH} "Serveur NuviraHub (laissez vide pour le serveur public NuviraHub) :"
+LangString ServerLabel ${LANG_FRENCH} "Serveur NuviraHub (laisse vide pour le serveur public NuviraHub) :"
 LangString ServerLabel ${LANG_GERMAN} "NuviraHub-Server (leer lassen für den öffentlichen NuviraHub-Server):"
-LangString ServerLabel ${LANG_SPANISH} "Servidor NuviraHub (déjelo vacío para el servidor público de NuviraHub):"
+LangString ServerLabel ${LANG_SPANISH} "Servidor NuviraHub (déjalo vacío para el servidor público de NuviraHub):"
 
 LangString PasswordLabel ${LANG_ENGLISH} "Permanent password (empty: one is generated and shown at the end):"
 LangString PasswordLabel ${LANG_ITALIAN} "Password permanente (vuota: viene generata e mostrata alla fine):"
@@ -101,7 +101,7 @@ LangString PasswordLabel ${LANG_SPANISH} "Contraseña permanente (vacía: se gen
 
 LangString Password2Label ${LANG_ENGLISH} "Repeat the password:"
 LangString Password2Label ${LANG_ITALIAN} "Ripeti la password:"
-LangString Password2Label ${LANG_FRENCH} "Répétez le mot de passe :"
+LangString Password2Label ${LANG_FRENCH} "Répète le mot de passe :"
 LangString Password2Label ${LANG_GERMAN} "Passwort wiederholen:"
 LangString Password2Label ${LANG_SPANISH} "Repite la contraseña:"
 
@@ -137,8 +137,8 @@ LangString Done ${LANG_SPANISH} "NuviraHub está instalado. ID del dispositivo:"
 
 LangString GeneratedPassword ${LANG_ENGLISH} "Permanent password (write it down: it is shown only now):"
 LangString GeneratedPassword ${LANG_ITALIAN} "Password permanente (annotala: viene mostrata solo ora):"
-LangString GeneratedPassword ${LANG_FRENCH} "Mot de passe permanent (notez-le : il n'est affiché que maintenant) :"
-LangString GeneratedPassword ${LANG_GERMAN} "Dauerhaftes Passwort (notieren Sie es: Es wird nur jetzt angezeigt):"
+LangString GeneratedPassword ${LANG_FRENCH} "Mot de passe permanent (note-le : il n'est affiché que maintenant) :"
+LangString GeneratedPassword ${LANG_GERMAN} "Dauerhaftes Passwort (notier es dir: Es wird nur jetzt angezeigt):"
 LangString GeneratedPassword ${LANG_SPANISH} "Contraseña permanente (anótala: solo se muestra ahora):"
 
 ; --- server from the file name ------------------------------------------------
