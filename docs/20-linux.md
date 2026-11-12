@@ -129,7 +129,7 @@ Kubuntu 26.04.1, Plasma 6.6 on Wayland, SDDM on Wayland, VM on the NAS; viewer o
 - **Recordings** lacked the end of a still screen (34 s saved as 1 s): fixed in the same commit, the last picture lasts until the file is closed (30 s session → 28.9 s file).
 - **Sign-in screen after the restart:** SDDM on Wayland was not covered (the agent reached, but "remote desktop portal not available"). Done the same evening through KWin's protocols (see "Sign-in screen"): after a restart, with SDDM's form, the viewer saw the sign-in screen at about 10 fps, typed the password and Enter, the person's session opened, the service handed the ID to the person's agent, and a new session showed their desktop at 25 fps. The same program run by the person refused the KWin protocols and used the portal. `deploy --remove` deleted the program and the `.desktop` file.
 - **Viewer on KDE.** Towards Mint: the toolbar, the remote resolution adapted (1280x800 → 1360x768 for 1280x718), put back when the viewer closed.
-- **KWallet.** Plasma 6.6's `ksecretd` gives `org.freedesktop.secrets`, but its wallet stays locked after sign-in until a program asks to unlock it (with the sign-in password it then opens with no dialog). NuviraHub does not ask at start, so the viewer key was written as `NVK1F` (file permissions); with the wallet open it moved to `NVK1S` by itself, same ID.
+- **KWallet.** Plasma 6.6's `ksecretd` gives `org.freedesktop.secrets`, but its wallet stays locked after sign-in until a program asks to unlock it (with the sign-in password it then opens with no dialog). NuviraHub does not ask at start, so the viewer key was written as `NVK1F` (file permissions); with the wallet open it moved to `NVK1S` by itself, same ID. Fixed on 2026-11-12 (see "KWallet opened at once").
 - **App buttons with polkit.** Started from the menu, "Install on this computer" showed KDE's polkit window, and with the password installed the system part (sign-in service, printer); "Remove" asked again and removed it. Started from an ssh shell the app is outside the graphical session and polkit gives up at once: the user service is installed without the system part, as the app says. The polkit window shows pkexec's generic English text with the command line.
 - **Server change and the sign-in screen** (main, 4c581d7, the CI `.deb`). The managed installation set aside for the test (`deploy --remove`, then `deploy` again afterwards, same server and ID); the user's unattended access and the system part installed by hand on 192.168.178.12. The app in the Plasma session driven through AT-SPI (the server field focused) and ydotool (typing); a temporary polkit rule answered pkexec for `/usr/bin/nuvira` in place of the password window, removed afterwards.
   - Save with `alexbn.ddns.net` (the same NAS by name): the user unit moved, pkexec ran `nuvira service system … --server alexbn.ddns.net`, `signin.json` changed and the sign-in unit restarted; `signin_server` saved in `app.json`; no note.
@@ -138,16 +138,22 @@ Kubuntu 26.04.1, Plasma 6.6 on Wayland, SDDM on Wayland, VM on the NAS; viewer o
   - Save once more, unchanged: no pkexec.
   - Not seen: the greeter's agent registering on the new server after a sign-out (the settings it starts with were checked).
 
-## To do
+### KWallet opened at once (2026-11-12)
 
-- A viewer started by itself (not by the app) on Kubuntu after a restart waits for the locked KWallet for `viewer.key` without end (seen 2026-11-10, a 30 s test with no connection): it should fall back to the file after a few seconds, as the app does for `app.key`.
+Kubuntu 26.04 (Plasma 6.6, `ksecretd`), automatic sign-in switched off, signed in at SDDM with the password, the wallet locked as before.
+
+- The Secret Service's `Unlock` on the wallet always returns a prompt, even after a sign-in with the password; running it (`Prompt`) opens the wallet with the password given at sign-in (`pam_kwallet5`) and **no window**.
+- So the key store now asks: `Unlock`, then the prompt run only when the service is KWallet (`ksecretd`, `kwalletd6`, `kwalletd5`, from the process owning `org.freedesktop.secrets`) and dismissed if not done in 3 s; another service (GNOME Keyring) is not prompted this way, its keyring being already open after a sign-in with the password. The system's password window (a wallet with a password of its own, or locked by hand) is shown at most once per program.
+- Result, with the package of the branch: the app started after sign-in opened the wallet with nothing on screen, `app.key` went from `NVK1F` to `NVK1S` at once, same ID (585 296 961).
+- Wallet locked by hand (`Lock` of the Secret Service: KWallet then forgets the sign-in password): the viewer showed KWallet's password window once; with it cancelled, the viewer stopped after about 20 s with "the system keyring … is locked: open it, then connect again" (translated), instead of waiting without end.
+
+## To do
 
 - **X11, faster capture**: MIT-SHM and XDamage instead of `GetImage` and comparing images.
 - **GNOME's lock screen at once:** the extension works from the next sign-in; before it the lock still closes the session.
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
 - **Other desktops**: GNOME and KDE Plasma (2026-11-09) tested; Sway and Hyprland have no remote desktop portal (screen without input).
-- **KWallet**: ask `ksecretd` to unlock the wallet when it opens without a dialog (sign-in password), so that the keys go there at once.
 - **polkit**: an action of our own, with a translated message, instead of pkexec's text with the command line; the `.desktop` entry's description in the five languages.
 - **Performance**: DMA-BUF capture, the cursor as metadata; VA-API on Intel and AMD and NVENC on a Linux installed (both tried only through WSL).
 - **Ubuntu 22.04 and Mint 21**: dropped in 0.14.0 (PipeWire too old); possible by loading PipeWire at run time.

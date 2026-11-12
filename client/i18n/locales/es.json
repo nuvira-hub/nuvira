@@ -330,6 +330,7 @@
   "viewer.file_arrived": "«{name}» ha llegado a la carpeta {folder} del equipo remoto",
   "viewer.file_failed": "«{name}» no enviado: {reason}",
   "viewer.folder_not_supported": "todavía no se pueden enviar carpetas",
+  "viewer.keyring_locked": "el llavero del sistema (KWallet, GNOME Keyring) está bloqueado: ábrelo y vuelve a conectarte",
   "viewer.session_closed": "Sesión cerrada: {reason}",
   "viewer.terminal_unavailable": "el ordenador remoto no ofrece el terminal",
   "term.title": "Terminal — {agent}",

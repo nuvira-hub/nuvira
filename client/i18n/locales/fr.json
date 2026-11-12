@@ -330,6 +330,7 @@
   "viewer.file_arrived": "« {name} » est arrivé dans le dossier {folder} de l'ordinateur distant",
   "viewer.file_failed": "« {name} » non envoyé : {reason}",
   "viewer.folder_not_supported": "les dossiers ne peuvent pas encore être envoyés",
+  "viewer.keyring_locked": "le trousseau du système (KWallet, GNOME Keyring) est verrouillé : ouvre-le, puis reconnecte-toi",
   "viewer.session_closed": "Session fermée : {reason}",
   "viewer.terminal_unavailable": "l'ordinateur distant ne propose pas le terminal",
   "term.title": "Terminal — {agent}",

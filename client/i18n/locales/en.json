@@ -330,6 +330,7 @@
   "viewer.file_arrived": "“{name}” arrived in the {folder} folder of the remote computer",
   "viewer.file_failed": "“{name}” not sent: {reason}",
   "viewer.folder_not_supported": "folders cannot be sent yet",
+  "viewer.keyring_locked": "the system keyring (KWallet, GNOME Keyring) is locked: open it, then connect again",
   "viewer.session_closed": "Session closed: {reason}",
   "viewer.terminal_unavailable": "the remote computer does not offer the terminal",
   "term.title": "Terminal — {agent}",

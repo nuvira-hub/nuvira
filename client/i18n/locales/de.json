@@ -330,6 +330,7 @@
   "viewer.file_arrived": "„{name}“ ist im Ordner {folder} des entfernten Computers angekommen",
   "viewer.file_failed": "„{name}“ nicht gesendet: {reason}",
   "viewer.folder_not_supported": "Ordner können noch nicht gesendet werden",
+  "viewer.keyring_locked": "der Schlüsselbund des Systems (KWallet, GNOME Keyring) ist gesperrt: entsperre ihn und verbinde dich dann erneut",
   "viewer.session_closed": "Sitzung geschlossen: {reason}",
   "viewer.terminal_unavailable": "der entfernte Computer bietet kein Terminal an",
   "term.title": "Terminal — {agent}",

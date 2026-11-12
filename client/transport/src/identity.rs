@@ -23,6 +23,19 @@ pub struct Identity {
     protection: Protection,
 }
 
+/// The system keeps the key locked (a keyring not opened), past the time given
+/// to [`Identity::load_or_create_within`].
+#[derive(Debug)]
+pub struct KeyringLocked(pub String);
+
+impl std::fmt::Display for KeyringLocked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for KeyringLocked {}
+
 impl Identity {
     /// Reads the key from `path` or creates it (with its folders) if missing.
     /// A plain file is protected in place when the system can. While the system
@@ -45,10 +58,11 @@ impl Identity {
                 Ok(None) => break (KeyPair::generate_for(&PKCS_ED25519)?.serialize_der(), None),
                 Err(ReadError::Unavailable(e)) => {
                     if limit.is_some_and(|limit| started.elapsed() >= limit) {
-                        anyhow::bail!(
+                        return Err(KeyringLocked(format!(
                             "device key {}: the system keeps it locked ({e:#}); open the keyring (KWallet, GNOME Keyring) and try again",
                             path.display()
-                        );
+                        ))
+                        .into());
                     }
                     if !waited {
                         tracing::warn!(
