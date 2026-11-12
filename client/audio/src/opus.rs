@@ -20,7 +20,9 @@ impl Encoder {
     pub fn new() -> Result<Self> {
         let mut err = 0;
         // SAFETY: plain constructor; the pointer is checked below.
-        let st = unsafe { ffi::opus_encoder_create(RATE as i32, CHANNELS as i32, ffi::OPUS_APPLICATION_AUDIO, &mut err) };
+        let st = unsafe {
+            ffi::opus_encoder_create(RATE as i32, CHANNELS as i32, ffi::OPUS_APPLICATION_AUDIO, &mut err)
+        };
         ensure!(!st.is_null() && err == ffi::OPUS_OK, "Opus encoder: error {err}");
         let enc = Encoder(st);
         // SAFETY: st is a valid encoder; each request takes one i32.
@@ -38,7 +40,9 @@ impl Encoder {
         ensure!(pcm.len() == FRAME * CHANNELS, "{} samples instead of {}", pcm.len(), FRAME * CHANNELS);
         let mut out = vec![0u8; MAX_PACKET];
         // SAFETY: pcm holds FRAME frames, out MAX_PACKET bytes.
-        let n = unsafe { ffi::opus_encode_float(self.0, pcm.as_ptr(), FRAME as i32, out.as_mut_ptr(), out.len() as i32) };
+        let n = unsafe {
+            ffi::opus_encode_float(self.0, pcm.as_ptr(), FRAME as i32, out.as_mut_ptr(), out.len() as i32)
+        };
         if n < 0 {
             bail!("Opus encoding: error {n}");
         }
@@ -77,7 +81,8 @@ impl Decoder {
             None => (std::ptr::null(), 0),
         };
         // SAFETY: data is packet (or null for a loss), pcm holds FRAME frames.
-        let n = unsafe { ffi::opus_decode_float(self.0, data, len, pcm.as_mut_ptr(), FRAME as i32, fec as i32) };
+        let n =
+            unsafe { ffi::opus_decode_float(self.0, data, len, pcm.as_mut_ptr(), FRAME as i32, fec as i32) };
         if n < 0 {
             bail!("Opus decoding: error {n}");
         }

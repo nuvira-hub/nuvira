@@ -6,10 +6,10 @@
 //! silence. Other systems: not yet (macOS ScreenCaptureKit, Linux PipeWire monitor).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -18,6 +18,9 @@ use tracing::{info, warn};
 use crate::opus::Encoder;
 use crate::resample::{Resampler, to_stereo};
 use crate::{CHANNELS, FRAME, RATE};
+
+/// How often the gaps are logged.
+const REPORT: Duration = Duration::from_secs(10);
 
 /// Captures until dropped.
 pub struct Capture {
@@ -44,9 +47,7 @@ impl Capture {
                 .name("audio capture".into())
                 .spawn(move || run(stop, sink, ready_tx))?
         };
-        ready_rx
-            .recv()
-            .map_err(|_| anyhow!("the audio capture stopped while starting"))??;
+        ready_rx.recv().map_err(|_| anyhow!("the audio capture stopped while starting"))??;
         Ok(Capture { stop, thread: Some(thread) })
     }
 }
@@ -62,15 +63,25 @@ impl Drop for Capture {
 
 fn run(stop: Arc<AtomicBool>, mut sink: impl FnMut(Vec<u8>), ready: mpsc::Sender<Result<()>>) {
     let (tx, rx) = mpsc::channel::<Vec<f32>>();
+    let gaps_seen = Arc::new(AtomicU64::new(0));
     let started = (|| -> Result<_> {
-        let device = cpal::default_host()
-            .default_output_device()
-            .context("no output device to capture")?;
+        let device = cpal::default_host().default_output_device().context("no output device to capture")?;
         let supported = device.default_output_config()?;
         let (channels, rate) = (supported.channels() as usize, supported.sample_rate());
         let format = supported.sample_format();
-        let config = supported.config();
-        let err = |e| warn!("audio capture: {e}");
+        let mut config = supported.config();
+        // 100 ms of room in Windows's buffer (the default is about 10 ms): when the
+        // computer is busy (a video playing, the screen being encoded) this thread can
+        // be late, and with a small buffer Windows drops the sound meanwhile (a gap).
+        // It does not add delay: the data is read as soon as it is there.
+        config.buffer_size = cpal::BufferSize::Fixed(rate / 10);
+        let gaps = gaps_seen.clone();
+        let err = move |e: cpal::Error| {
+            // Windows reports each gap ("buffer underrun or overrun"): counted, logged
+            // every 10 s instead of once each.
+            gaps.fetch_add(1, Ordering::Relaxed);
+            tracing::debug!("audio capture: {e}");
+        };
         let stream = match format {
             cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(
                 config,
@@ -121,7 +132,20 @@ fn run(stop: Arc<AtomicBool>, mut sink: impl FnMut(Vec<u8>), ready: mpsc::Sender
         Err(e) => return warn!("audio capture: {e:#}"),
     };
     let mut pcm: Vec<f32> = Vec::with_capacity(FRAME * CHANNELS * 2);
+    let mut last_report = Instant::now();
+    let mut gaps_reported = 0;
     while !stop.load(Ordering::Relaxed) {
+        if last_report.elapsed() >= REPORT {
+            let gaps = gaps_seen.load(Ordering::Relaxed);
+            if gaps != gaps_reported {
+                warn!(
+                    gaps = gaps - gaps_reported,
+                    "audio capture: Windows dropped some sound (computer busy)"
+                );
+                gaps_reported = gaps;
+            }
+            last_report = Instant::now();
+        }
         let data = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(d) => d,
             Err(mpsc::RecvTimeoutError::Timeout) => continue,

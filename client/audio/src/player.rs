@@ -35,6 +35,8 @@ pub struct Counters {
     pub packets: AtomicU64,
     pub lost: AtomicU64,
     pub underruns: AtomicU64,
+    /// Times the buffer grew past MAX and the oldest audio was dropped.
+    pub trimmed: AtomicU64,
 }
 
 pub struct Player {
@@ -65,9 +67,7 @@ impl Player {
                 .name("audio playback".into())
                 .spawn(move || run(rx, muted, counters, dump, ready_tx))?
         };
-        ready_rx
-            .recv()
-            .map_err(|_| anyhow!("the audio playback stopped while starting"))??;
+        ready_rx.recv().map_err(|_| anyhow!("the audio playback stopped while starting"))??;
         Ok(Player { tx: Some(tx), muted, counters, thread: Some(thread) })
     }
 
@@ -187,7 +187,26 @@ fn run(
     let max = (rate as f64 * MAX.as_secs_f64()) as usize * channels;
     let target = (rate as f64 * TARGET.as_secs_f64()) as usize * channels;
     let mut next: Option<u32> = None;
+    let mut last_report = std::time::Instant::now();
+    let mut reported = (0, 0, 0);
     while let Ok((seq, packet)) = rx.recv() {
+        if last_report.elapsed() >= std::time::Duration::from_secs(10) {
+            let now = (
+                counters.lost.load(Ordering::Relaxed),
+                counters.underruns.load(Ordering::Relaxed),
+                counters.trimmed.load(Ordering::Relaxed),
+            );
+            if now != reported {
+                info!(
+                    lost = now.0 - reported.0,
+                    underruns = now.1 - reported.1,
+                    trimmed = now.2 - reported.2,
+                    "audio playback in the last 10 s"
+                );
+                reported = now;
+            }
+            last_report = std::time::Instant::now();
+        }
         counters.packets.fetch_add(1, Ordering::Relaxed);
         let mut pcm = Vec::new();
         match next {
@@ -229,6 +248,7 @@ fn run(
         if b.samples.len() > max {
             let drop = b.samples.len() - target;
             b.samples.drain(..drop);
+            counters.trimmed.fetch_add(1, Ordering::Relaxed);
         }
     }
     drop(stream);
@@ -236,6 +256,7 @@ fn run(
         packets = counters.packets.load(Ordering::Relaxed),
         lost = counters.lost.load(Ordering::Relaxed),
         underruns = counters.underruns.load(Ordering::Relaxed),
+        trimmed = counters.trimmed.load(Ordering::Relaxed),
         "audio playback stopped"
     );
 }
@@ -266,10 +287,8 @@ impl Wav {
     }
 
     fn write(&mut self, pcm: &[f32]) -> Result<()> {
-        let data: Vec<u8> = pcm
-            .iter()
-            .flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
-            .collect();
+        let data: Vec<u8> =
+            pcm.iter().flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes()).collect();
         self.file.write_all(&data)?;
         self.bytes += data.len() as u32;
         Ok(())
