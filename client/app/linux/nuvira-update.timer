@@ -3,7 +3,10 @@
 Description=NuviraHub automatic update check
 
 [Timer]
-OnBootSec=5min
+# From the timer's start, not from boot: started by the package's postinst
+# long after boot, OnBootSec would fire at once, while dpkg or rpm is still
+# installing the package ("not installed from a .deb or .rpm package").
+OnActiveSec=5min
 OnUnitActiveSec=1h
 RandomizedDelaySec=10min
 
