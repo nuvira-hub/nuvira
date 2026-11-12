@@ -8,11 +8,11 @@
       <string id="SUPPORTED_NuviraHub_0_17">NuviraHub 0.17 or later</string>
       <string id="NuviraHub">NuviraHub</string>
       <string id="Server">Server</string>
-      <string id="Server_Help">The NuviraHub server the PCs register with, as host or host:port (for example nuvira.example.com), and optionally the fingerprint of its certificate (as in the server's log). The service and the app use it in place of their own settings, and the app shows the server as set by the organisation. Without this policy the PCs keep the server they were installed with; with none at all they use the NuviraHub public server.</string>
+      <string id="Server_Help">The NuviraHub server the PCs register with, as host or host:port (for example nuvira.example.com), and optionally the fingerprint of its certificate (as in the server's log). The service and the app use it in place of their own settings, and the app shows the server as set by the organization. Without this policy the PCs keep the server they were installed with; with none at all they use the NuviraHub public server.</string>
       <string id="PasswordHash">Permanent password</string>
       <string id="PasswordHash_Help">The permanent password for unattended access, as a hash: never the password itself, because every user of the PC can read the policies. Make the hash with: nuvira.exe service password-hash (it asks for the password). Use a long random password: whoever can read the hash can try passwords against it offline.</string>
-      <string id="Profile">Customised installer profile (Pro)</string>
-      <string id="Profile_Help">NuviraHub Pro: the code of a customised installer profile of your server (web console, Installers). The PCs take logo, colours, contacts and language of that profile from the server.</string>
+      <string id="Profile">Customized installer profile (Pro)</string>
+      <string id="Profile_Help">NuviraHub Pro: the code of a customized installer profile of your server (web console, Installers). The PCs take logo, colors, contacts and language of that profile from the server.</string>
     </stringTable>
     <presentationTable>
       <presentation id="Server">
