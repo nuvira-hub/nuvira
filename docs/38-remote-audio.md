@@ -9,7 +9,7 @@ What the controlled computer plays (a video, a notification, a call) comes out o
 | System | Sends its sound (controlled) | Plays the sound (technician) |
 |---|---|---|
 | Windows | yes: WASAPI loopback of the default output device | yes |
-| macOS | not yet (ScreenCaptureKit audio, planned) | yes |
+| macOS | yes: ScreenCaptureKit system audio (macOS 13 or later) | yes |
 | Linux | yes: monitor of the default output, PipeWire (pipewire-pulse) or PulseAudio | yes (ALSA, also through PipeWire and PulseAudio) |
 | Web client (Pro) | — | not yet |
 
@@ -19,6 +19,7 @@ Session recordings stay video only.
 
 - **Capture** (`client/audio/src/capture.rs`): `cpal` opens the default output device as an input, which on Windows is WASAPI loopback: the mix sent to the speakers, before the volume. The device's format (often 48 kHz float, sometimes 44.1 kHz or more channels) is converted to 48 kHz stereo (`rubato`). Windows's buffer is opened at 100 ms instead of its default of about 10 ms: on a busy computer the capture thread can be late, and with the small buffer Windows drops the sound meanwhile (an audible gap). It adds no delay, the data is read as soon as it is there. The gaps Windows still reports are counted and logged every 10 s; the player logs its losses, underruns and trims the same way. WASAPI delivers nothing while nothing plays: no packets then.
 - **Capture on Linux** (`client/audio/src/pulse.rs`): the monitor of the default output (`@DEFAULT_MONITOR@`, what goes to the speakers) through `libpulse-simple`, asked for at 48 kHz stereo float, one 20 ms packet per read. PipeWire answers the same calls through pipewire-pulse (the default on current distributions), and so does PulseAudio. The library is loaded at run time: no build or package dependency, and without it the agent does not offer the sound. With PipeWire the monitor comes before the volume and the mute, like WASAPI: the person at the computer can turn the speakers down or mute them and the technician still hears (tried at 10% and muted, same level). With PulseAudio itself the monitor follows the volume. The monitor gives zeros when nothing plays.
+- **Capture on macOS** (`capture.rs`, `open` for macOS): a ScreenCaptureKit stream of the main display with `capturesAudio`, 48 kHz stereo, its own sound left out (`excludesCurrentProcessAudio`). The stream needs a screen output: 2×2 pixels once a second, never read. It is the Screen Recording permission the screen capture already has: nothing more to allow. Like WASAPI it takes the sound before the volume and the mute.
 - **Silence** is not sent: a 20 ms frame of only zeros is skipped (on Linux the monitor gives them all the time).
 - **Codec** (`client/audio/src/opus.rs`): Opus at 48 kHz stereo, 20 ms packets, 96 kbit/s, with in-band redundancy (FEC) for one lost packet. The library is `unsafe-libopus`, libopus translated to Rust: no C compiler or cmake in the build.
 - **Transport** (`client/audio/src/packet.rs`): each packet is one QUIC datagram, `0xA0, seq u32, Opus packet`: a lost one is not retransmitted (it would arrive too late), and it does not hold up anything else. The first byte tells it apart from the video's datagrams (`nuvira_transport::fec`, version 1). Over the WebSocket fallback the datagrams travel inside the tunnel like the rest.
@@ -39,11 +40,11 @@ Session recordings stay video only.
   - Mute and unmute with the toolbar button (pressed through UI Automation): the capture stops at once and nothing is received while muted; after unmuting the next tone arrives complete.
 - Linux, 2026-11-12, the Ubuntu 26.04 VM (PipeWire 1.6, Wayland, a dummy output) to the NUC through the NAS's server, same test tone played with `pw-play`: 9.00 s received, frequencies exact, no gaps, the silence around it not sent.
 - Linux, 2026-11-12, a laptop (Celeron, built-in sound card) on an Ubuntu 26.10 live session (PipeWire, Wayland) and the Linux Mint 22.3 VM (PipeWire 1.0.5, X11), same tone: 451 and 452 packets, none lost, 9.00 s, no gaps. On the laptop the same with its output muted and at 10% volume.
+- macOS, 2026-11-12, the rented Mac mini M2 Pro (macOS 27.2) to the NUC over the internet (direct, Paris to Italy), the tone played with `afplay`: 452 packets, none lost, 9.00 s, no gaps; the same with the Mac's output muted.
 - Listening, 2026-11-12, the Celeron laptop to the NUC, a YouTube video (load 6.9 on 4 cores, video at 10 to 18 fps): with the fixed 60 ms buffer 1 to 41 drops every 10 s, tears often; with the adaptive one the target settled at 140 ms after two drops in the first 30 s, then almost clean.
 - Listening, 2026-11-12, PC-LABORATORIO (an old PC) to the NUC, a YouTube video, scrolling the screen meanwhile: good sound, video and sound together. With cpal's default buffer Windows dropped sound 5 to 10 times every 10 s (small tears); with the 100 ms buffer 0 to 2 times, rare tears on that PC only at full load. The viewer lost no packet and never ran dry.
 
 ## To do
 
-- macOS capture.
 - A rule of the Pro server (`Policy.no_audio`) and a switch for the person at the PC, like the other permissions ([32](32-session-permissions.md)).
 - Audio in session recordings and in the web client.
