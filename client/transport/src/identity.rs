@@ -30,12 +30,26 @@ impl Identity {
     /// here (another account or computer) is set aside as `*.unreadable` and a
     /// new key, hence a new ID, is made.
     pub fn load_or_create(path: &Path) -> Result<Self> {
+        Self::load_or_create_within(path, None)
+    }
+
+    /// As [`Self::load_or_create`], but gives up after `limit` while the system
+    /// keeps the key locked (a program started by hand, such as the viewer,
+    /// says so instead of waiting without end).
+    pub fn load_or_create_within(path: &Path, limit: Option<Duration>) -> Result<Self> {
+        let started = std::time::Instant::now();
         let mut waited = false;
         let (der, protection) = loop {
             match keystore::read(path) {
                 Ok(Some((der, protection))) => break (der, Some(protection)),
                 Ok(None) => break (KeyPair::generate_for(&PKCS_ED25519)?.serialize_der(), None),
                 Err(ReadError::Unavailable(e)) => {
+                    if limit.is_some_and(|limit| started.elapsed() >= limit) {
+                        anyhow::bail!(
+                            "device key {}: the system keeps it locked ({e:#}); open the keyring (KWallet, GNOME Keyring) and try again",
+                            path.display()
+                        );
+                    }
                     if !waited {
                         tracing::warn!(
                             "device key {}: waiting for the system to open it: {e:#}",

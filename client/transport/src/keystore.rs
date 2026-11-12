@@ -436,8 +436,10 @@ mod sys {
     //! Root: `systemd-creds` (TPM 2.0 when present, with no PCRs so firmware and
     //! Secure Boot updates do not lose the key; plus the host key).
     //! A person: the Secret Service, only when its default collection is unlocked
-    //! and the computer does not sign in automatically (the keyring would stay
-    //! locked after a restart, and the agent with it); otherwise the file.
+    //! (or opens with no window, as KWallet does after a sign-in with the
+    //! password) and the computer does not sign in automatically (the keyring
+    //! would stay locked after a restart, and the agent with it); otherwise the
+    //! file.
 
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -574,6 +576,7 @@ mod sys {
         //! may be inside tokio already.
 
         use std::collections::HashMap;
+        use std::sync::atomic::{AtomicBool, Ordering};
         use std::time::Duration;
 
         use super::super::{ReadError, random_key};
@@ -586,6 +589,9 @@ mod sys {
         const LABEL: &str = "NuviraHub device keys";
 
         type Secret = (OwnedObjectPath, Vec<u8>, Vec<u8>, String);
+
+        /// The person was asked to open the keyring (once per program).
+        static ASKED: AtomicBool = AtomicBool::new(false);
 
         fn attributes() -> HashMap<&'static str, &'static str> {
             HashMap::from([("application", "nuvira"), ("purpose", "device-keys")])
@@ -636,10 +642,68 @@ mod sys {
             collection.get_property::<bool>("Locked").await.map_err(later)
         }
 
-        /// The default collection exists and is unlocked now.
+        /// KWallet's service (ksecretd, kwalletd). After a sign-in with the
+        /// password it opens its wallet with no window, but only when a program
+        /// asks: until then the wallet stays locked.
+        async fn kwallet(conn: &zbus::Connection) -> bool {
+            let Ok(dbus) = zbus::fdo::DBusProxy::new(conn).await else { return false };
+            let Ok(name) = zbus::names::BusName::try_from(DEST) else { return false };
+            let Ok(pid) = dbus.get_connection_unix_process_id(name).await else { return false };
+            let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+            matches!(comm.trim(), "ksecretd" | "kwalletd6" | "kwalletd5")
+        }
+
+        /// Asks the service to open `objects`; whether they are open now. Quietly
+        /// (`window` false) the system's prompt is run only for KWallet, which
+        /// needs no window after a sign-in with the password, and dismissed if
+        /// it is not done in 3 s (a wallet with a password of its own). With
+        /// `window` the prompt stays on screen for the person to answer later.
+        async fn open(
+            conn: &zbus::Connection,
+            objects: Vec<OwnedObjectPath>,
+            window: bool,
+        ) -> Result<bool, ReadError> {
+            use futures_util::StreamExt;
+
+            let service = proxy(conn, PATH, SERVICE).await?;
+            let (_, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) =
+                service.call("Unlock", &(objects,)).await.map_err(later)?;
+            if prompt.as_str() == "/" {
+                return Ok(true);
+            }
+            let prompt = proxy(conn, prompt.as_str(), "org.freedesktop.Secret.Prompt").await?;
+            if !window && !kwallet(conn).await {
+                let _ = prompt.call::<_, _, ()>("Dismiss", &()).await;
+                return Ok(false);
+            }
+            let mut completed = prompt.receive_signal("Completed").await.map_err(later)?;
+            prompt.call::<_, _, ()>("Prompt", &("",)).await.map_err(later)?;
+            if window {
+                return Ok(false);
+            }
+            match tokio::time::timeout(Duration::from_secs(3), completed.next()).await {
+                Ok(Some(message)) => {
+                    let (dismissed, _): (bool, OwnedValue) = message.body().deserialize().map_err(later)?;
+                    Ok(!dismissed)
+                }
+                _ => {
+                    let _ = prompt.call::<_, _, ()>("Dismiss", &()).await;
+                    Ok(false)
+                }
+            }
+        }
+
+        /// The default collection exists and is unlocked now, or opens with no
+        /// window when asked (KWallet after a sign-in with the password).
         pub fn usable() -> bool {
             run(async |conn| match default_collection(&conn).await? {
-                Some(collection) => Ok(!locked(&conn, &collection).await?),
+                Some(collection) => {
+                    if !locked(&conn, &collection).await? {
+                        return Ok(true);
+                    }
+                    Ok(open(&conn, vec![collection.clone()], false).await?
+                        && !locked(&conn, &collection).await?)
+                }
                 None => Ok(false),
             })
             .unwrap_or(false)
@@ -648,21 +712,22 @@ mod sys {
         pub fn wrapping_key(create: bool) -> Result<Option<[u8; 32]>, ReadError> {
             run(async move |conn| {
                 let service = proxy(&conn, PATH, SERVICE).await?;
-                let (unlocked, locked_items): (Vec<OwnedObjectPath>, Vec<OwnedObjectPath>) =
-                    service.call("SearchItems", &(attributes(),)).await.map_err(later)?;
+                let search = async || -> Result<(Vec<OwnedObjectPath>, Vec<OwnedObjectPath>), ReadError> {
+                    service.call("SearchItems", &(attributes(),)).await.map_err(later)
+                };
+                let (mut unlocked, locked_items) = search().await?;
                 if unlocked.is_empty() && !locked_items.is_empty() {
-                    // Asks the person to unlock (the system's prompt); the caller
-                    // tries again later.
-                    if let Ok((_, prompt)) = service
-                        .call::<_, _, (Vec<OwnedObjectPath>, OwnedObjectPath)>("Unlock", &(locked_items,))
-                        .await
-                        && prompt.as_str() != "/"
-                        && let Ok(prompt) =
-                            proxy(&conn, prompt.as_str(), "org.freedesktop.Secret.Prompt").await
-                    {
-                        let _: Result<(), _> = prompt.call("Prompt", &("",)).await;
+                    if open(&conn, locked_items.clone(), false).await? {
+                        unlocked = search().await?.0;
                     }
-                    return Err(ReadError::Unavailable(anyhow!("the keyring is locked")));
+                    if unlocked.is_empty() {
+                        // Asks the person (the system's prompt), once for this
+                        // program: the caller tries again later.
+                        if !ASKED.swap(true, Ordering::Relaxed) {
+                            let _ = open(&conn, locked_items, true).await;
+                        }
+                        return Err(ReadError::Unavailable(anyhow!("the keyring is locked")));
+                    }
                 }
                 let (_, session): (OwnedValue, OwnedObjectPath) =
                     service.call("OpenSession", &("plain", Value::from(""))).await.map_err(later)?;

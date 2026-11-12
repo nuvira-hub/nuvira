@@ -147,7 +147,7 @@ async fn send(args: &Args) -> Result<()> {
     let size = file.metadata().await?.len();
     let name = args.file.file_name().and_then(|n| n.to_str()).context("file name")?.to_string();
 
-    let identity = Identity::load_or_create(&args.identity)?;
+    let identity = Identity::load_or_create_within(&args.identity, Some(std::time::Duration::from_secs(20)))?;
     let server = nuvira_transport::resolve_addr(&args.server, signal::DEFAULT_PORT)?;
     let expected = match &args.server_key {
         Some(key) => Some(nuvira_transport::parse_fingerprint(key)?),
