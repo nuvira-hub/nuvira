@@ -65,8 +65,11 @@ fn main() {
         .collect();
     let settings = EncoderSettings { bitrate_bps: 6_000_000, max_fps: 30, ..Default::default() };
     let mut enc = nuvira_codec::create_encoder(plan, settings, None).expect("encoder");
-    let parts: &[(usize, u32)] =
-        if noisy { &[(0, 6_000_000), (1, 1_000_000), (2, 6_000_000)] } else { &[(0, 6_000_000), (1, 1_000_000)] };
+    let parts: &[(usize, u32)] = if noisy {
+        &[(0, 6_000_000), (1, 1_000_000), (2, 6_000_000)]
+    } else {
+        &[(0, 6_000_000), (1, 1_000_000)]
+    };
     for &(half, target) in parts {
         if half > 0 {
             enc.set_bitrate(target);
