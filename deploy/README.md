@@ -60,11 +60,14 @@ Devices on the same LAN as the server that use the public name need NAT reflecti
 
 The server also hands the signed app updates to its devices, from `/data/updates` over the TCP port (`http://server:21116/nuvira/update/windows-x64.json`). Devices with unattended access install a new version within 6 hours, never during a session; copies that are not installed offer it.
 
-To publish a version: download `nuvira-update-VERSION.zip` from the [GitHub release](https://github.com/nuvira-hub/nuvira/releases/latest) and unpack it into `/data/updates` (on Unraid `/mnt/user/appdata/nuvira-server/updates`), replacing `windows-x64.json`. The folder then holds:
+To publish a version: download `nuvira-update-VERSION.zip` from the [GitHub release](https://github.com/nuvira-hub/nuvira/releases/latest) and unpack it into `/data/updates` (on Unraid `/mnt/user/appdata/nuvira-server/updates`). Do not copy the zip itself there: the server only hands out the unpacked files. Its folders and `.json` files go straight into `updates`, replacing the `.json` files already there. The folder then holds one manifest and one folder per channel:
 
 ```
-updates/windows-x64.json
-updates/windows-x64/nuvira-VERSION.exe
+updates/windows-x64.json      updates/windows-x64/nuvira-VERSION.exe
+updates/linux-x64.json        updates/linux-x64/nuvira-VERSION
+updates/linux-x64-deb.json    updates/linux-x64-deb/nuvira-VERSION.deb
+updates/linux-x64-rpm.json    updates/linux-x64-rpm/nuvira-VERSION.rpm
+updates/macos.json            updates/macos/nuvira-VERSION.zip
 ```
 
-The older `nuvira-*.exe` can be deleted. No restart is needed: the manifest is read at every request. The files must be readable by the container's user (65532, or the one given with `--user`). Every update is signed with the NuviraHub release key and the app checks the signature before installing it, so a tampered file is refused.
+`macos/nuvira-VERSION.zip` stays zipped: it is the macOS app, unpacked by the Mac when it updates. The programs of older versions can be deleted. No restart is needed: the manifest is read at every request. The files must be readable by the container's user (65532, or the one given with `--user`). Every update is signed with the NuviraHub release key and the app checks the signature before installing it, so a tampered file is refused.
