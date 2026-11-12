@@ -1,10 +1,16 @@
 //! Playback of the packets on the default output device.
 //!
 //! Packets go to a decoding thread; the device's callback takes the samples from a
-//! buffer kept around [`TARGET`]: it starts playing once that much is there, plays
-//! silence when it runs dry (and waits to fill again), and drops the oldest audio
-//! beyond [`MAX`] so the delay does not grow. A lost packet is rebuilt from the
-//! redundancy of the next one, or made up by Opus (concealment).
+//! buffer kept around a target, [`TARGET`] at first: it starts playing once that
+//! much is there, plays silence when it runs dry (and waits to fill again), and drops
+//! the oldest audio beyond the target plus [`SLACK`] so the delay does not grow. A
+//! lost packet is rebuilt from the redundancy of the next one, or made up by Opus
+//! (concealment).
+//!
+//! The target adapts: a slow or overloaded computer sends its sound in bursts (it
+//! stops for a while, then everything at once), and each drop is a tear. Each drop
+//! raises the target by [`STEP_UP`] up to [`TARGET_MAX`]; after [`CALM`] without
+//! one it comes down by [`STEP_DOWN`]. On a normal computer it stays at [`TARGET`].
 
 use std::collections::VecDeque;
 use std::io::{Seek, SeekFrom, Write};
@@ -22,10 +28,16 @@ use crate::opus::Decoder;
 use crate::resample::{Resampler, from_stereo};
 use crate::{CHANNELS, RATE};
 
-/// Audio kept ahead of the speakers.
+/// Audio kept ahead of the speakers, at first and at best.
 pub const TARGET: Duration = Duration::from_millis(60);
-/// More than this behind: the oldest is dropped.
-pub const MAX: Duration = Duration::from_millis(250);
+/// More than the target plus this behind: the oldest is dropped.
+pub const SLACK: Duration = Duration::from_millis(190);
+/// Largest target, for the slowest computers.
+pub const TARGET_MAX: Duration = Duration::from_millis(300);
+const STEP_UP: Duration = Duration::from_millis(40);
+const STEP_DOWN: Duration = Duration::from_millis(20);
+/// Time without drops before the target comes down a step.
+const CALM: Duration = Duration::from_secs(30);
 /// Lost packets made up at most in a row (beyond it, silence: the sound stopped).
 const MAX_CONCEALED: u32 = 5;
 
@@ -35,7 +47,7 @@ pub struct Counters {
     pub packets: AtomicU64,
     pub lost: AtomicU64,
     pub underruns: AtomicU64,
-    /// Times the buffer grew past MAX and the oldest audio was dropped.
+    /// Times the buffer grew past the target plus SLACK and the oldest audio was dropped.
     pub trimmed: AtomicU64,
 }
 
@@ -48,8 +60,10 @@ pub struct Player {
 
 struct Buffer {
     samples: VecDeque<f32>,
-    /// Waiting to reach TARGET before playing (start, or after running dry).
+    /// Waiting to reach `target` before playing (start, or after running dry).
     filling: bool,
+    /// Samples to have before playing (the adaptive target).
+    target: usize,
 }
 
 impl Player {
@@ -99,18 +113,18 @@ impl Drop for Player {
 type Output = (Option<cpal::Stream>, usize, u32, Arc<Mutex<Buffer>>);
 
 fn open_output(muted: Arc<AtomicBool>, counters: Arc<Counters>, need_device: bool) -> Result<Output> {
-    let buffer = Arc::new(Mutex::new(Buffer { samples: VecDeque::new(), filling: true }));
+    let buffer = Arc::new(Mutex::new(Buffer { samples: VecDeque::new(), filling: true, target: 0 }));
     let device = match need_device {
         true => cpal::default_host().default_output_device().context("no output device")?,
         false => return Ok((None, CHANNELS, RATE, buffer)),
     };
     let supported = device.default_output_config()?;
     let (channels, rate) = (supported.channels() as usize, supported.sample_rate());
-    let target = (rate as f64 * TARGET.as_secs_f64()) as usize * channels;
+    buffer.lock().expect("audio buffer").target = samples(TARGET, rate, channels);
     let shared = buffer.clone();
     let fill = move |out: &mut [f32]| {
         let mut b = shared.lock().expect("audio buffer");
-        if b.filling && b.samples.len() < target {
+        if b.filling && b.samples.len() < b.target {
             out.fill(0.0);
             return;
         }
@@ -184,8 +198,8 @@ fn run(
         Ok(r) => r,
         Err(e) => return warn!("audio playback: {e:#}"),
     };
-    let max = (rate as f64 * MAX.as_secs_f64()) as usize * channels;
-    let target = (rate as f64 * TARGET.as_secs_f64()) as usize * channels;
+    let mut delay = TARGET;
+    let mut changed = std::time::Instant::now();
     let mut next: Option<u32> = None;
     let mut last_report = std::time::Instant::now();
     let mut reported = (0, 0, 0);
@@ -245,10 +259,22 @@ fn run(
         };
         let mut b = buffer.lock().expect("audio buffer");
         b.samples.extend(out);
-        if b.samples.len() > max {
-            let drop = b.samples.len() - target;
+        if b.samples.len() > samples(delay + SLACK, rate, channels) {
+            // A burst: more room from now on, then down to the (new) target.
+            if delay < TARGET_MAX {
+                delay = (delay + STEP_UP).min(TARGET_MAX);
+                info!(ms = delay.as_millis() as u64, "audio buffer raised (sound arriving in bursts)");
+            }
+            changed = std::time::Instant::now();
+            b.target = samples(delay, rate, channels);
+            let drop = b.samples.len() - b.target;
             b.samples.drain(..drop);
             counters.trimmed.fetch_add(1, Ordering::Relaxed);
+        } else if delay > TARGET && changed.elapsed() >= CALM {
+            delay = delay.saturating_sub(STEP_DOWN).max(TARGET);
+            changed = std::time::Instant::now();
+            b.target = samples(delay, rate, channels);
+            info!(ms = delay.as_millis() as u64, "audio buffer lowered");
         }
     }
     drop(stream);
@@ -313,4 +339,9 @@ pub mod tests_support {
         let crossings = samples.windows(2).filter(|w| w[0] < 0.0 && w[1] >= 0.0).count();
         crossings as f32 * rate as f32 / samples.len().max(1) as f32
     }
+}
+
+/// Interleaved samples in `d` at `rate` with `channels`.
+fn samples(d: Duration, rate: u32, channels: usize) -> usize {
+    (rate as f64 * d.as_secs_f64()) as usize * channels
 }
