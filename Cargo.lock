@@ -3504,6 +3504,7 @@ dependencies = [
  "cpal",
  "libloading 0.8.9",
  "rubato",
+ "screencapturekit",
  "tracing",
  "unsafe-libopus",
 ]

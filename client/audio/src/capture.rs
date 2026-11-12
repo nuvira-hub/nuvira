@@ -4,7 +4,8 @@
 //!   device as input that way). The device's format is converted to 48 kHz stereo.
 //! - Linux: the monitor of the default output through PipeWire or PulseAudio
 //!   ([`crate::pulse`]), asked for at 48 kHz stereo directly.
-//! - macOS: not yet (ScreenCaptureKit).
+//! - macOS: the system audio of ScreenCaptureKit (macOS 13 or later), asked for at
+//!   48 kHz stereo; same Screen Recording permission as the screen.
 //!
 //! Silence is not sent (WASAPI gives nothing while nothing plays, the Linux monitor
 //! gives zeros): the viewer plays silence when no packet comes.
@@ -35,7 +36,7 @@ pub fn available() -> bool {
     #[cfg(target_os = "linux")]
     return crate::pulse::available();
     #[cfg(not(target_os = "linux"))]
-    return cfg!(windows);
+    return cfg!(any(windows, target_os = "macos"));
 }
 
 impl Capture {
@@ -194,7 +195,78 @@ fn open(gaps: Arc<AtomicU64>) -> Result<Source> {
     }))
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+fn open(_gaps: Arc<AtomicU64>) -> Result<Source> {
+    use anyhow::Context;
+    use screencapturekit::cm::CMTime;
+    use screencapturekit::prelude::*;
+
+    let (tx, rx) = mpsc::channel::<Vec<f32>>();
+    let content = SCShareableContent::get().map_err(|e| anyhow!("{e:?}"))?;
+    let display = content.displays().into_iter().next().context("no display for ScreenCaptureKit")?;
+    let filter = SCContentFilter::create().with_display(&display).with_excluding_windows(&[]).build()?;
+    // The stream needs a screen: the smallest, once a second, never read.
+    let config = SCStreamConfiguration::new()
+        .with_width(2)
+        .with_height(2)
+        .with_minimum_frame_interval(&CMTime { value: 1, timescale: 1, flags: 1, epoch: 0 })
+        .with_captures_audio(true)
+        .with_sample_rate(crate::RATE as i32)
+        .with_channel_count(CHANNELS as i32)
+        // A viewer on this Mac playing a session's sound is not sent back.
+        .with_excludes_current_process_audio(true);
+    let mut stream = SCStream::new(&filter, &config).map_err(|e| anyhow!("{e:?}"))?;
+    stream.add_output_handler(|_: CMSampleBuffer, _: SCStreamOutputType| {}, SCStreamOutputType::Screen)?;
+    stream.add_output_handler(
+        move |sample: CMSampleBuffer, _: SCStreamOutputType| {
+            if let Some(pcm) = mac_samples(&sample) {
+                let _ = tx.send(pcm);
+            }
+        },
+        SCStreamOutputType::Audio,
+    )?;
+    stream.start_capture().map_err(|e| anyhow!("{e:?}")).context("ScreenCaptureKit audio")?;
+    info!("audio capture started (ScreenCaptureKit)");
+    struct Running(SCStream);
+    impl Drop for Running {
+        fn drop(&mut self) {
+            let _ = self.0.stop_capture();
+        }
+    }
+    let running = Running(stream);
+    Ok(Box::new(move || {
+        let _ = &running;
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(data) => Ok(Some(data)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => bail!("the audio stream ended"),
+        }
+    }))
+}
+
+/// Interleaved stereo float samples of a ScreenCaptureKit audio buffer: float 32
+/// bits, one buffer per channel (the usual) or one interleaved buffer.
+#[cfg(target_os = "macos")]
+fn mac_samples(sample: &screencapturekit::cm::CMSampleBuffer) -> Option<Vec<f32>> {
+    let list = sample.audio_buffer_list().ok()?;
+    let floats = |b: &screencapturekit::cm::AudioBuffer| -> Vec<f32> {
+        b.data().chunks_exact(4).map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]])).collect()
+    };
+    match list.num_buffers() {
+        0 => None,
+        1 => {
+            let b = list.get(0)?;
+            let v = floats(b);
+            Some(crate::resample::to_stereo(&v, b.number_channels.max(1) as usize))
+        }
+        _ => {
+            let (l, r) = (floats(list.get(0)?), floats(list.get(1)?));
+            Some(l.iter().zip(&r).flat_map(|(a, b)| [*a, *b]).collect())
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn open(_gaps: Arc<AtomicU64>) -> Result<Source> {
     bail!("capturing the sound is not available on this system yet")
 }

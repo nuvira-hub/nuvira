@@ -3,7 +3,8 @@
 //!
 //! - [`capture`]: the sound the computer sends to its speakers (Windows: WASAPI
 //!   loopback of the default output device; Linux: the monitor of the default
-//!   output through PipeWire or PulseAudio).
+//!   output through PipeWire or PulseAudio; macOS: ScreenCaptureKit's system
+//!   audio).
 //! - [`opus`]: Opus at 48 kHz stereo, 20 ms packets.
 //! - [`packet`]: the QUIC datagram that carries one packet.
 //! - [`player`]: playback on the viewer's default output device, with a short
