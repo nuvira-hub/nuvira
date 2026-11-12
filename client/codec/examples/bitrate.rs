@@ -72,6 +72,7 @@ fn main() {
             enc.set_bitrate(target);
         }
         let mut bytes = 0usize;
+        let started = std::time::Instant::now();
         for i in 0..90 {
             let data = &frames[(half * 90 + i) % frames.len()];
             let img = BgraImage { width: w as u32, height: h as u32, stride: w * 4, data };
@@ -80,7 +81,12 @@ fn main() {
             }
             std::thread::sleep(std::time::Duration::from_millis(33));
         }
-        // 90 frame a 30 fps = 3 s.
-        println!("{plan:?}: asked {} kbit/s → produced {} kbit/s", target / 1000, bytes * 8 / 3 / 1000);
+        // 90 frame a 30 fps = 3 s; the real time is longer by the encoding time.
+        let real = bytes as f64 * 8.0 / started.elapsed().as_secs_f64() / 1000.0;
+        println!(
+            "{plan:?}: asked {} kbit/s → produced {} kbit/s at 30 fps, {real:.0} kbit/s in real time",
+            target / 1000,
+            bytes * 8 / 3 / 1000
+        );
     }
 }
