@@ -17,6 +17,7 @@ members = [
     "client/portal",
     "client/msi",
     "client/cups",
+    "client/audio",
 ]
 
 [workspace.package]
@@ -35,6 +36,7 @@ nuvira-input = { path = "client/input" }
 nuvira-clipboard = { path = "client/clipboard" }
 nuvira-i18n = { path = "client/i18n" }
 nuvira-cups = { path = "client/cups" }
+nuvira-audio = { path = "client/audio" }
 
 anyhow = "1"
 bytes = "1"

@@ -48,7 +48,7 @@ Technician (A)           Server                      Remote (B)
 | `input` | reliable stream | mouse, keyboard (physical keys by W3C code), wheel, Ctrl+Alt+Del; text typed as characters (`Text`, only towards agents with `Hello.text`, from 0.22.2) |
 | `video` | QUIC datagrams with forward error correction (`Hello.video_datagrams`), or a reliable stream with older devices | encoded frames, keyframe requests on the control channel |
 | `file` | one stream per file | name and size, then data; from the agent also clipboard images, downloads and printed documents (see [29-remote-printing.md](29-remote-printing.md)) |
-| `audio` | datagrams (planned) | Opus |
+| `audio` | QUIC datagrams (`Hello.audio`, from 0.23.0) | Opus packets, `SetAudio` mutes (see [38-remote-audio.md](38-remote-audio.md)) |
 | `tunnel` | one bidirectional stream per TCP connection (Pro) | raw bytes after `TunnelOpen`/`TunnelResult` (see [26-tcp-tunnel.md](26-tcp-tunnel.md)) |
 | `terminal` | one bidirectional stream per terminal | shell in a pseudo-terminal (see [25-remote-terminal.md](25-remote-terminal.md)) |
 

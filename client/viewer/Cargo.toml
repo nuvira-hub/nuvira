@@ -19,6 +19,7 @@ nuvira-codec.workspace = true
 nuvira-i18n.workspace = true
 nuvira-proto.workspace = true
 nuvira-transport.workspace = true
+nuvira-audio.workspace = true
 prost.workspace = true
 quinn.workspace = true
 pollster.workspace = true

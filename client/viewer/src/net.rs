@@ -51,6 +51,8 @@ pub enum NetEvent {
         recording_required: bool,
         /// It can adapt its screen's resolution to the window (SetResolution).
         resolution: bool,
+        /// Its sound is played here (SetAudio switches it).
+        audio: bool,
     },
     /// A document printed on the remote computer (PDF).
     PrintJob {
@@ -103,6 +105,8 @@ pub enum NetEvent {
         tunnel: bool,
         /// Adapting the remote resolution to the window.
         resolution: bool,
+        /// The remote computer's sound (off: the person there switched it off).
+        audio: bool,
         /// Switched off by the person there ("input", "clipboard", "files", …).
         switched_off: Vec<String>,
     },
@@ -489,7 +493,8 @@ async fn handshake(
     password: Option<String>,
     proxy: &EventLoopProxy<NetEvent>,
     terminal_only: bool,
-) -> Result<(FramedSend, FramedRecv, Option<FramedSend>, Option<FramedRecv>)> {
+    audio: bool,
+) -> Result<(FramedSend, FramedRecv, Option<FramedSend>, Option<FramedRecv>, bool)> {
     let (send, recv) = conn.open_bi().await?;
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -506,6 +511,7 @@ async fn handshake(
             terminal_only,
             print: !terminal_only && crate::printing::available(),
             recording: !terminal_only,
+            audio: audio && !terminal_only && conn.max_datagram_size().is_some(),
             ..Default::default()
         })))
         .await?;
@@ -554,8 +560,9 @@ async fn handshake(
             recording: false,
             recording_required: false,
             resolution: false,
+            audio: false,
         });
-        return Ok((ctrl_tx, ctrl_rx, None, None));
+        return Ok((ctrl_tx, ctrl_rx, None, None, false));
     }
     let Some(ControlMessage { msg: Some(Msg::VideoFormat(format)) }) = ctrl_rx.recv().await? else {
         bail!("missing video format");
@@ -586,6 +593,7 @@ async fn handshake(
         recording: agent.recording,
         recording_required: agent.recording_required,
         resolution: agent.resolution,
+        audio: audio && agent.audio,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -596,7 +604,7 @@ async fn handshake(
         false => Some(FramedRecv::new(conn.accept_uni().await?)),
     };
     tracing::debug!("video channel accepted");
-    Ok((ctrl_tx, ctrl_rx, Some(input_tx), video_rx))
+    Ok((ctrl_tx, ctrl_rx, Some(input_tx), video_rx, agent.audio))
 }
 
 async fn session(
@@ -615,8 +623,10 @@ async fn session(
         () = viewer_gone(&mut input_rx) => return Ok(()),
     };
     recording.set_upload(upload);
-    let (mut ctrl_tx, mut ctrl_rx, mut input_tx, video_rx) = tokio::select! {
-        r = handshake(&conn, direct, password, &proxy, terminal_only) => match r {
+    // The remote computer's sound, played here (none without an output device).
+    let mut player = start_player(terminal_only);
+    let (mut ctrl_tx, mut ctrl_rx, mut input_tx, video_rx, agent_audio) = tokio::select! {
+        r = handshake(&conn, direct, password, &proxy, terminal_only, player.is_some()) => match r {
             Ok(channels) => channels,
             Err(e) => {
                 // The agent's own reason, unless it already gave it in its answer.
@@ -635,6 +645,11 @@ async fn session(
         }
     };
 
+    if !agent_audio {
+        // An older agent, or one that cannot capture its sound.
+        player = None;
+    }
+    let player = player.map(Arc::new);
     // Decoding happens on a separate thread so as not to block the network.
     let (key_tx, mut key_rx) = mpsc::unbounded_channel::<()>();
     let key_tx_for_datagrams = key_tx.clone();
@@ -652,14 +667,24 @@ async fn session(
             return std::future::pending().await;
         }
         let Some(mut video_rx) = video_rx else {
-            return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams, &loss).await;
+            return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams, &loss, player.as_deref()).await;
         };
-        while let Some(frame) = video_rx.recv::<VideoFrame>().await? {
-            if frame_tx.send((frame, nuvira_proto::now_us())).is_err() {
-                break;
+        let stream = async {
+            while let Some(frame) = video_rx.recv::<VideoFrame>().await? {
+                if frame_tx.send((frame, nuvira_proto::now_us())).is_err() {
+                    break;
+                }
             }
+            anyhow::Ok(())
+        };
+        // The video on its stream: the datagrams carry only the sound.
+        match player.as_deref() {
+            Some(player) => tokio::select! {
+                r = stream => r,
+                r = receive_audio(&conn, player) => r,
+            },
+            None => stream.await,
         }
-        anyhow::Ok(())
     };
 
     // Closing the input channel (the viewer exits) ends the session, also terminal only.
@@ -935,6 +960,7 @@ async fn session(
                             terminal: p.terminal,
                             tunnel: p.tunnel,
                             resolution: p.resolution,
+                            audio: p.audio,
                             switched_off: p.switched_off,
                         });
                     }
@@ -1271,6 +1297,7 @@ async fn receive_datagram_video(
     frames: &std::sync::mpsc::SyncSender<(VideoFrame, u64)>,
     request_keyframe: &mpsc::UnboundedSender<()>,
     loss: &VideoLoss,
+    audio: Option<&nuvira_audio::player::Player>,
 ) -> Result<()> {
     use prost::Message;
     let mut rx = nuvira_transport::fec::Receiver::default();
@@ -1289,6 +1316,14 @@ async fn receive_datagram_video(
             }
             Err(e) => return Err(e.into()),
         };
+        if nuvira_audio::packet::is_audio(&packet) {
+            if let Some(player) = audio
+                && let Ok((seq, data)) = nuvira_audio::packet::decode(&packet)
+            {
+                player.push(seq, data);
+            }
+            continue;
+        }
         let pushed = rx.push(&packet);
         let (shards, lost) = rx.take_loss();
         loss.shards.fetch_add(shards, Ordering::Relaxed);
@@ -1322,6 +1357,41 @@ async fn receive_datagram_video(
         }
         if frames.send((frame, nuvira_proto::now_us())).is_err() {
             return Ok(());
+        }
+    }
+}
+
+/// The sound when the video is on its stream: every datagram is a packet of it.
+async fn receive_audio(conn: &nuvira_transport::Connection, player: &nuvira_audio::player::Player) -> Result<()> {
+    info!("receiving the sound");
+    loop {
+        let packet = match conn.read_datagram().await {
+            Ok(p) => p,
+            Err(quinn::ConnectionError::ApplicationClosed(_) | quinn::ConnectionError::LocallyClosed) => {
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        match nuvira_audio::packet::decode(&packet) {
+            Ok((seq, data)) => player.push(seq, data),
+            Err(e) => tracing::debug!("datagram dropped: {e:#}"),
+        }
+    }
+}
+
+/// The player of the remote computer's sound: none for terminals, with
+/// NUVIRA_NO_AUDIO, or without an output device. NUVIRA_AUDIO_DUMP=file.wav also
+/// writes what is received (automated tests).
+fn start_player(terminal_only: bool) -> Option<nuvira_audio::player::Player> {
+    if terminal_only || std::env::var_os("NUVIRA_NO_AUDIO").is_some() {
+        return None;
+    }
+    let dump = std::env::var_os("NUVIRA_AUDIO_DUMP").map(std::path::PathBuf::from);
+    match nuvira_audio::player::Player::start(dump) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            info!("no sound: {e:#}");
+            None
         }
     }
 }

@@ -572,6 +572,7 @@ pub struct PolicyUi {
     pub no_restart: bool,
     pub no_record: bool,
     pub no_resolution: bool,
+    pub no_audio: bool,
 }
 
 impl From<pb::Policy> for PolicyUi {
@@ -589,6 +590,7 @@ impl From<pb::Policy> for PolicyUi {
             no_restart: p.no_restart,
             no_record: p.no_record,
             no_resolution: p.no_resolution,
+            no_audio: p.no_audio,
         }
     }
 }
@@ -608,6 +610,7 @@ impl From<PolicyUi> for pb::Policy {
             no_restart: p.no_restart,
             no_record: p.no_record,
             no_resolution: p.no_resolution,
+            no_audio: p.no_audio,
         }
     }
 }

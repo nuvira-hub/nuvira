@@ -34,3 +34,4 @@
 | 35 | [macOS: installation for the whole Mac](35-macos-deployment.md) | `nuvira-macos.pkg` and a configuration profile (MDM): the Mac's own ID, settings from managed preferences |
 | 36 | [Device key protected by the system](36-device-key.md) | DPAPI, Keychain, Secret Service, systemd-creds; migration of plain keys, hand-over to other accounts |
 | 37 | [Remote resolution adapted to the window](37-remote-resolution.md) | The remote screen takes the window's size (Windows, macOS, Linux X11), put back at the end; switch at the PC, Pro rule |
+| 38 | [Remote audio](38-remote-audio.md) | What the controlled computer plays comes out of the technician's speakers (Opus over QUIC datagrams); mute button; sent from Windows for now |

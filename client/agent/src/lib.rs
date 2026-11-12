@@ -544,6 +544,7 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
         no_print = policy.no_print,
         record_always = policy.record_always,
         no_resolution = policy.no_resolution,
+        no_audio = policy.no_audio,
         "rules of the server"
     );
     // The app shows the setting of the recordings locked when the rules want them.
@@ -574,6 +575,7 @@ fn merge_limits(a: nuvira_proto::v1::Policy, b: &nuvira_proto::v1::Policy) -> nu
         no_restart: a.no_restart || b.no_restart,
         no_record: a.no_record || b.no_record,
         no_resolution: a.no_resolution || b.no_resolution,
+        no_audio: a.no_audio || b.no_audio,
     }
 }
 
@@ -1135,6 +1137,13 @@ async fn session(
         && nuvira_capture::resolution::supported();
     // Video as datagrams with error correction, when the viewer asks for it.
     let video_datagrams = hello.video_datagrams && conn.max_datagram_size().is_some();
+    // The computer's sound, as datagrams, to viewers that play it.
+    let audio_offered = !terminal_only
+        && hello.audio
+        && !policy.no_audio
+        && config.synthetic.is_none()
+        && conn.max_datagram_size().is_some()
+        && nuvira_audio::capture::available();
     let hello = Hello {
         password_required: gate.is_some(),
         file_manager: !config.view_only && config.synthetic.is_none() && !policy.no_files,
@@ -1156,6 +1165,7 @@ async fn session(
         text: !terminal_only && !config.view_only,
         // Clipboard.paste: with the clipboard and the keyboard.
         paste: !terminal_only && !config.view_only && config.synthetic.is_none() && !policy.no_clipboard,
+        audio: audio_offered,
         ..local_hello()
     };
     // What the person at the PC can switch off: what this session has.
@@ -1168,6 +1178,7 @@ async fn session(
         (switches::TUNNEL, hello.tunnel),
         (switches::PRINT, hello.print),
         (switches::RESOLUTION, hello.resolution),
+        (switches::AUDIO, hello.audio),
     ] {
         if has {
             offered |= bit;
@@ -1356,6 +1367,64 @@ async fn session(
                 let _ = unanswered_since_ms.compare_exchange(0, now_ms, Ordering::Relaxed, Ordering::Relaxed);
             }
             anyhow::Ok(())
+        }
+    };
+
+    // The sound: captured while the viewer wants it (SetAudio), each packet a datagram.
+    let (audio_on_tx, mut audio_on_rx) = tokio::sync::watch::channel(true);
+    let audio = {
+        let conn = conn.clone();
+        // On while the viewer wants it (its mute button) and the person at the PC did
+        // not switch it off.
+        let mut audio_off = off.clone();
+        async move {
+            if !audio_offered {
+                return std::future::pending().await;
+            }
+            let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+            let mut capture: Option<nuvira_audio::capture::Capture> = None;
+            let mut failed = false;
+            let mut seq = 0u32;
+            loop {
+                let want = *audio_on_rx.borrow_and_update() && audio_off.is_on(switches::AUDIO);
+                if want && capture.is_none() && !failed {
+                    let tx = tx.clone();
+                    match tokio::task::spawn_blocking(move || nuvira_audio::capture::Capture::start(move |p| {
+                        let _ = tx.send(p);
+                    }))
+                    .await?
+                    {
+                        Ok(c) => capture = Some(c),
+                        Err(e) => {
+                            // No sound device: the session goes on without sound.
+                            warn!("sound not sent: {e:#}");
+                            failed = true;
+                        }
+                    }
+                } else if !want && let Some(c) = capture.take() {
+                    tokio::task::spawn_blocking(move || drop(c)).await?;
+                }
+                tokio::select! {
+                    changed = audio_on_rx.changed() => {
+                        if changed.is_err() {
+                            return anyhow::Ok(());
+                        }
+                    }
+                    _ = audio_off.changed() => {}
+                    Some(packet) = rx.recv() => {
+                        if capture.is_none() {
+                            continue;
+                        }
+                        // Not waiting for room: a packet that cannot leave now is late anyway.
+                        match conn.send_datagram(nuvira_audio::packet::encode(seq, &packet).into()) {
+                            Ok(()) => {}
+                            Err(quinn::SendDatagramError::ConnectionLost(e)) => return Err(e.into()),
+                            Err(e) => tracing::debug!("audio packet not sent: {e}"),
+                        }
+                        seq = seq.wrapping_add(1);
+                    }
+                }
+            }
         }
     };
 
@@ -1692,6 +1761,10 @@ async fn session(
                         tracing::debug!("viewer area {}x{}", size.width, size.height);
                     }
                 }
+                Some(Msg::SetAudio(set)) => {
+                    info!(on = set.on, "sound of the session");
+                    let _ = audio_on_tx.send(set.on);
+                }
                 Some(Msg::SetPrivacy(set)) => {
                     let mut error = String::new();
                     if set.on && privacy.is_none() {
@@ -1959,6 +2032,7 @@ async fn session(
         r = input => r.context("input channel"),
         r = accept_streams(&conn, (&terminal_refused, &tunnel_refused), &off) => r,
         r = printing => r,
+        r = audio => r.context("sound"),
     };
     let last = pipeline.lock().expect("pipeline").take();
     let _ = tokio::task::spawn_blocking(move || drop(last)).await;
@@ -2235,6 +2309,7 @@ fn permissions(offered: u8, off: u8) -> nuvira_proto::v1::Permissions {
         tunnel: on(switches::TUNNEL),
         print: on(switches::PRINT),
         resolution: on(switches::RESOLUTION),
+        audio: on(switches::AUDIO),
         switched_off: switches::names(off & offered),
     }
 }
@@ -2306,6 +2381,7 @@ fn local_hello() -> Hello {
         restart_users: false,
         text: false,
         paste: false,
+        audio: false,
         print: false,
         recording: false,
         recording_required: false,
