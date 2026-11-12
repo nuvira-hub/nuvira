@@ -42,8 +42,12 @@ const OWN_DEVICE_PREFIX: &[u8] = b"NuviraHub";
 // ioctl numbers of <linux/input.h>.
 const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
 const fn eviocgbit_ev(len: libc::c_ulong) -> libc::c_ulong {
-    // _IOC(_IOC_READ, 'E', 0x20 + 0, len)
-    (2 << 30) | (len << 16) | ((b'E' as libc::c_ulong) << 8) | 0x20
+    eviocgbit(0, len)
+}
+/// EVIOCGBIT(ev, len): the codes a device has for one event type.
+const fn eviocgbit(ev: u32, len: libc::c_ulong) -> libc::c_ulong {
+    // _IOC(_IOC_READ, 'E', 0x20 + ev, len)
+    (2 << 30) | (len << 16) | ((b'E' as libc::c_ulong) << 8) | (0x20 + ev as libc::c_ulong)
 }
 const fn eviocgname(len: libc::c_ulong) -> libc::c_ulong {
     (2 << 30) | (len << 16) | ((b'E' as libc::c_ulong) << 8) | 0x06
@@ -51,6 +55,14 @@ const fn eviocgname(len: libc::c_ulong) -> libc::c_ulong {
 const EV_KEY: u32 = 1;
 const EV_REL: u32 = 2;
 const EV_ABS: u32 = 3;
+const KEY_A: usize = 30;
+const KEY_Z: usize = 44;
+const KEY_SPACE: usize = 57;
+const BTN_LEFT: usize = 0x110;
+const BTN_TOUCH: usize = 0x14a;
+const REL_X: usize = 0;
+const ABS_X: usize = 0;
+const ABS_MT_POSITION_X: usize = 0x35;
 
 /// The root side is there (the system part of unattended access is installed).
 pub fn available() -> bool {
@@ -211,7 +223,10 @@ impl Grabbed {
 }
 
 /// Opens and grabs a keyboard, mouse, touchpad or touch screen; `None` for other
-/// devices (lid and other switches) and for NuviraHub's own.
+/// devices and for NuviraHub's own. Power and sleep buttons, brightness keys
+/// ("Video Bus"), a laptop's hotkeys and the lid stay free: the person at the
+/// computer can still turn it off (on a laptop of 2026-11-12 the power button
+/// was blocked with the rest).
 fn grab(path: &Path) -> Result<Option<(String, OwnedFd)>> {
     let file =
         std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open(path)?;
@@ -223,6 +238,23 @@ fn grab(path: &Path) -> Result<Option<(String, OwnedFd)>> {
     }
     let types = u32::from_le_bytes(bits);
     if types & ((1 << EV_KEY) | (1 << EV_REL) | (1 << EV_ABS)) == 0 {
+        return Ok(None);
+    }
+    let has = |ev: u32, codes: &[usize]| -> bool {
+        if types & (1 << ev) == 0 {
+            return false;
+        }
+        let mut map = [0u8; 96]; // KEY_MAX 0x2ff: 768 bits
+        // SAFETY: the kernel writes at most `len` bytes into `map`.
+        if unsafe { libc::ioctl(fd.as_raw_fd(), eviocgbit(ev, map.len() as libc::c_ulong), map.as_mut_ptr()) } < 0 {
+            return false;
+        }
+        codes.iter().all(|&c| map[c / 8] & (1 << (c % 8)) != 0)
+    };
+    let keyboard = has(EV_KEY, &[KEY_A, KEY_Z, KEY_SPACE]);
+    let pointer = has(EV_REL, &[REL_X]) || has(EV_KEY, &[BTN_LEFT]);
+    let touch = has(EV_ABS, &[ABS_X]) || has(EV_ABS, &[ABS_MT_POSITION_X]) || has(EV_KEY, &[BTN_TOUCH]);
+    if !(keyboard || pointer || touch) {
         return Ok(None);
     }
     let mut name = [0u8; 128];
