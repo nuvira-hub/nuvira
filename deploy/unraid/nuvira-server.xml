@@ -29,7 +29,7 @@ In the NuviraHub app, enter this server's address in Settings → Server. A sing
   <Requires>Forward port 21116 UDP (and TCP for the WebSocket fallback) from the router to Unraid, to reach the server from outside your network. Back up the Data folder: it holds the server's identity, which the apps pin.</Requires>
   <Changes>
 ### 0.22.6 (2026-11-11)
-- Apps 0.22: remote resolution adapted to the technician's window; hardware encoding on Linux (NVIDIA NVENC, VA-API); KDE Plasma's sign-in screen on Wayland; Windows unattended access that survives user switching; the permanent password changed from the app; Macs installed with the package update themselves; French, German and Spanish address the user informally. The server is unchanged since 0.22.0: put the new update zip in the updates folder. Notes: https://github.com/nuvira-hub/nuvira/releases
+- Apps 0.22: remote resolution adapted to the technician's window; hardware encoding on Linux (NVIDIA NVENC, VA-API); KDE Plasma's sign-in screen on Wayland; Windows unattended access that survives user switching; the permanent password changed from the app; Macs installed with the package update themselves; French, German and Spanish address the user informally. The server is unchanged since 0.22.0: extract the new update zip into the updates folder. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.21.1 (2026-11-09)
 - Device keys protected by the system (DPAPI, Keychain, Secret Service), direct connections over IPv6, smoother picture from Macs, updates that also trust an offline backup key. Server: IPv6 relay between an IPv4 and an IPv6 side (needs this image), unknown messages ignored. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.20.1 (2026-11-08)
@@ -39,7 +39,7 @@ In the NuviraHub app, enter this server's address in Settings → Server. A sing
 ### 0.18.0 (2026-11-08)
 - Apps: a locked Mac is unlocked from the session (the technician types its password); the app connects again by itself when it started before the network. The server is unchanged. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.17.0 (2026-11-08)
-- Apps: unattended access on macOS, the sign-in screen on macOS and Linux (X11), automatic updates for Linux and macOS, session recording, permissions per technician, MSI package and Group Policy. Server: update channels for Linux and macOS (put the new update zip in the updates folder), messages for recordings and permissions of the Pro edition. Notes: https://github.com/nuvira-hub/nuvira/releases
+- Apps: unattended access on macOS, the sign-in screen on macOS and Linux (X11), automatic updates for Linux and macOS, session recording, permissions per technician, MSI package and Group Policy. Server: update channels for Linux and macOS (extract the new update zip into the updates folder), messages for recordings and permissions of the Pro edition. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.16.0 (2026-11-07)
 - Apps: remote terminal, remote printing, remote restart with reconnection, privacy mode (Windows), unattended access on Linux. Server: messages for the support queue and inventory of the Pro edition. Notes: https://github.com/nuvira-hub/nuvira/releases
 ### 0.15.0 (2026-11-03)
@@ -49,7 +49,7 @@ In the NuviraHub app, enter this server's address in Settings → Server. A sing
   </Changes>
   <Config Name="Port (UDP)" Target="21116" Default="21116" Mode="udp" Description="Signalling and relay (QUIC). Forward it on the router." Type="Port" Display="always" Required="true" Mask="false">21116</Config>
   <Config Name="Port (TCP)" Target="21116" Default="21116" Mode="tcp" Description="WebSocket fallback for networks that block UDP, and app updates. Forward it on the router." Type="Port" Display="always" Required="false" Mask="false">21116</Config>
-  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/nuvira-server" Mode="rw" Description="Database, server certificate, and the app updates you publish to your devices (updates folder). Back up the whole folder." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/nuvira-server</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/nuvira-server" Mode="rw" Description="Database, server certificate, and the app updates you publish to your devices: extract the nuvira-update zip of a release into the updates folder (its folders and .json files go straight in it). Back up the whole folder." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/nuvira-server</Config>
   <Config Name="Log level" Target="NUVIRA_LOG" Default="info" Mode="" Description="debug, info or warn." Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
   <Config Name="WebSocket listen" Target="NUVIRA_WS_LISTEN" Default=":21116" Mode="" Description="TCP address of the WebSocket fallback; off to disable it." Type="Variable" Display="advanced" Required="false" Mask="false">:21116</Config>
   <Config Name="Limits per address" Target="NUVIRA_RATE_LIMITS" Default="on" Mode="" Description="Limits on registrations and connection requests per address (local addresses are always exempt); off to disable them." Type="Variable" Display="advanced" Required="false" Mask="false">on</Config>
