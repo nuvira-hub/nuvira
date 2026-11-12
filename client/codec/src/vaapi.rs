@@ -1172,6 +1172,7 @@ pub struct VaapiEncoder {
 
 impl VaapiEncoder {
     pub fn new(settings: EncoderSettings) -> Result<Self> {
+        driver_survives(settings)?;
         let display = shared_display()?;
         let mut enc =
             Self { display, settings, session: None, force_key: true, new_rate: false, fallback: None };
@@ -1363,3 +1364,63 @@ mod tests {
         assert!((90..=118).contains(&luma), "luma {luma}");
     }
 }
+
+/// Set in the child of [`driver_survives`]: it tries the driver itself.
+static IN_PROBE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the driver opens and encodes without killing the process: the first
+/// time, a child process (fork) does what [`VaapiEncoder::new`] does. Some drivers
+/// abort instead of failing: i965 2.4.1 on an Intel Braswell (Celeron N3xxx),
+/// `intel_enc_hw_context_init: Assertion 'encoder_context->mfc_context' failed` in
+/// vaCreateContext, also with ffmpeg (2026-11-12); without this the agent died at
+/// its start. A driver that only fails is left to the attempt in this process,
+/// which tells why; one that crashes or hangs is not used again in this process.
+fn driver_survives(settings: EncoderSettings) -> Result<()> {
+    use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
+    static VERDICT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+    if IN_PROBE.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(());
+    }
+    let verdict = VERDICT.get_or_init(|| {
+        // SAFETY: the child only runs the encoder test and leaves with _exit (no
+        // destructors, no atexit handlers of the parent).
+        let pid = unsafe { libc::fork() };
+        if pid < 0 {
+            return Ok(()); // no child: tried in this process
+        }
+        if pid == 0 {
+            IN_PROBE.store(true, std::sync::atomic::Ordering::Relaxed);
+            let ok = tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(), || {
+                VaapiEncoder::new(settings).is_ok()
+            });
+            unsafe { libc::_exit(if ok { 0 } else { 1 }) }
+        }
+        let started = Instant::now();
+        let mut status = 0;
+        loop {
+            // SAFETY: waiting for our own child.
+            let r = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if r == pid {
+                break;
+            }
+            if r < 0 {
+                return Ok(());
+            }
+            if started.elapsed() > Duration::from_secs(15) {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                    libc::waitpid(pid, &mut status, 0);
+                }
+                return Err("the VA-API driver did not answer within 15 s".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if libc::WIFSIGNALED(status) {
+            return Err(format!("the VA-API driver crashed while trying it (signal {})", libc::WTERMSIG(status)));
+        }
+        Ok(())
+    });
+    verdict.clone().map_err(|e| anyhow::anyhow!(e))
+}
+
