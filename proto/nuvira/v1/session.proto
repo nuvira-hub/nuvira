@@ -54,7 +54,15 @@ message ControlMessage {
     ResolutionState resolution_state = 28;
     RestartCheck restart_check = 29;
     RestartUsers restart_users = 30;
+    SetAudio set_audio = 31;
   }
+}
+
+// From the viewer (to agents with Hello.audio): send the computer's sound, or stop
+// (the viewer's mute switch: no capture and nothing on the network meanwhile).
+// Audio starts on by itself; each packet is a QUIC datagram (nuvira_audio::packet).
+message SetAudio {
+  bool on = 1;
 }
 
 // From the agent, when it changes: the screen of the controlled computer is locked
@@ -381,6 +389,10 @@ message Hello {
   bool text = 18;
   // From the agent: it presses Clipboard.paste once the text is in its clipboard.
   bool paste = 19;
+  // From the viewer: it plays the remote computer's sound (QUIC datagrams,
+  // nuvira_audio::packet). From the agent: it sends it, from the start of the
+  // session until SetAudio turns it off.
+  bool audio = 20;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

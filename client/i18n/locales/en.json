@@ -283,6 +283,8 @@
   "tb.sas_label": "Ctrl+Alt+Del",
   "tb.view_only": "View only: mouse and keyboard are not sent",
   "tb.privacy": "Privacy mode: the remote screen turns black and its mouse and keyboard are blocked; you keep seeing the real screen",
+  "tb.sound_on": "Sound of the remote computer: on (click to mute)",
+  "tb.sound_off": "Sound of the remote computer: muted (click to hear it)",
   "tb.restart": "Restart the remote computer: the session comes back by itself",
   "tb.actual_size": "Real size (1:1): move the mouse to see the rest of the screen",
   "tb.fit_window": "Fit to the window",

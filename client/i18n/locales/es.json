@@ -283,6 +283,8 @@
   "tb.sas_label": "Ctrl+Alt+Supr",
   "tb.view_only": "Solo ver: no se envían el ratón ni el teclado",
   "tb.privacy": "Modo privacidad: la pantalla remota se vuelve negra y su ratón y teclado quedan bloqueados; tú sigues viendo la pantalla real",
+  "tb.sound_on": "Sonido del ordenador remoto: activado (clic para silenciarlo)",
+  "tb.sound_off": "Sonido del ordenador remoto: silenciado (clic para oírlo)",
   "tb.restart": "Reiniciar el equipo remoto: la sesión se reanuda sola",
   "tb.actual_size": "Tamaño real (1:1): mueve el ratón para ver el resto de la pantalla",
   "tb.fit_window": "Ajustar a la ventana",

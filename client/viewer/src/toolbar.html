@@ -51,6 +51,9 @@
   button:hover { background: var(--hover); }
   button:active { transform: translateY(1px); }
   button.on { background: var(--on-bg); color: var(--on); }
+  /* sound: the waves while on, a cross while muted */
+  #sound .cross, #sound.muted .waves { display: none; }
+  #sound.muted .cross { display: inline; }
   /* recording: a red dot while it runs */
   #record.on { background: transparent; color: #e53935; }
   #record.on svg circle.dot-rec { fill: #e53935; }
@@ -99,6 +102,9 @@
   <button id="viewonly" data-i18n-title="tb.view_only">
     <svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
   </button>
+  <button id="sound" data-i18n-title="tb.sound_on" hidden>
+    <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path class="waves" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="cross" d="M16 9l6 6M22 9l-6 6"/></svg>
+  </button>
   <button id="privacy" data-i18n-title="tb.privacy" hidden>
     <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M4 5l16 10"/></svg>
   </button>
@@ -136,7 +142,7 @@
   for (const node of document.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
 
   const send = (action) => window.ipc.postMessage(action);
-  for (const id of ["sendfile", "files", "terminal", "tunnels", "chat", "sas", "viewonly", "privacy", "record", "restart", "resolution", "actual", "fullscreen", "collapse", "expand", "close"]) {
+  for (const id of ["sendfile", "files", "terminal", "tunnels", "chat", "sas", "viewonly", "sound", "privacy", "record", "restart", "resolution", "actual", "fullscreen", "collapse", "expand", "close"]) {
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
@@ -192,6 +198,12 @@
       if ("terminal" in state) document.getElementById("terminal").hidden = !state.terminal;
       if ("tunnel" in state) document.getElementById("tunnels").hidden = !state.tunnel;
       if ("privacyAvailable" in state) document.getElementById("privacy").hidden = !state.privacyAvailable;
+      if ("soundAvailable" in state) document.getElementById("sound").hidden = !state.soundAvailable;
+      if ("sound" in state) {
+        const b = document.getElementById("sound");
+        b.classList.toggle("muted", !state.sound);
+        b.title = t(state.sound ? "tb.sound_on" : "tb.sound_off");
+      }
       if ("privacy" in state) document.getElementById("privacy").classList.toggle("on", state.privacy);
       if ("restart" in state) document.getElementById("restart").hidden = !state.restart;
       if ("recordingAvailable" in state) document.getElementById("record").hidden = !state.recordingAvailable;

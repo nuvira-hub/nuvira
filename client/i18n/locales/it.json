@@ -283,6 +283,8 @@
   "tb.sas_label": "Ctrl+Alt+Canc",
   "tb.view_only": "Solo visualizzazione: mouse e tastiera non vengono inviati",
   "tb.privacy": "Modalità privacy: lo schermo remoto diventa nero e mouse e tastiera lì sono bloccati; tu continui a vedere lo schermo vero",
+  "tb.sound_on": "Audio del computer remoto: attivo (clic per silenziarlo)",
+  "tb.sound_off": "Audio del computer remoto: silenziato (clic per sentirlo)",
   "tb.restart": "Riavvia il computer remoto: la sessione riprende da sola",
   "tb.actual_size": "Dimensione reale (1:1): muovi il mouse per vedere il resto dello schermo",
   "tb.fit_window": "Adatta alla finestra",

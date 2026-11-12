@@ -283,6 +283,8 @@
   "tb.sas_label": "Strg+Alt+Entf",
   "tb.view_only": "Nur ansehen: Maus und Tastatur werden nicht gesendet",
   "tb.privacy": "Datenschutzmodus: der entfernte Bildschirm wird schwarz und Maus und Tastatur dort sind gesperrt; du siehst weiter den echten Bildschirm",
+  "tb.sound_on": "Ton des entfernten Computers: an (klicken zum Stummschalten)",
+  "tb.sound_off": "Ton des entfernten Computers: stumm (klicken zum Anhören)",
   "tb.restart": "Entfernten Computer neu starten: die Sitzung verbindet sich danach von selbst",
   "tb.actual_size": "Originalgröße (1:1): Maus bewegen, um den Rest des Bildschirms zu sehen",
   "tb.fit_window": "An Fenster anpassen",

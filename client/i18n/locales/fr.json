@@ -283,6 +283,8 @@
   "tb.sas_label": "Ctrl+Alt+Suppr",
   "tb.view_only": "Affichage seul : la souris et le clavier ne sont pas envoyés",
   "tb.privacy": "Mode confidentialité : l'écran distant devient noir et sa souris et son clavier sont bloqués ; tu continues à voir l'écran réel",
+  "tb.sound_on": "Son de l'ordinateur distant : activé (clique pour le couper)",
+  "tb.sound_off": "Son de l'ordinateur distant : coupé (clique pour l'entendre)",
   "tb.restart": "Redémarrer l'ordinateur distant : la session reprend toute seule",
   "tb.actual_size": "Taille réelle (1:1) : déplace la souris pour voir le reste de l'écran",
   "tb.fit_window": "Adapter à la fenêtre",

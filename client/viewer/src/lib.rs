@@ -439,6 +439,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         feedback_window: (Instant::now(), Vec::new(), Vec::new()),
         view_only: args.view_only,
         privacy: false,
+        sound: None,
         privacy_at_start: args.privacy,
         adapt: Adapt { wanted: args.adapt_resolution || prefs::load().adapt_resolution, ..Default::default() },
         recording: Recording {
@@ -598,6 +599,8 @@ struct App {
     switched_off: Vec<String>,
     /// Privacy mode on at the agent (as it last said).
     privacy: bool,
+    /// The remote computer's sound: None when this session has none, else on or muted.
+    sound: Option<bool>,
     /// `--privacy`: to turn on as soon as connected.
     privacy_at_start: bool,
     /// The remote resolution adapted to the window.
@@ -955,6 +958,14 @@ impl App {
                 self.send_view_size();
                 self.send_control(Msg::SetRecording(nuvira_proto::v1::SetRecording { on: !self.recording.on }));
             }
+            Action::Sound => {
+                if let Some(on) = self.sound {
+                    info!(on = !on, "sound of the remote computer");
+                    self.sound = Some(!on);
+                    self.send_control(Msg::SetAudio(nuvira_proto::v1::SetAudio { on: !on }));
+                    self.update_toolbar_state();
+                }
+            }
             Action::Privacy => {
                 info!("privacy mode requested: {}", !self.privacy);
                 self.send_control(Msg::SetPrivacy(nuvira_proto::v1::SetPrivacy { on: !self.privacy }));
@@ -1043,7 +1054,7 @@ impl App {
     fn update_toolbar_state(&self) {
         let (Some(toolbar), Some(window)) = (&self.toolbar, &self.window) else { return };
         toolbar.update(&format!(
-            "{{viewOnly:{},inputBlocked:{},privacy:{},recording:{},recordingRequired:{},actualSize:{},fullscreen:{},quality:{},resolutionAvailable:{},adaptResolution:{}}}",
+            "{{viewOnly:{},inputBlocked:{},privacy:{},recording:{},recordingRequired:{},actualSize:{},fullscreen:{},quality:{},resolutionAvailable:{},adaptResolution:{},sound:{}}}",
             self.view_only || self.input_blocked,
             self.input_blocked,
             self.privacy,
@@ -1053,7 +1064,8 @@ impl App {
             window.fullscreen().is_some(),
             toolbar::js_string(toolbar::quality_name(self.quality)),
             self.adapt.available && self.adapt.allowed,
-            self.adapt.wanted
+            self.adapt.wanted,
+            self.sound.unwrap_or(false)
         ));
     }
 }
@@ -1244,8 +1256,11 @@ impl ApplicationHandler<NetEvent> for App {
                 recording,
                 recording_required,
                 resolution,
+                audio,
             } => {
                 self.remote_mac = remote_mac;
+                // Every session starts with the sound on.
+                self.sound = audio.then_some(true);
                 self.restart_users = restart_users;
                 // A new session: the agent put the screen back when the last one ended.
                 self.adapt.available = resolution;
@@ -1304,7 +1319,7 @@ impl ApplicationHandler<NetEvent> for App {
                 self.send_view_size();
                 if let Some(toolbar) = &self.toolbar {
                     toolbar.update(&format!(
-                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal},tunnel:{tunnel},restart:{restart},recordingAvailable:{recording}}}"
+                        "{{fileManager:{file_manager},secureAttention:{secure_attention},privacyAvailable:{privacy},terminal:{terminal},tunnel:{tunnel},restart:{restart},recordingAvailable:{recording},soundAvailable:{audio}}}"
                     ));
                 }
                 self.update_toolbar_state();

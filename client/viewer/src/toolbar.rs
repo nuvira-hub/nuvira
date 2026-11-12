@@ -24,7 +24,7 @@ const HTML: &str = include_str!("toolbar.html");
 const CHAT_HTML: &str = include_str!("chat.html");
 const NOTICE_HTML: &str = include_str!("notice.html");
 /// Sizes in logical pixels: open toolbar and the tab to reopen it.
-const BAR: (f64, f64) = (940.0, 38.0);
+const BAR: (f64, f64) = (976.0, 38.0);
 /// Chat panel: width and maximum height, distance from the edges.
 const CHAT: (f64, f64) = (340.0, 440.0);
 const CHAT_MARGIN: f64 = 12.0;
@@ -38,6 +38,8 @@ pub enum Action {
     ViewOnly,
     /// Privacy mode on or off at the agent.
     Privacy,
+    /// The remote computer's sound on or muted.
+    Sound,
     /// Starts or stops recording the session.
     Record,
     /// Opens a remote terminal window.
@@ -90,6 +92,7 @@ impl Action {
             "sas" => Self::SecureAttention,
             "viewonly" => Self::ViewOnly,
             "privacy" => Self::Privacy,
+            "sound" => Self::Sound,
             "record" => Self::Record,
             "terminal" => Self::Terminal,
             "tunnels" => Self::Tunnels,
@@ -389,6 +392,7 @@ mod tests {
     fn actions_and_escaping() {
         assert_eq!(Action::parse("sas"), Some(Action::SecureAttention));
         assert_eq!(Action::parse("privacy"), Some(Action::Privacy));
+        assert_eq!(Action::parse("sound"), Some(Action::Sound));
         assert_eq!(Action::parse("resolution"), Some(Action::AdaptResolution));
         assert_eq!(Action::parse("record"), Some(Action::Record));
         assert_eq!(Action::parse("terminal"), Some(Action::Terminal));
