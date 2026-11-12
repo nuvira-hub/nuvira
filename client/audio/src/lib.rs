@@ -2,7 +2,8 @@
 //! the viewer's speakers.
 //!
 //! - [`capture`]: the sound the computer sends to its speakers (Windows: WASAPI
-//!   loopback of the default output device).
+//!   loopback of the default output device; Linux: the monitor of the default
+//!   output through PipeWire or PulseAudio).
 //! - [`opus`]: Opus at 48 kHz stereo, 20 ms packets.
 //! - [`packet`]: the QUIC datagram that carries one packet.
 //! - [`player`]: playback on the viewer's default output device, with a short
@@ -12,6 +13,8 @@ pub mod capture;
 pub mod opus;
 pub mod packet;
 pub mod player;
+#[cfg(target_os = "linux")]
+mod pulse;
 mod resample;
 
 /// Opus works at 48 kHz: other device rates are converted.

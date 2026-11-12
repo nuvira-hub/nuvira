@@ -3502,6 +3502,7 @@ version = "0.22.7"
 dependencies = [
  "anyhow",
  "cpal",
+ "libloading 0.8.9",
  "rubato",
  "tracing",
  "unsafe-libopus",
