@@ -11,7 +11,9 @@
 //!   one, keyframes when asked (as the other encoders): one frame out for every
 //!   frame in, no reordering.
 //! - CBR rate control (VBR if missing), bitrate changed during the session with a
-//!   new rate-control parameter.
+//!   new rate-control parameter. A driver with only constant QP (iHD on Intel Gen9
+//!   without the HuC firmware) is used too, the QP of each frame chosen here from
+//!   the size of the previous ones (`QpControl`).
 //! - Headers: SPS and PPS written here and given as packed headers when the
 //!   driver takes them (as FFmpeg and GStreamer do). Mesa's drivers (AMD
 //!   radeonsi, D3D12 under WSL) need them: their VA layer reads the profile and
@@ -61,6 +63,8 @@ const ATTRIB_NOT_SUPPORTED: u32 = 0x8000_0000;
 const RT_FORMAT_YUV420: u32 = 1;
 const RC_CBR: u32 = 2;
 const RC_VBR: u32 = 4;
+/// Constant QP: the bitrate is then followed here (see [`QpControl`]).
+const RC_CQP: u32 = 16;
 const PROGRESSIVE: c_int = 1;
 
 const BUF_CODED: c_int = 21;
@@ -525,7 +529,19 @@ impl Display {
         }
     }
 
+    /// The first profile and entrypoint whose rate control follows a bitrate (CBR,
+    /// else VBR); failing that, one with only constant QP, the bitrate then followed
+    /// here. iHD on Intel Gen9 (Skylake to Comet Lake) gives only constant QP on the
+    /// low-power entrypoint unless the HuC firmware is loaded (i915.enable_guc=2),
+    /// which the kernel does not do there by default (Kaby Lake-R, 2026-11-12).
     fn choose_profile(&mut self) -> Result<()> {
+        if self.find_profile(false) || self.find_profile(true) {
+            return Ok(());
+        }
+        bail!("the driver does not encode H.264")
+    }
+
+    fn find_profile(&mut self, cqp: bool) -> bool {
         let va = self.va;
         // SAFETY: buffers sized as libva asks.
         unsafe {
@@ -555,14 +571,19 @@ impl Display {
                         continue;
                     }
                     let rc = attribs[1].value;
-                    let rate_control = if rc == ATTRIB_NOT_SUPPORTED {
+                    let rate_control = if cqp {
+                        if rc == ATTRIB_NOT_SUPPORTED || rc & RC_CQP == 0 {
+                            continue;
+                        }
+                        RC_CQP
+                    } else if rc == ATTRIB_NOT_SUPPORTED {
                         0
                     } else if rc & RC_CBR != 0 {
                         RC_CBR
                     } else if rc & RC_VBR != 0 {
                         RC_VBR
                     } else {
-                        continue; // only constant QP: the bitrate could not be followed
+                        continue; // only constant QP: second pass
                     };
                     self.profile = profile;
                     self.entrypoint = entrypoint;
@@ -570,11 +591,11 @@ impl Display {
                     let packed = attribs[2].value;
                     let both = PACKED_SEQUENCE | PACKED_PICTURE;
                     self.packed_headers = packed != ATTRIB_NOT_SUPPORTED && packed & both == both;
-                    return Ok(());
+                    return true;
                 }
             }
         }
-        bail!("the driver does not encode H.264")
+        false
     }
 }
 
@@ -802,8 +823,10 @@ impl Session {
         settings: &EncoderSettings,
         keyframe: bool,
         new_rate: bool,
+        qp: Option<u8>,
     ) -> Result<Vec<u8>> {
         let va = d.va;
+        let cqp = qp.is_some();
         let key = keyframe || self.last.is_none() || self.frame_num >= MAX_FRAME_NUM;
         if key {
             self.frame_num = 0;
@@ -854,7 +877,7 @@ impl Session {
                     seq.intra_period = INTRA_PERIOD;
                     seq.intra_idr_period = INTRA_PERIOD;
                     seq.ip_period = 1;
-                    seq.bits_per_second = bits;
+                    seq.bits_per_second = if cqp { 0 } else { bits };
                     seq.max_num_ref_frames = 1;
                     seq.picture_width_in_mbs = self.mbs_w as u16;
                     seq.picture_height_in_mbs = self.mbs_h as u16;
@@ -901,7 +924,7 @@ impl Session {
                         }
                     }
                 }
-                if key || new_rate {
+                if (key || new_rate) && !cqp {
                     let mut rc = Misc {
                         type_: MISC_RATE_CONTROL,
                         data: RateControl {
@@ -949,6 +972,11 @@ impl Session {
                 slice.macroblock_info = VA_INVALID_ID;
                 slice.slice_type = if key { SLICE_I } else { SLICE_P };
                 slice.idr_pic_id = self.idr_id;
+                // Constant QP: the frame's QP as a delta from the PPS's 26, so that our
+                // packed PPS (pic_init_qp 26) stays true whatever the QP.
+                if let Some(qp) = qp {
+                    slice.slice_qp_delta = qp as i8 - 26;
+                }
                 slice.ref_pic_list0 = [INVALID_PICTURE; 32];
                 slice.ref_pic_list1 = [INVALID_PICTURE; 32];
                 if let Some(r) = reference {
@@ -1160,12 +1188,71 @@ pub(crate) fn nal_types(data: &[u8]) -> Vec<u8> {
     data.windows(4).filter(|w| w[0] == 0 && w[1] == 0 && w[2] == 1).map(|w| w[3] & 0x1f).collect()
 }
 
+/// Bitrate followed by changing the QP, for drivers with only constant QP.
+///
+/// Each frame's size is compared with its share of the bitrate (the time since
+/// the previous frame, from one frame at the highest rate to 100 ms; a keyframe
+/// may use eight times as much). Six QP steps halve the size, so the error in QP
+/// is `6 * log2(size / share)`: the QP goes up by half of it at once (at most 3
+/// a frame), and down by 15 % of it, at most one a frame; nearly empty frames
+/// (a still screen) say nothing about the picture and lower it only by 0.1.
+struct QpControl {
+    qp: f32,
+    bitrate: u32,
+    max_fps: u32,
+    last: Option<std::time::Instant>,
+}
+
+impl QpControl {
+    const MIN: f32 = 20.0;
+    const MAX: f32 = 46.0;
+
+    fn new(settings: &EncoderSettings) -> Self {
+        Self { qp: 28.0, bitrate: settings.bitrate_bps.max(1), max_fps: settings.max_fps.max(1), last: None }
+    }
+
+    fn qp(&self) -> u8 {
+        self.qp.round() as u8
+    }
+
+    fn set_bitrate(&mut self, bps: u32) {
+        let bps = bps.max(1);
+        // Half of the change at once, the rest from the next frames.
+        let change = 6.0 * (self.bitrate as f32 / bps as f32).log2() * 0.5;
+        self.qp = (self.qp + change).clamp(Self::MIN, Self::MAX);
+        self.bitrate = bps;
+    }
+
+    fn frame(&mut self, bytes: usize, keyframe: bool) {
+        let now = std::time::Instant::now();
+        let min = 1.0 / self.max_fps as f32;
+        let dt = self.last.map_or(min, |t| (now - t).as_secs_f32()).clamp(min, 0.1f32.max(min));
+        self.last = Some(now);
+        let mut share = self.bitrate as f32 * dt;
+        if keyframe {
+            share *= 8.0;
+        }
+        let ratio = (bytes as f32 * 8.0 / share).max(1e-3);
+        let error = 6.0 * ratio.log2();
+        let step = if error > 0.0 {
+            (error * 0.5).min(3.0)
+        } else if ratio < 0.125 {
+            -0.1
+        } else {
+            (error * 0.15).max(-1.0)
+        };
+        self.qp = (self.qp + step).clamp(Self::MIN, Self::MAX);
+    }
+}
+
 pub struct VaapiEncoder {
     display: &'static Display,
     settings: EncoderSettings,
     session: Option<Session>,
     force_key: bool,
     new_rate: bool,
+    /// The driver has only constant QP: the bitrate is followed here.
+    qp_control: Option<QpControl>,
     /// The driver failed during the session: OpenH264 from then on.
     fallback: Option<OpenH264Encoder>,
 }
@@ -1174,8 +1261,16 @@ impl VaapiEncoder {
     pub fn new(settings: EncoderSettings) -> Result<Self> {
         driver_survives(settings)?;
         let display = shared_display()?;
-        let mut enc =
-            Self { display, settings, session: None, force_key: true, new_rate: false, fallback: None };
+        let qp_control = (display.rate_control == RC_CQP).then(|| QpControl::new(&settings));
+        let mut enc = Self {
+            display,
+            settings,
+            session: None,
+            force_key: true,
+            new_rate: false,
+            qp_control,
+            fallback: None,
+        };
         // The keyframe must carry the parameter sets (ours or the driver's).
         let (w, h) = (320u32, 180u32);
         let data = vec![128u8; (w * h * 4) as usize];
@@ -1223,8 +1318,12 @@ impl VaapiEncoder {
         let new_rate = std::mem::take(&mut self.new_rate);
         let session = self.session.as_mut().context("VA-API session")?;
         session.upload(self.display, image)?;
-        let data = session.encode(self.display, &self.settings, key, new_rate)?;
+        let qp = self.qp_control.as_ref().map(QpControl::qp);
+        let data = session.encode(self.display, &self.settings, key, new_rate, qp)?;
         let keyframe = nal_types(&data).contains(&5);
+        if let Some(control) = &mut self.qp_control {
+            control.frame(data.len(), keyframe);
+        }
         Ok(EncodedFrame { data, keyframe, ..Default::default() })
     }
 }
@@ -1248,6 +1347,9 @@ impl VideoEncoder for VaapiEncoder {
         if bps != self.settings.bitrate_bps {
             self.settings.bitrate_bps = bps;
             self.new_rate = true;
+            if let Some(control) = &mut self.qp_control {
+                control.set_bitrate(bps);
+            }
         }
     }
 
@@ -1319,6 +1421,35 @@ mod tests {
         assert_eq!(level(120 * 68), 41); // 1080p
         assert_eq!(level(240 * 135), 51); // 4K
         assert_eq!(level(320 * 180), 60); // 5K
+    }
+
+    #[test]
+    fn qp_control() {
+        let settings = EncoderSettings { bitrate_bps: 3_000_000, max_fps: 30, ltr: false };
+        let mut c = QpControl::new(&settings);
+        // 100 kB a frame at 30 fps (24 Mbit/s against 3): the QP goes up 3 a frame.
+        c.frame(100_000, false);
+        assert_eq!(c.qp(), 31);
+        for _ in 0..10 {
+            c.frame(100_000, false);
+        }
+        assert_eq!(c.qp(), 46);
+        // A frame on its share (12.5 kB) leaves it where it is.
+        let mut c = QpControl::new(&settings);
+        c.frame(12_500, false);
+        assert_eq!(c.qp(), 28);
+        // A keyframe may be eight times larger.
+        c.frame(100_000, true);
+        assert_eq!(c.qp(), 28);
+        // Half the share: down by 0.9.
+        c.frame(6_250, false);
+        assert!((c.qp - 27.1).abs() < 0.01, "{}", c.qp);
+        // A still screen: down slowly.
+        c.frame(100, false);
+        assert!((c.qp - 27.0).abs() < 0.01, "{}", c.qp);
+        // A third of the bitrate: half of 9.5 QP up at once.
+        c.set_bitrate(1_000_000);
+        assert_eq!(c.qp(), 32);
     }
 
     /// Needs a VA-API device that encodes H.264; skipped elsewhere.
