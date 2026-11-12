@@ -105,6 +105,8 @@ pub enum NetEvent {
         tunnel: bool,
         /// Adapting the remote resolution to the window.
         resolution: bool,
+        /// The remote computer's sound (off: the person there switched it off).
+        audio: bool,
         /// Switched off by the person there ("input", "clipboard", "files", …).
         switched_off: Vec<String>,
     },
@@ -958,6 +960,7 @@ async fn session(
                             terminal: p.terminal,
                             tunnel: p.tunnel,
                             resolution: p.resolution,
+                            audio: p.audio,
                             switched_off: p.switched_off,
                         });
                     }

@@ -544,6 +544,7 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
         no_print = policy.no_print,
         record_always = policy.record_always,
         no_resolution = policy.no_resolution,
+        no_audio = policy.no_audio,
         "rules of the server"
     );
     // The app shows the setting of the recordings locked when the rules want them.
@@ -574,6 +575,7 @@ fn merge_limits(a: nuvira_proto::v1::Policy, b: &nuvira_proto::v1::Policy) -> nu
         no_restart: a.no_restart || b.no_restart,
         no_record: a.no_record || b.no_record,
         no_resolution: a.no_resolution || b.no_resolution,
+        no_audio: a.no_audio || b.no_audio,
     }
 }
 
@@ -1138,6 +1140,7 @@ async fn session(
     // The computer's sound, as datagrams, to viewers that play it.
     let audio_offered = !terminal_only
         && hello.audio
+        && !policy.no_audio
         && config.synthetic.is_none()
         && conn.max_datagram_size().is_some()
         && nuvira_audio::capture::available();
@@ -1175,6 +1178,7 @@ async fn session(
         (switches::TUNNEL, hello.tunnel),
         (switches::PRINT, hello.print),
         (switches::RESOLUTION, hello.resolution),
+        (switches::AUDIO, hello.audio),
     ] {
         if has {
             offered |= bit;
@@ -1370,6 +1374,9 @@ async fn session(
     let (audio_on_tx, mut audio_on_rx) = tokio::sync::watch::channel(true);
     let audio = {
         let conn = conn.clone();
+        // On while the viewer wants it (its mute button) and the person at the PC did
+        // not switch it off.
+        let mut audio_off = off.clone();
         async move {
             if !audio_offered {
                 return std::future::pending().await;
@@ -1379,7 +1386,7 @@ async fn session(
             let mut failed = false;
             let mut seq = 0u32;
             loop {
-                let want = *audio_on_rx.borrow_and_update();
+                let want = *audio_on_rx.borrow_and_update() && audio_off.is_on(switches::AUDIO);
                 if want && capture.is_none() && !failed {
                     let tx = tx.clone();
                     match tokio::task::spawn_blocking(move || nuvira_audio::capture::Capture::start(move |p| {
@@ -1403,6 +1410,7 @@ async fn session(
                             return anyhow::Ok(());
                         }
                     }
+                    _ = audio_off.changed() => {}
                     Some(packet) = rx.recv() => {
                         if capture.is_none() {
                             continue;
@@ -2301,6 +2309,7 @@ fn permissions(offered: u8, off: u8) -> nuvira_proto::v1::Permissions {
         tunnel: on(switches::TUNNEL),
         print: on(switches::PRINT),
         resolution: on(switches::RESOLUTION),
+        audio: on(switches::AUDIO),
         switched_off: switches::names(off & offered),
     }
 }

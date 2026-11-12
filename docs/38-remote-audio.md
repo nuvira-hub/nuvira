@@ -25,6 +25,13 @@ Session recordings stay video only.
 - **Transport** (`client/audio/src/packet.rs`): each packet is one QUIC datagram, `0xA0, seq u32, Opus packet`: a lost one is not retransmitted (it would arrive too late), and it does not hold up anything else. The first byte tells it apart from the video's datagrams (`nuvira_transport::fec`, version 1). Over the WebSocket fallback the datagrams travel inside the tunnel like the rest.
 - **Playback** (`client/audio/src/player.rs`): a decoding thread fills a buffer that the output device's callback empties. It starts playing once the target is there (60 ms at first), plays silence and waits to refill when it runs dry, and drops the oldest audio beyond the target plus 190 ms, so the delay stays short. The target adapts: a slow or overloaded computer sends its sound in bursts, and each drop is a tear, so each drop raises the target by 40 ms (up to 300 ms) and 30 s without one bring it down by 20 ms. On a normal computer it stays at 60 ms. A lost packet is rebuilt from the next one's redundancy; up to 5 in a row are made up by Opus's concealment, beyond that it is silence (the sound stopped).
 
+## Rules and the person at the computer
+
+Like the other permissions ([32](32-session-permissions.md)):
+
+- **Rule "No sound of the computer"** (`Policy.no_audio`, field 13): from the server's rules (app → Administration, Pro console → Rules), or as a limit of a technician's account or of a member of a shared book (Pro, limit bit 12). The agent then does not offer the sound (`Hello.audio` false).
+- **Switch "Sound"** in the strip of the app, for the person at the computer: off, the capture stops at once and nothing is sent; `Permissions.audio` (field 9) tells the viewer, which greys out its sound button and shows "Switched off by the person at the remote computer: Sound". On again, the sound comes back (unless the technician muted it).
+
 ## Protocol
 
 - `Hello.audio` (field 20): from the viewer, it plays the sound (it has an output device, the connection has datagrams, it is not a terminal-only session); from the agent, it will send it. Audio flows only when both set it, so older viewers never receive an audio datagram, and older agents never send one.
@@ -46,5 +53,4 @@ Session recordings stay video only.
 
 ## To do
 
-- A rule of the Pro server (`Policy.no_audio`) and a switch for the person at the PC, like the other permissions ([32](32-session-permissions.md)).
 - Audio in session recordings and in the web client.

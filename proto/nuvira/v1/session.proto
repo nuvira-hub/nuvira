@@ -409,6 +409,8 @@ message Permissions {
   bool print = 6;
   // Adapting the screen's resolution to the viewer (SetResolution).
   bool resolution = 8;
+  // The computer's sound (off: the agent stops sending it).
+  bool audio = 9;
   // What the person at the PC switched off themselves (the rest is by the rules).
   repeated string switched_off = 7;
 }

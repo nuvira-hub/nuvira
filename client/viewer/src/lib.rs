@@ -1612,7 +1612,7 @@ impl ApplicationHandler<NetEvent> for App {
                     None => {}
                 }
             }
-            NetEvent::Permissions { input, files, terminal, tunnel, resolution, switched_off } => {
+            NetEvent::Permissions { input, files, terminal, tunnel, resolution, audio, switched_off } => {
                 // Switched off there: the agent put the screen back; on again: asked again.
                 if resolution != self.adapt.allowed && self.adapt.available {
                     self.adapt.allowed = resolution;
@@ -1651,7 +1651,11 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 self.switched_off = switched_off;
                 if let Some(toolbar) = &self.toolbar {
-                    toolbar.update(&format!("{{fileManager:{files},terminal:{terminal},tunnel:{tunnel}}}"));
+                    // The sound button only while the person there lets the sound through.
+                    let sound = self.sound.is_some() && audio;
+                    toolbar.update(&format!(
+                        "{{fileManager:{files},terminal:{terminal},tunnel:{tunnel},soundAvailable:{sound}}}"
+                    ));
                 }
                 self.update_toolbar_state();
             }

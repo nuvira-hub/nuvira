@@ -129,6 +129,8 @@ message Policy {
   bool no_record = 11;
   // The resolution of the controlled screen is never changed by a session.
   bool no_resolution = 12;
+  // The computer's sound is never sent to the viewer.
+  bool no_audio = 13;
 }
 
 // ---------------------------------------------------------------------------
