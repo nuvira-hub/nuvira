@@ -160,3 +160,11 @@ Kubuntu 26.04 (Plasma 6.6, `ksecretd`), automatic sign-in switched off, signed i
 - **Ubuntu 22.04 and Mint 21**: dropped in 0.14.0 (PipeWire too old); possible by loading PipeWire at run time.
 
 **Unattended access** (2026-11-06): the user service on Ubuntu 26.04 and Fedora 44 (Wayland) and Mint 22.3 (X11) starts at login and is reached with the permanent password with no app open; after a restart with automatic login both came back by themselves, and on Wayland the saved permission was accepted without a dialog. The app links to the service's agent and shows its ID.
+
+## Tests of 2026-11-12 (a real laptop, Ubuntu 26.10 live session)
+
+An Acer laptop with an Intel Celeron N3xxx (Braswell), GNOME on Wayland, started from an Ubuntu 26.10 live USB stick; nothing installed on its disk. Packages and NuviraHub were added to the live session (`sudo nuvira service deploy` with the 0.22.7 `.deb`, then this branch's program in place of `/usr/bin/nuvira`).
+
+- **VA-API driver crash.** With `i965-va-driver` (the only driver for this chip: iHD refuses it) the encoder test aborted the agent at its start (`intel_enc_hw_context_init: Assertion 'encoder_context->mfc_context' failed`, also with `ffmpeg -c:v h264_vaapi`): the released 0.22.7 does not start on such a PC. With the driver tried in a child process the agent and the app start, "VA-API: the VA-API driver crashed while trying it (signal 6)", OpenH264 (36 ms a 1080p frame), sessions work.
+- **Privacy mode on GNOME Wayland**: the laptop's screen went black while the viewer kept the real picture, its touchpad and keyboard did nothing, the viewer's mouse and keys went through, and the screen came back when it was turned off (seen by the owner). The root service had grabbed 8 devices, the power and sleep buttons, the brightness keys ("Video Bus") and Acer's hotkeys among them: now only the keyboard, the touchpad and the mouse (3 devices).
+- **Remote audio** (branch `remote-audio`): see [38-remote-audio.md](38-remote-audio.md).
