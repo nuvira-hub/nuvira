@@ -3439,7 +3439,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-agent"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3471,7 +3471,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-app"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "nuvira-agent",
@@ -3498,7 +3498,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-audio"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "cpal",
@@ -3511,7 +3511,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-capture"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
@@ -3530,7 +3530,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-clipboard"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3541,7 +3541,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-codec"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
@@ -3556,14 +3556,14 @@ dependencies = [
 
 [[package]]
 name = "nuvira-cups"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "nuvira-i18n"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "serde_json",
  "windows",
@@ -3571,7 +3571,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-input"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
@@ -3596,7 +3596,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-msi"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3606,7 +3606,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-portal"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "ashpd 0.13.13",
@@ -3620,7 +3620,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-proto"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "bytes",
  "prost",
@@ -3630,14 +3630,14 @@ dependencies = [
 
 [[package]]
 name = "nuvira-secret"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "ring",
 ]
 
 [[package]]
 name = "nuvira-service"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3660,7 +3660,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-transport"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -3687,7 +3687,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-update"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3705,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "nuvira-viewer"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
