@@ -101,6 +101,7 @@ The display manager's greeter (LightDM, GDM…) is reached by a systemd **system
   - The system's part (`nuvira service system`, root) puts it in `/usr/share/gnome-shell/extensions` and enables it for the greeter, with the list the greeter had (read without the caller's own dconf database): sign-in screen, from GDM's next start. Where depends on GDM's dconf profile: with `system-db:gdm` (Fedora, upstream) in `/etc/dconf/db/gdm.d/90-nuvira-remote-access` + `dconf update`; on Debian and Ubuntu, whose profile has only a file database compiled by gdm3's `/usr/share/gdm/generate-config` at every start, in `/usr/share/gdm/dconf/95-nuvira-remote-access` (after `90-debian-settings`) + `generate-config`.
   - `metadata.json` lists GNOME Shell 45 up to the installed version and the next, written again at every installation (GNOME refuses extensions that do not list its version).
   - Removing unattended access removes both.
+- **Why not at once.** GNOME Shell reads its extensions when the session starts, and a running one has no way to load a new one from a folder: tried on GNOME 50 (Fedora 44, 2026-11-13), a test extension put in `~/.local/share/gnome-shell/extensions` during the session: `EnableExtension` answers `false`, `GetExtensionInfo` an empty dictionary, and `ReloadExtension` is no longer there. Only `InstallRemoteExtension` loads one at once, downloading it from extensions.gnome.org after a question to the person at the computer: possible if the extension is published there one day. Meanwhile the app tells: when the extension is installed but GNOME Shell has not loaded it in this session (`GetExtensionInfo` without its `uuid`, asked at most every 30 s), the settings say "Sign out and in once: until then GNOME's lock screen closes remote sessions" (`settings.gnome_sign_in_again`, `nuvira_service::gnome::sign_in_again_needed`).
 - **Without the extension** (not yet signed in again, or another desktop) the capture sends a dark placeholder once a second and the agent tells the viewer (`ScreenState`, `input: false`): someone must unlock it at the computer.
 - **Other ways looked at** (2026-11-08): gnome-remote-desktop's system mode (RDP to GDM, but a separate headless session, not the one on the monitor); DRM/KMS capture with `uinput` input as root (works below GNOME, but tiled buffers, planes and drivers to handle). The extension keeps the same API and needed no new capture.
 
@@ -153,7 +154,7 @@ Kubuntu 26.04 (Plasma 6.6, `ksecretd`), automatic sign-in switched off, signed i
 
 ## To do
 
-- **GNOME's lock screen at once:** the extension works from the next sign-in; before it the lock still closes the session.
+- **GNOME's lock screen at once:** only by publishing the extension on extensions.gnome.org (see "Locked screen"); the app says when a sign-out and in is needed.
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
 - **Other desktops**: GNOME and KDE Plasma (2026-11-09) tested; Sway and Hyprland have no remote desktop portal (screen without input).
