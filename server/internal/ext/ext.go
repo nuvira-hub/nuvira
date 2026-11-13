@@ -159,6 +159,15 @@ type SessionLimiter interface {
 	SessionLimits(viewerToken, agentID string) *pb.Policy
 }
 
+// ConnectGuard is implemented by modules that decide which viewers may ask for a
+// connection at all (NuviraHub Pro: the list of allowed addresses). viewerIP is
+// the address the server sees the viewer from (behind a reverse proxy in the
+// LAN, the client's from X-Forwarded-For). A refusal carries the translation
+// key the viewer shows. The call is synchronous: keep it short.
+type ConnectGuard interface {
+	AllowConnect(viewerIP, viewerID, agentID string) (ok bool, reason string)
+}
+
 // MergeLimits adds the limits of b to a (each one that is on in either stays on).
 func MergeLimits(a, b *pb.Policy) *pb.Policy {
 	if b == nil {
