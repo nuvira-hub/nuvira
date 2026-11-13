@@ -1504,12 +1504,22 @@ async fn session(
         let mut changes = off.clone();
         // Lock state last told to the viewer (macOS only: elsewhere always false).
         let mut screen_locked = false;
+        // Who joined the session, told to this viewer (none in LAN sessions).
+        let mut guests_rx = match &shared {
+            Some(s) => s.subscribe(),
+            None => tokio::sync::watch::channel(Vec::new()).1,
+        };
         loop {
             let msg = tokio::select! {
                 msg = ctrl_rx.recv::<ControlMessage>() => match msg? {
                     Some(msg) => msg,
                     None => return anyhow::Ok(()),
                 },
+                Ok(()) = guests_rx.changed() => {
+                    let names = guests_rx.borrow_and_update().clone();
+                    ctrl_tx.send(&control(Msg::Guests(nuvira_proto::v1::Guests { names }))).await?;
+                    continue;
+                }
                 now = changes.changed() => {
                     ctrl_tx.send(&tell_permissions(now)).await?;
                     // Switched off by the person at the PC: the screen goes back at once.

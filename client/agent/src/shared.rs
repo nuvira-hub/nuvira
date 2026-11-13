@@ -59,6 +59,8 @@ pub struct Shared {
     /// The keyboard and mouse can be used in this session at all.
     input_offered: bool,
     events: mpsc::UnboundedSender<AgentEvent>,
+    /// The guests' names, for the first viewer (`Guests` control message).
+    names: tokio::sync::watch::Sender<Vec<String>>,
 }
 
 impl Shared {
@@ -78,7 +80,19 @@ impl Shared {
             input,
             input_offered,
             events,
+            names: tokio::sync::watch::channel(Vec::new()).0,
         }
+    }
+
+    /// The guests' names at every change, for the first viewer.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Vec<String>> {
+        self.names.subscribe()
+    }
+
+    /// The app and the first viewer learn who is in the session.
+    fn tell(&self, names: Vec<String>) {
+        self.names.send_replace(names.clone());
+        let _ = self.events.send(AgentEvent::Guests { names });
     }
 
     /// A frame sent to the first viewer: a copy to every guest.
@@ -104,7 +118,7 @@ impl Shared {
             self.request_keyframe();
         }
         if let Some(names) = names {
-            let _ = self.events.send(AgentEvent::Guests { names });
+            self.tell(names);
         }
     }
 
@@ -137,7 +151,7 @@ impl Shared {
             guests.push(Guest { id, name, tx, lost: lost.clone() });
             names(&guests)
         };
-        let _ = self.events.send(AgentEvent::Guests { names });
+        self.tell(names);
         *self.last_key.lock().expect("keyframe") = None;
         self.request_keyframe();
         (id, rx, lost)
@@ -149,7 +163,7 @@ impl Shared {
             guests.retain(|g| g.id != id);
             names(&guests)
         };
-        let _ = self.events.send(AgentEvent::Guests { names });
+        self.tell(names);
     }
 
     fn full(&self) -> bool {
@@ -330,4 +344,71 @@ pub async fn guest_session(
     }
     info!("viewer left the session");
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn display() -> nuvira_capture::Display {
+        nuvira_capture::Display {
+            index: 0,
+            name: "Screen".into(),
+            left: 0,
+            top: 0,
+            width: 1280,
+            height: 720,
+            primary: true,
+        }
+    }
+
+    fn frame(seq: u64, keyframe: bool) -> VideoFrame {
+        VideoFrame { seq, keyframe, data: vec![0; 10], ..Default::default() }
+    }
+
+    /// A guest that does not read (a slow network): its queue fills up, the frames
+    /// after are dropped, it is marked as waiting for a keyframe and one is asked
+    /// for, at most every 2 s; the names go to the first viewer and to the app.
+    #[test]
+    fn slow_guest_waits_for_a_keyframe() {
+        let keyframe = Arc::new(AtomicBool::new(false));
+        let (input, _input_rx) = mpsc::unbounded_channel();
+        let (events, mut events_rx) = mpsc::unbounded_channel();
+        let shared = Shared::new(keyframe.clone(), display(), input, true, events);
+        let mut names = shared.subscribe();
+
+        let (id, mut rx, lost) = shared.join("NuviraHub Web".into());
+        assert!(keyframe.swap(false, Ordering::Relaxed), "a keyframe for the new guest");
+        assert!(lost.load(Ordering::Relaxed), "nothing shown before a keyframe");
+        assert_eq!(*names.borrow_and_update(), ["NuviraHub Web"]);
+        assert!(matches!(events_rx.try_recv(), Ok(AgentEvent::Guests { names }) if names == ["NuviraHub Web"]));
+
+        // The guest's queue (8) fills up: the next frame is dropped and a keyframe
+        // asked for, but not twice within 2 s.
+        lost.store(false, Ordering::Relaxed);
+        *shared.last_key.lock().unwrap() = None;
+        for seq in 1..=8 {
+            shared.frame(&frame(seq, false));
+        }
+        assert!(!lost.load(Ordering::Relaxed) && !keyframe.load(Ordering::Relaxed));
+        shared.frame(&frame(9, false));
+        assert!(lost.load(Ordering::Relaxed) && keyframe.swap(false, Ordering::Relaxed));
+        shared.frame(&frame(10, false));
+        assert!(!keyframe.load(Ordering::Relaxed), "a second keyframe within 2 s");
+        // What it had queued it still gets; it shows nothing until the keyframe.
+        let mut got = 0;
+        while let Ok(ToGuest::Frame(_)) = rx.try_recv() {
+            got += 1;
+        }
+        assert_eq!(got, 8);
+        shared.frame(&frame(11, true));
+        assert!(matches!(rx.try_recv(), Ok(ToGuest::Frame(f)) if f.keyframe));
+
+        shared.leave(id);
+        assert!(names.borrow_and_update().is_empty());
+        // When the first viewer's session ends the guests' queues close.
+        let (_, mut rx2, _) = shared.join("PC-B".into());
+        shared.end();
+        assert!(rx2.try_recv().is_err() && rx2.is_closed());
+    }
 }

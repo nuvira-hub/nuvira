@@ -188,6 +188,8 @@ pub enum NetEvent {
     FilesPicked(Vec<std::path::PathBuf>),
     /// Chat message from the person at the remote PC.
     Chat(String),
+    /// Who joined this session (shared sessions), at every change.
+    Guests(Vec<String>),
     /// Click on the toolbar.
     Toolbar(crate::toolbar::Action),
     /// File manager: answer of the agent to a request.
@@ -940,6 +942,9 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::Chat(chat)) }) => {
                         let _ = proxy.send_event(NetEvent::Chat(chat.text));
+                    }
+                    Some(ControlMessage { msg: Some(Msg::Guests(g)) }) => {
+                        let _ = proxy.send_event(NetEvent::Guests(g.names));
                     }
                     Some(ControlMessage { msg: Some(Msg::ScreenState(s)) }) => {
                         let _ = proxy.send_event(NetEvent::ScreenLocked { locked: s.locked, input: s.input });

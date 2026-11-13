@@ -501,6 +501,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         altgr: AltGrFix::default(),
         input_blocked: false,
         switched_off: Vec::new(),
+        guests: Vec::new(),
         exit_reason: None,
         closed_message: None,
         restarting: None,
@@ -597,6 +598,8 @@ struct App {
     input_blocked: bool,
     /// What the person at the remote computer switched off, as the agent last said.
     switched_off: Vec<String>,
+    /// Who joined this session (shared sessions), as the agent last said.
+    guests: Vec<String>,
     /// Privacy mode on at the agent (as it last said).
     privacy: bool,
     /// The remote computer's sound: None when this session has none, else on or muted.
@@ -1705,6 +1708,27 @@ impl ApplicationHandler<NetEvent> for App {
                     self.notice(&t(if on { "viewer.privacy_on" } else { "viewer.privacy_off" }), false);
                 }
                 self.update_toolbar_state();
+            }
+            NetEvent::Guests(names) => {
+                // Another technician joined or left: this one is told. Counted by
+                // name, since two can have the same (two windows of one computer).
+                let count = |list: &[String], name: &str| list.iter().filter(|n| *n == name).count();
+                let mut seen = HashSet::new();
+                for name in names.iter().chain(&self.guests) {
+                    if !seen.insert(name.clone()) {
+                        continue;
+                    }
+                    let (now, before) = (count(&names, name), count(&self.guests, name));
+                    for _ in before..now {
+                        info!(name, "joined the session");
+                        self.notice(&tf("viewer.guest_joined", &[("name", name)]), false);
+                    }
+                    for _ in now..before {
+                        info!(name, "left the session");
+                        self.notice(&tf("viewer.guest_left", &[("name", name)]), false);
+                    }
+                }
+                self.guests = names;
             }
             NetEvent::Chat(text) => {
                 info!("chat message received");

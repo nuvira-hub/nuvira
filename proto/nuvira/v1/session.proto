@@ -55,7 +55,15 @@ message ControlMessage {
     RestartCheck restart_check = 29;
     RestartUsers restart_users = 30;
     SetAudio set_audio = 31;
+    Guests guests = 32;
   }
+}
+
+// From the agent to the viewer who started the session: who joined it (shared
+// sessions, docs/39), at every change; empty when the last one left. Older
+// viewers ignore it.
+message Guests {
+  repeated string names = 1;
 }
 
 // From the viewer (to agents with Hello.audio): send the computer's sound, or stop
