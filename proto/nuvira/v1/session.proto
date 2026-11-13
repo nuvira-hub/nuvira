@@ -56,7 +56,31 @@ message ControlMessage {
     RestartUsers restart_users = 30;
     SetAudio set_audio = 31;
     Guests guests = 32;
+    CursorShape cursor_shape = 33;
+    CursorPosition cursor_position = 34;
   }
+}
+
+// From the agent, when Hello.cursor is on both sides: the remote pointer's image,
+// sent when it changes (the picture no longer has it). BGRA, not premultiplied,
+// at most 256x256; hot_x, hot_y: the point that clicks.
+message CursorShape {
+  uint32 serial = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  uint32 hot_x = 4;
+  uint32 hot_y = 5;
+  bytes bgra = 6;
+}
+
+// From the agent: where the remote pointer is, in pixels of the picture (its
+// VideoFormat), and which CursorShape it has; visible false when it is hidden or
+// outside the picture. Sent when it moves, at most about 60 times a second.
+message CursorPosition {
+  int32 x = 1;
+  int32 y = 2;
+  bool visible = 3;
+  uint32 serial = 4;
 }
 
 // From the agent to the viewer who started the session: who joined it (shared
@@ -401,6 +425,10 @@ message Hello {
   // nuvira_audio::packet). From the agent: it sends it, from the start of the
   // session until SetAudio turns it off.
   bool audio = 20;
+  // From the viewer: it draws the remote pointer itself (CursorShape,
+  // CursorPosition). From the agent: the picture has no pointer and those
+  // messages come; off, the pointer stays in the picture as before.
+  bool cursor = 21;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

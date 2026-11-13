@@ -70,6 +70,8 @@ pub struct Shared {
     /// Guests that want the sound: the capture runs while the first viewer or one
     /// of them does.
     listeners: watch::Sender<usize>,
+    /// The pointer comes apart from the picture in this session (Hello.cursor).
+    cursor_offered: bool,
 }
 
 impl Shared {
@@ -80,6 +82,7 @@ impl Shared {
         input_offered: bool,
         events: mpsc::UnboundedSender<AgentEvent>,
         audio_offered: bool,
+        cursor_offered: bool,
     ) -> Self {
         Self {
             keyframe,
@@ -94,6 +97,7 @@ impl Shared {
             audio_offered,
             audio: broadcast::channel(64).0,
             listeners: watch::channel(0).0,
+            cursor_offered,
         }
     }
 
@@ -253,7 +257,10 @@ pub async fn guest_session(
     let input = shared.input_offered && !policy.no_input;
     // The sound where the first viewer has it, and this one plays it.
     let audio = shared.audio_offered && hello.audio && !policy.no_audio && conn.max_datagram_size().is_some();
-    let answer = Hello { password_required: true, text: input, audio, ..local_hello() };
+    // The pointer apart, to a guest that draws it; one that cannot gets it in the
+    // picture (for everyone, while it stays).
+    let cursor = shared.cursor_offered && hello.cursor;
+    let answer = Hello { password_required: true, text: input, audio, cursor, ..local_hello() };
     ctrl_tx.send(&control(Msg::Hello(answer))).await?;
     let given = match ctrl_rx.recv::<ControlMessage>().await? {
         Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
@@ -305,6 +312,19 @@ pub async fn guest_session(
         }
     }
     let _leave = Leave(&shared, id);
+    struct PlainGuest(bool);
+    impl Drop for PlainGuest {
+        fn drop(&mut self) {
+            if self.0 {
+                crate::plain_guest(false);
+            }
+        }
+    }
+    let plain = shared.cursor_offered && !cursor;
+    if plain {
+        crate::plain_guest(true);
+    }
+    let _plain = PlainGuest(plain);
     info!(guests = shared.guests.lock().expect("guests").len(), "viewer joined the session");
 
     let display = shared.display.lock().expect("display").clone();
@@ -318,9 +338,17 @@ pub async fn guest_session(
 
     // Answers to the viewer's pings, sent by the loop that owns the control channel.
     let (pong_tx, mut pong_rx) = mpsc::unbounded_channel::<Pong>();
+    let mut pointer = crate::PointerSender::default();
+    let mut pointer_tick = tokio::time::interval(Duration::from_millis(16));
+    pointer_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let video = async {
         loop {
             tokio::select! {
+                _ = pointer_tick.tick(), if cursor => {
+                    for msg in pointer.poll() {
+                        ctrl_tx.send(&control(msg)).await?;
+                    }
+                }
                 message = frames.recv() => match message {
                     Some(ToGuest::Frame(frame)) => {
                         if lost.load(Ordering::Relaxed) {
@@ -450,7 +478,7 @@ mod tests {
         let keyframe = Arc::new(AtomicBool::new(false));
         let (input, _input_rx) = mpsc::unbounded_channel();
         let (events, mut events_rx) = mpsc::unbounded_channel();
-        let shared = Shared::new(keyframe.clone(), display(), input, true, events, true);
+        let shared = Shared::new(keyframe.clone(), display(), input, true, events, true, false);
         let mut names = shared.subscribe();
 
         let (id, mut rx, lost) = shared.join("NuviraHub Web".into());

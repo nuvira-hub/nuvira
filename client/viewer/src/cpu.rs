@@ -15,7 +15,7 @@ use anyhow::{Context, Result, anyhow};
 use nuvira_codec::YuvFrame;
 use winit::window::Window;
 
-use crate::render::{View, Viewport, place};
+use crate::render::{CursorOverlay, View, Viewport, place};
 
 pub struct CpuRenderer {
     surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
@@ -26,6 +26,9 @@ pub struct CpuRenderer {
     /// Ready image, the size of the window, in 0x00RRGGBB.
     pixels: Vec<u32>,
     view: View,
+    /// The remote pointer drawn on top, and what it covers (to put back).
+    cursor: Option<CursorOverlay>,
+    under: Vec<(usize, u32)>,
 }
 
 impl CpuRenderer {
@@ -33,8 +36,16 @@ impl CpuRenderer {
         let size = window.inner_size();
         let context = softbuffer::Context::new(window.clone()).map_err(|e| anyhow!("{e}"))?;
         let surface = softbuffer::Surface::new(&context, window).map_err(|e| anyhow!("{e}"))?;
-        let mut r =
-            Self { surface, width: 0, height: 0, last: None, pixels: Vec::new(), view: View::default() };
+        let mut r = Self {
+            surface,
+            width: 0,
+            height: 0,
+            last: None,
+            pixels: Vec::new(),
+            view: View::default(),
+            cursor: None,
+            under: Vec::new(),
+        };
         r.resize(size.width, size.height);
         Ok(r)
     }
@@ -82,7 +93,76 @@ impl CpuRenderer {
         }
     }
 
+    /// The remote pointer drawn on top (`None`: not drawn); whether the picture changes.
+    pub fn set_cursor(&mut self, cursor: Option<CursorOverlay>) -> bool {
+        let same = match (&self.cursor, &cursor) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.shape.serial == b.shape.serial && a.rect == b.rect,
+            _ => false,
+        };
+        if !same {
+            self.restore_under();
+            self.cursor = cursor;
+            self.draw_cursor();
+        }
+        !same
+    }
+
+    fn restore_under(&mut self) {
+        for (i, px) in self.under.drain(..) {
+            if let Some(p) = self.pixels.get_mut(i) {
+                *p = px;
+            }
+        }
+    }
+
+    /// Draws the pointer, scaled like the image, keeping what it covers.
+    fn draw_cursor(&mut self) {
+        let Some(c) = &self.cursor else { return };
+        let vp = self.viewport();
+        let s = &c.shape;
+        let [rx, ry, rw, rh] = c.rect;
+        let (x0, y0) = (vp.x + rx * vp.width, vp.y + ry * vp.height);
+        let (w, h) = ((rw * vp.width).max(1.0), (rh * vp.height).max(1.0));
+        let (out_w, out_h) = (self.width as i32, self.height as i32);
+        for wy in y0.floor() as i32..(y0 + h).ceil() as i32 {
+            if wy < 0 || wy >= out_h {
+                continue;
+            }
+            let sy = (((wy as f32 + 0.5 - y0) / h) * s.height as f32) as i32;
+            if sy < 0 || sy >= s.height as i32 {
+                continue;
+            }
+            for wx in x0.floor() as i32..(x0 + w).ceil() as i32 {
+                if wx < 0 || wx >= out_w {
+                    continue;
+                }
+                let sx = (((wx as f32 + 0.5 - x0) / w) * s.width as f32) as i32;
+                if sx < 0 || sx >= s.width as i32 {
+                    continue;
+                }
+                let k = ((sy as u32 * s.width + sx as u32) * 4) as usize;
+                let Some(src) = s.rgba.get(k..k + 4) else { continue };
+                let a = u32::from(src[3]);
+                if a == 0 {
+                    continue;
+                }
+                let i = wy as usize * out_w as usize + wx as usize;
+                let Some(dst) = self.pixels.get_mut(i) else { continue };
+                self.under.push((i, *dst));
+                let blend = |c: u32, shift: u32| (u32::from(src[c as usize]) * a + ((*dst >> shift) & 0xFF) * (255 - a)) / 255;
+                *dst = (blend(0, 16) << 16) | (blend(1, 8) << 8) | blend(2, 0);
+            }
+        }
+    }
+
     fn convert(&mut self, frame: &YuvFrame) {
+        self.under.clear();
+        self.convert_frame(frame);
+        self.draw_cursor();
+    }
+
+    fn convert_frame(&mut self, frame: &YuvFrame) {
         let vp = place(frame.width, frame.height, self.width, self.height, self.view);
         let out_w = self.width as usize;
         self.pixels.fill(0);

@@ -39,6 +39,16 @@ use winit::window::{Window, WindowId};
 
 use crate::net::{FrameSlot, NetEvent};
 use crate::render::Renderer;
+
+/// The remote pointer as this viewer knows it (see `update_pointer`).
+#[derive(Default)]
+struct Pointer {
+    shape: Option<render::CursorShape>,
+    os: Option<winit::window::CustomCursor>,
+    position: Option<(i32, i32, bool, u32)>,
+    screen: (u32, u32),
+    local: Option<(f32, f32)>,
+}
 use crate::report::Report;
 
 const COPYRIGHT: &str =
@@ -503,6 +513,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         input_blocked: false,
         switched_off: Vec::new(),
         guests: Vec::new(),
+        pointer: Pointer::default(),
         exit_reason: None,
         closed_message: None,
         restarting: None,
@@ -601,6 +612,10 @@ struct App {
     switched_off: Vec<String>,
     /// Who joined this session (shared sessions), as the agent last said.
     guests: Vec<String>,
+    /// The remote pointer drawn here (Hello.cursor): its shape, as this
+    /// computer's pointer too, and position; the remote screen's size; where this
+    /// mouse last pointed in the picture (0..1).
+    pointer: Pointer,
     /// Privacy mode on at the agent (as it last said).
     privacy: bool,
     /// The remote computer's sound: None when this session has none, else on or muted.
@@ -1078,6 +1093,37 @@ impl App {
         }
     }
 
+    /// The remote pointer: this computer's pointer takes its shape while this
+    /// viewer controls; it is drawn into the picture where the remote computer moves
+    /// it (its own mouse, a program) or while only watching. Hidden by the agent
+    /// (drawn in the picture again, a recording): the usual pointer.
+    fn update_pointer(&mut self) {
+        let p = &self.pointer;
+        let (Some(window), Some(r)) = (&self.window, self.renderer.as_mut()) else { return };
+        let Some((x, y, visible, serial)) = p.position else { return };
+        let shape = p.shape.as_ref().filter(|s| s.serial == serial && visible);
+        let (sw, sh) = (p.screen.0.max(1) as f32, p.screen.1.max(1) as f32);
+        let controlling = !self.view_only && !self.input_blocked;
+        match (shape, &p.os) {
+            (Some(_), Some(os)) if controlling => window.set_cursor(os.clone()),
+            _ => window.set_cursor(winit::window::CursorIcon::Default),
+        }
+        // Drawn unless it is where this mouse put it (within 3 pixels).
+        let here = p.local.is_some_and(|(lx, ly)| (lx * sw - x as f32).abs() <= 3.0 && (ly * sh - y as f32).abs() <= 3.0);
+        let overlay = shape.filter(|_| !(controlling && here)).map(|s| render::CursorOverlay {
+            shape: s.clone(),
+            rect: [
+                (x - s.hot_x as i32) as f32 / sw,
+                (y - s.hot_y as i32) as f32 / sh,
+                s.width as f32 / sw,
+                s.height as f32 / sh,
+            ],
+        });
+        if r.set_cursor(overlay) {
+            window.request_redraw();
+        }
+    }
+
     fn notice(&self, text: &str, sticky: bool) {
         if let Some(toolbar) = &self.toolbar {
             toolbar.update(&format!("{{notice:{},sticky:{sticky}}}", toolbar::js_string(text)));
@@ -1305,6 +1351,10 @@ impl ApplicationHandler<NetEvent> for App {
                 audio,
             } => {
                 self.remote_mac = remote_mac;
+                self.pointer = Pointer { screen: (width, height), ..Pointer::default() };
+                if let Some(window) = &self.window {
+                    window.set_cursor(winit::window::CursorIcon::Default);
+                }
                 // Every session starts with the sound on.
                 self.sound = audio.then_some(true);
                 self.restart_users = restart_users;
@@ -1740,6 +1790,32 @@ impl ApplicationHandler<NetEvent> for App {
                     self.notice(&tf("viewer.resolution_now", &[("size", &format!("{width}x{height}"))]), false);
                 }
             }
+            NetEvent::ScreenSize { width, height } => {
+                self.pointer.screen = (width, height);
+                self.update_pointer();
+            }
+            NetEvent::CursorShape { serial, width, height, hot_x, hot_y, rgba } => {
+                // As this computer's pointer while it controls (not when only watching).
+                match winit::window::CustomCursor::from_rgba(
+                    rgba.as_ref().clone(),
+                    width as u16,
+                    height as u16,
+                    hot_x as u16,
+                    hot_y as u16,
+                ) {
+                    Ok(source) => self.pointer.os = Some(event_loop.create_custom_cursor(source)),
+                    Err(e) => debug!("remote pointer not usable here: {e}"),
+                }
+                if self.pointer.shape.is_none() {
+                    info!(width, height, "remote pointer drawn here");
+                }
+                self.pointer.shape = Some(render::CursorShape { serial, width, height, hot_x, hot_y, rgba });
+                self.update_pointer();
+            }
+            NetEvent::CursorPosition { x, y, visible, serial } => {
+                self.pointer.position = Some((x, y, visible, serial));
+                self.update_pointer();
+            }
             NetEvent::Privacy { on, error } => {
                 info!(on, error, "privacy mode");
                 let changed = on != self.privacy;
@@ -1913,6 +1989,10 @@ impl ApplicationHandler<NetEvent> for App {
                 let Some(r) = &self.renderer else { return };
                 if let Some((x, y)) = r.viewport().normalize(position.x, position.y) {
                     self.send(Event::MouseMove(MouseMove { x, y }));
+                    if !self.view_only {
+                        self.pointer.local = Some((x, y));
+                        self.update_pointer();
+                    }
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {

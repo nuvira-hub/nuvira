@@ -1182,6 +1182,15 @@ async fn session(
         && nuvira_capture::resolution::supported();
     // Video as datagrams with error correction, when the viewer asks for it.
     let video_datagrams = hello.video_datagrams && conn.max_datagram_size().is_some();
+    // The pointer apart from the picture, to viewers that draw it (Linux, and not
+    // with the DMA-BUF capture, which would lose it from recordings).
+    let cursor_offered = hello.cursor
+        && !terminal_only
+        && !recording_required
+        && config.synthetic.is_none()
+        && pointer::possible(config.plan);
+    pointer::set_wanted(cursor_offered);
+    let _pointer_reset = pointer::Reset;
     // The computer's sound, as datagrams, to viewers that play it.
     let audio_offered = !terminal_only
         && hello.audio
@@ -1211,6 +1220,7 @@ async fn session(
         // Clipboard.paste: with the clipboard and the keyboard.
         paste: !terminal_only && !config.view_only && config.synthetic.is_none() && !policy.no_clipboard,
         audio: audio_offered,
+        cursor: cursor_offered,
         ..local_hello()
     };
     // What the person at the PC can switch off: what this session has.
@@ -1347,6 +1357,7 @@ async fn session(
             offered & switches::INPUT != 0,
             g.ctx.events.clone(),
             audio_offered,
+            cursor_offered,
         ));
         *g.ctx.shared.lock().expect("shared") = Some(s.clone());
         s
@@ -1529,7 +1540,13 @@ async fn session(
             if let Some(g) = gate {
                 let _ = g.ctx.events.send(AgentEvent::Recording { on });
             }
+            // The recording is of the video: the pointer must be in it.
+            pointer::set_recording(on);
         };
+        // The pointer for this viewer, when it draws it.
+        let mut pointer_sender = pointer::Sender::default();
+        let mut pointer_tick = tokio::time::interval(Duration::from_millis(16));
+        pointer_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut changes = off.clone();
         // Lock state last told to the viewer (macOS only: elsewhere always false).
         let mut screen_locked = false;
@@ -1547,6 +1564,12 @@ async fn session(
                 Ok(()) = guests_rx.changed() => {
                     let names = guests_rx.borrow_and_update().clone();
                     ctrl_tx.send(&control(Msg::Guests(nuvira_proto::v1::Guests { names }))).await?;
+                    continue;
+                }
+                _ = pointer_tick.tick(), if cursor_offered => {
+                    for msg in pointer_sender.poll() {
+                        ctrl_tx.send(&control(msg)).await?;
+                    }
                     continue;
                 }
                 now = changes.changed() => {
@@ -2433,6 +2456,141 @@ fn control(msg: Msg) -> ControlMessage {
 }
 
 /// What the viewer may do: what the session has, less what is switched off.
+/// The remote pointer apart from the picture (`Hello.cursor`, Linux): what to ask
+/// the capture for, when it must be drawn into the picture after all, and the
+/// messages for a viewer that draws it.
+mod pointer {
+    #[cfg(target_os = "linux")]
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use nuvira_proto::v1::control_message::Msg;
+
+    #[cfg(target_os = "linux")]
+    static RECORDING: AtomicBool = AtomicBool::new(false);
+    #[cfg(target_os = "linux")]
+    static PLAIN_GUESTS: AtomicUsize = AtomicUsize::new(0);
+
+    /// The capture can give it apart: Linux, without the DMA-BUF capture (the
+    /// pointer could not be drawn into those pictures for a recording).
+    pub fn possible(plan: nuvira_codec::EncoderPlan) -> bool {
+        #[cfg(target_os = "linux")]
+        return plan == nuvira_codec::EncoderPlan::Software || nuvira_codec::dmabuf_import_modifiers().is_empty();
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = plan;
+            false
+        }
+    }
+
+    pub fn set_wanted(on: bool) {
+        #[cfg(target_os = "linux")]
+        nuvira_portal::cursor::set_wanted(on);
+        #[cfg(not(target_os = "linux"))]
+        let _ = on;
+    }
+
+    /// At the end of the session: back to the pointer in the picture.
+    pub struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            set_wanted(false);
+            set_recording(false);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn update() {
+        nuvira_portal::cursor::set_composite(
+            RECORDING.load(Ordering::Relaxed) || PLAIN_GUESTS.load(Ordering::Relaxed) > 0,
+        );
+    }
+
+    /// The viewer records the session: the pointer goes into the picture.
+    pub fn set_recording(on: bool) {
+        #[cfg(target_os = "linux")]
+        {
+            RECORDING.store(on, Ordering::Relaxed);
+            update();
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = on;
+    }
+
+    /// A guest that cannot draw the pointer joins (or leaves): it needs it in the
+    /// picture.
+    pub fn plain_guest(joined: bool) {
+        #[cfg(target_os = "linux")]
+        {
+            if joined {
+                PLAIN_GUESTS.fetch_add(1, Ordering::Relaxed);
+            } else {
+                let _ = PLAIN_GUESTS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+            }
+            update();
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = joined;
+    }
+
+    /// The pointer's messages for one viewer, when they change.
+    #[derive(Default)]
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub struct Sender {
+        generation: Option<u64>,
+        serial: u32,
+        shown: bool,
+    }
+
+    impl Sender {
+        pub fn poll(&mut self) -> Vec<Msg> {
+            #[cfg(target_os = "linux")]
+            {
+                use nuvira_portal::cursor;
+                let generation = cursor::generation();
+                if self.generation == Some(generation) {
+                    return Vec::new();
+                }
+                self.generation = Some(generation);
+                let mut out = Vec::new();
+                // In the picture (a recording, a guest, a compositor without it): the
+                // viewer hides its own.
+                if !cursor::active() || cursor::composite() {
+                    if self.shown {
+                        self.shown = false;
+                        out.push(Msg::CursorPosition(nuvira_proto::v1::CursorPosition::default()));
+                    }
+                    return out;
+                }
+                let (shape, pos) = cursor::latest();
+                if let Some(s) = shape
+                    && s.serial != self.serial
+                {
+                    self.serial = s.serial;
+                    out.push(Msg::CursorShape(nuvira_proto::v1::CursorShape {
+                        serial: s.serial,
+                        width: s.width,
+                        height: s.height,
+                        hot_x: s.hot_x,
+                        hot_y: s.hot_y,
+                        bgra: s.bgra.as_ref().clone(),
+                    }));
+                }
+                self.shown = pos.visible;
+                out.push(Msg::CursorPosition(nuvira_proto::v1::CursorPosition {
+                    x: pos.x,
+                    y: pos.y,
+                    visible: pos.visible,
+                    serial: pos.serial,
+                }));
+                out
+            }
+            #[cfg(not(target_os = "linux"))]
+            Vec::new()
+        }
+    }
+}
+pub(crate) use pointer::{Sender as PointerSender, plain_guest};
+
 fn permissions(offered: u8, off: u8) -> nuvira_proto::v1::Permissions {
     let on = |bit: u8| offered & bit != 0 && off & bit == 0;
     nuvira_proto::v1::Permissions {
@@ -2505,6 +2663,7 @@ fn local_hello() -> Hello {
         os: std::env::consts::OS.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
         password_required: false,
+        cursor: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,

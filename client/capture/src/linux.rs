@@ -24,6 +24,39 @@ use pw::spa::pod::Pod;
 use tracing::{debug, info, warn};
 
 use crate::{Capturer, Display, Frame};
+use nuvira_portal::cursor;
+
+/// `struct spa_meta_cursor` (spa/buffer/meta.h): the pointer as stream metadata.
+#[repr(C)]
+struct CursorMeta {
+    id: u32,
+    flags: u32,
+    x: i32,
+    y: i32,
+    hot_x: i32,
+    hot_y: i32,
+    bitmap_offset: u32,
+}
+
+impl spa::buffer::meta::Metadata for CursorMeta {
+    const META_TYPE: u32 = spa::sys::SPA_META_Cursor;
+}
+
+/// `struct spa_meta_bitmap`: the pointer's image, `offset` bytes after it.
+#[repr(C)]
+struct BitmapMeta {
+    format: u32,
+    width: u32,
+    height: u32,
+    stride: i32,
+    offset: u32,
+}
+
+/// Room asked for the pointer's metadata: the two headers and a picture of
+/// `side`x`side` RGBA.
+const fn cursor_meta_size(side: u32) -> i32 {
+    (std::mem::size_of::<CursorMeta>() + std::mem::size_of::<BitmapMeta>()) as i32 + (side * side * 4) as i32
+}
 
 /// File in the data folder with the portal's restore token.
 const TOKEN_FILE: &str = "remote-desktop-token";
@@ -103,8 +136,13 @@ pub fn set_dmabuf_modifiers(modifiers: Vec<u64>) {
 /// headers, which the packages are built with, do not have it yet).
 const VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED: u32 = 1 << 3;
 
-/// The modifiers to offer now (empty: no DMA-BUF).
+/// The modifiers to offer now (empty: no DMA-BUF). The pointer as metadata comes
+/// only with shared memory (the agent asks for one or the other): it can then be
+/// drawn into the picture when needed.
 fn dmabuf_wanted() -> Vec<u64> {
+    if cursor::wanted() {
+        return Vec::new();
+    }
     let modifiers = DMABUF_MODIFIERS.lock().expect("modifiers").clone();
     match std::env::var("NUVIRA_DMABUF").as_deref() {
         Ok("1") if modifiers.is_empty() => vec![crate::dmabuf::MODIFIER_LINEAR],
@@ -337,6 +375,13 @@ struct State {
     /// The modifiers offered, and their generation.
     modifiers: Vec<u64>,
     generation: u64,
+    /// The pointer as metadata: the last picture (without it), to draw it again
+    /// when only the pointer moves and it must be in the picture; the last
+    /// bitmap, its serial, and the generation of the pointer drawn.
+    last: Option<Image>,
+    bitmap: Vec<u8>,
+    serial: u32,
+    drawn: u64,
 }
 
 fn stream_loop(
@@ -371,6 +416,10 @@ fn stream_loop(
         pool: Vec::new(),
         modifiers: modifiers.clone(),
         generation,
+        last: None,
+        bitmap: Vec::new(),
+        serial: 0,
+        drawn: u64::MAX,
     };
     let ml = mainloop.clone();
     let _listener = stream
@@ -403,6 +452,18 @@ fn stream_loop(
                 modifier = state.format.modifier(),
                 "PipeWire format"
             );
+            // The pointer as metadata: room for it in every buffer.
+            if !state.dmabuf && cursor::active() {
+                match cursor_meta_param() {
+                    Ok(pod) => {
+                        let mut params: Vec<&Pod> = Pod::from_bytes(&pod).into_iter().collect();
+                        if let Err(e) = stream.update_params(&mut params) {
+                            warn!("PipeWire pointer metadata: {e}");
+                        }
+                    }
+                    Err(e) => warn!("PipeWire pointer metadata: {e:#}"),
+                }
+            }
             if state.dmabuf {
                 // The compositor left the modifier open: the one we take (the first
                 // of ours it can do) is sent back with the buffers we want.
@@ -448,6 +509,9 @@ fn stream_loop(
                 }
             }
             let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            if cursor::active() {
+                read_cursor(&buffer, state);
+            }
             let rgb = match state.format.format() {
                 VideoFormat::BGRx | VideoFormat::BGRA => false,
                 VideoFormat::RGBx | VideoFormat::RGBA => true,
@@ -500,6 +564,16 @@ fn stream_loop(
             let (offset, len, stride) = (chunk.offset() as usize, chunk.size() as usize, chunk.stride());
             // An empty chunk: nothing changed (or only the cursor, with metadata).
             if len == 0 || stride <= 0 {
+                // The pointer moved and must be in the picture: the last picture again.
+                if cursor::active() && cursor::composite() && state.drawn != cursor::generation()
+                    && let Some(last) = &state.last
+                {
+                    let mut out = state.pool.pop().unwrap_or_default();
+                    out.clear();
+                    out.extend_from_slice(&last.data);
+                    let image = Image { data: out, dmabuf: None, ..*last };
+                    send_with_cursor(state, image);
+                }
                 return;
             }
             let stride = stride as usize;
@@ -516,6 +590,14 @@ fn stream_loop(
             out.clear();
             out.extend_from_slice(src);
             let image = Image { width: size.width, height: size.height, stride, data: out, rgb, dmabuf: None };
+            if cursor::active() && cursor::composite() {
+                // Kept without the pointer, to draw it again when only it moves.
+                let keep = Image { data: image.data.clone(), dmabuf: None, ..image };
+                state.last = Some(keep);
+                send_with_cursor(state, image);
+                return;
+            }
+            state.last = None;
             // The capture thread takes one image at a time: if it is behind, this
             // one is dropped (the next will be newer anyway).
             if let Err(std::sync::mpsc::TrySendError::Full(image)) = state.images.try_send(image) {
@@ -614,6 +696,96 @@ fn format_pod(modifier: Option<Modifiers>) -> Result<Vec<u8>> {
     let (cursor, _) =
         pw::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &pw::spa::pod::Value::Object(obj))
             .map_err(|e| anyhow!("format: {e:?}"))?;
+    Ok(cursor.into_inner())
+}
+
+/// The pointer's metadata read from a buffer and published for the agent.
+fn read_cursor(buffer: &pw::buffer::Buffer, state: &mut State) {
+    let Some(meta) = buffer.find_meta::<CursorMeta>() else { return };
+    // id 0: no pointer on this screen (hidden, or on another one).
+    if meta.id == 0 {
+        cursor::publish(None, cursor::Position { visible: false, serial: state.serial, ..Default::default() });
+        return;
+    }
+    let mut shape = None;
+    if meta.bitmap_offset as usize >= std::mem::size_of::<CursorMeta>() {
+        // SAFETY: the compositor wrote the bitmap header at bitmap_offset inside the
+        // metadata it filled (room asked by cursor_meta_param), and its pixels at
+        // offset after that header.
+        unsafe {
+            let base = (meta as *const CursorMeta).cast::<u8>();
+            let bitmap = &*(base.add(meta.bitmap_offset as usize).cast::<BitmapMeta>());
+            let (w, h) = (bitmap.width.min(256), bitmap.height.min(256));
+            let stride = bitmap.stride.max(0) as usize;
+            if w > 0 && h > 0 && stride >= w as usize * 4 && bitmap.offset as usize >= std::mem::size_of::<BitmapMeta>() {
+                let pixels = std::slice::from_raw_parts(
+                    (bitmap as *const BitmapMeta).cast::<u8>().add(bitmap.offset as usize),
+                    stride * (h as usize - 1) + w as usize * 4,
+                );
+                let format = bitmap.format;
+                let mut bgra = Vec::with_capacity((w * h * 4) as usize);
+                for y in 0..h as usize {
+                    for px in pixels[y * stride..][..w as usize * 4].chunks_exact(4) {
+                        let [b, g, r, a] = if format == VideoFormat::RGBA.as_raw() {
+                            [px[2], px[1], px[0], px[3]]
+                        } else if format == VideoFormat::BGRA.as_raw() {
+                            [px[0], px[1], px[2], px[3]]
+                        } else if format == VideoFormat::ARGB.as_raw() {
+                            [px[3], px[2], px[1], px[0]]
+                        } else {
+                            [px[1], px[2], px[3], px[0]] // ABGR
+                        };
+                        bgra.extend_from_slice(&[b, g, r, a]);
+                    }
+                }
+                if bgra != state.bitmap {
+                    state.serial = state.serial.wrapping_add(1).max(1);
+                    state.bitmap.clone_from(&bgra);
+                    shape = Some(cursor::Shape {
+                        serial: state.serial,
+                        width: w,
+                        height: h,
+                        hot_x: meta.hot_x.clamp(0, w as i32 - 1) as u32,
+                        hot_y: meta.hot_y.clamp(0, h as i32 - 1) as u32,
+                        bgra: Arc::new(bgra),
+                    });
+                }
+            }
+        }
+    }
+    cursor::publish(shape, cursor::Position { x: meta.x, y: meta.y, visible: state.serial != 0, serial: state.serial });
+}
+
+/// Sends a picture with the pointer drawn in (it must be in the picture).
+fn send_with_cursor(state: &mut State, mut image: Image) {
+    cursor::draw(&mut image.data, image.width, image.height, image.stride, image.rgb);
+    state.drawn = cursor::generation();
+    if let Err(std::sync::mpsc::TrySendError::Full(image)) = state.images.try_send(image) {
+        state.pool.push(image.data);
+    }
+}
+
+/// `SPA_PARAM_Meta` for the pointer: room for a picture of up to 256x256.
+fn cursor_meta_param() -> Result<Vec<u8>> {
+    use pw::spa::pod::{ChoiceValue, Property, Value};
+    use pw::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Id};
+    let meta = pw::spa::pod::Object {
+        type_: pw::spa::utils::SpaTypes::ObjectParamMeta.as_raw(),
+        id: pw::spa::param::ParamType::Meta.as_raw(),
+        properties: vec![
+            Property::new(spa::sys::SPA_PARAM_META_type, Value::Id(Id(spa::sys::SPA_META_Cursor))),
+            Property::new(
+                spa::sys::SPA_PARAM_META_size,
+                Value::Choice(ChoiceValue::Int(Choice(
+                    ChoiceFlags::empty(),
+                    ChoiceEnum::Range { default: cursor_meta_size(64), min: cursor_meta_size(1), max: cursor_meta_size(256) },
+                ))),
+            ),
+        ],
+    };
+    let (cursor, _) =
+        pw::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &Value::Object(meta))
+            .map_err(|e| anyhow!("meta: {e:?}"))?;
     Ok(cursor.into_inner())
 }
 

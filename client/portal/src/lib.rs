@@ -15,6 +15,7 @@
 //! KWin's own protocols ([`kwin`]), see [`set_direct`].
 #![cfg(target_os = "linux")]
 
+pub mod cursor;
 mod kwin;
 mod mutter;
 
@@ -350,11 +351,15 @@ async fn open_with(token_file: &std::path::Path, token: Option<&str>) -> Result<
         )
         .await?
         .response()?;
+    // The pointer as metadata when the agent wants it and the portal can.
+    let metadata = cursor::wanted()
+        && screencast.available_cursor_modes().await.is_ok_and(|modes| modes.contains(CursorMode::Metadata));
+    cursor::set_active(metadata);
     screencast
         .select_sources(
             &session,
             SelectSourcesOptions::default()
-                .set_cursor_mode(CursorMode::Embedded)
+                .set_cursor_mode(if metadata { CursorMode::Metadata } else { CursorMode::Embedded })
                 .set_sources(ashpd::enumflags2::BitFlags::from(SourceType::Monitor))
                 .set_multiple(false),
         )
