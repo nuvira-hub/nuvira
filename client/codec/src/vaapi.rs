@@ -817,9 +817,10 @@ fn dmabuf_modifiers(d: &Display) -> Vec<u64> {
     if d.vendor.contains("Intel") && !list.contains(&MOD_I915_Y_TILED) {
         list.push(MOD_I915_Y_TILED);
     }
-    // Measured on the Kaby Lake-R laptop (docs/20-linux.md): the compositor takes a
-    // tiled layout whenever offered, and importing it cost the agent more than
-    // linear buffers: linear only, unless NUVIRA_DMABUF_TILED=1.
+    // Measured on the Kaby Lake-R laptop (docs/20-linux.md): Mutter takes the tiled
+    // layout whenever offered, and it saves little (encoding 4.8 ms against 5.2,
+    // the agent 13 % of a core against 12 %): linear only, the layout tried the
+    // longest, unless NUVIRA_DMABUF_TILED=1.
     if std::env::var("NUVIRA_DMABUF_TILED").as_deref() == Ok("1") {
         list.push(MOD_LINEAR);
         list
