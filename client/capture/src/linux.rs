@@ -327,7 +327,7 @@ fn stream_loop(
             }
             let size = state.format.size();
             let flags = state.format.flags();
-            state.dmabuf = flags.contains(spa::param::video::VideoFlags::MODIFIER);
+            state.dmabuf = flags.bits() & spa::sys::SPA_VIDEO_FLAG_MODIFIER != 0;
             debug!(
                 format = ?state.format.format(),
                 size.width,
@@ -339,7 +339,7 @@ fn stream_loop(
             if state.dmabuf {
                 // The compositor left the modifier open: the one we take (linear,
                 // the only one offered) is sent back with the buffers we want.
-                let fixate = flags.contains(spa::param::video::VideoFlags::MODIFIER_FIXATION_REQUIRED);
+                let fixate = flags.bits() & spa::sys::SPA_VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED != 0;
                 match dmabuf_params(fixate) {
                     Ok(pods) => {
                         let mut params: Vec<&Pod> = pods.iter().filter_map(|p| Pod::from_bytes(p)).collect();
