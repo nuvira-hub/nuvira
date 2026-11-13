@@ -200,7 +200,7 @@ Kubuntu 26.04 (Plasma 6.6, `ksecretd`), automatic sign-in switched off, signed i
 ## To do
 
 - **GNOME's lock screen at once:** only by publishing the extension on extensions.gnome.org (see "Locked screen"); the app says when a sign-out and in is needed.
-- **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
+- **Automatic updates**: the `linux-x64` channel for the archive (the packages have their own timer and, since 2026-11-13, the signed apt and dnf repositories).
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
 - **Other desktops**: GNOME and KDE Plasma (2026-11-09) tested; Sway and Hyprland have no remote desktop portal (screen without input).
 - **Performance**: DMA-BUF capture with the tiled modifiers the GPU prefers, and tried on KDE Plasma and AMD (on by default with VA-API, tried on Intel with GNOME only); the cursor as metadata; VA-API on AMD.
