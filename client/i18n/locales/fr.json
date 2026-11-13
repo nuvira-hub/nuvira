@@ -309,6 +309,8 @@
   "viewer.title_pending": "NuviraHub — en attente de l'acceptation de {agent}…",
   "viewer.connecting": "Connexion à {agent}…",
   "viewer.pending": "En attente que la personne à l'ordinateur distant accepte…",
+  "viewer.guest_joined": "{name} a rejoint la session : il voit l'écran et peut utiliser le clavier et la souris",
+  "viewer.guest_left": "{name} a quitté la session",
   "viewer.privacy_on": "Mode confidentialité activé : l'écran distant est noir",
   "viewer.privacy_off": "Mode confidentialité désactivé",
   "viewer.privacy_failed": "Mode confidentialité non activé : {reason}",

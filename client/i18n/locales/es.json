@@ -309,6 +309,8 @@
   "viewer.title_pending": "NuviraHub — esperando a que {agent} acepte…",
   "viewer.connecting": "Conectando con {agent}…",
   "viewer.pending": "Esperando a que la persona del equipo remoto acepte…",
+  "viewer.guest_joined": "{name} se ha unido a la sesión: ve la pantalla y puede usar el teclado y el ratón",
+  "viewer.guest_left": "{name} ha salido de la sesión",
   "viewer.privacy_on": "Modo privacidad activado: la pantalla remota está negra",
   "viewer.privacy_off": "Modo privacidad desactivado",
   "viewer.privacy_failed": "Modo privacidad no activado: {reason}",

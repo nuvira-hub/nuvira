@@ -309,6 +309,8 @@
   "viewer.title_pending": "NuviraHub — waiting for {agent} to accept…",
   "viewer.connecting": "Connecting to {agent}…",
   "viewer.pending": "Waiting for the person at the remote computer to accept…",
+  "viewer.guest_joined": "{name} joined this session: they see the screen and can use the keyboard and mouse",
+  "viewer.guest_left": "{name} left the session",
   "viewer.privacy_on": "Privacy mode on: the remote screen is black",
   "viewer.privacy_off": "Privacy mode off",
   "viewer.privacy_failed": "Privacy mode not turned on: {reason}",

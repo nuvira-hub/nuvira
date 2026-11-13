@@ -309,6 +309,8 @@
   "viewer.title_pending": "NuviraHub — warten, bis {agent} annimmt…",
   "viewer.connecting": "Verbindung mit {agent}…",
   "viewer.pending": "Warten, bis die Person am entfernten Computer annimmt…",
+  "viewer.guest_joined": "{name} ist der Sitzung beigetreten: sieht den Bildschirm und kann Tastatur und Maus verwenden",
+  "viewer.guest_left": "{name} hat die Sitzung verlassen",
   "viewer.privacy_on": "Datenschutzmodus an: der entfernte Bildschirm ist schwarz",
   "viewer.privacy_off": "Datenschutzmodus aus",
   "viewer.privacy_failed": "Datenschutzmodus nicht eingeschaltet: {reason}",

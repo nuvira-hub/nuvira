@@ -309,6 +309,8 @@
   "viewer.title_pending": "NuviraHub — in attesa che {agent} accetti…",
   "viewer.connecting": "Connessione a {agent}…",
   "viewer.pending": "In attesa che la persona al computer remoto accetti…",
+  "viewer.guest_joined": "{name} si è unito alla sessione: vede lo schermo e può usare tastiera e mouse",
+  "viewer.guest_left": "{name} ha lasciato la sessione",
   "viewer.privacy_on": "Modalità privacy attiva: lo schermo remoto è nero",
   "viewer.privacy_off": "Modalità privacy disattivata",
   "viewer.privacy_failed": "Modalità privacy non attivata: {reason}",
