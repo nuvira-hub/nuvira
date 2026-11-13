@@ -454,9 +454,9 @@ fn stream_loop(
             );
             // The pointer as metadata: room for it in every buffer.
             if !state.dmabuf && cursor::active() {
-                match cursor_meta_param() {
-                    Ok(pod) => {
-                        let mut params: Vec<&Pod> = Pod::from_bytes(&pod).into_iter().collect();
+                match cursor_meta_param().and_then(|meta| Ok([meta, shm_buffers_param()?])) {
+                    Ok(pods) => {
+                        let mut params: Vec<&Pod> = pods.iter().filter_map(|p| Pod::from_bytes(p)).collect();
                         if let Err(e) = stream.update_params(&mut params) {
                             warn!("PipeWire pointer metadata: {e}");
                         }
@@ -771,6 +771,24 @@ fn send_with_cursor(state: &mut State, mut image: Image) {
     if let Err(std::sync::mpsc::TrySendError::Full(image)) = state.images.try_send(image) {
         state.pool.push(image.data);
     }
+}
+
+/// `SPA_PARAM_Buffers` in shared memory, sent with the pointer's metadata: the
+/// compositor allocates the buffers (and their metadata) after these.
+fn shm_buffers_param() -> Result<Vec<u8>> {
+    use pw::spa::pod::{Property, Value};
+    let buffers = pw::spa::pod::Object {
+        type_: pw::spa::utils::SpaTypes::ObjectParamBuffers.as_raw(),
+        id: pw::spa::param::ParamType::Buffers.as_raw(),
+        properties: vec![Property::new(
+            pw::spa::sys::SPA_PARAM_BUFFERS_dataType,
+            Value::Int((1 << pw::spa::sys::SPA_DATA_MemPtr) | (1 << pw::spa::sys::SPA_DATA_MemFd)),
+        )],
+    };
+    let (cursor, _) =
+        pw::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &Value::Object(buffers))
+            .map_err(|e| anyhow!("buffers: {e:?}"))?;
+    Ok(cursor.into_inner())
 }
 
 /// `SPA_PARAM_Meta` for the pointer: room for a picture of up to 256x256.
