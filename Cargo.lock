@@ -3524,6 +3524,7 @@ dependencies = [
  "pipewire",
  "screencapturekit",
  "tracing",
+ "tracing-subscriber",
  "windows",
  "x11rb",
 ]

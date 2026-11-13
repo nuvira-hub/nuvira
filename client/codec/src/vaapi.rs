@@ -614,6 +614,7 @@ impl Display {
         *self.vpp_verdict.get_or_init(|| match vpp_check(self, 256, 64) {
             Ok(diff) if diff <= VPP_TOLERANCE => {
                 info!(diff, "VA-API: colour conversion on the GPU");
+                crate::set_dmabuf_import_ready();
                 true
             }
             Ok(diff) => {

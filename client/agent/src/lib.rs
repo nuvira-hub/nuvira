@@ -85,7 +85,14 @@ impl AgentConfig {
     fn open_capturer(&self) -> Result<Box<dyn Capturer>> {
         match self.synthetic {
             Some((w, h, fps)) => Ok(Box::new(SyntheticCapturer::new(w, h, fps))),
-            None => nuvira_capture::open(self.display),
+            None => {
+                // DMA-BUF capture where the encoder takes it (VA-API with video processing).
+                #[cfg(target_os = "linux")]
+                nuvira_capture::set_dmabuf_default(
+                    self.plan != EncoderPlan::Software && nuvira_codec::dmabuf_import_ready(),
+                );
+                nuvira_capture::open(self.display)
+            }
         }
     }
 }

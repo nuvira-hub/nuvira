@@ -54,7 +54,7 @@ pub struct Frame {
     /// GPU mode (Windows): the image is in this BGRA texture and `data` is empty.
     #[cfg(windows)]
     pub texture: Option<::windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>,
-    /// Linux with `NUVIRA_DMABUF=1`: the image is in this DMA-BUF and `data` is empty.
+    /// Linux, when the encoder imports DMA-BUFs: the image is in this DMA-BUF and `data` is empty.
     #[cfg(target_os = "linux")]
     pub dmabuf: Option<std::sync::Arc<dmabuf::DmaBuf>>,
 }
@@ -146,6 +146,9 @@ pub fn screen_locked() -> bool {
 pub fn lock_screen_takes_input() -> bool {
     cfg!(target_os = "macos") && std::path::Path::new("/var/run/nuvira-hid.sock").exists()
 }
+
+#[cfg(target_os = "linux")]
+pub use linux::set_dmabuf_default;
 
 #[cfg(target_os = "linux")]
 pub fn wayland() -> bool {

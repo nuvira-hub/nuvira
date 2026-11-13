@@ -91,6 +91,24 @@ impl Default for EncoderSettings {
 /// Long-term reference slots, with [`EncoderSettings::ltr`].
 pub const LTR_SLOTS: u8 = 2;
 
+#[cfg(target_os = "linux")]
+static DMABUF_IMPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A VA-API encoder of this process converts on the GPU's video engine, so it
+/// can take the screen as a DMA-BUF with no copy through RAM (set by the
+/// encoder test at start). The capture asks the compositor for DMA-BUFs only
+/// then: any other encoder would read them back from the GPU's memory, which
+/// is slow on graphics cards with memory of their own.
+#[cfg(target_os = "linux")]
+pub fn dmabuf_import_ready() -> bool {
+    DMABUF_IMPORT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn set_dmabuf_import_ready() {
+    DMABUF_IMPORT.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A picture in a DMA-BUF (Linux), as the compositor shares it: one plane of a
 /// 32-bit RGB format.
 #[cfg(target_os = "linux")]

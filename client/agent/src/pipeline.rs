@@ -31,7 +31,7 @@ struct Captured {
     /// GPU mode: the image is in this texture and `data` is empty.
     #[cfg(windows)]
     texture: Option<nuvira_codec::GpuTexture>,
-    /// The image is in this DMA-BUF and `data` is empty (Linux, `NUVIRA_DMABUF=1`).
+    /// The image is in this DMA-BUF and `data` is empty (Linux, with a VA-API encoder that imports it).
     #[cfg(target_os = "linux")]
     dmabuf: Option<std::sync::Arc<nuvira_capture::dmabuf::DmaBuf>>,
 }

@@ -79,15 +79,25 @@ struct Image {
     dmabuf: Option<crate::dmabuf::DmaBuf>,
 }
 
-/// `NUVIRA_DMABUF=1`: the compositor is asked for DMA-BUF buffers too (linear
-/// ones), for a VA-API encoder to import with no copy through RAM. Off by default
-/// until tried on real graphics cards.
+static DMABUF_DEFAULT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the compositor is asked for DMA-BUF buffers too (linear ones), for a
+/// VA-API encoder to import with no copy through RAM: the agent turns it on when
+/// its encoder can; `NUVIRA_DMABUF=1` or `0` forces it.
+pub fn set_dmabuf_default(on: bool) {
+    DMABUF_DEFAULT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// `SPA_VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED` (PipeWire 0.3.75; Debian 12's
 /// headers, which the packages are built with, do not have it yet).
 const VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED: u32 = 1 << 3;
 
 fn dmabuf_wanted() -> bool {
-    std::env::var("NUVIRA_DMABUF").as_deref() == Ok("1")
+    match std::env::var("NUVIRA_DMABUF").as_deref() {
+        Ok("1") => true,
+        Ok("0") => false,
+        _ => DMABUF_DEFAULT.load(std::sync::atomic::Ordering::Relaxed),
+    }
 }
 
 pub struct PipeWireCapturer {
