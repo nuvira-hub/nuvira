@@ -281,7 +281,9 @@ function render(state) {
   if (session) {
     const who = session.viewer_name || formatId(session.viewer_id);
     const path = t(session.direct ? "session.direct" : "session.relay");
-    $("session-text").textContent = t(session.terminal ? "session.strip_terminal" : "session.strip", { who, path });
+    const guests = (session.guests ?? []).map((g) => (/^\d+$/.test(g) ? formatId(g) : g));
+    const key = session.terminal ? "session.strip_terminal" : guests.length ? "session.strip_shared" : "session.strip";
+    $("session-text").textContent = t(key, { who, path, others: guests.join(", ") });
   }
   $("session-rec").classList.toggle("hidden", !session?.recording);
   renderSwitches(session);

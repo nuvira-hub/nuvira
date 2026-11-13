@@ -16,6 +16,7 @@ mod pipeline;
 mod printer;
 mod pty;
 mod restart;
+mod shared;
 mod switches;
 mod terminal;
 mod tunnel;
@@ -161,6 +162,11 @@ pub enum AgentEvent {
     },
     SessionEnded {
         error: Option<String>,
+    },
+    /// Who joined the session in progress besides the viewer who started it
+    /// (shared sessions): at every change, empty when the last one leaves.
+    Guests {
+        names: Vec<String>,
     },
     /// Chat message from the controlling side.
     Chat {
@@ -384,6 +390,7 @@ pub async fn serve_via_server(
         busy: AtomicU32::new(0),
         waiting: Mutex::new(None),
         end_session: Notify::new(),
+        shared: Mutex::new(None),
         policy: Default::default(),
         support_ticket: Mutex::new(None),
         allow_privacy: AtomicBool::new(permissions.privacy),
@@ -518,6 +525,8 @@ struct SessionContext {
     restarting: Mutex<Option<Instant>>,
     /// Switches of the session in progress ([`AgentCommand::Switch`]).
     switches: Mutex<Option<Arc<switches::Switches>>>,
+    /// The session in progress, which other viewers can join ([`shared`]).
+    shared: Mutex<Option<Arc<shared::Shared>>>,
 }
 
 impl SessionContext {
@@ -558,6 +567,8 @@ struct Request {
     viewer_name: String,
     /// What this session may not do on top of the server's rules (Incoming.limits).
     limits: nuvira_proto::v1::Policy,
+    /// It joins the session in progress ([`shared`]).
+    join: bool,
 }
 
 /// The rules and the limits of a session together: every limit of either holds.
@@ -651,10 +662,11 @@ async fn signal_loop(
                     None
                 }
                 Some(server_message::Msg::Incoming(inc)) => {
-                    let request = Request {
+                    let mut request = Request {
                         viewer_id: inc.viewer_id,
                         viewer_name: inc.viewer_name,
                         limits: inc.limits.unwrap_or_default(),
+                        join: false,
                     };
                     info!("connection request from {} ({})", request.viewer_name, request.viewer_id);
                     if request.limits != Default::default() {
@@ -670,6 +682,13 @@ async fn signal_loop(
                     if let Some(cancel) = retry {
                         info!("same viewer again: its previous attempt is abandoned");
                         cancel.notify_one();
+                        accepted.insert(inc.session_id.clone(), request);
+                        Some(client_message::Msg::Accept(Accept { session_id: inc.session_id }))
+                    } else if ctx.busy.load(Ordering::Relaxed) > 0 && shared::can_join(ctx) {
+                        // Another viewer joins the session in progress, after the same
+                        // access control.
+                        info!("a session is in progress: this viewer would join it");
+                        request.join = true;
                         accepted.insert(inc.session_id.clone(), request);
                         Some(client_message::Msg::Accept(Accept { session_id: inc.session_id }))
                     } else if ctx.busy.load(Ordering::Relaxed) > 0 {
@@ -702,13 +721,19 @@ async fn signal_loop(
                         warn!("route of a session not accepted here: ignored");
                         continue;
                     };
-                    ctx.busy.fetch_add(1, Ordering::Relaxed);
+                    let join = request.join;
+                    if !join {
+                        ctx.busy.fetch_add(1, Ordering::Relaxed);
+                    }
                     let (ctx, identity) = (ctx.clone(), identity.clone());
                     let session_id = route.session_id.clone();
                     let report_tx = report_tx.clone();
                     tokio::spawn(async move {
                         let mut outcome = Outcome::default();
-                        stats::reset();
+                        // A guest's transfers are none: the counters stay the session's.
+                        if !join {
+                            stats::reset();
+                        }
                         let result = relayed_session(&ctx, &identity, &p2p_route, &request, &session_id, &mut outcome).await;
                         if let Err(e) = &result {
                             warn!("session ended: {e:#}");
@@ -729,8 +754,10 @@ async fn signal_loop(
                                 .map(|e| format!("{e:#}"))
                                 .unwrap_or_default(),
                         });
-                        ctx.busy.fetch_sub(1, Ordering::Relaxed);
-                        let _ = ctx.events.send(AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) });
+                        if !join {
+                            ctx.busy.fetch_sub(1, Ordering::Relaxed);
+                            let _ = ctx.events.send(AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) });
+                        }
                     });
                     None
                 }
@@ -908,7 +935,12 @@ async fn relayed_session(
     );
     let gate = Gate { ctx, session_id, request, direct, access: &outcome.access, terminal_only: AtomicBool::new(false) };
     let result = tokio::select! {
-        r = session(conn.clone(), streams, &ctx.config, Some(&gate)) => r,
+        r = async {
+            match request.join {
+                true => shared::guest_session(conn.clone(), streams, &gate).await,
+                false => session(conn.clone(), streams, &ctx.config, Some(&gate)).await,
+            }
+        } => r,
         _ = ctx.end_session.notified() => {
             info!("session ended by the person at the PC");
             Ok(())
@@ -1026,6 +1058,10 @@ impl Gate<'_> {
     }
 
     fn started(&self) -> Result<(), String> {
+        // A guest is told to the app with the list of guests (AgentEvent::Guests).
+        if self.request.join {
+            return Ok(());
+        }
         let _ = self.ctx.events.send(AgentEvent::SessionStarted {
             viewer_id: self.request.viewer_id.clone(),
             viewer_name: self.request.viewer_name.clone(),
@@ -1291,6 +1327,21 @@ async fn session(
     // Capture in progress: the control channel replaces it when the screen changes.
     let pipeline = std::sync::Mutex::new(Some(first));
     let (screen_tx, mut screen_rx) = tokio::sync::watch::channel(screen_rect(&display));
+    // Other viewers can join this session (sessions from a server only): the same
+    // picture, and their keyboard and mouse into this session's input.
+    let (guest_input_tx, mut guest_input_rx) = mpsc::unbounded_channel::<InputEvent>();
+    let shared = gate.map(|g| {
+        let s = Arc::new(shared::Shared::new(
+            keyframe.clone(),
+            display.clone(),
+            guest_input_tx,
+            offered & switches::INPUT != 0,
+            g.ctx.events.clone(),
+        ));
+        *g.ctx.shared.lock().expect("shared") = Some(s.clone());
+        s
+    });
+    let _end_shared = shared::EndShared(gate.map(|g| g.ctx));
 
     // Chat: messages from the person at the PC come from the app through the context.
     let (chat_tx, mut chat_rx) = mpsc::unbounded_channel::<String>();
@@ -1330,6 +1381,7 @@ async fn session(
     let video = {
         let unanswered_since_ms = unanswered_since_ms.clone();
         let sent_bytes = sent_bytes.clone();
+        let shared = shared.clone();
         let conn = conn.clone();
         let fec_permille = fec_permille.clone();
         let overhead_permille = overhead_permille.clone();
@@ -1363,6 +1415,9 @@ async fn session(
                     }
                 };
                 sent_bytes.fetch_add(sent as u64, Ordering::Relaxed);
+                if let Some(shared) = &shared {
+                    shared.frame(&frame);
+                }
                 let now_ms = session_start.elapsed().as_millis().max(1) as u64;
                 let _ = unanswered_since_ms.compare_exchange(0, now_ms, Ordering::Relaxed, Ordering::Relaxed);
             }
@@ -1463,6 +1518,9 @@ async fn session(
                         tokio::task::spawn_blocking(move || nuvira_capture::resolution::restore(owner, Some(&d))).await?;
                         display = reopen(&source, &pipeline, display.index, display.index).await?;
                         ctrl_tx.send(&video_format(&display)).await?;
+                        if let Some(shared) = &shared {
+                            shared.set_display(&display);
+                        }
                         if let Some(msg) = displays_message(config, &display) {
                             ctrl_tx.send(&msg).await?;
                         }
@@ -1680,6 +1738,9 @@ async fn session(
                     tokio::task::spawn_blocking(move || nuvira_capture::resolution::restore(owner, Some(&d))).await?;
                     display = reopen(&source, &pipeline, index, display.index).await?;
                     ctrl_tx.send(&video_format(&display)).await?;
+                    if let Some(shared) = &shared {
+                        shared.set_display(&display);
+                    }
                     if let Some(msg) = displays_message(config, &display) {
                         ctrl_tx.send(&msg).await?;
                     }
@@ -1710,6 +1771,9 @@ async fn session(
                             Ok(true) => {
                                 display = reopen(&source, &pipeline, display.index, display.index).await?;
                                 ctrl_tx.send(&video_format(&display)).await?;
+                                if let Some(shared) = &shared {
+                                    shared.set_display(&display);
+                                }
                                 if let Some(msg) = displays_message(config, &display) {
                                     ctrl_tx.send(&msg).await?;
                                 }
@@ -1874,16 +1938,43 @@ async fn session(
     };
 
     let input = async {
-        let mut rx = FramedRecv::new(conn.accept_uni().await?);
         // Keyboard and mouse: while the session has them and they are not switched off.
         let open_injector = |screen| -> Result<_> { input_thread(nuvira_input::open(screen)?) };
-        // Switched off before the viewer's first event (the stream shows only then): none.
-        let mut injector = match offered & switches::INPUT != 0 && off.is_on(switches::INPUT) {
-            true => Some(open_injector(*screen_rx.borrow_and_update())?),
-            false => None,
-        };
-        let mut input_changes = off.clone();
         let closed = || anyhow!("input thread ended");
+        let input_offered = offered & switches::INPUT != 0;
+        // The viewer's input stream shows only with its first event; the events of
+        // viewers who joined the session may come before.
+        let mut injector = None;
+        let stream = loop {
+            tokio::select! {
+                stream = conn.accept_uni() => break stream?,
+                Some(event) = guest_input_rx.recv() => {
+                    if !(input_offered && off.is_on(switches::INPUT)) {
+                        // Ending the thread releases the keys still pressed.
+                        injector = None;
+                        continue;
+                    }
+                    if injector.is_none() {
+                        injector = Some(open_injector(*screen_rx.borrow_and_update())?);
+                    }
+                    if let Some(injector) = &injector {
+                        injector.send(InputCmd::Event(event)).map_err(|_| closed())?;
+                    }
+                }
+                Ok(()) = screen_rx.changed() => if let Some(injector) = &injector {
+                    let screen = *screen_rx.borrow_and_update();
+                    injector.send(InputCmd::Screen(screen)).map_err(|_| closed())?;
+                },
+            }
+        };
+        let mut rx = FramedRecv::new(stream);
+        // Switched off before the viewer's first event (the stream shows only then): none.
+        if injector.is_none() && input_offered && off.is_on(switches::INPUT) {
+            injector = Some(open_injector(*screen_rx.borrow_and_update())?);
+        } else if !off.is_on(switches::INPUT) {
+            injector = None;
+        }
+        let mut input_changes = off.clone();
         loop {
             tokio::select! {
                 event = rx.recv::<InputEvent>() => match event? {
@@ -1906,6 +1997,10 @@ async fn session(
                         _ => {}
                     }
                 }
+                // The keyboard and mouse of viewers who joined the session.
+                Some(event) = guest_input_rx.recv() => if let Some(injector) = &injector {
+                    injector.send(InputCmd::Event(event)).map_err(|_| closed())?;
+                },
                 Ok(()) = screen_rx.changed() => if let Some(injector) = &injector {
                     let screen = *screen_rx.borrow_and_update();
                     injector.send(InputCmd::Screen(screen)).map_err(|_| closed())?;

@@ -1,0 +1,333 @@
+//! Shared sessions: more viewers on the computer of a session in progress.
+//!
+//! A second technician (at most [`MAX_GUESTS`]) reaches the computer while someone
+//! is already connected: they go through the same access control (password,
+//! confirmation by the person at the PC), then see the same picture and use the
+//! same keyboard and mouse. The rest of the session (files, clipboard, terminal,
+//! tunnels, printing, sound, recording, privacy mode, the screen and its
+//! resolution) stays with the first viewer, and the agent says so in its Hello:
+//! any viewer works as a guest, older ones too. The guests leave when the first
+//! viewer's session ends.
+//!
+//! The encoder runs once: its frames are copied to each guest. A guest that cannot
+//! keep up loses frames, waits for the next keyframe and asks for one (every 2 s at
+//! most); the bitrate follows the first viewer's network.
+
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use anyhow::{Result, bail};
+use nuvira_proto::v1::{
+    AuthResult, ControlMessage, Hello, InputEvent, Pong, VideoFrame, control_message::Msg,
+};
+use nuvira_transport::{Connection, FramedRecv, FramedSend};
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+
+use crate::{AgentEvent, Gate, SessionContext, WRONG_PASSWORD, control, local_hello, video_format};
+
+/// Viewers that can join a session besides the one who started it.
+pub const MAX_GUESTS: usize = 3;
+
+/// What goes to a guest from the session.
+enum ToGuest {
+    Frame(VideoFrame),
+    /// The first viewer chose another screen, or its resolution changed.
+    Format(nuvira_capture::Display),
+}
+
+struct Guest {
+    id: u64,
+    name: String,
+    tx: mpsc::Sender<ToGuest>,
+    /// Frames were dropped: the next ones are useless until a keyframe.
+    lost: Arc<AtomicBool>,
+}
+
+/// The session in progress, as guests see it (`SessionContext::shared`).
+pub struct Shared {
+    /// The keyframe request of the session's encoder.
+    keyframe: Arc<AtomicBool>,
+    last_key: Mutex<Option<Instant>>,
+    display: Mutex<nuvira_capture::Display>,
+    guests: Mutex<Vec<Guest>>,
+    next_id: AtomicU64,
+    /// The guests' keyboard and mouse, into the session's input (its switch and
+    /// the first viewer's injector apply).
+    input: mpsc::UnboundedSender<InputEvent>,
+    /// The keyboard and mouse can be used in this session at all.
+    input_offered: bool,
+    events: mpsc::UnboundedSender<AgentEvent>,
+}
+
+impl Shared {
+    pub fn new(
+        keyframe: Arc<AtomicBool>,
+        display: nuvira_capture::Display,
+        input: mpsc::UnboundedSender<InputEvent>,
+        input_offered: bool,
+        events: mpsc::UnboundedSender<AgentEvent>,
+    ) -> Self {
+        Self {
+            keyframe,
+            last_key: Mutex::new(None),
+            display: Mutex::new(display),
+            guests: Mutex::new(Vec::new()),
+            next_id: AtomicU64::new(1),
+            input,
+            input_offered,
+            events,
+        }
+    }
+
+    /// A frame sent to the first viewer: a copy to every guest.
+    pub fn frame(&self, frame: &VideoFrame) {
+        let mut guests = self.guests.lock().expect("guests");
+        if guests.is_empty() {
+            return;
+        }
+        let before = guests.len();
+        guests.retain(|g| match g.tx.try_send(ToGuest::Frame(frame.clone())) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                g.lost.store(true, Ordering::Relaxed);
+                true
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        });
+        let lost = guests.iter().any(|g| g.lost.load(Ordering::Relaxed));
+        let changed = guests.len() != before;
+        let names = changed.then(|| names(&guests));
+        drop(guests);
+        if lost {
+            self.request_keyframe();
+        }
+        if let Some(names) = names {
+            let _ = self.events.send(AgentEvent::Guests { names });
+        }
+    }
+
+    /// The picture changed size or screen.
+    pub fn set_display(&self, display: &nuvira_capture::Display) {
+        *self.display.lock().expect("display") = display.clone();
+        for g in self.guests.lock().expect("guests").iter() {
+            // A new stream starts with a keyframe: what was waiting is useless.
+            g.lost.store(true, Ordering::Relaxed);
+            let _ = g.tx.try_send(ToGuest::Format(display.clone()));
+        }
+    }
+
+    /// A keyframe for a guest that joined or lost frames: every 2 s at most, so that
+    /// a slow guest does not fill the first viewer's network with keyframes.
+    fn request_keyframe(&self) {
+        let mut last = self.last_key.lock().expect("keyframe");
+        if last.is_none_or(|t| t.elapsed() >= Duration::from_secs(2)) {
+            *last = Some(Instant::now());
+            self.keyframe.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn join(&self, name: String) -> (u64, mpsc::Receiver<ToGuest>, Arc<AtomicBool>) {
+        let (tx, rx) = mpsc::channel(8);
+        let lost = Arc::new(AtomicBool::new(true));
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let names = {
+            let mut guests = self.guests.lock().expect("guests");
+            guests.push(Guest { id, name, tx, lost: lost.clone() });
+            names(&guests)
+        };
+        let _ = self.events.send(AgentEvent::Guests { names });
+        *self.last_key.lock().expect("keyframe") = None;
+        self.request_keyframe();
+        (id, rx, lost)
+    }
+
+    fn leave(&self, id: u64) {
+        let names = {
+            let mut guests = self.guests.lock().expect("guests");
+            guests.retain(|g| g.id != id);
+            names(&guests)
+        };
+        let _ = self.events.send(AgentEvent::Guests { names });
+    }
+
+    fn full(&self) -> bool {
+        self.guests.lock().expect("guests").len() >= MAX_GUESTS
+    }
+
+    /// The session ends: the guests' channels close, and their sessions with them.
+    pub fn end(&self) {
+        self.guests.lock().expect("guests").clear();
+    }
+}
+
+fn names(guests: &[Guest]) -> Vec<String> {
+    guests.iter().map(|g| g.name.clone()).collect()
+}
+
+/// Ends the sharing of the session however it ends (`SessionContext::shared`).
+pub struct EndShared<'a>(pub Option<&'a SessionContext>);
+
+impl Drop for EndShared<'_> {
+    fn drop(&mut self) {
+        if let Some(ctx) = self.0
+            && let Some(shared) = ctx.shared.lock().expect("shared").take()
+        {
+            shared.end();
+        }
+    }
+}
+
+/// Whether a request can join the session in progress.
+pub fn can_join(ctx: &SessionContext) -> bool {
+    ctx.shared.lock().expect("shared").as_ref().is_some_and(|s| !s.full())
+}
+
+/// A guest's session, its connection open: access control, then the picture and
+/// the input until either side ends it or the first viewer's session ends.
+pub async fn guest_session(
+    conn: Connection,
+    (send, recv): (quinn::SendStream, quinn::RecvStream),
+    gate: &Gate<'_>,
+) -> Result<()> {
+    let mut ctrl_tx = FramedSend::new(send);
+    let mut ctrl_rx = FramedRecv::new(recv);
+    let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = ctrl_rx.recv().await? else {
+        bail!("the viewer did not introduce itself");
+    };
+    info!(
+        device = hello.device_name,
+        os = hello.os,
+        version = hello.app_version,
+        "viewer joining the session in progress"
+    );
+    if hello.protocol_version < nuvira_proto::MIN_PROTOCOL_VERSION {
+        bail!("viewer protocol version not supported: {}", hello.protocol_version);
+    }
+    let policy = gate.policy();
+    let Some(shared) = gate.ctx.shared.lock().expect("shared").clone() else {
+        bail!("@agent.busy");
+    };
+    let input = shared.input_offered && !policy.no_input;
+    let answer = Hello { password_required: true, text: input, ..local_hello() };
+    ctrl_tx.send(&control(Msg::Hello(answer))).await?;
+    let given = match ctrl_rx.recv::<ControlMessage>().await? {
+        Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
+        _ => bail!("the viewer did not send the password"),
+    };
+    // Only the first viewer has a terminal; a recording required by the rules cannot
+    // be made by a guest.
+    let refused = if hello.terminal_only {
+        Some("@agent.busy")
+    } else if policy.record_always {
+        Some("@agent.recording_required")
+    } else {
+        None
+    };
+    let verdict = match refused {
+        Some(reason) => Err(reason.to_string()),
+        None => {
+            let pending = (hello.protocol_version
+                >= nuvira_proto::v1::ProtocolVersion::ConfirmationPending as u32)
+                .then_some(&mut ctrl_tx);
+            gate.authorize(&given, pending).await
+        }
+    };
+    // The session may have ended while the person at the PC was asked.
+    let verdict = verdict.and_then(|()| match gate.ctx.shared.lock().expect("shared").as_ref() {
+        Some(s) if Arc::ptr_eq(s, &shared) && !s.full() => Ok(()),
+        _ => Err("@agent.busy".to_string()),
+    });
+    let (ok, message) = match &verdict {
+        Ok(()) => (true, String::new()),
+        Err(reason) => (false, reason.clone()),
+    };
+    ctrl_tx.send(&control(Msg::AuthResult(AuthResult { ok, message }))).await?;
+    if let Err(reason) = verdict {
+        let pause = if reason == WRONG_PASSWORD { 2000 } else { 500 };
+        tokio::time::sleep(Duration::from_millis(pause)).await;
+        bail!("{reason}");
+    }
+
+    let name = match gate.request.viewer_name.as_str() {
+        "" => gate.request.viewer_id.clone(),
+        name => name.to_string(),
+    };
+    let (id, mut frames, lost) = shared.join(name);
+    struct Leave<'a>(&'a Shared, u64);
+    impl Drop for Leave<'_> {
+        fn drop(&mut self) {
+            self.0.leave(self.1);
+        }
+    }
+    let _leave = Leave(&shared, id);
+    info!(guests = shared.guests.lock().expect("guests").len(), "viewer joined the session");
+
+    let display = shared.display.lock().expect("display").clone();
+    ctrl_tx.send(&video_format(&display)).await?;
+    // What the guest's session has: the keyboard and mouse, or nothing.
+    let mut permissions = crate::permissions(0, 0);
+    permissions.input = input;
+    ctrl_tx.send(&control(Msg::Permissions(permissions))).await?;
+    let mut video_tx = FramedSend::new(conn.open_uni().await?);
+
+    // Answers to the viewer's pings, sent by the loop that owns the control channel.
+    let (pong_tx, mut pong_rx) = mpsc::unbounded_channel::<Pong>();
+    let video = async {
+        loop {
+            tokio::select! {
+                message = frames.recv() => match message {
+                    Some(ToGuest::Frame(frame)) => {
+                        if lost.load(Ordering::Relaxed) {
+                            if !frame.keyframe {
+                                continue;
+                            }
+                            lost.store(false, Ordering::Relaxed);
+                        }
+                        video_tx.send(&frame).await?;
+                    }
+                    Some(ToGuest::Format(display)) => ctrl_tx.send(&video_format(&display)).await?,
+                    // The first viewer's session ended.
+                    None => return anyhow::Ok(()),
+                },
+                Some(pong) = pong_rx.recv() => ctrl_tx.send(&control(Msg::Pong(pong))).await?,
+            }
+        }
+    };
+    let input_loop = async {
+        let mut rx = FramedRecv::new(conn.accept_uni().await?);
+        while let Some(event) = rx.recv::<InputEvent>().await? {
+            if input {
+                let _ = shared.input.send(event);
+            }
+        }
+        anyhow::Ok(())
+    };
+    let control_loop = async {
+        while let Some(msg) = ctrl_rx.recv::<ControlMessage>().await? {
+            match msg.msg {
+                Some(Msg::Ping(ping)) => {
+                    let _ =
+                        pong_tx.send(Pong { ping_sent_us: ping.sent_us, agent_us: nuvira_proto::now_us() });
+                }
+                Some(Msg::RequestKeyframe(_)) => {
+                    lost.store(true, Ordering::Relaxed);
+                    shared.request_keyframe();
+                }
+                _ => {}
+            }
+        }
+        anyhow::Ok(())
+    };
+    let result = tokio::select! {
+        r = video => r,
+        r = input_loop => r,
+        r = control_loop => r,
+    };
+    if let Err(e) = &result {
+        warn!("guest's session ended: {e:#}");
+    }
+    info!("viewer left the session");
+    result
+}
