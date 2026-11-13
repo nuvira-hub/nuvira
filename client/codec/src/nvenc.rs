@@ -16,6 +16,11 @@
 //!   the bitrate is changed during the session with `nvEncReconfigureEncoder`.
 //!   Linux has no asynchronous mode: one frame in, one frame out.
 //! - If the driver fails during the session the encoder goes on with OpenH264.
+//! - A picture smaller than the screen (the technician's window) is scaled on the
+//!   GPU: the screen goes to CUDA memory, a kernel of ours averages it down
+//!   (`nvenc_scale.ptx`, the same bytes as `convert::scale_bgra`), and its output,
+//!   registered with NVENC, is encoded where it is. If any of it fails the CPU
+//!   scales as before (`NUVIRA_NVENC_GPU_SCALE=0` too).
 
 use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use std::sync::OnceLock;
@@ -112,6 +117,40 @@ type PresetConfig = unsafe extern "C" fn(Handle, Guid, Guid, c_uint, *mut c_void
 type WithParams = unsafe extern "C" fn(Handle, *mut c_void) -> Status;
 type Destroy = unsafe extern "C" fn(Handle) -> Status;
 type LastError = unsafe extern "C" fn(Handle) -> *const c_char;
+type DevicePtr = u64;
+
+/// `CUDA_MEMCPY2D` of cuda.h (64-bit).
+#[repr(C)]
+struct Memcpy2D {
+    src_x_bytes: usize,
+    src_y: usize,
+    src_memory_type: c_uint,
+    src_host: *const c_void,
+    src_device: DevicePtr,
+    src_array: Handle,
+    src_pitch: usize,
+    dst_x_bytes: usize,
+    dst_y: usize,
+    dst_memory_type: c_uint,
+    dst_host: *mut c_void,
+    dst_device: DevicePtr,
+    dst_array: Handle,
+    dst_pitch: usize,
+    width_bytes: usize,
+    height: usize,
+}
+
+impl Default for Memcpy2D {
+    fn default() -> Self {
+        // SAFETY: integers and null pointers.
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+const CU_MEMORYTYPE_HOST: c_uint = 1;
+const CU_MEMORYTYPE_DEVICE: c_uint = 2;
+/// The scaling kernel (see the module's documentation).
+const SCALE_PTX: &str = concat!(include_str!("nvenc_scale.ptx"), "\0");
 
 /// NVENC's functions and CUDA's few, from the driver's libraries.
 struct Nv {
@@ -130,6 +169,31 @@ struct Nv {
     reconfigure: WithParams,
     destroy: Destroy,
     last_error: LastError,
+    register_resource: WithParams,
+    unregister_resource: WithParams,
+    map_input: WithParams,
+    unmap_input: WithParams,
+    cu_mem_alloc_pitch: unsafe extern "C" fn(*mut DevicePtr, *mut usize, usize, usize, c_uint) -> c_int,
+    cu_mem_free: unsafe extern "C" fn(DevicePtr) -> c_int,
+    cu_memcpy_2d: unsafe extern "C" fn(*const Memcpy2D) -> c_int,
+    cu_module_load_data: unsafe extern "C" fn(*mut Handle, *const c_void) -> c_int,
+    cu_module_unload: unsafe extern "C" fn(Handle) -> c_int,
+    cu_module_get_function: unsafe extern "C" fn(*mut Handle, Handle, *const c_char) -> c_int,
+    #[allow(clippy::type_complexity)]
+    cu_launch_kernel: unsafe extern "C" fn(
+        Handle,
+        c_uint,
+        c_uint,
+        c_uint,
+        c_uint,
+        c_uint,
+        c_uint,
+        c_uint,
+        Handle,
+        *mut *mut c_void,
+        *mut *mut c_void,
+    ) -> c_int,
+    cu_ctx_synchronize: unsafe extern "C" fn() -> c_int,
     cu_init: unsafe extern "C" fn(c_uint) -> c_int,
     cu_device_get: unsafe extern "C" fn(*mut c_int, c_int) -> c_int,
     cu_device_name: unsafe extern "C" fn(*mut c_char, c_int, c_int) -> c_int,
@@ -195,6 +259,18 @@ fn load() -> Result<Nv> {
             reconfigure: func!(l::FN_RECONFIGURE, WithParams),
             destroy: func!(l::FN_DESTROY, Destroy),
             last_error: func!(l::FN_LAST_ERROR, LastError),
+            register_resource: func!(l::FN_REGISTER_RESOURCE, WithParams),
+            unregister_resource: func!(l::FN_UNREGISTER_RESOURCE, WithParams),
+            map_input: func!(l::FN_MAP_INPUT, WithParams),
+            unmap_input: func!(l::FN_UNMAP_INPUT, WithParams),
+            cu_mem_alloc_pitch: sym!("cuMemAllocPitch_v2"),
+            cu_mem_free: sym!("cuMemFree_v2"),
+            cu_memcpy_2d: sym!("cuMemcpy2D_v2"),
+            cu_module_load_data: sym!("cuModuleLoadData"),
+            cu_module_unload: sym!("cuModuleUnload"),
+            cu_module_get_function: sym!("cuModuleGetFunction"),
+            cu_launch_kernel: sym!("cuLaunchKernel"),
+            cu_ctx_synchronize: sym!("cuCtxSynchronize"),
             cu_init: sym!("cuInit"),
             cu_device_get: sym!("cuDeviceGet"),
             cu_device_name: sym!("cuDeviceGetName"),
@@ -241,6 +317,41 @@ struct Session {
     init: Params,
     config: Params,
     frame: u32,
+    /// The picture scaled on the GPU, registered as NVENC input (made at the first one).
+    gpu_input: Option<GpuInput>,
+}
+
+/// CUDA memory holding a picture, with its pitch.
+struct DeviceImage {
+    ptr: DevicePtr,
+    pitch: usize,
+    width: u32,
+    height: u32,
+}
+
+impl DeviceImage {
+    /// Must be called with the encoder's CUDA context current.
+    fn new(nv: &Nv, width: u32, height: u32) -> Result<Self> {
+        let (mut ptr, mut pitch) = (0, 0);
+        // SAFETY: out-pointers to locals; the memory is freed by `free`.
+        let status =
+            unsafe { (nv.cu_mem_alloc_pitch)(&mut ptr, &mut pitch, width as usize * 4, height as usize, 4) };
+        ensure!(status == CUDA_SUCCESS, "cuMemAllocPitch: {status}");
+        Ok(Self { ptr, pitch, width, height })
+    }
+
+    fn free(&mut self, nv: &Nv) {
+        if self.ptr != 0 {
+            // SAFETY: allocated by `new`, freed once.
+            unsafe { (nv.cu_mem_free)(self.ptr) };
+            self.ptr = 0;
+        }
+    }
+}
+
+struct GpuInput {
+    image: DeviceImage,
+    registered: Handle,
 }
 
 impl Session {
@@ -254,6 +365,7 @@ impl Session {
             init: Params::new(l::INIT_SIZE, l::INIT_VER),
             config: Params::new(l::CONFIG_SIZE, l::CONFIG_VER),
             frame: 0,
+            gpu_input: None,
         };
         if let Err(e) = s.open(nv, ctx, settings) {
             s.close(nv);
@@ -359,6 +471,12 @@ impl Session {
     fn close(&mut self, nv: &Nv) {
         // SAFETY: only what was created, once (handles reset to null).
         unsafe {
+            if let Some(mut gpu) = self.gpu_input.take() {
+                if !self.encoder.is_null() {
+                    (nv.unregister_resource)(self.encoder, gpu.registered);
+                }
+                gpu.image.free(nv);
+            }
             if !self.encoder.is_null() {
                 if !self.input.is_null() {
                     (nv.destroy_input)(self.encoder, self.input);
@@ -386,10 +504,9 @@ impl Session {
 
     fn encode(&mut self, nv: &Nv, image: &BgraImage, keyframe: bool) -> Result<(Vec<u8>, bool)> {
         let (w, h) = (self.width as usize, self.height as usize);
-        // SAFETY: NVENC calls on this session's buffers; the locked input is written
-        // within its pitch and height, the locked bitstream read within its size.
-        unsafe {
-            let start = std::time::Instant::now();
+        // SAFETY: NVENC calls on this session's input buffer, written within its
+        // pitch and height while locked.
+        let pitch = unsafe {
             let mut lock = Params::new(l::LOCK_INPUT_SIZE, l::LOCK_INPUT_VER);
             lock.put_ptr(l::LOCK_INPUT_BUFFER, self.input);
             let status = (nv.lock_input)(self.encoder, lock.ptr());
@@ -401,20 +518,80 @@ impl Session {
                 std::ptr::copy_nonoverlapping(src.as_ptr(), data.add(row * pitch), w * 4);
             }
             (nv.unlock_input)(self.encoder, self.input);
-            let copied = start.elapsed();
+            pitch
+        };
+        self.encode_input(nv, self.input, pitch as u32, l::BUFFER_FORMAT_ARGB, keyframe)
+    }
 
+    /// The GPU input of this session, made (and registered with NVENC) the first time.
+    fn gpu_input(&mut self, nv: &Nv) -> Result<&GpuInput> {
+        if self.gpu_input.is_none() {
+            let mut image = DeviceImage::new(nv, self.width, self.height)?;
+            let mut reg = Params::new(l::REGISTER_SIZE, l::REGISTER_VER);
+            reg.put_u32(l::REGISTER_TYPE, l::RESOURCE_TYPE_CUDADEVICEPTR);
+            reg.put_u32(l::REGISTER_WIDTH, self.width);
+            reg.put_u32(l::REGISTER_HEIGHT, self.height);
+            reg.put_u32(l::REGISTER_PITCH, image.pitch as u32);
+            reg.put_ptr(l::REGISTER_RESOURCE, image.ptr as usize as *mut c_void);
+            reg.put_u32(l::REGISTER_FORMAT, l::BUFFER_FORMAT_ARGB);
+            reg.put_u32(l::REGISTER_USAGE, l::BUFFER_USAGE_INPUT_IMAGE);
+            // SAFETY: the structure of the header's size; the CUDA memory outlives the
+            // registration (unregistered in `close` before it is freed).
+            let status = unsafe { (nv.register_resource)(self.encoder, reg.ptr()) };
+            if let Err(e) = self.check(nv, status, "nvEncRegisterResource") {
+                image.free(nv);
+                return Err(e);
+            }
+            let registered = reg.get_ptr(l::REGISTER_REGISTERED);
+            self.gpu_input = Some(GpuInput { image, registered });
+        }
+        self.gpu_input.as_ref().context("GPU input")
+    }
+
+    /// Encodes the picture already in the GPU input (written by the scaling kernel).
+    fn encode_gpu(&mut self, nv: &Nv, keyframe: bool) -> Result<(Vec<u8>, bool)> {
+        let (registered, pitch) = {
+            let gpu = self.gpu_input.as_ref().context("GPU input")?;
+            (gpu.registered, gpu.image.pitch as u32)
+        };
+        let mut map = Params::new(l::MAP_INPUT_SIZE, l::MAP_INPUT_VER);
+        map.put_ptr(l::MAP_INPUT_REGISTERED, registered);
+        // SAFETY: a resource registered with this session; unmapped after encoding.
+        let status = unsafe { (nv.map_input)(self.encoder, map.ptr()) };
+        self.check(nv, status, "nvEncMapInputResource")?;
+        let mapped = map.get_ptr(l::MAP_INPUT_MAPPED);
+        let format = map.get_u32(l::MAP_INPUT_FORMAT);
+        let result = self.encode_input(nv, mapped, pitch, format, keyframe);
+        // SAFETY: mapped just above.
+        unsafe { (nv.unmap_input)(self.encoder, mapped) };
+        result
+    }
+
+    /// Encodes the picture in `input` (an input buffer of NVENC's or a mapped resource).
+    fn encode_input(
+        &mut self,
+        nv: &Nv,
+        input: Handle,
+        pitch: u32,
+        format: u32,
+        keyframe: bool,
+    ) -> Result<(Vec<u8>, bool)> {
+        // SAFETY: NVENC calls on this session's buffers; the locked bitstream is read
+        // within its size.
+        unsafe {
+            let start = std::time::Instant::now();
             let mut pic = Params::new(l::PIC_SIZE, l::PIC_VER);
             pic.put_u32(l::PIC_WIDTH, self.width);
             pic.put_u32(l::PIC_HEIGHT, self.height);
-            pic.put_u32(l::PIC_PITCH, pitch as u32);
+            pic.put_u32(l::PIC_PITCH, pitch);
             if keyframe {
                 pic.put_u32(l::PIC_FLAGS, l::PIC_FLAG_FORCEIDR | l::PIC_FLAG_OUTPUT_SPSPPS);
             }
             pic.put_u32(l::PIC_FRAME_IDX, self.frame);
             pic.put_u32(l::PIC_TIMESTAMP, self.frame);
-            pic.put_ptr(l::PIC_INPUT, self.input);
+            pic.put_ptr(l::PIC_INPUT, input);
             pic.put_ptr(l::PIC_OUTPUT, self.output);
-            pic.put_u32(l::PIC_FORMAT, l::BUFFER_FORMAT_ARGB);
+            pic.put_u32(l::PIC_FORMAT, format);
             pic.put_u32(l::PIC_STRUCT, l::PIC_STRUCT_FRAME);
             let status = (nv.encode)(self.encoder, pic.ptr());
             self.check(nv, status, "nvEncEncodePicture")?;
@@ -433,7 +610,7 @@ impl Session {
             (nv.unlock_bitstream)(self.encoder, self.output);
             let total = start.elapsed();
             if total.as_millis() >= 20 {
-                debug!(?copied, ?submitted, ?total, "NVENC slow encode");
+                debug!(?submitted, ?total, "NVENC slow encode");
             }
             Ok((bytes, idr))
         }
@@ -460,6 +637,18 @@ pub struct NvencEncoder {
     new_rate: bool,
     /// The driver failed during the session: OpenH264 from then on.
     fallback: Option<OpenH264Encoder>,
+    /// Scaling on the GPU: the kernel and the screen in CUDA memory (made at the
+    /// first scaled picture); `None` once it failed or when switched off.
+    scaler: Option<Scaler>,
+    gpu_scale: bool,
+}
+
+/// The scaling kernel, loaded in the encoder's CUDA context, and the screen copied
+/// to CUDA memory for it.
+struct Scaler {
+    module: Handle,
+    function: Handle,
+    source: Option<DeviceImage>,
 }
 
 // SAFETY: the CUDA context and the NVENC session are used by one thread at a time
@@ -496,6 +685,8 @@ impl NvencEncoder {
             force_key: true,
             new_rate: false,
             fallback: None,
+            scaler: None,
+            gpu_scale: std::env::var("NUVIRA_NVENC_GPU_SCALE").as_deref() != Ok("0"),
         };
         // A test frame: the keyframe must carry SPS, PPS and an IDR slice.
         let (w, h) = (320u32, 180u32);
@@ -522,6 +713,149 @@ impl NvencEncoder {
                 Err(e) => warn!("NVENC session not closed: {e:#}"),
             }
         }
+    }
+
+    fn scaler_drop(&mut self) {
+        if let Some(mut scaler) = self.scaler.take() {
+            match Current::push(self.nv, self.ctx) {
+                Ok(_current) => {
+                    if let Some(mut source) = scaler.source.take() {
+                        source.free(self.nv);
+                    }
+                    // SAFETY: loaded in this context, unloaded once.
+                    unsafe { (self.nv.cu_module_unload)(scaler.module) };
+                }
+                Err(e) => warn!("CUDA scaling kernel not unloaded: {e:#}"),
+            }
+        }
+    }
+
+    /// The session for an encoded size of `w`x`h`, opened again when it changes.
+    fn session_for(&mut self, w: u32, h: u32) -> Result<()> {
+        if self.session.as_ref().is_none_or(|s| (s.width, s.height) != (w, h)) {
+            self.session_drop();
+            let _current = Current::push(self.nv, self.ctx)?;
+            self.session = Some(Session::new(self.nv, self.ctx, &self.settings, w, h)?);
+            debug!(w, h, "NVENC session");
+            self.force_key = true;
+            self.new_rate = false;
+        }
+        Ok(())
+    }
+
+    /// `image` reduced to `w`x`h` on the GPU into the session's GPU input, then encoded.
+    fn encode_scaled_nv(&mut self, image: &BgraImage, w: u32, h: u32, force_keyframe: bool) -> Result<EncodedFrame> {
+        self.session_for(w, h)?;
+        let nv = self.nv;
+        let _current = Current::push(nv, self.ctx)?;
+        if self.scaler.is_none() {
+            let (mut module, mut function) = (std::ptr::null_mut(), std::ptr::null_mut());
+            // SAFETY: NUL-terminated PTX text; out-pointers to locals.
+            unsafe {
+                let status = (nv.cu_module_load_data)(&mut module, SCALE_PTX.as_ptr().cast());
+                ensure!(status == CUDA_SUCCESS, "cuModuleLoadData: {status}");
+                let status = (nv.cu_module_get_function)(&mut function, module, c"scale_bgra".as_ptr());
+                if status != CUDA_SUCCESS {
+                    (nv.cu_module_unload)(module);
+                    bail!("cuModuleGetFunction: {status}");
+                }
+            }
+            info!("NVENC: pictures smaller than the screen are scaled on the GPU");
+            self.scaler = Some(Scaler { module, function, source: None });
+        }
+        let scaler = self.scaler.as_mut().context("scaler")?;
+        if scaler.source.as_ref().is_none_or(|s| (s.width, s.height) != (image.width, image.height)) {
+            if let Some(mut old) = scaler.source.take() {
+                old.free(nv);
+            }
+            scaler.source = Some(DeviceImage::new(nv, image.width, image.height)?);
+        }
+        let source = scaler.source.as_ref().context("source")?;
+        let function = scaler.function;
+        let (src_ptr, src_pitch) = (source.ptr, source.pitch);
+        ensure!(image.data.len() >= image.stride * (image.height as usize - 1) + image.width as usize * 4, "image too small");
+        let copy = Memcpy2D {
+            src_memory_type: CU_MEMORYTYPE_HOST,
+            src_host: image.data.as_ptr().cast(),
+            src_pitch: image.stride,
+            dst_memory_type: CU_MEMORYTYPE_DEVICE,
+            dst_device: src_ptr,
+            dst_pitch: src_pitch,
+            width_bytes: image.width as usize * 4,
+            height: image.height as usize,
+            ..Default::default()
+        };
+        let key = force_keyframe || std::mem::take(&mut self.force_key);
+        let new_rate = std::mem::take(&mut self.new_rate);
+        let session = self.session.as_mut().context("NVENC session")?;
+        let gpu = session.gpu_input(nv)?;
+        let (dst_ptr, dst_pitch) = (gpu.image.ptr, gpu.image.pitch);
+        // SAFETY: the copy stays within the host image (checked above) and the CUDA
+        // memory (its size); the kernel's parameters match its declaration, and it
+        // writes within the GPU input (w x h at its pitch, w <= the source width).
+        unsafe {
+            let status = (nv.cu_memcpy_2d)(&copy);
+            ensure!(status == CUDA_SUCCESS, "cuMemcpy2D: {status}");
+            let (mut src, mut spitch, mut sw, mut sh) =
+                (src_ptr, src_pitch as u32, image.width, image.height);
+            let (mut dst, mut dpitch, mut dw, mut dh) = (dst_ptr, dst_pitch as u32, w, h);
+            let mut params: [*mut c_void; 8] = [
+                (&raw mut src).cast(),
+                (&raw mut spitch).cast(),
+                (&raw mut sw).cast(),
+                (&raw mut sh).cast(),
+                (&raw mut dst).cast(),
+                (&raw mut dpitch).cast(),
+                (&raw mut dw).cast(),
+                (&raw mut dh).cast(),
+            ];
+            let status = (nv.cu_launch_kernel)(
+                function,
+                w.div_ceil(16),
+                h.div_ceil(16),
+                1,
+                16,
+                16,
+                1,
+                0,
+                std::ptr::null_mut(),
+                params.as_mut_ptr(),
+                std::ptr::null_mut(),
+            );
+            ensure!(status == CUDA_SUCCESS, "cuLaunchKernel: {status}");
+            let status = (nv.cu_ctx_synchronize)();
+            ensure!(status == CUDA_SUCCESS, "cuCtxSynchronize: {status}");
+        }
+        if new_rate {
+            session.reconfigure(nv, &self.settings)?;
+        }
+        let (data, keyframe) = session.encode_gpu(nv, key)?;
+        Ok(EncodedFrame { data, keyframe, ..Default::default() })
+    }
+
+    /// The scaling kernel alone, its output read back (tests).
+    #[cfg(test)]
+    fn scale_on_gpu(&mut self, image: &BgraImage, w: u32, h: u32) -> Result<Vec<u8>> {
+        self.encode_scaled_nv(image, w, h, true)?;
+        let nv = self.nv;
+        let _current = Current::push(nv, self.ctx)?;
+        let gpu = self.session.as_mut().context("session")?.gpu_input(nv)?;
+        let mut out = vec![0u8; (w * h * 4) as usize];
+        let copy = Memcpy2D {
+            src_memory_type: CU_MEMORYTYPE_DEVICE,
+            src_device: gpu.image.ptr,
+            src_pitch: gpu.image.pitch,
+            dst_memory_type: CU_MEMORYTYPE_HOST,
+            dst_host: out.as_mut_ptr().cast(),
+            dst_pitch: w as usize * 4,
+            width_bytes: w as usize * 4,
+            height: h as usize,
+            ..Default::default()
+        };
+        // SAFETY: within the GPU input and `out`.
+        let status = unsafe { (nv.cu_memcpy_2d)(&copy) };
+        ensure!(status == CUDA_SUCCESS, "cuMemcpy2D: {status}");
+        Ok(out)
     }
 
     fn encode_nv(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<EncodedFrame> {
@@ -558,6 +892,7 @@ impl NvencEncoder {
 impl Drop for NvencEncoder {
     fn drop(&mut self) {
         self.session_drop();
+        self.scaler_drop();
         // SAFETY: the context made in `new`, no longer current anywhere.
         unsafe { (self.nv.cu_ctx_destroy)(self.ctx) };
     }
@@ -576,6 +911,35 @@ impl VideoEncoder for NvencEncoder {
         if bps != self.settings.bitrate_bps {
             self.settings.bitrate_bps = bps;
             self.new_rate = true;
+        }
+    }
+
+    fn encode_scaled(
+        &mut self,
+        image: &BgraImage,
+        size: (u32, u32),
+        force_keyframe: bool,
+    ) -> Option<Result<Option<EncodedFrame>>> {
+        if self.fallback.is_some() || !self.gpu_scale {
+            return None;
+        }
+        // Even sizes, within the image (as the CPU's scaling does).
+        let w = size.0.min(image.width) & !1;
+        let h = size.1.min(image.height) & !1;
+        if w < 2 || h < 2 {
+            return None;
+        }
+        match self.encode_scaled_nv(image, w, h, force_keyframe) {
+            Ok(frame) if frame.data.is_empty() => Some(Ok(None)),
+            Ok(frame) => Some(Ok(Some(frame))),
+            Err(e) => {
+                warn!("scaling on the GPU failed ({e:#}): the CPU scales from now on");
+                self.gpu_scale = false;
+                self.scaler_drop();
+                // The session is opened again for the CPU's pictures.
+                self.session_drop();
+                None
+            }
         }
     }
 
@@ -621,6 +985,51 @@ mod tests {
         assert_eq!(p.get_u32(l::CONFIG_H264_REPEAT_SPSPPS.0), 1 << l::CONFIG_H264_REPEAT_SPSPPS.1);
         p.set_bit(l::CONFIG_H264_REPEAT_SPSPPS, false);
         assert_eq!(p.get_u32(l::CONFIG_H264_REPEAT_SPSPPS.0), 0);
+    }
+
+    /// The GPU's scaling gives the CPU's bytes, and the scaled picture encodes.
+    /// Needs an NVIDIA GPU with its driver; skipped elsewhere.
+    #[test]
+    fn gpu_scale_matches_cpu() {
+        let mut enc = match NvencEncoder::new(EncoderSettings::default()) {
+            Ok(enc) => enc,
+            Err(e) => {
+                eprintln!("no NVENC here, skipped: {e:#}");
+                return;
+            }
+        };
+        // A screen with detail (text-like stripes and a gradient), not a multiple of
+        // the output size; a stride with padding.
+        let (sw, sh, stride) = (1366u32, 768u32, 1366 * 4 + 64);
+        let mut data = vec![0u8; stride * sh as usize];
+        for y in 0..sh as usize {
+            for x in 0..sw as usize {
+                let p = &mut data[y * stride + x * 4..][..4];
+                p[0] = (x * 7 + y) as u8;
+                p[1] = if (x / 3 + y / 2) % 2 == 0 { 250 } else { 10 };
+                p[2] = (y * 255 / sh as usize) as u8;
+                p[3] = 255;
+            }
+        }
+        let image = BgraImage { width: sw, height: sh, stride, data: &data };
+        for (w, h) in [(900u32, 506u32), (640, 360), (1366, 768), (160, 90)] {
+            let gpu = enc.scale_on_gpu(&image, w, h).expect("scaled on the GPU");
+            let mut cpu = Vec::new();
+            crate::convert::scale_bgra(&image, w as usize, h as usize, &mut cpu);
+            let differ = gpu.iter().zip(&cpu).filter(|(a, b)| a != b).count();
+            assert_eq!(differ, 0, "{w}x{h}: {differ} bytes differ");
+        }
+        // Then a stream of scaled pictures, with a keyframe at the start, decoded.
+        let frame = enc.encode_scaled(&image, (900, 506), true).expect("GPU scaling").unwrap().unwrap();
+        assert!(frame.keyframe);
+        let mut dec = crate::OpenH264Decoder::new().unwrap();
+        let yuv = crate::VideoDecoder::decode(&mut dec, &frame.data).unwrap().expect("a picture");
+        assert_eq!((yuv.width, yuv.height), (900, 506));
+        let started = std::time::Instant::now();
+        for _ in 0..30 {
+            enc.encode_scaled(&image, (900, 506), false).expect("GPU scaling").unwrap();
+        }
+        eprintln!("1366x768 to 900x506 on the GPU and encoded: {:?} a frame", started.elapsed() / 30);
     }
 
     /// Needs an NVIDIA GPU with its driver; skipped elsewhere.

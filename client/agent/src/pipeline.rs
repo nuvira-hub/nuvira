@@ -352,6 +352,9 @@ fn encode_loop(
                 };
                 if size == (image.width, image.height) {
                     encoder.encode(&full, force_key)
+                } else if let Some(result) = encoder.encode_scaled(&full, size, force_key) {
+                    // Scaled by the encoder on the GPU (NVENC on Linux).
+                    result
                 } else {
                     nuvira_codec::convert::scale_bgra(&full, size.0 as usize, size.1 as usize, &mut scaled);
                     let (w, h) = size;
