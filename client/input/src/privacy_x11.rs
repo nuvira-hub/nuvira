@@ -286,7 +286,13 @@ pub(super) fn signal_fd() -> std::io::Result<i32> {
 /// returns then); otherwise does nothing. Call it first thing in `main`.
 pub fn overlay_if_asked() {
     if std::env::args_os().nth(1).is_some_and(|a| a == OVERLAY_ARG) {
-        std::process::exit(if crate::wayland_session() { super::wayland::run_child() } else { child::run() });
+        std::process::exit(if !crate::wayland_session() {
+            child::run()
+        } else if super::kde::supported() {
+            super::kde::run_child()
+        } else {
+            super::wayland::run_child()
+        });
     }
 }
 

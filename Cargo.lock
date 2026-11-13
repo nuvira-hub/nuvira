@@ -3588,6 +3588,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wayland-client",
+ "wayland-protocols",
  "windows",
  "x11rb",
  "xkbcommon-dl",

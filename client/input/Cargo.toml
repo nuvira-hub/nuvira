@@ -32,6 +32,8 @@ x11rb = { version = "0.13", features = ["randr", "xinput", "xtest"] }
 # Text on Wayland: the compositor's keymap (wl_keyboard), compiled with libxkbcommon
 # loaded at run time (the same crates winit uses).
 wayland-client = "0.31"
+# Privacy mode on KDE: the black windows (xdg-shell).
+wayland-protocols = { version = "0.32", features = ["client"] }
 xkbcommon-dl = "0.4"
 # IBus's signals for the Unicode entry (ibus_watch.rs).
 futures-util = "0.3"
