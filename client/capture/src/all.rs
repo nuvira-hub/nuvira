@@ -48,6 +48,8 @@ impl AllCapturer {
             captured_us: 0,
             #[cfg(windows)]
             texture: None,
+            #[cfg(target_os = "linux")]
+            dmabuf: None,
         };
         Ok(Self { parts, display, frame })
     }

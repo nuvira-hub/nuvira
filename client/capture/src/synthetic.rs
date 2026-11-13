@@ -35,6 +35,8 @@ impl SyntheticCapturer {
                 captured_us: 0,
                 #[cfg(windows)]
                 texture: None,
+                #[cfg(target_os = "linux")]
+                dmabuf: None,
             },
             interval: Duration::from_secs(1) / fps.max(1),
             next: Instant::now(),

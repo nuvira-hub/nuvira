@@ -75,6 +75,19 @@ struct Image {
     stride: usize,
     data: Vec<u8>,
     rgb: bool,
+    /// The picture left in the GPU's memory (`data` empty).
+    dmabuf: Option<crate::dmabuf::DmaBuf>,
+}
+
+/// `NUVIRA_DMABUF=1`: the compositor is asked for DMA-BUF buffers too (linear
+/// ones), for a VA-API encoder to import with no copy through RAM. Off by default
+/// until tried on real graphics cards.
+/// `SPA_VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED` (PipeWire 0.3.75; Debian 12's
+/// headers, which the packages are built with, do not have it yet).
+const VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED: u32 = 1 << 3;
+
+fn dmabuf_wanted() -> bool {
+    std::env::var("NUVIRA_DMABUF").as_deref() == Ok("1")
 }
 
 pub struct PipeWireCapturer {
@@ -135,6 +148,7 @@ impl PipeWireCapturer {
             stride: width as usize * 4,
             data: PLACEHOLDER.repeat(width as usize * height as usize),
             captured_us: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64),
+            dmabuf: None,
         });
         self.frame.as_ref()
     }
@@ -193,6 +207,7 @@ impl Capturer for PipeWireCapturer {
             stride: image.stride,
             data,
             captured_us: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64),
+            dmabuf: image.dmabuf.map(Arc::new),
         };
         if let Some(old) = self.frame.replace(frame) {
             let _ = stream.spare.send(old.data);
@@ -257,6 +272,8 @@ impl Drop for Stream {
 
 struct State {
     format: spa::param::video::VideoInfoRaw,
+    /// The negotiated format has a modifier: the buffers are DMA-BUFs.
+    dmabuf: bool,
     images: SyncSender<Image>,
     spare: Receiver<Vec<u8>>,
     ready: Option<Sender<Result<(u32, u32)>>>,
@@ -284,7 +301,14 @@ fn stream_loop(
             *pw::keys::MEDIA_ROLE => "Screen",
         },
     )?;
-    let state = State { format: Default::default(), images, spare, ready: Some(ready.clone()), pool: Vec::new() };
+    let state = State {
+        format: Default::default(),
+        dmabuf: false,
+        images,
+        spare,
+        ready: Some(ready.clone()),
+        pool: Vec::new(),
+    };
     let ml = mainloop.clone();
     let _listener = stream
         .add_local_listener_with_user_data(state)
@@ -296,7 +320,7 @@ fn stream_loop(
                 ml.quit();
             }
         })
-        .param_changed(|_, state, id, param| {
+        .param_changed(|stream, state, id, param| {
             let Some(param) = param else { return };
             if id != pw::spa::param::ParamType::Format.as_raw() {
                 return;
@@ -306,7 +330,34 @@ fn stream_loop(
                 return;
             }
             let size = state.format.size();
-            debug!(format = ?state.format.format(), size.width, size.height, "PipeWire format");
+            let flags = state.format.flags();
+            state.dmabuf = flags.bits() & spa::sys::SPA_VIDEO_FLAG_MODIFIER != 0;
+            debug!(
+                format = ?state.format.format(),
+                size.width,
+                size.height,
+                dmabuf = state.dmabuf,
+                modifier = state.format.modifier(),
+                "PipeWire format"
+            );
+            if state.dmabuf {
+                // The compositor left the modifier open: the one we take (linear,
+                // the only one offered) is sent back with the buffers we want.
+                let fixate = flags.bits() & VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED != 0;
+                match dmabuf_params(fixate) {
+                    Ok(pods) => {
+                        let mut params: Vec<&Pod> = pods.iter().filter_map(|p| Pod::from_bytes(p)).collect();
+                        if let Err(e) = stream.update_params(&mut params) {
+                            warn!("PipeWire DMA-BUF buffers: {e}");
+                        }
+                    }
+                    Err(e) => warn!("PipeWire DMA-BUF buffers: {e:#}"),
+                }
+                if fixate {
+                    return;
+                }
+                info!(modifier = state.format.modifier(), "PipeWire capture in DMA-BUF buffers");
+            }
             if let Some(ready) = state.ready.take() {
                 let _ = ready.send(Ok((size.width, size.height)));
             }
@@ -321,6 +372,46 @@ fn stream_loop(
             let size = state.format.size();
             let datas = buffer.datas_mut();
             let Some(data) = datas.first_mut() else { return };
+            if data.type_() == spa::buffer::DataType::DmaBuf {
+                let chunk = data.chunk();
+                if chunk.flags().contains(spa::buffer::ChunkFlags::CORRUPTED) || chunk.stride() <= 0 {
+                    return;
+                }
+                let drm_format = match state.format.format() {
+                    VideoFormat::BGRx => crate::dmabuf::DRM_FORMAT_XRGB8888,
+                    VideoFormat::BGRA => crate::dmabuf::DRM_FORMAT_ARGB8888,
+                    VideoFormat::RGBx => crate::dmabuf::DRM_FORMAT_XBGR8888,
+                    _ => crate::dmabuf::DRM_FORMAT_ABGR8888,
+                };
+                // Our own copy of the descriptor: the buffer goes back to the
+                // compositor when this callback returns.
+                // SAFETY: fcntl on the buffer's descriptor, valid during the callback.
+                let fd = unsafe { libc::fcntl(data.fd() as i32, libc::F_DUPFD_CLOEXEC, 0) };
+                if fd < 0 {
+                    return;
+                }
+                // SAFETY: a new descriptor of ours.
+                let fd = unsafe { <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+                let image = Image {
+                    width: size.width,
+                    height: size.height,
+                    stride: chunk.stride() as usize,
+                    data: Vec::new(),
+                    rgb: false,
+                    dmabuf: Some(crate::dmabuf::DmaBuf {
+                        fd,
+                        width: size.width,
+                        height: size.height,
+                        drm_format,
+                        modifier: state.format.modifier(),
+                        offset: chunk.offset(),
+                        stride: chunk.stride() as u32,
+                        size: data.as_raw().maxsize,
+                    }),
+                };
+                let _ = state.images.try_send(image);
+                return;
+            }
             let chunk = data.chunk();
             let (offset, len, stride) = (chunk.offset() as usize, chunk.size() as usize, chunk.stride());
             // An empty chunk: nothing changed (or only the cursor, with metadata).
@@ -340,7 +431,7 @@ fn stream_loop(
             let mut out = state.pool.pop().unwrap_or_default();
             out.clear();
             out.extend_from_slice(src);
-            let image = Image { width: size.width, height: size.height, stride, data: out, rgb };
+            let image = Image { width: size.width, height: size.height, stride, data: out, rgb, dmabuf: None };
             // The capture thread takes one image at a time: if it is behind, this
             // one is dropped (the next will be newer anyway).
             if let Err(std::sync::mpsc::TrySendError::Full(image)) = state.images.try_send(image) {
@@ -349,8 +440,13 @@ fn stream_loop(
         })
         .register()?;
 
-    let format = format_pod()?;
-    let mut params = [Pod::from_bytes(&format).context("format")?];
+    // DMA-BUF first when wanted, shared memory otherwise: the compositor picks.
+    let mut formats = Vec::new();
+    if dmabuf_wanted() {
+        formats.push(format_pod(Some(false))?);
+    }
+    formats.push(format_pod(None)?);
+    let mut params: Vec<&Pod> = formats.iter().filter_map(|f| Pod::from_bytes(f)).collect();
     stream.connect(
         spa::utils::Direction::Input,
         Some(node_id),
@@ -366,11 +462,15 @@ fn stream_loop(
 }
 
 /// Raw video in 32-bit formats with no conversion on our side but the swap of R
-/// and B, in shared memory (no DMA-BUF: no modifiers offered).
-fn format_pod() -> Result<Vec<u8>> {
+/// and B. `None`: in shared memory (no modifier). `Some(fixed)`: in DMA-BUFs with
+/// the linear modifier, offered as a choice to the compositor, or `fixed` when it
+/// asks us to settle it.
+fn format_pod(modifier: Option<bool>) -> Result<Vec<u8>> {
     use pw::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
-    use pw::spa::utils::{Fraction, Rectangle};
-    let obj = pw::spa::pod::object!(
+    use pw::spa::pod::{ChoiceValue, Property, PropertyFlags, Value};
+    use pw::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Fraction, Rectangle};
+    let linear = crate::dmabuf::MODIFIER_LINEAR as i64;
+    let mut obj = pw::spa::pod::object!(
         pw::spa::utils::SpaTypes::ObjectParamFormat,
         pw::spa::param::ParamType::EnumFormat,
         pw::spa::pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
@@ -405,10 +505,50 @@ fn format_pod() -> Result<Vec<u8>> {
             Fraction { num: 240, denom: 1 }
         ),
     );
+    if let Some(fixed) = modifier {
+        // SPA_POD_PROP_FLAG_DONT_FIXATE (1 << 4): the compositor settles it.
+        let dont_fixate = PropertyFlags::from_bits_retain(1 << 4);
+        obj.properties.push(Property {
+            key: FormatProperties::VideoModifier.as_raw(),
+            flags: if fixed { PropertyFlags::MANDATORY } else { PropertyFlags::MANDATORY | dont_fixate },
+            value: if fixed {
+                Value::Long(linear)
+            } else {
+                Value::Choice(ChoiceValue::Long(Choice(
+                    ChoiceFlags::empty(),
+                    ChoiceEnum::Enum { default: linear, alternatives: vec![linear] },
+                )))
+            },
+        });
+    }
     let (cursor, _) =
         pw::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &pw::spa::pod::Value::Object(obj))
             .map_err(|e| anyhow!("format: {e:?}"))?;
     Ok(cursor.into_inner())
+}
+
+/// After a DMA-BUF format: the buffers we take (DMA-BUFs), and the format with the
+/// modifier settled when the compositor asked for it.
+fn dmabuf_params(fixate: bool) -> Result<Vec<Vec<u8>>> {
+    use pw::spa::pod::{Property, Value};
+    let buffers = pw::spa::pod::Object {
+        type_: pw::spa::utils::SpaTypes::ObjectParamBuffers.as_raw(),
+        id: pw::spa::param::ParamType::Buffers.as_raw(),
+        properties: vec![Property::new(
+            pw::spa::sys::SPA_PARAM_BUFFERS_dataType,
+            Value::Int(1 << pw::spa::sys::SPA_DATA_DmaBuf),
+        )],
+    };
+    let (cursor, _) = pw::spa::pod::serialize::PodSerializer::serialize(
+        std::io::Cursor::new(Vec::new()),
+        &Value::Object(buffers),
+    )
+    .map_err(|e| anyhow!("buffers: {e:?}"))?;
+    let mut pods = vec![cursor.into_inner()];
+    if fixate {
+        pods.push(format_pod(Some(true))?);
+    }
+    Ok(pods)
 }
 
 /// Opens the shared screen; `index` is ignored: the person chooses the screen in
