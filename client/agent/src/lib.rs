@@ -1344,6 +1344,7 @@ async fn session(
             guest_input_tx,
             offered & switches::INPUT != 0,
             g.ctx.events.clone(),
+            audio_offered,
         ));
         *g.ctx.shared.lock().expect("shared") = Some(s.clone());
         s
@@ -1436,19 +1437,26 @@ async fn session(
     let (audio_on_tx, mut audio_on_rx) = tokio::sync::watch::channel(true);
     let audio = {
         let conn = conn.clone();
-        // On while the viewer wants it (its mute button) and the person at the PC did
-        // not switch it off.
+        // On while the viewer wants it (its mute button), or a guest of the session
+        // does, and the person at the PC did not switch it off.
         let mut audio_off = off.clone();
+        let shared = shared.clone();
         async move {
             if !audio_offered {
                 return std::future::pending().await;
             }
+            let mut listeners = match &shared {
+                Some(s) => s.listeners(),
+                None => tokio::sync::watch::channel(0).1,
+            };
             let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
             let mut capture: Option<nuvira_audio::capture::Capture> = None;
             let mut failed = false;
             let mut seq = 0u32;
             loop {
-                let want = *audio_on_rx.borrow_and_update() && audio_off.is_on(switches::AUDIO);
+                let first = *audio_on_rx.borrow_and_update();
+                let guests = *listeners.borrow_and_update() > 0;
+                let want = (first || guests) && audio_off.is_on(switches::AUDIO);
                 if want && capture.is_none() && !failed {
                     let tx = tx.clone();
                     match tokio::task::spawn_blocking(move || nuvira_audio::capture::Capture::start(move |p| {
@@ -1473,17 +1481,29 @@ async fn session(
                         }
                     }
                     _ = audio_off.changed() => {}
+                    changed = listeners.changed() => {
+                        if changed.is_err() {
+                            listeners = tokio::sync::watch::channel(0).1;
+                        }
+                    }
                     Some(packet) = rx.recv() => {
                         if capture.is_none() {
                             continue;
                         }
+                        let datagram = Arc::new(nuvira_audio::packet::encode(seq, &packet));
+                        seq = seq.wrapping_add(1);
+                        if let Some(s) = &shared {
+                            s.audio_packet(&datagram);
+                        }
+                        if !*audio_on_rx.borrow() {
+                            continue;
+                        }
                         // Not waiting for room: a packet that cannot leave now is late anyway.
-                        match conn.send_datagram(nuvira_audio::packet::encode(seq, &packet).into()) {
+                        match conn.send_datagram(datagram.as_ref().clone().into()) {
                             Ok(()) => {}
                             Err(quinn::SendDatagramError::ConnectionLost(e)) => return Err(e.into()),
                             Err(e) => tracing::debug!("audio packet not sent: {e}"),
                         }
-                        seq = seq.wrapping_add(1);
                     }
                 }
             }
