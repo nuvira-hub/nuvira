@@ -19,7 +19,7 @@ pub mod cups;
 /// GNOME on Wayland: the extension that keeps remote control on the lock and
 /// sign-in screens.
 #[cfg(target_os = "linux")]
-mod gnome;
+pub mod gnome;
 /// Root's updates of the .deb and .rpm packages.
 #[cfg(target_os = "linux")]
 mod package_update;

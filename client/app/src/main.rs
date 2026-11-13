@@ -142,6 +142,9 @@ struct UiState {
     /// Documents of remote computers go to this printer without asking (chosen in the
     /// session window's print window; `print.json` of the viewer).
     print_auto: Option<String>,
+    /// GNOME: the lock-screen extension is installed but not loaded in this
+    /// session yet; the person must sign out and in once.
+    gnome_sign_in_again: bool,
     /// The server is set by the organisation's policies: the field is read-only.
     server_managed: bool,
 }
@@ -747,7 +750,28 @@ fn get_state(state: State<NuviraApp>) -> UiState {
     ui.print_auto = print_choice()
         .filter(|c| c["automatic"].as_bool() == Some(true))
         .and_then(|c| c["printer"].as_str().map(String::from));
+    ui.gnome_sign_in_again = gnome_sign_in_again();
     ui.clone()
+}
+
+/// See [`UiState::gnome_sign_in_again`]: asked to GNOME Shell at most every 30 s.
+#[cfg(target_os = "linux")]
+fn gnome_sign_in_again() -> bool {
+    static LAST: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
+    let mut last = LAST.lock().expect("gnome");
+    if let Some((at, value)) = *last
+        && at.elapsed() < std::time::Duration::from_secs(30)
+    {
+        return value;
+    }
+    let value = nuvira_service::gnome::sign_in_again_needed();
+    *last = Some((std::time::Instant::now(), value));
+    value
+}
+
+#[cfg(not(target_os = "linux"))]
+fn gnome_sign_in_again() -> bool {
+    false
 }
 
 /// Where the session window prints the documents of remote computers (`print.json`).

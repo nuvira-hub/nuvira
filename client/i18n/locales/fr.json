@@ -214,6 +214,7 @@
   "settings.terminal_hint": "Qui se connecte à cet ordinateur peut ouvrir une invite de commandes avec les droits de l'utilisateur connecté, sans voir le bureau. La bande en haut indique quand un terminal est ouvert.",
   "settings.tunnel_allowed": "Autoriser les tunnels vers le réseau local",
   "settings.tunnel_hint": "Avec un serveur NuviraHub Pro, qui contrôle cet ordinateur peut atteindre à travers lui les adresses de son réseau local, par exemple le panneau web du routeur ou le Bureau à distance d'un autre PC. Jamais d'adresses internet.",
+  "settings.gnome_sign_in_again": "Déconnecte-toi et reconnecte-toi une fois : jusque-là, l'écran de verrouillage de GNOME ferme les sessions à distance (GNOME démarre l'extension de NuviraHub à la connexion).",
   "settings.unattended": "Accès sans surveillance",
   "settings.unattended_hint": "Installe NuviraHub sur cet ordinateur pour l'atteindre même lorsque personne n'est devant, y compris après un redémarrage, avec un mot de passe permanent. Un compte administrateur est nécessaire.",
   "settings.change_pw": "Changer le mot de passe permanent",

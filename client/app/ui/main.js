@@ -247,6 +247,7 @@ function render(state) {
     );
   }
   $("install-on").classList.toggle("hidden", !state.service);
+  $("gnome-relogin").classList.toggle("hidden", !(state.service && state.gnome_sign_in_again));
   // Linux and macOS: a user service (systemd, launchd), removed from here;
   // Windows: from the system settings.
   const linux = state.platform === "linux";
