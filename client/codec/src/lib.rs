@@ -115,6 +115,18 @@ pub trait VideoEncoder: Send {
         false
     }
 
+    /// Encodes `image` reduced to `size`, scaling it itself (on the GPU) with the
+    /// same result as [`convert::scale_bgra`]. `None` when it cannot: the caller
+    /// scales the image on the CPU and calls [`encode`](Self::encode).
+    fn encode_scaled(
+        &mut self,
+        _image: &BgraImage,
+        _size: (u32, u32),
+        _force_keyframe: bool,
+    ) -> Option<anyhow::Result<Option<EncodedFrame>>> {
+        None
+    }
+
     /// Changes the bitrate during the session (adaptive bitrate).
     fn set_bitrate(&mut self, _bps: u32) {}
 

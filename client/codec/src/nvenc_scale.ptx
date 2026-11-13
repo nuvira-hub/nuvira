@@ -1,0 +1,124 @@
+// Scaling of a BGRA image on the GPU, for NVENC (client/codec/src/nvenc.rs): each
+// output pixel is the average of the source pixels it covers, with the same
+// integer arithmetic as convert::scale_bgra on the CPU, so the two give the same
+// bytes. Written by hand (no CUDA toolkit is needed to build NuviraHub); the
+// driver compiles it for the card when the module is loaded. Checked with ptxas.
+//
+// scale_bgra(src, src_pitch, src_w, src_h, dst, dst_pitch, dst_w, dst_h): one
+// thread per output pixel; dst_w <= src_w and dst_h <= src_h.
+
+.version 6.0
+.target sm_50
+.address_size 64
+
+.visible .entry scale_bgra(
+    .param .u64 p_src,
+    .param .u32 p_src_pitch,
+    .param .u32 p_src_w,
+    .param .u32 p_src_h,
+    .param .u64 p_dst,
+    .param .u32 p_dst_pitch,
+    .param .u32 p_dst_w,
+    .param .u32 p_dst_h
+)
+{
+    .reg .pred %p<4>;
+    .reg .b32 %r<32>;
+    .reg .b64 %rd<12>;
+
+    ld.param.u64 %rd1, [p_src];
+    ld.param.u32 %r1, [p_src_pitch];
+    ld.param.u32 %r2, [p_src_w];
+    ld.param.u32 %r3, [p_src_h];
+    ld.param.u64 %rd2, [p_dst];
+    ld.param.u32 %r4, [p_dst_pitch];
+    ld.param.u32 %r5, [p_dst_w];
+    ld.param.u32 %r6, [p_dst_h];
+    cvta.to.global.u64 %rd1, %rd1;
+    cvta.to.global.u64 %rd2, %rd2;
+
+    // x, y of the output pixel
+    mov.u32 %r7, %ctaid.x;
+    mov.u32 %r8, %ntid.x;
+    mov.u32 %r9, %tid.x;
+    mad.lo.u32 %r10, %r7, %r8, %r9;
+    mov.u32 %r7, %ctaid.y;
+    mov.u32 %r8, %ntid.y;
+    mov.u32 %r9, %tid.y;
+    mad.lo.u32 %r11, %r7, %r8, %r9;
+    setp.ge.u32 %p1, %r10, %r5;
+    setp.ge.u32 %p2, %r11, %r6;
+    or.pred %p1, %p1, %p2;
+    @%p1 bra DONE;
+
+    // source columns x0..x1 and rows y0..y1 (never empty)
+    mul.lo.u32 %r12, %r10, %r2;
+    div.u32 %r12, %r12, %r5;
+    add.u32 %r13, %r10, 1;
+    mul.lo.u32 %r13, %r13, %r2;
+    div.u32 %r13, %r13, %r5;
+    mul.lo.u32 %r14, %r11, %r3;
+    div.u32 %r14, %r14, %r6;
+    add.u32 %r15, %r11, 1;
+    mul.lo.u32 %r15, %r15, %r3;
+    div.u32 %r15, %r15, %r6;
+
+    // sums of the four channels
+    mov.u32 %r16, 0;
+    mov.u32 %r17, 0;
+    mov.u32 %r18, 0;
+    mov.u32 %r19, 0;
+    mov.u32 %r20, %r14;
+ROWS:
+    setp.ge.u32 %p2, %r20, %r15;
+    @%p2 bra ROWS_DONE;
+    mul.wide.u32 %rd3, %r20, %r1;
+    add.u64 %rd4, %rd1, %rd3;
+    mov.u32 %r21, %r12;
+COLS:
+    setp.ge.u32 %p3, %r21, %r13;
+    @%p3 bra COLS_DONE;
+    mul.wide.u32 %rd5, %r21, 4;
+    add.u64 %rd6, %rd4, %rd5;
+    ld.global.u32 %r22, [%rd6];
+    and.b32 %r23, %r22, 255;
+    add.u32 %r16, %r16, %r23;
+    bfe.u32 %r23, %r22, 8, 8;
+    add.u32 %r17, %r17, %r23;
+    bfe.u32 %r23, %r22, 16, 8;
+    add.u32 %r18, %r18, %r23;
+    shr.u32 %r23, %r22, 24;
+    add.u32 %r19, %r19, %r23;
+    add.u32 %r21, %r21, 1;
+    bra COLS;
+COLS_DONE:
+    add.u32 %r20, %r20, 1;
+    bra ROWS;
+ROWS_DONE:
+    // (sum + n / 2) / n for each channel
+    sub.u32 %r24, %r13, %r12;
+    sub.u32 %r25, %r15, %r14;
+    mul.lo.u32 %r24, %r24, %r25;
+    shr.u32 %r25, %r24, 1;
+    add.u32 %r16, %r16, %r25;
+    div.u32 %r16, %r16, %r24;
+    add.u32 %r17, %r17, %r25;
+    div.u32 %r17, %r17, %r24;
+    add.u32 %r18, %r18, %r25;
+    div.u32 %r18, %r18, %r24;
+    add.u32 %r19, %r19, %r25;
+    div.u32 %r19, %r19, %r24;
+    shl.b32 %r17, %r17, 8;
+    shl.b32 %r18, %r18, 16;
+    shl.b32 %r19, %r19, 24;
+    or.b32 %r16, %r16, %r17;
+    or.b32 %r16, %r16, %r18;
+    or.b32 %r16, %r16, %r19;
+    mul.wide.u32 %rd7, %r11, %r4;
+    add.u64 %rd8, %rd2, %rd7;
+    mul.wide.u32 %rd9, %r10, 4;
+    add.u64 %rd8, %rd8, %rd9;
+    st.global.u32 [%rd8], %r16;
+DONE:
+    ret;
+}
