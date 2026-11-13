@@ -355,6 +355,7 @@ async fn open_with(token_file: &std::path::Path, token: Option<&str>) -> Result<
     let metadata = cursor::wanted()
         && screencast.available_cursor_modes().await.is_ok_and(|modes| modes.contains(CursorMode::Metadata));
     cursor::set_active(metadata);
+    info!(wanted = cursor::wanted(), metadata, "pointer of the screen cast");
     screencast
         .select_sources(
             &session,

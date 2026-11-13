@@ -701,7 +701,15 @@ fn format_pod(modifier: Option<Modifiers>) -> Result<Vec<u8>> {
 
 /// The pointer's metadata read from a buffer and published for the agent.
 fn read_cursor(buffer: &pw::buffer::Buffer, state: &mut State) {
-    let Some(meta) = buffer.find_meta::<CursorMeta>() else { return };
+    let Some(meta) = buffer.find_meta::<CursorMeta>() else {
+        if state.serial == 0 && state.bitmap.is_empty() {
+            debug!("no pointer metadata in this buffer");
+        }
+        return;
+    };
+    if state.serial == 0 && meta.id != 0 {
+        info!(id = meta.id, bitmap = meta.bitmap_offset, "pointer metadata from the compositor");
+    }
     // id 0: no pointer on this screen (hidden, or on another one).
     if meta.id == 0 {
         cursor::publish(None, cursor::Position { visible: false, serial: state.serial, ..Default::default() });
