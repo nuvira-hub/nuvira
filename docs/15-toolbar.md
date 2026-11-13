@@ -18,7 +18,7 @@ Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs`
 |---|---|---|
 | Dot, name, fps and latency | Green: direct connection; orange: through the server's relay | viewer |
 | 1, 2, …, All | Screen to transmit (only if the agent has more than one); "All" streams every screen at once, laid out as in the remote virtual desktop (gaps black). Composed in RAM: on the NUC two 1080p screens make 3840x1080 at ~19 fps with software encoding; tested by the user from the laptop | agent: `SelectDisplay` (65535 = all) |
-| Quality | Balanced → Sharp → Smooth at each click | agent: `SetQuality` |
+| Quality ▾ | A drop-down menu: Balanced, Sharp, Smooth, each with what it does and a tick on the current one (arrows, Enter, Esc; a click elsewhere closes it) | agent: `SetQuality` |
 | Ctrl+Alt+Del | Same as Ctrl+Alt+End (see [14-phase3-service.md](14-phase3-service.md)) | service |
 | Eye | View only: mouse and keyboard are not sent | viewer |
 | Screen with a slash | Privacy mode: the remote screen turns black and its mouse and keyboard are blocked (see [24-privacy-mode.md](24-privacy-mode.md)); only when the agent has it | agent: `SetPrivacy` (Windows) |
@@ -31,6 +31,10 @@ Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs`
 | Full screen | Enters and leaves | viewer |
 | Arrow | Shrinks the bar to a tab; a click opens it again | viewer |
 | X | Closes the session | viewer |
+
+## Drop-down menus
+
+The toolbar's WebView is only as tall as the bar: a menu drawn in it would be cut, and making it taller would cover the picture. A menu is a WebView of its own (`toolbar::Menu`, `menu.html`), hidden until a button asks for it: the page sends `menu:quality:<x>` (the button's left edge in the bar), the viewer places the menu under it, inside the window, fills it (`nuvira.show([...])`) and gives it the keyboard. A choice sends its action (`quality:sharp`) and `menuclose`; Esc, losing the focus (a click on the session or the bar), a resize or a second click on the button close it. Tried 2026-11-13 on PC-LABORATORIO (UI Automation: the menu opened under the button with the tick on Balanced, "Sharp" chosen, the viewer's log "quality Sharp").
 
 ## New control messages (`session.proto`)
 
@@ -61,4 +65,3 @@ A viewer killed abruptly left the agent "busy" until the QUIC timeout (20 s). No
 
 ## To do
 
-- Drop-down menus (for example for quality) require temporarily enlarging the WebView: for now quality changes at each click.

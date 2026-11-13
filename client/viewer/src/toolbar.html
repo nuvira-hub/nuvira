@@ -146,18 +146,16 @@
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
-  // Quality: each click moves to the next one.
-  const QUALITIES = ["balanced", "sharp", "fast"];
+  // Quality: a drop-down menu (a WebView of its own, opened by the viewer under the button).
   let quality = "balanced";
   let stats = "";
   let noticeTimer = null;
-  document.getElementById("quality").addEventListener("click", () => {
-    const i = QUALITIES.indexOf(quality);
-    send("quality:" + QUALITIES[(i + 1) % QUALITIES.length]);
+  document.getElementById("quality").addEventListener("click", (e) => {
+    send("menu:quality:" + Math.round(e.currentTarget.getBoundingClientRect().left));
   });
   function showQuality() {
-    document.getElementById("quality-label").textContent = t(`tb.quality_${quality}`);
-    document.getElementById("quality").title = `${t(`tb.quality_${quality}_hint`)} ${t("tb.click_to_change")}`;
+    document.getElementById("quality-label").textContent = t(`tb.quality_${quality}`) + " ▾";
+    document.getElementById("quality").title = t(`tb.quality_${quality}_hint`);
   }
   showQuality();
 

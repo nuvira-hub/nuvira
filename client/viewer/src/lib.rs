@@ -489,6 +489,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         renderer: None,
         toolbar: None,
         chat: None,
+        menu: None,
         notice: None,
         quality: nuvira_proto::v1::Quality::Balanced,
         agent: args.agent.clone(),
@@ -642,6 +643,7 @@ struct App {
     renderer: Option<Renderer>,
     toolbar: Option<toolbar::Toolbar>,
     chat: Option<toolbar::ChatPanel>,
+    menu: Option<toolbar::Menu>,
     /// Message in the middle of the window until the first image.
     notice: Option<toolbar::Notice>,
     quality: nuvira_proto::v1::Quality,
@@ -976,6 +978,43 @@ impl App {
             Action::Display(index) => {
                 self.send_control(Msg::SelectDisplay(nuvira_proto::v1::SelectDisplay { index }));
             }
+            Action::Menu(kind, x) => {
+                if kind == "quality"
+                    && let Some(menu) = self.menu.as_mut()
+                {
+                    let current = toolbar::quality_name(self.quality);
+                    let items: Vec<toolbar::MenuItem> = [
+                        ("balanced", "tb.quality_balanced", "tb.quality_balanced_hint"),
+                        ("sharp", "tb.quality_sharp", "tb.quality_sharp_hint"),
+                        ("fast", "tb.quality_fast", "tb.quality_fast_hint"),
+                    ]
+                    .iter()
+                    .map(|&(name, label, hint)| toolbar::MenuItem {
+                        action: match name {
+                            "sharp" => "quality:sharp",
+                            "fast" => "quality:fast",
+                            _ => "quality:balanced",
+                        },
+                        label,
+                        hint,
+                        checked: name == current,
+                    })
+                    .collect();
+                    // A second click on the button closes it.
+                    if menu.is_open() {
+                        menu.hide();
+                    } else {
+                        menu.show(f64::from(x), &items);
+                        // The open menu keeps the keyboard.
+                        return;
+                    }
+                }
+            }
+            Action::MenuClose => {
+                if let Some(menu) = self.menu.as_mut() {
+                    menu.hide();
+                }
+            }
             Action::Quality(quality) => {
                 self.quality = quality;
                 info!("quality {quality:?}");
@@ -1213,6 +1252,10 @@ impl ApplicationHandler<NetEvent> for App {
         match toolbar::ChatPanel::new(window.clone(), self.proxy.clone()) {
             Ok(chat) => self.chat = Some(chat),
             Err(e) => error!("chat not available: {e:#}"),
+        }
+        match toolbar::Menu::new(window.clone(), self.proxy.clone()) {
+            Ok(menu) => self.menu = Some(menu),
+            Err(e) => error!("menu not available: {e:#}"),
         }
         let connecting = tf("viewer.connecting", &[("agent", &self.agent)]);
         match toolbar::Notice::new(window.clone(), self.proxy.clone(), &connecting) {
@@ -1831,6 +1874,9 @@ impl ApplicationHandler<NetEvent> for App {
                 if let Some(chat) = &self.chat {
                     chat.layout();
                 }
+                if let Some(menu) = self.menu.as_mut() {
+                    menu.hide();
+                }
                 if let Some(notice) = &self.notice {
                     notice.layout();
                 }
@@ -1875,6 +1921,12 @@ impl ApplicationHandler<NetEvent> for App {
                     && let Some(chat) = &self.chat
                 {
                     chat.focus_session();
+                }
+                // ...and an open menu closes.
+                if state == ElementState::Pressed
+                    && let Some(menu) = self.menu.as_mut()
+                {
+                    menu.hide();
                 }
                 let button = match button {
                     winit::event::MouseButton::Left => Button::Left,
