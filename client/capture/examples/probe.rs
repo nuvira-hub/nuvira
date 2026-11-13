@@ -6,6 +6,8 @@
 use std::time::{Duration, Instant};
 
 fn main() -> anyhow::Result<()> {
+    // RUST_LOG=nuvira_capture=debug shows the capture's choices (format, DMA-BUF).
+    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
     // NUVIRA_GNOME_DIRECT=1: GNOME's own remote desktop API instead of the portal.
     #[cfg(target_os = "linux")]
     nuvira_portal::set_direct(std::env::var_os("NUVIRA_GNOME_DIRECT").is_some());
