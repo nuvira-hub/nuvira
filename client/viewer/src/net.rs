@@ -658,16 +658,20 @@ async fn session(
     let loss = Arc::new(VideoLoss::default());
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<(VideoFrame, u64)>(4);
     let decoder_proxy = proxy.clone();
+    // The sound also goes into recordings.
+    let audio_tap = Arc::new(crate::recorder::AudioTap::default());
+    let decoder_tap = player.is_some().then(|| audio_tap.clone());
     let decoder = std::thread::Builder::new()
         .name("decoding".into())
-        .spawn(move || decode_loop(frame_rx, decoder_proxy, slot, key_tx, &recording))?;
+        .spawn(move || decode_loop(frame_rx, decoder_proxy, slot, key_tx, &recording, decoder_tap))?;
+    let sound = player.as_deref().map(|p| (p, &*audio_tap));
 
     let video = async {
         if terminal_only {
             return std::future::pending().await;
         }
         let Some(mut video_rx) = video_rx else {
-            return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams, &loss, player.as_deref()).await;
+            return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams, &loss, sound).await;
         };
         let stream = async {
             while let Some(frame) = video_rx.recv::<VideoFrame>().await? {
@@ -678,10 +682,10 @@ async fn session(
             anyhow::Ok(())
         };
         // The video on its stream: the datagrams carry only the sound.
-        match player.as_deref() {
-            Some(player) => tokio::select! {
+        match sound {
+            Some(sound) => tokio::select! {
                 r = stream => r,
-                r = receive_audio(&conn, player) => r,
+                r = receive_audio(&conn, sound) => r,
             },
             None => stream.await,
         }
@@ -1297,7 +1301,7 @@ async fn receive_datagram_video(
     frames: &std::sync::mpsc::SyncSender<(VideoFrame, u64)>,
     request_keyframe: &mpsc::UnboundedSender<()>,
     loss: &VideoLoss,
-    audio: Option<&nuvira_audio::player::Player>,
+    audio: Option<(&nuvira_audio::player::Player, &crate::recorder::AudioTap)>,
 ) -> Result<()> {
     use prost::Message;
     let mut rx = nuvira_transport::fec::Receiver::default();
@@ -1317,10 +1321,11 @@ async fn receive_datagram_video(
             Err(e) => return Err(e.into()),
         };
         if nuvira_audio::packet::is_audio(&packet) {
-            if let Some(player) = audio
+            if let Some((player, tap)) = audio
                 && let Ok((seq, data)) = nuvira_audio::packet::decode(&packet)
             {
                 player.push(seq, data);
+                tap.push(seq, data);
             }
             continue;
         }
@@ -1362,7 +1367,10 @@ async fn receive_datagram_video(
 }
 
 /// The sound when the video is on its stream: every datagram is a packet of it.
-async fn receive_audio(conn: &nuvira_transport::Connection, player: &nuvira_audio::player::Player) -> Result<()> {
+async fn receive_audio(
+    conn: &nuvira_transport::Connection,
+    (player, tap): (&nuvira_audio::player::Player, &crate::recorder::AudioTap),
+) -> Result<()> {
     info!("receiving the sound");
     loop {
         let packet = match conn.read_datagram().await {
@@ -1373,7 +1381,10 @@ async fn receive_audio(conn: &nuvira_transport::Connection, player: &nuvira_audi
             Err(e) => return Err(e.into()),
         };
         match nuvira_audio::packet::decode(&packet) {
-            Ok((seq, data)) => player.push(seq, data),
+            Ok((seq, data)) => {
+                player.push(seq, data);
+                tap.push(seq, data);
+            }
             Err(e) => tracing::debug!("datagram dropped: {e:#}"),
         }
     }
@@ -1402,6 +1413,7 @@ fn decode_loop(
     slot: Arc<FrameSlot>,
     request_keyframe: mpsc::UnboundedSender<()>,
     recording: &crate::recorder::Switch,
+    audio: Option<Arc<crate::recorder::AudioTap>>,
 ) {
     let mut decoder = match nuvira_codec::best_decoder() {
         Ok(d) => d,
@@ -1433,23 +1445,39 @@ fn decode_loop(
         if recorder.as_ref().map(|r| r.0) != wanted.as_ref().map(|w| w.0) {
             close(recorder.take(), None);
             if let Some((n, dir, stem)) = wanted {
-                recorder = Some((n, crate::recorder::Recorder::new(dir, stem, recording.upload())));
+                let r = crate::recorder::Recorder::new(dir, stem, recording.upload(), audio.is_some());
+                recorder = Some((n, r));
                 // It starts at a keyframe.
                 let _ = request_keyframe.send(());
             }
+            if let Some(tap) = &audio {
+                tap.set_on(recorder.is_some());
+            }
         }
-        let (frame, received_us) = match next {
-            Ok(f) => f,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+        let frame = match next {
+            Ok(f) => Some(f),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         };
-        if let Some((_, r)) = recorder.as_mut()
-            && let Err(e) = r.push(&frame)
-        {
-            warn!("recording stopped: {e:#}");
-            recording.stop();
-            close(recorder.take(), Some(format!("{e:#}")));
+        if let Some((_, r)) = recorder.as_mut() {
+            let mut result = frame.as_ref().map_or(Ok(()), |(f, received_us)| r.push(f, *received_us));
+            if let Some(tap) = &audio {
+                for (seq, packet, received_us) in tap.take() {
+                    if result.is_ok() {
+                        result = r.push_audio(seq, &packet, received_us);
+                    }
+                }
+            }
+            if let Err(e) = result {
+                warn!("recording stopped: {e:#}");
+                recording.stop();
+                close(recorder.take(), Some(format!("{e:#}")));
+                if let Some(tap) = &audio {
+                    tap.set_on(false);
+                }
+            }
         }
+        let Some((frame, received_us)) = frame else { continue };
         // After an error frames are dropped until the next keyframe.
         if waiting_key && !frame.keyframe {
             continue;

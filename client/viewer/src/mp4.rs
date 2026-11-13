@@ -6,6 +6,11 @@
 //! second, each starting at a keyframe when there is one), so that a crash or a full
 //! disk loses at most the last second. At the end the total duration is written
 //! into `mehd` and an `mfra` index of the keyframes is appended for seeking.
+//!
+//! With the remote computer's sound, a second track holds its Opus packets as they
+//! arrived (48 kHz, 20 ms each), in fragments of their own of about a second. The
+//! track has no holes: missing packets (silence not sent, losses) are filled with a
+//! silent packet.
 
 use std::io::{Seek, SeekFrom, Write};
 
@@ -19,6 +24,13 @@ const MOVIE_TIMESCALE: u32 = 1_000;
 const FRAGMENT_TICKS: u64 = TIMESCALE as u64;
 /// Duration of the last sample, when nothing follows it (1/30 s).
 const LAST_SAMPLE_TICKS: u32 = TIMESCALE / 30;
+/// Ticks per second of the sound track, and of one Opus packet (20 ms).
+pub const AUDIO_TIMESCALE: u32 = 48_000;
+pub const AUDIO_PACKET_TICKS: u32 = 960;
+/// Packets in an audio fragment (1 s).
+const AUDIO_FRAGMENT: usize = 50;
+const VIDEO_TRACK: u32 = 1;
+const AUDIO_TRACK: u32 = 2;
 
 /// What the writer needs to know from a sequence parameter set.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,6 +232,15 @@ struct Sample {
     key: bool,
 }
 
+/// The sound track being written.
+struct AudioTrack {
+    /// An Opus packet of silence, for the slots without sound.
+    silence: Vec<u8>,
+    pending: Vec<Vec<u8>>,
+    /// The 20 ms slot of the next packet, from the start of the file.
+    next_slot: u64,
+}
+
 /// One MP4 file being written.
 pub struct Mp4Writer<W: Write + Seek> {
     out: W,
@@ -234,12 +255,14 @@ pub struct Mp4Writer<W: Write + Seek> {
     /// Start time and position of the fragments that begin with a keyframe.
     keyframes: Vec<(u64, u64)>,
     end_time: u64,
+    audio: Option<AudioTrack>,
 }
 
 impl<W: Write + Seek> Mp4Writer<W> {
     /// Writes the header for a stream described by `sps` and `pps` (NAL units with
-    /// their header byte, no start code).
-    pub fn create(mut out: W, sps: &[u8], pps: &[u8]) -> Result<Self> {
+    /// their header byte, no start code). With `audio_silence` (an Opus packet of
+    /// silence) the file has a sound track too.
+    pub fn create(mut out: W, sps: &[u8], pps: &[u8], audio_silence: Option<Vec<u8>>) -> Result<Self> {
         let info = parse_sps(sps)?;
         let start = out.stream_position()?;
         let ftyp = boxed(b"ftyp", |b| {
@@ -249,7 +272,7 @@ impl<W: Write + Seek> Mp4Writer<W> {
                 b.extend_from_slice(brand);
             }
         });
-        let moov = moov(&info, sps, pps);
+        let moov = moov(&info, sps, pps, audio_silence.is_some());
         // The mehd duration is the last 8 bytes of the mehd box, found by its name.
         let mehd = find(&moov, b"mehd").context("mehd")?;
         out.write_all(&ftyp)?;
@@ -264,7 +287,66 @@ impl<W: Write + Seek> Mp4Writer<W> {
             mehd_at: start + ftyp.len() as u64 + mehd as u64 + 12,
             keyframes: Vec::new(),
             end_time: 0,
+            audio: audio_silence.map(|silence| AudioTrack { silence, pending: Vec::new(), next_slot: 0 }),
         })
+    }
+
+    /// Adds an Opus packet in its 20 ms `slot` from the start of the file. The slots
+    /// before it that have no packet get silence; a packet for a slot already
+    /// written is dropped (false).
+    pub fn push_audio(&mut self, packet: &[u8], slot: u64) -> Result<bool> {
+        let Some(audio) = self.audio.as_ref() else { return Ok(false) };
+        if slot < audio.next_slot || packet.is_empty() {
+            return Ok(false);
+        }
+        while let Some(audio) = self.audio.as_ref()
+            && audio.next_slot < slot
+        {
+            let silence = audio.silence.clone();
+            self.push_audio_sample(silence)?;
+        }
+        self.push_audio_sample(packet.to_vec())?;
+        Ok(true)
+    }
+
+    /// The slot the next audio packet would take (none without a sound track).
+    pub fn next_audio_slot(&self) -> Option<u64> {
+        self.audio.as_ref().map(|a| a.next_slot)
+    }
+
+    fn push_audio_sample(&mut self, data: Vec<u8>) -> Result<()> {
+        let audio = self.audio.as_mut().context("no sound track")?;
+        audio.pending.push(data);
+        audio.next_slot += 1;
+        if audio.pending.len() >= AUDIO_FRAGMENT {
+            self.flush_audio()?;
+        }
+        Ok(())
+    }
+
+    /// Writes the pending audio packets as one fragment.
+    fn flush_audio(&mut self) -> Result<()> {
+        let Some(audio) = self.audio.as_mut() else { return Ok(()) };
+        if audio.pending.is_empty() {
+            return Ok(());
+        }
+        let packets = std::mem::take(&mut audio.pending);
+        let base = (audio.next_slot - packets.len() as u64) * u64::from(AUDIO_PACKET_TICKS);
+        self.sequence += 1;
+        let entries: Vec<(u32, u32, Option<u32>)> =
+            packets.iter().map(|p| (AUDIO_PACKET_TICKS, p.len() as u32, None)).collect();
+        let moof = traf_moof(self.sequence, AUDIO_TRACK, base, &entries, 0);
+        let offset = moof.len() as u32 + 8;
+        let moof = moof_with_offset(moof, offset);
+        self.out.write_all(&moof)?;
+        let size: usize = packets.iter().map(Vec::len).sum();
+        put32_to(&mut self.out, (size + 8) as u32)?;
+        self.out.write_all(b"mdat")?;
+        for p in &packets {
+            self.out.write_all(p)?;
+        }
+        self.out.flush()?;
+        Ok(())
     }
 
     /// Adds a frame (Annex B) shown at `time` ticks from the start of the file.
@@ -355,11 +437,16 @@ impl<W: Write + Seek> Mp4Writer<W> {
             let next = (last.time + u64::from(self.last_duration.max(1))).max(end);
             self.flush(next)?;
         }
+        self.flush_audio()?;
         let mfra = mfra(&self.keyframes);
         self.out.write_all(&mfra)?;
         let end = self.out.stream_position()?;
         self.out.seek(SeekFrom::Start(self.mehd_at))?;
-        let ms = self.end_time * u64::from(MOVIE_TIMESCALE) / u64::from(TIMESCALE);
+        let audio_ms = self.audio.as_ref().map_or(0, |a| {
+            a.next_slot * u64::from(AUDIO_PACKET_TICKS) * u64::from(MOVIE_TIMESCALE)
+                / u64::from(AUDIO_TIMESCALE)
+        });
+        let ms = (self.end_time * u64::from(MOVIE_TIMESCALE) / u64::from(TIMESCALE)).max(audio_ms);
         self.out.write_all(&ms.to_be_bytes())?;
         self.out.seek(SeekFrom::Start(end))?;
         self.out.flush()?;
@@ -408,7 +495,7 @@ fn find(data: &[u8], kind: &[u8; 4]) -> Option<usize> {
 
 const MATRIX: [u32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
 
-fn moov(info: &SpsInfo, sps: &[u8], pps: &[u8]) -> Vec<u8> {
+fn moov(info: &SpsInfo, sps: &[u8], pps: &[u8], audio: bool) -> Vec<u8> {
     let mvhd = full(b"mvhd", 0, 0, |b| {
         put32(b, 0);
         put32(b, 0);
@@ -419,12 +506,12 @@ fn moov(info: &SpsInfo, sps: &[u8], pps: &[u8]) -> Vec<u8> {
         b.extend_from_slice(&[0; 10]);
         MATRIX.iter().for_each(|&m| put32(b, m));
         b.extend_from_slice(&[0; 24]);
-        put32(b, 2);
+        put32(b, if audio { AUDIO_TRACK + 1 } else { VIDEO_TRACK + 1 });
     });
     let tkhd = full(b"tkhd", 0, 3, |b| {
         put32(b, 0);
         put32(b, 0);
-        put32(b, 1);
+        put32(b, VIDEO_TRACK);
         put32(b, 0);
         put32(b, 0);
         b.extend_from_slice(&[0; 8]);
@@ -517,17 +604,113 @@ fn moov(info: &SpsInfo, sps: &[u8], pps: &[u8]) -> Vec<u8> {
     let mvex = boxed(b"mvex", |b| {
         b.extend(full(b"mehd", 1, 0, |b| put64(b, 0)));
         b.extend(full(b"trex", 0, 0, |b| {
-            put32(b, 1);
+            put32(b, VIDEO_TRACK);
             put32(b, 1);
             put32(b, 0);
             put32(b, 0);
             put32(b, 0);
         }));
+        if audio {
+            // Every Opus packet is a sync sample.
+            b.extend(full(b"trex", 0, 0, |b| {
+                put32(b, AUDIO_TRACK);
+                put32(b, 1);
+                put32(b, AUDIO_PACKET_TICKS);
+                put32(b, 0);
+                put32(b, sample_flags(true));
+            }));
+        }
     });
     boxed(b"moov", |b| {
         b.extend(mvhd);
         b.extend(trak);
+        if audio {
+            b.extend(audio_trak());
+        }
         b.extend(mvex);
+    })
+}
+
+/// The sound track: Opus, 48 kHz stereo (`Opus` sample entry with `dOps`, as in
+/// "Encapsulation of Opus in ISO Base Media File Format").
+fn audio_trak() -> Vec<u8> {
+    let tkhd = full(b"tkhd", 0, 3, |b| {
+        put32(b, 0);
+        put32(b, 0);
+        put32(b, AUDIO_TRACK);
+        put32(b, 0);
+        put32(b, 0);
+        b.extend_from_slice(&[0; 8]);
+        put16(b, 0);
+        put16(b, 1); // alternate group
+        put16(b, 0x0100); // volume
+        put16(b, 0);
+        MATRIX.iter().for_each(|&m| put32(b, m));
+        put32(b, 0);
+        put32(b, 0);
+    });
+    let mdhd = full(b"mdhd", 0, 0, |b| {
+        put32(b, 0);
+        put32(b, 0);
+        put32(b, AUDIO_TIMESCALE);
+        put32(b, 0);
+        put16(b, 0x55c4); // "und"
+        put16(b, 0);
+    });
+    let hdlr = full(b"hdlr", 0, 0, |b| {
+        put32(b, 0);
+        b.extend_from_slice(b"soun");
+        b.extend_from_slice(&[0; 12]);
+        b.extend_from_slice(b"NuviraHub\0");
+    });
+    let dops = boxed(b"dOps", |b| {
+        b.push(0); // version
+        b.push(2); // output channels
+        put16(b, 0); // pre-skip: the stream is taken in the middle
+        put32(b, AUDIO_TIMESCALE);
+        put16(b, 0); // output gain
+        b.push(0); // channel mapping family: mono or stereo
+    });
+    let opus = boxed(b"Opus", |b| {
+        b.extend_from_slice(&[0; 6]);
+        put16(b, 1); // data reference
+        b.extend_from_slice(&[0; 8]);
+        put16(b, 2); // channels
+        put16(b, 16); // sample size
+        put32(b, 0);
+        put32(b, AUDIO_TIMESCALE << 16);
+        b.extend_from_slice(&dops);
+    });
+    let stbl = boxed(b"stbl", |b| {
+        b.extend(full(b"stsd", 0, 0, |b| {
+            put32(b, 1);
+            b.extend_from_slice(&opus);
+        }));
+        b.extend(full(b"stts", 0, 0, |b| put32(b, 0)));
+        b.extend(full(b"stsc", 0, 0, |b| put32(b, 0)));
+        b.extend(full(b"stsz", 0, 0, |b| {
+            put32(b, 0);
+            put32(b, 0);
+        }));
+        b.extend(full(b"stco", 0, 0, |b| put32(b, 0)));
+    });
+    let minf = boxed(b"minf", |b| {
+        b.extend(full(b"smhd", 0, 0, |b| put32(b, 0)));
+        b.extend(boxed(b"dinf", |b| {
+            b.extend(full(b"dref", 0, 0, |b| {
+                put32(b, 1);
+                b.extend(full(b"url ", 0, 1, |_| {}));
+            }));
+        }));
+        b.extend(stbl);
+    });
+    boxed(b"trak", |b| {
+        b.extend(tkhd);
+        b.extend(boxed(b"mdia", |b| {
+            b.extend(mdhd);
+            b.extend(hdlr);
+            b.extend(minf);
+        }));
     })
 }
 
@@ -538,20 +721,39 @@ fn sample_flags(key: bool) -> u32 {
 }
 
 fn moof(sequence: u32, base: u64, samples: &[Sample], durations: &[u32], data_offset: u32) -> Vec<u8> {
+    let entries: Vec<(u32, u32, Option<u32>)> = samples
+        .iter()
+        .zip(durations)
+        .map(|(s, d)| (*d, s.data.len() as u32, Some(sample_flags(s.key))))
+        .collect();
+    traf_moof(sequence, VIDEO_TRACK, base, &entries, data_offset)
+}
+
+/// A fragment of one track: duration, size and (when given) flags of each sample.
+fn traf_moof(
+    sequence: u32,
+    track: u32,
+    base: u64,
+    entries: &[(u32, u32, Option<u32>)],
+    data_offset: u32,
+) -> Vec<u8> {
+    let with_flags = entries.iter().any(|e| e.2.is_some());
     boxed(b"moof", |b| {
         b.extend(full(b"mfhd", 0, 0, |b| put32(b, sequence)));
         b.extend(boxed(b"traf", |b| {
             // default-base-is-moof
-            b.extend(full(b"tfhd", 0, 0x02_0000, |b| put32(b, 1)));
+            b.extend(full(b"tfhd", 0, 0x02_0000, |b| put32(b, track)));
             b.extend(full(b"tfdt", 1, 0, |b| put64(b, base)));
-            // data offset, duration, size and flags for every sample
-            b.extend(full(b"trun", 0, 0x701, |b| {
-                put32(b, samples.len() as u32);
+            // data offset, duration, size (and flags) for every sample
+            b.extend(full(b"trun", 0, if with_flags { 0x701 } else { 0x301 }, |b| {
+                put32(b, entries.len() as u32);
                 put32(b, data_offset);
-                for (s, d) in samples.iter().zip(durations) {
-                    put32(b, *d);
-                    put32(b, s.data.len() as u32);
-                    put32(b, sample_flags(s.key));
+                for &(duration, size, flags) in entries {
+                    put32(b, duration);
+                    put32(b, size);
+                    if with_flags {
+                        put32(b, flags.unwrap_or(0));
+                    }
                 }
             }));
         }));
@@ -568,7 +770,7 @@ fn moof_with_offset(mut moof: Vec<u8>, offset: u32) -> Vec<u8> {
 
 fn mfra(keyframes: &[(u64, u64)]) -> Vec<u8> {
     let tfra = full(b"tfra", 1, 0, |b| {
-        put32(b, 1);
+        put32(b, VIDEO_TRACK);
         // One byte each for the traf, trun and sample numbers.
         put32(b, 0);
         put32(b, keyframes.len() as u32);
@@ -632,7 +834,7 @@ mod tests {
         let keys: Vec<bool> = (0..10).map(|i| i == 0).collect();
         let frames = encode(320, 240, &keys);
         let (sps, pps) = param_sets(&frames[0]);
-        let mut w = Mp4Writer::create(std::io::Cursor::new(Vec::new()), &sps, &pps).unwrap();
+        let mut w = Mp4Writer::create(std::io::Cursor::new(Vec::new()), &sps, &pps, None).unwrap();
         for (i, frame) in frames.iter().enumerate() {
             w.push(frame, i as u64 * 9000, keys[i]).unwrap();
         }
@@ -648,7 +850,7 @@ mod tests {
         let frames = encode(320, 240, &keys);
         assert_eq!(frames.len(), 30);
         let (sps, pps) = param_sets(&frames[0]);
-        let mut w = Mp4Writer::create(std::io::Cursor::new(Vec::new()), &sps, &pps).unwrap();
+        let mut w = Mp4Writer::create(std::io::Cursor::new(Vec::new()), &sps, &pps, None).unwrap();
         for (i, frame) in frames.iter().enumerate() {
             w.push(frame, i as u64 * 9000, keys[i]).unwrap();
         }

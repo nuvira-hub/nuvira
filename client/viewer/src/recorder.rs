@@ -6,11 +6,17 @@
 //! next part starts, "name (2).mp4" and so on: MP4 players do not cope well with a
 //! track whose picture size changes. Frames lost on the way (datagrams) break the
 //! stream until the next keyframe: they are skipped, and the picture stays still.
+//!
+//! The remote computer's sound, when the session has it, goes into a second track.
+//! Its packets carry no time of their own (and silence is not sent): each is placed
+//! by when it arrived here, moved to the agent's clock with the difference measured
+//! on the video frames, and packets that follow one another stay 20 ms apart.
 
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use nuvira_proto::v1::VideoFrame;
@@ -33,6 +39,13 @@ struct Part {
 pub struct Recorder {
     /// NuviraHub Pro: every closed file is sent to the server.
     upload: Option<crate::upload::Target>,
+    /// An Opus packet of silence when the session has sound: the files get a sound track.
+    silence: Option<Vec<u8>>,
+    /// Arrival here minus the agent's capture time of the video frames (µs): the
+    /// lowest seen, slowly let up so that the two clocks drifting apart are followed.
+    clock_offset: Option<i64>,
+    /// The last audio packet written.
+    audio_seq: Option<u32>,
     dir: PathBuf,
     stem: String,
     part: Option<Part>,
@@ -44,14 +57,35 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    /// Files go in `dir` (created if missing), named after `stem`.
-    pub fn new(dir: PathBuf, stem: String, upload: Option<crate::upload::Target>) -> Self {
-        Self { upload, dir, stem, part: None, parts: 0, last_seq: None, waiting_key: true, files: Vec::new() }
+    /// Files go in `dir` (created if missing), named after `stem`; with `audio` they
+    /// have a sound track.
+    pub fn new(dir: PathBuf, stem: String, upload: Option<crate::upload::Target>, audio: bool) -> Self {
+        let silence = audio
+            .then(|| silence_packet().inspect_err(|e| warn!("recording without sound: {e:#}")).ok())
+            .flatten();
+        Self {
+            upload,
+            silence,
+            clock_offset: None,
+            audio_seq: None,
+            dir,
+            stem,
+            part: None,
+            parts: 0,
+            last_seq: None,
+            waiting_key: true,
+            files: Vec::new(),
+        }
     }
 
-    /// Adds a frame. Errors (disk full, folder not writable) end the recording: the
-    /// caller stops it and says why.
-    pub fn push(&mut self, frame: &VideoFrame) -> Result<()> {
+    /// Adds a frame, received here at `received_us`. Errors (disk full, folder not
+    /// writable) end the recording: the caller stops it and says why.
+    pub fn push(&mut self, frame: &VideoFrame, received_us: u64) -> Result<()> {
+        let offset = received_us as i64 - frame.capture_us as i64;
+        self.clock_offset = Some(match self.clock_offset {
+            Some(o) if o <= offset => o + (offset - o) / 1000,
+            _ => offset,
+        });
         let gap = self.last_seq.is_some_and(|last| frame.seq != last + 1);
         self.last_seq = Some(frame.seq);
         if gap && !frame.keyframe {
@@ -70,6 +104,28 @@ impl Recorder {
         part.last_us = part.last_us.max(frame.capture_us);
         part.last_at = std::time::Instant::now();
         part.writer.push(&frame.data, time, frame.keyframe)
+    }
+
+    /// Adds a packet of the remote computer's sound, received here at `received_us`.
+    pub fn push_audio(&mut self, seq: u32, packet: &[u8], received_us: u64) -> Result<()> {
+        let (Some(offset), Some(part)) = (self.clock_offset, self.part.as_mut()) else { return Ok(()) };
+        let Some(next) = part.writer.next_audio_slot() else { return Ok(()) };
+        // Late or repeated.
+        if self.audio_seq.is_some_and(|s| seq.wrapping_sub(s).wrapping_sub(1) > u32::MAX / 2) {
+            return Ok(());
+        }
+        let follows = self.audio_seq.is_some_and(|s| seq == s.wrapping_add(1));
+        self.audio_seq = Some(seq);
+        let since = received_us as i64 - offset - part.start_us as i64;
+        if since < 0 {
+            return Ok(());
+        }
+        let estimate = since as u64 / 20_000;
+        // One packet after the other: the next slot, unless the time says otherwise by
+        // more than 200 ms (the sound stopped and started again, the clocks moved).
+        let slot = if follows && estimate.abs_diff(next) <= 10 { next } else { estimate.max(next) };
+        part.writer.push_audio(packet, slot)?;
+        Ok(())
     }
 
     /// A keyframe carries the parameter sets: a new part when the size changed.
@@ -106,7 +162,9 @@ impl Recorder {
         self.parts += 1;
         let path = free_path(&self.dir, &self.stem, self.parts);
         let file = File::create(&path).with_context(|| format!("creating {}", path.display()))?;
-        let writer = Mp4Writer::create(BufWriter::with_capacity(1 << 20, file), sps, pps)?;
+        let writer =
+            Mp4Writer::create(BufWriter::with_capacity(1 << 20, file), sps, pps, self.silence.clone())?;
+        self.audio_seq = None;
         info!(w = size.0, h = size.1, "recording to {}", path.display());
         self.files.push(path.clone());
         self.part = Some(Part {
@@ -141,6 +199,49 @@ impl Recorder {
     pub fn finish(mut self) -> Result<Vec<PathBuf>> {
         self.close_part()?;
         Ok(self.files)
+    }
+}
+
+/// An Opus packet of 20 ms of silence, for the moments without sound.
+fn silence_packet() -> Result<Vec<u8>> {
+    let mut encoder = nuvira_audio::opus::Encoder::new()?;
+    let zeros = vec![0f32; nuvira_audio::FRAME * nuvira_audio::CHANNELS];
+    // The first packets of an encoder carry its start; the third is plain silence.
+    let mut packet = Vec::new();
+    for _ in 0..3 {
+        packet = encoder.encode(&zeros)?;
+    }
+    Ok(packet)
+}
+
+/// The sound packets received while a recording runs, taken by the decoding thread
+/// (which writes the files): (seq, packet, received at, µs).
+#[derive(Default)]
+pub struct AudioTap {
+    on: AtomicBool,
+    packets: Mutex<Vec<(u32, Vec<u8>, u64)>>,
+}
+
+impl AudioTap {
+    pub fn push(&self, seq: u32, packet: &[u8]) {
+        if self.on.load(Ordering::Relaxed) {
+            let mut packets = self.packets.lock().expect("audio tap");
+            // A few minutes at most, if nobody takes them.
+            if packets.len() < 10_000 {
+                packets.push((seq, packet.to_vec(), nuvira_proto::now_us()));
+            }
+        }
+    }
+
+    pub fn set_on(&self, on: bool) {
+        self.on.store(on, Ordering::Relaxed);
+        if !on {
+            self.packets.lock().expect("audio tap").clear();
+        }
+    }
+
+    pub fn take(&self) -> Vec<(u32, Vec<u8>, u64)> {
+        std::mem::take(&mut *self.packets.lock().expect("audio tap"))
     }
 }
 
@@ -283,7 +384,7 @@ mod tests {
         let mut bgra = vec![90u8; (w * h * 4) as usize];
         (0..n)
             .filter_map(|i| {
-                bgra[i * 4..i * 4 + 64].fill(i as u8 * 3);
+                bgra[i * 4..i * 4 + 64].fill((i as u8).wrapping_mul(3));
                 let image =
                     nuvira_codec::BgraImage { width: w, height: h, stride: (w * 4) as usize, data: &bgra };
                 nuvira_codec::VideoEncoder::encode(&mut encoder, &image, i == 0).unwrap()
@@ -303,7 +404,7 @@ mod tests {
     fn parts_follow_the_resolution() {
         let dir = std::env::temp_dir().join(format!("nuvira-rec-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let mut rec = Recorder::new(dir.clone(), "test".into(), None);
+        let mut rec = Recorder::new(dir.clone(), "test".into(), None, false);
         // It starts at a keyframe: the frames before are skipped.
         let mut first = frames(320, 240, 20, 1, 0);
         first.remove(0);
@@ -311,12 +412,12 @@ mod tests {
         let mut later = frames(320, 240, 60, 100, 1_000_000);
         let other = frames(640, 360, 20, 160, 3_100_000);
         for f in first.iter().chain(&later).chain(&other) {
-            rec.push(f).unwrap();
+            rec.push(f, f.capture_us + 20_000).unwrap();
         }
         // A lost frame (datagrams): nothing until the next keyframe.
         later = frames(640, 360, 5, 250, 4_000_000);
         for f in &later[1..] {
-            rec.push(f).unwrap();
+            rec.push(f, f.capture_us + 20_000).unwrap();
         }
         let files = rec.finish().unwrap();
         assert_eq!(files, [dir.join("test.mp4"), dir.join("test (2).mp4")]);
@@ -331,12 +432,61 @@ mod tests {
     fn first_moment_at_another_size_is_dropped() {
         let dir = std::env::temp_dir().join(format!("nuvira-rec-test-first-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let mut rec = Recorder::new(dir.clone(), "test".into(), None);
+        let mut rec = Recorder::new(dir.clone(), "test".into(), None, false);
         // 0.3 s at the window's size, then the full size.
         for f in frames(320, 240, 10, 1, 0).iter().chain(&frames(640, 480, 20, 11, 333_330)) {
-            rec.push(f).unwrap();
+            rec.push(f, f.capture_us + 20_000).unwrap();
         }
         assert_eq!(rec.finish().unwrap(), [dir.join("test.mp4")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn sound_goes_into_a_second_track() {
+        let dir = std::env::temp_dir().join(format!("nuvira-rec-test-audio-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut rec = Recorder::new(dir.clone(), "test".into(), None, true);
+        // 3 s of video (the agent's clock 5 s behind this one, 30 ms on the way) and
+        // a 440 Hz tone, with 0.5 s of silence not sent from 1 s (packets 50 to 74
+        // missing) and the arrival a bit irregular.
+        let video = frames(320, 240, 90, 1, 1_000_000);
+        let mut encoder = nuvira_audio::opus::Encoder::new().unwrap();
+        let mut packets = Vec::new();
+        for i in 0..150u64 {
+            let pcm: Vec<f32> = (0..nuvira_audio::FRAME)
+                .flat_map(|n| {
+                    let t = (i as usize * nuvira_audio::FRAME + n) as f32 / 48_000.0;
+                    let v = (t * 440.0 * std::f32::consts::TAU).sin() * 0.3;
+                    [v, v]
+                })
+                .collect();
+            let packet = encoder.encode(&pcm).unwrap();
+            if !(50..75).contains(&i) {
+                packets.push((i, packet));
+            }
+        }
+        let offset = 5_000_000 + 30_000;
+        let mut seq = 0u32;
+        let mut audio = packets.into_iter().peekable();
+        for f in &video {
+            rec.push(f, f.capture_us + offset).unwrap();
+            while let Some((i, packet)) = audio.next_if(|(i, _)| 1_000_000 + i * 20_000 <= f.capture_us) {
+                let jitter = (i % 3) * 7_000;
+                rec.push_audio(seq, &packet, 1_000_000 + i * 20_000 + offset + 20_000 + jitter).unwrap();
+                seq += 1;
+            }
+        }
+        let files = rec.finish().unwrap();
+        assert_eq!(files.len(), 1);
+        let data = std::fs::read(&files[0]).unwrap();
+        let count = |kind: &[u8]| data.windows(4).filter(|x| *x == kind).count();
+        assert_eq!(count(b"trak"), 2);
+        assert_eq!(count(b"dOps"), 1);
+        // The audio fragments: 1 s each.
+        assert!(count(b"moof") >= 5, "{} fragments", count(b"moof"));
+        if let Some(keep) = std::env::var_os("NUVIRA_KEEP_TEST_MP4") {
+            std::fs::copy(&files[0], keep).unwrap();
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
