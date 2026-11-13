@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- The administrator prompt of NuviraHub (pkexec of /usr/bin/nuvira, installed by
+     the .deb and .rpm packages): setting up, changing or removing unattended access
+     (`nuvira service system`). pkexec shows this message instead of its own text
+     with the command line. -->
+<policyconfig>
+  <vendor>NuviraHub</vendor>
+  <vendor_url>https://nuvirahub.dev</vendor_url>
+  <icon_name>io.github.nuvira-hub.nuvira</icon_name>
+  <action id="io.github.nuvira-hub.nuvira.unattended">
+    <description>Change unattended access to this computer</description>
+    <description xml:lang="it">Modificare l'accesso non presidiato a questo computer</description>
+    <description xml:lang="fr">Modifier l'accès sans surveillance à cet ordinateur</description>
+    <description xml:lang="de">Unbeaufsichtigten Zugriff auf diesen Computer ändern</description>
+    <description xml:lang="es">Cambiar el acceso desatendido a este equipo</description>
+    <message>NuviraHub needs an administrator's password to change unattended access to this computer.</message>
+    <message xml:lang="it">NuviraHub ha bisogno della password di un amministratore per modificare l'accesso non presidiato a questo computer.</message>
+    <message xml:lang="fr">NuviraHub a besoin du mot de passe d'un administrateur pour modifier l'accès sans surveillance à cet ordinateur.</message>
+    <message xml:lang="de">NuviraHub braucht das Passwort eines Administrators, um den unbeaufsichtigten Zugriff auf diesen Computer zu ändern.</message>
+    <message xml:lang="es">NuviraHub necesita la contraseña de un administrador para cambiar el acceso desatendido a este equipo.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/nuvira</annotate>
+  </action>
+</policyconfig>

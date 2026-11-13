@@ -136,7 +136,9 @@ fn arguments(remove: bool, server: &str, server_key: Option<&str>) -> Vec<String
 }
 
 /// `nuvira service system` of this program as root, after the system's
-/// administrator prompt: pkexec shows the text of its own policy, macOS `reason`
+/// administrator prompt: pkexec shows the message of our polkit action
+/// (`io.github.nuvira-hub.nuvira.unattended`, installed by the packages for
+/// /usr/bin/nuvira; its own text with the command line otherwise), macOS `reason`
 /// (macOS 27 only its own text). `Ok(false)`: the person did not give the password.
 pub fn run_as_admin(remove: bool, reason: &str, server: &str, server_key: Option<&str>) -> Result<bool> {
     let handed = if remove { None } else { hand_key_to_root(&nuvira_transport::identity::data_dir()) };
