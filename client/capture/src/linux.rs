@@ -791,7 +791,8 @@ fn shm_buffers_param() -> Result<Vec<u8>> {
     Ok(cursor.into_inner())
 }
 
-/// `SPA_PARAM_Meta` for the pointer: room for a picture of up to 256x256.
+/// `SPA_PARAM_Meta` for the pointer: room for a picture of up to 1024x1024 (GNOME
+/// offers a fixed size, room for 384x384: a smaller maximum left the pointer out).
 fn cursor_meta_param() -> Result<Vec<u8>> {
     use pw::spa::pod::{ChoiceValue, Property, Value};
     use pw::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Id};
@@ -804,7 +805,7 @@ fn cursor_meta_param() -> Result<Vec<u8>> {
                 spa::sys::SPA_PARAM_META_size,
                 Value::Choice(ChoiceValue::Int(Choice(
                     ChoiceFlags::empty(),
-                    ChoiceEnum::Range { default: cursor_meta_size(64), min: cursor_meta_size(1), max: cursor_meta_size(256) },
+                    ChoiceEnum::Range { default: cursor_meta_size(64), min: cursor_meta_size(1), max: cursor_meta_size(1024) },
                 ))),
             ),
         ],
