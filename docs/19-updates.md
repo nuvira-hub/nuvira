@@ -66,6 +66,7 @@ The app checks at start-up and every 6 hours. A bar shows "NuviraHub X is availa
 2. `tools/publish-update.sh`: builds and signs into `dist/update/`.
    For Linux and macOS: download the artifacts of the CI runs of the same commit (`gh run download … -D dist/ci`) and run `tools/sign-unix-updates.sh dist/ci`: it signs `linux-x64`, `linux-x64-deb`, `linux-x64-rpm` and `macos` into `dist/update/` and makes `dist/nuvira-update-VERSION.zip` again with every channel.
 3. Copy the contents of `dist/update/` into `updates` in the server's data (on Unraid `/mnt/user/appdata/nuvira-server/updates`).
+4. The apt and dnf repositories (docs/20, "Package repositories"): `tools/publish-repo.sh VERSION FOLDER` on a Linux host, with the private key of the packages, then the folder copied to `/srv/nuvira/repo` on the server of the website (VPS).
 
 ## Version numbers
 
