@@ -110,7 +110,7 @@ PC-LABORATORIO's service with main (f6448b5, built on the NUC), pointed at a nuv
 - The file replaced with 18 bytes of text: at the next check downloaded again (33.8 MB) and installed.
 Afterwards the manifest was removed, the service put back on alexbn.ddns.net (ID 260 905 122 as before) and the test server and files removed.
 
-Not tested yet: macOS (the bundle swap, signature and designated requirement check, the Screen Recording and Accessibility permissions after the swap, a standard user), the .rpm with dnf, the app's "Update" and "Restart" bars on Linux and macOS, an agent of a package install restarting after root's update.
+Not tested yet then: macOS (the bundle swap, signature and designated requirement check, the Screen Recording and Accessibility permissions after the swap, a standard user), the .rpm with dnf, the app's "Update" and "Restart" bars on Linux and macOS, an agent of a package install restarting after root's update. Since tried: the Mac (2026-11-10, below) and the .rpm with the agent restarting (2026-11-12 and 13, below).
 
 ## Test of 2026-11-10 (Mac installed with the .pkg)
 
@@ -121,6 +121,12 @@ Fixed in main (0d56212, 0b3d0e5): the agent sees an app of root's (`RootBundle`)
 - the first try left the app owned by the archive's user (`m1:staff`): `chown -R root:wheel` added; the second try kept it `root:wheel`;
 - `codesign --verify --deep --strict` valid and Gatekeeper "Notarized Developer ID" after the swap.
 Afterwards the profile and the server were put back (NAS) and the test files removed.
+
+## The .rpm with dnf (Fedora, 2026-11-12 and 2026-11-13)
+
+Fedora 44 VM, installation for the whole computer (`nuvira service deploy`), public server, root's `nuvira-update.timer` as shipped (5 minutes after the start, then every hour). Seen in the journal with nobody doing anything:
+- 2026-11-12 09:02: "version 0.22.6 available on connect.nuvirahub.dev (this is 0.22.4)", "version 0.22.6 installed" 11 s later.
+- 2026-11-13 12:23, the VM just started: "version 0.24.0 available (this is 0.22.6)", installed 54 s later. The package's script ran the deployment again: the person's agent restarted with the new program at 12:23:37 (`/proc/<pid>/exe` the new `/usr/bin/nuvira`, "0.24.0" in it), registered again with the same ID (462 631 005), the system service restarted at 12:23:59 and found the person's agent keeping the computer's ID.
 
 ## To do
 

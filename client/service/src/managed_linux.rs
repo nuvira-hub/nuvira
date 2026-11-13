@@ -126,6 +126,9 @@ pub fn deploy(opts: DeployOptions) -> Result<Option<String>> {
     nuvira_transport::identity::Identity::load_or_create(&key).context("the computer's device key")?;
     std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600))?;
 
+    // The organisation's policies win: with their password no other one is made
+    // (a password printed by the package's script would not work).
+    let policy = crate::policy::read();
     let mut generated = None;
     let hash = match (given(opts.password_hash), given(opts.password)) {
         (Some(hash), _) if nuvira_secret::is_hash(&hash) => Some(hash),
@@ -138,7 +141,7 @@ pub fn deploy(opts: DeployOptions) -> Result<Option<String>> {
     };
     match hash {
         Some(hash) => write_hash(&hash)?,
-        None if signin::password_hash().is_ok() => {}
+        None if signin::password_hash().is_ok() || policy.password_hash.is_some() => {}
         None => {
             let password = crate::random_password();
             write_hash(&nuvira_secret::hash(&password))?;
@@ -159,7 +162,7 @@ pub fn deploy(opts: DeployOptions) -> Result<Option<String>> {
         managed: true,
         profile: given(opts.profile).or(previous.as_ref().and_then(|p| p.profile.clone())),
     };
-    apply_policy(&mut settings, &crate::policy::read())?;
+    apply_policy(&mut settings, &policy)?;
     // Whoever installed unattended access for themselves: their agent has the same
     // ID and would take it from the computer's (from their next sign-in their own
     // installation gives way, see `user::start`).
