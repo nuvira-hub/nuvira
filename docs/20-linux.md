@@ -16,6 +16,32 @@ Since 0.13.0 the app runs on Linux and controls other computers: ID, address boo
 
 The `.deb` and `.rpm` come from `client/app/linux/nfpm.yaml` (nfpm). The names carry no version, so the website can link the latest release. Runtime needs: WebKitGTK 4.1, GTK 3, libxkbcommon-x11.
 
+### Package repositories (apt and dnf)
+
+The same packages are also in signed repositories on the website, so that a computer can install and update NuviraHub with the system's own tools (unattended-upgrades, `dnf-automatic`, Ansible's `apt` and `dnf` modules). The package's own update timer stays: the two install the same versions.
+
+Ubuntu, Debian, Mint:
+
+```sh
+sudo curl -fsSLo /usr/share/keyrings/nuvirahub.gpg https://nuvirahub.dev/apt/nuvirahub.gpg
+sudo curl -fsSLo /etc/apt/sources.list.d/nuvirahub.sources https://nuvirahub.dev/apt/nuvirahub.sources
+sudo apt update && sudo apt install nuvira
+```
+
+Fedora:
+
+```sh
+sudo curl -fsSLo /etc/yum.repos.d/nuvirahub.repo https://nuvirahub.dev/rpm/nuvirahub.repo
+sudo dnf install nuvira
+```
+
+- **Key:** "NuviraHub packages <security@nuvirahub.dev>", RSA 4096, fingerprint `DCC4 15B3 B0A1 7FF5 C60D  778E 6D61 4698 DDF9 000B` (`deploy/repo/nuvirahub.asc` and `.gpg`). Only for the packages: the app's updates have their own key (docs/19). The private key is kept with the release key (`~/.nuvira/repo-signing.asc`), never in a repository.
+- **apt:** `dists/stable` with `InRelease` (clear-signed) and `Release.gpg`; one component `main`, `amd64`. The source file names the keyring (`Signed-By`), so the key is trusted only for this repository.
+- **dnf:** each `.rpm` signed (`rpmsign`, so `gpgcheck=1`) and `repodata/repomd.xml` signed (`repomd.xml.asc`, so `repo_gpgcheck=1`).
+- **Built** by `tools/publish-repo.sh VERSION FOLDER` on a Linux host with podman or docker: it downloads the release's `.deb` and `.rpm` from GitHub and runs `deploy/repo/build-repo.sh` in a Debian 12 container (`apt-ftparchive`, `createrepo_c`, `rpmsign`), the key mounted only for the run; the last 3 versions stay.
+- **Tried** 2026-11-13, the repositories of 0.25.0 served from the LAN: Ubuntu 26.04 `apt update` checked `InRelease`, `apt-cache policy` offered 0.25.0, `apt-get download` fetched it; with one character of `InRelease` changed apt refused it (`BADSIG 6D614698DDF9000B`). Fedora 44: `dnf makecache` imported the key from the `.repo` file's `gpgkey` and checked `repomd.xml`, `repoquery` found 0.25.0, the downloaded `.rpm` passed `rpm -K` ("RSA/SHA512 signature … OK") once the key was in rpm's keyring (dnf puts it there when installing).
+- **Online** since 2026-11-13 (0.25.0) at https://nuvirahub.dev/apt and /rpm, files in `/srv/nuvira/repo` on the VPS: Kubuntu 26.04 `apt update` checked `InRelease` and offered 0.25.0; Fedora 44 `dnf makecache` checked `repomd.xml`, `repoquery` found 0.25.0, the `.rpm` passed `rpm -K`.
+
 The packages also install the polkit action `io.github.nuvira-hub.nuvira.unattended` (`client/app/linux/io.github.nuvira-hub.nuvira.policy`, in `/usr/share/polkit-1/actions`), tied to `/usr/bin/nuvira` with `org.freedesktop.policykit.exec.path`: the administrator prompt of the app (pkexec of `nuvira service system`, to set up, change or remove unattended access) says "NuviraHub needs an administrator's password to change unattended access to this computer", in the five languages, instead of pkexec's own text with the command line. The archive (`install.sh`, in `~/.local`) has no such action: pkexec shows its own text there. The `.desktop` entries have their name, description, generic name and search keywords in the five languages. Tried 2026-11-13 on the Kubuntu VM (Plasma 6.6, Italian): KDE's window showed the Italian message; `desktop-file-validate` finds nothing in the entries.
 
 ## Windows and icons
