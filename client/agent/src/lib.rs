@@ -88,9 +88,11 @@ impl AgentConfig {
             None => {
                 // DMA-BUF capture where the encoder takes it (VA-API with video processing).
                 #[cfg(target_os = "linux")]
-                nuvira_capture::set_dmabuf_default(
-                    self.plan != EncoderPlan::Software && nuvira_codec::dmabuf_import_ready(),
-                );
+                nuvira_capture::set_dmabuf_modifiers(if self.plan == EncoderPlan::Software {
+                    Vec::new()
+                } else {
+                    nuvira_codec::dmabuf_import_modifiers()
+                });
                 nuvira_capture::open(self.display)
             }
         }

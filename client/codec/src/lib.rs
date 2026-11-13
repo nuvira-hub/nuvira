@@ -92,21 +92,22 @@ impl Default for EncoderSettings {
 pub const LTR_SLOTS: u8 = 2;
 
 #[cfg(target_os = "linux")]
-static DMABUF_IMPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static DMABUF_MODIFIERS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 
-/// A VA-API encoder of this process converts on the GPU's video engine, so it
-/// can take the screen as a DMA-BUF with no copy through RAM (set by the
-/// encoder test at start). The capture asks the compositor for DMA-BUFs only
-/// then: any other encoder would read them back from the GPU's memory, which
-/// is slow on graphics cards with memory of their own.
+/// The DMA-BUF layouts (DRM format modifiers) a VA-API encoder of this process
+/// imports, in order of preference: the GPU's own tiled one first when its driver
+/// can (set by the encoder test at start), then linear. Empty: no import (any
+/// other encoder would read DMA-BUFs back from the GPU's memory, which is slow on
+/// graphics cards with memory of their own), so the capture stays in shared
+/// memory.
 #[cfg(target_os = "linux")]
-pub fn dmabuf_import_ready() -> bool {
-    DMABUF_IMPORT.load(std::sync::atomic::Ordering::Relaxed)
+pub fn dmabuf_import_modifiers() -> Vec<u64> {
+    DMABUF_MODIFIERS.lock().expect("modifiers").clone()
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn set_dmabuf_import_ready() {
-    DMABUF_IMPORT.store(true, std::sync::atomic::Ordering::Relaxed);
+pub(crate) fn set_dmabuf_import_modifiers(modifiers: Vec<u64>) {
+    *DMABUF_MODIFIERS.lock().expect("modifiers") = modifiers;
 }
 
 /// A picture in a DMA-BUF (Linux), as the compositor shares it: one plane of a

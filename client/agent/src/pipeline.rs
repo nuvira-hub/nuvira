@@ -355,6 +355,14 @@ fn encode_loop(
         if let Some(buf) = &image.dmabuf {
             imported = encoder.encode_dmabuf(&dmabuf_image(buf), size, force_key);
             if imported.is_none() {
+                // A tiled picture the encoder did not take (its import failed): the
+                // CPU cannot read it either; the capture asks the compositor for
+                // what the encoder still takes (linear) and this one is skipped.
+                #[cfg(target_os = "linux")]
+                if buf.modifier != nuvira_capture::dmabuf::MODIFIER_LINEAR {
+                    nuvira_capture::set_dmabuf_modifiers(nuvira_codec::dmabuf_import_modifiers());
+                    continue;
+                }
                 let mut data = std::mem::take(&mut dmabuf_ram);
                 if let Err(e) = buf.read(&mut data) {
                     if !std::mem::replace(&mut dmabuf_warned, true) {

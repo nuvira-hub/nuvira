@@ -79,25 +79,71 @@ struct Image {
     dmabuf: Option<crate::dmabuf::DmaBuf>,
 }
 
-static DMABUF_DEFAULT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The DMA-BUF modifiers the compositor is offered (empty: shared memory only),
+/// and a generation that changes with them: a stream in progress negotiates again.
+static DMABUF_MODIFIERS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+static DMABUF_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Whether the compositor is asked for DMA-BUF buffers too (linear ones), for a
-/// VA-API encoder to import with no copy through RAM: the agent turns it on when
-/// its encoder can; `NUVIRA_DMABUF=1` or `0` forces it.
-pub fn set_dmabuf_default(on: bool) {
-    DMABUF_DEFAULT.store(on, std::sync::atomic::Ordering::Relaxed);
+/// The DMA-BUF layouts (modifiers) the encoder imports, in order of preference,
+/// for a VA-API encoder to take the picture with no copy through RAM: the agent
+/// sets them from its encoder (empty: shared memory); a stream in progress
+/// negotiates again when they change (an import that failed: linear only).
+/// `NUVIRA_DMABUF=1` asks for DMA-BUFs whatever the encoder (linear if it said
+/// nothing), `NUVIRA_DMABUF=0` never.
+pub fn set_dmabuf_modifiers(modifiers: Vec<u64>) {
+    let mut current = DMABUF_MODIFIERS.lock().expect("modifiers");
+    if *current != modifiers {
+        info!(?modifiers, "DMA-BUF modifiers offered to the compositor");
+        *current = modifiers;
+        DMABUF_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// `SPA_VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED` (PipeWire 0.3.75; Debian 12's
 /// headers, which the packages are built with, do not have it yet).
 const VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED: u32 = 1 << 3;
 
-fn dmabuf_wanted() -> bool {
+/// The modifiers to offer now (empty: no DMA-BUF).
+fn dmabuf_wanted() -> Vec<u64> {
+    let modifiers = DMABUF_MODIFIERS.lock().expect("modifiers").clone();
     match std::env::var("NUVIRA_DMABUF").as_deref() {
-        Ok("1") => true,
-        Ok("0") => false,
-        _ => DMABUF_DEFAULT.load(std::sync::atomic::Ordering::Relaxed),
+        Ok("1") if modifiers.is_empty() => vec![crate::dmabuf::MODIFIER_LINEAR],
+        Ok("0") => Vec::new(),
+        _ => modifiers,
     }
+}
+
+/// The formats offered: DMA-BUF with `modifiers` first (if any), then shared memory.
+fn offered_formats(modifiers: &[u64]) -> Result<Vec<Vec<u8>>> {
+    let mut formats = Vec::new();
+    if !modifiers.is_empty() {
+        formats.push(format_pod(Some(Modifiers::Offer(modifiers)))?);
+    }
+    formats.push(format_pod(None)?);
+    Ok(formats)
+}
+
+/// The modifier to settle on when the compositor leaves a choice: the first of
+/// ours (in our order of preference) among those it offers.
+fn choose_modifier(param: &Pod, ours: &[u64], fallback: u64) -> u64 {
+    use pw::spa::pod::{ChoiceValue, Value, deserialize::PodDeserializer};
+    use pw::spa::utils::ChoiceEnum;
+    let Ok((_, Value::Object(obj))) = PodDeserializer::deserialize_any_from(param.as_bytes()) else {
+        return fallback;
+    };
+    let key = spa::param::format::FormatProperties::VideoModifier.as_raw();
+    let theirs: Vec<u64> = match obj.properties.iter().find(|p| p.key == key).map(|p| &p.value) {
+        Some(Value::Long(m)) => vec![*m as u64],
+        Some(Value::Choice(ChoiceValue::Long(choice))) => match &choice.1 {
+            ChoiceEnum::Enum { default, alternatives } => {
+                std::iter::once(*default).chain(alternatives.iter().copied()).map(|m| m as u64).collect()
+            }
+            ChoiceEnum::None(m) => vec![*m as u64],
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+    ours.iter().copied().find(|m| theirs.contains(m)).unwrap_or(fallback)
 }
 
 pub struct PipeWireCapturer {
@@ -288,6 +334,9 @@ struct State {
     spare: Receiver<Vec<u8>>,
     ready: Option<Sender<Result<(u32, u32)>>>,
     pool: Vec<Vec<u8>>,
+    /// The modifiers offered, and their generation.
+    modifiers: Vec<u64>,
+    generation: u64,
 }
 
 fn stream_loop(
@@ -311,6 +360,8 @@ fn stream_loop(
             *pw::keys::MEDIA_ROLE => "Screen",
         },
     )?;
+    let generation = DMABUF_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+    let modifiers = dmabuf_wanted();
     let state = State {
         format: Default::default(),
         dmabuf: false,
@@ -318,6 +369,8 @@ fn stream_loop(
         spare,
         ready: Some(ready.clone()),
         pool: Vec::new(),
+        modifiers: modifiers.clone(),
+        generation,
     };
     let ml = mainloop.clone();
     let _listener = stream
@@ -351,9 +404,10 @@ fn stream_loop(
                 "PipeWire format"
             );
             if state.dmabuf {
-                // The compositor left the modifier open: the one we take (linear,
-                // the only one offered) is sent back with the buffers we want.
-                let fixate = flags.bits() & VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED != 0;
+                // The compositor left the modifier open: the one we take (the first
+                // of ours it can do) is sent back with the buffers we want.
+                let fixate = (flags.bits() & VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED != 0)
+                    .then(|| choose_modifier(param, &state.modifiers, state.format.modifier()));
                 match dmabuf_params(fixate) {
                     Ok(pods) => {
                         let mut params: Vec<&Pod> = pods.iter().filter_map(|p| Pod::from_bytes(p)).collect();
@@ -363,7 +417,7 @@ fn stream_loop(
                     }
                     Err(e) => warn!("PipeWire DMA-BUF buffers: {e:#}"),
                 }
-                if fixate {
+                if fixate.is_some() {
                     return;
                 }
                 info!(modifier = state.format.modifier(), "PipeWire capture in DMA-BUF buffers");
@@ -373,6 +427,26 @@ fn stream_loop(
             }
         })
         .process(|stream, state| {
+            // The encoder's modifiers changed (an import that failed): negotiate again.
+            let generation = DMABUF_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+            if generation != state.generation {
+                state.generation = generation;
+                let modifiers = dmabuf_wanted();
+                if modifiers != state.modifiers {
+                    info!(?modifiers, "PipeWire: formats offered again");
+                    state.modifiers = modifiers;
+                    match offered_formats(&state.modifiers) {
+                        Ok(formats) => {
+                            let mut params: Vec<&Pod> = formats.iter().filter_map(|f| Pod::from_bytes(f)).collect();
+                            if let Err(e) = stream.update_params(&mut params) {
+                                warn!("PipeWire formats: {e}");
+                            }
+                        }
+                        Err(e) => warn!("PipeWire formats: {e:#}"),
+                    }
+                    return;
+                }
+            }
             let Some(mut buffer) = stream.dequeue_buffer() else { return };
             let rgb = match state.format.format() {
                 VideoFormat::BGRx | VideoFormat::BGRA => false,
@@ -451,11 +525,7 @@ fn stream_loop(
         .register()?;
 
     // DMA-BUF first when wanted, shared memory otherwise: the compositor picks.
-    let mut formats = Vec::new();
-    if dmabuf_wanted() {
-        formats.push(format_pod(Some(false))?);
-    }
-    formats.push(format_pod(None)?);
+    let formats = offered_formats(&modifiers)?;
     let mut params: Vec<&Pod> = formats.iter().filter_map(|f| Pod::from_bytes(f)).collect();
     stream.connect(
         spa::utils::Direction::Input,
@@ -475,11 +545,16 @@ fn stream_loop(
 /// and B. `None`: in shared memory (no modifier). `Some(fixed)`: in DMA-BUFs with
 /// the linear modifier, offered as a choice to the compositor, or `fixed` when it
 /// asks us to settle it.
-fn format_pod(modifier: Option<bool>) -> Result<Vec<u8>> {
+/// The modifier of a DMA-BUF format: offered (a choice) or settled.
+enum Modifiers<'a> {
+    Offer(&'a [u64]),
+    Fixed(u64),
+}
+
+fn format_pod(modifier: Option<Modifiers>) -> Result<Vec<u8>> {
     use pw::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
     use pw::spa::pod::{ChoiceValue, Property, PropertyFlags, Value};
     use pw::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Fraction, Rectangle};
-    let linear = crate::dmabuf::MODIFIER_LINEAR as i64;
     let mut obj = pw::spa::pod::object!(
         pw::spa::utils::SpaTypes::ObjectParamFormat,
         pw::spa::param::ParamType::EnumFormat,
@@ -515,21 +590,26 @@ fn format_pod(modifier: Option<bool>) -> Result<Vec<u8>> {
             Fraction { num: 240, denom: 1 }
         ),
     );
-    if let Some(fixed) = modifier {
-        // SPA_POD_PROP_FLAG_DONT_FIXATE (1 << 4): the compositor settles it.
-        let dont_fixate = PropertyFlags::from_bits_retain(1 << 4);
-        obj.properties.push(Property {
+    match modifier {
+        None => {}
+        Some(Modifiers::Fixed(m)) => obj.properties.push(Property {
             key: FormatProperties::VideoModifier.as_raw(),
-            flags: if fixed { PropertyFlags::MANDATORY } else { PropertyFlags::MANDATORY | dont_fixate },
-            value: if fixed {
-                Value::Long(linear)
-            } else {
-                Value::Choice(ChoiceValue::Long(Choice(
+            flags: PropertyFlags::MANDATORY,
+            value: Value::Long(m as i64),
+        }),
+        Some(Modifiers::Offer(list)) => {
+            // SPA_POD_PROP_FLAG_DONT_FIXATE (1 << 4): the compositor settles it.
+            let dont_fixate = PropertyFlags::from_bits_retain(1 << 4);
+            let list: Vec<i64> = list.iter().map(|&m| m as i64).collect();
+            obj.properties.push(Property {
+                key: FormatProperties::VideoModifier.as_raw(),
+                flags: PropertyFlags::MANDATORY | dont_fixate,
+                value: Value::Choice(ChoiceValue::Long(Choice(
                     ChoiceFlags::empty(),
-                    ChoiceEnum::Enum { default: linear, alternatives: vec![linear] },
-                )))
-            },
-        });
+                    ChoiceEnum::Enum { default: list[0], alternatives: list },
+                ))),
+            });
+        }
     }
     let (cursor, _) =
         pw::spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &pw::spa::pod::Value::Object(obj))
@@ -539,7 +619,7 @@ fn format_pod(modifier: Option<bool>) -> Result<Vec<u8>> {
 
 /// After a DMA-BUF format: the buffers we take (DMA-BUFs), and the format with the
 /// modifier settled when the compositor asked for it.
-fn dmabuf_params(fixate: bool) -> Result<Vec<Vec<u8>>> {
+fn dmabuf_params(fixate: Option<u64>) -> Result<Vec<Vec<u8>>> {
     use pw::spa::pod::{Property, Value};
     let buffers = pw::spa::pod::Object {
         type_: pw::spa::utils::SpaTypes::ObjectParamBuffers.as_raw(),
@@ -555,8 +635,8 @@ fn dmabuf_params(fixate: bool) -> Result<Vec<Vec<u8>>> {
     )
     .map_err(|e| anyhow!("buffers: {e:?}"))?;
     let mut pods = vec![cursor.into_inner()];
-    if fixate {
-        pods.push(format_pod(Some(true))?);
+    if let Some(m) = fixate {
+        pods.push(format_pod(Some(Modifiers::Fixed(m)))?);
     }
     Ok(pods)
 }
