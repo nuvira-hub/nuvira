@@ -146,8 +146,20 @@ fn sas_listener() -> Option<std::thread::JoinHandle<()>> {
         let event = HANDLE(raw as *mut c_void);
         while !STOP.load(Ordering::Relaxed) {
             if unsafe { WaitForSingleObject(event, 500) } == WAIT_OBJECT_0 {
-                info!("Ctrl+Alt+Del requested by the agent");
-                unsafe { SendSAS(false) };
+                // SendSAS reaches the console only: in a Remote Desktop session the
+                // shell's Windows Security screen instead.
+                match crate::launch::active_session().filter(|&s| crate::launch::is_remote(s)) {
+                    Some(session) => {
+                        info!(session, "Ctrl+Alt+Del requested by the agent: Windows Security of the Remote Desktop session");
+                        if let Err(e) = crate::launch::windows_security_in(session) {
+                            warn!("Windows Security not opened: {e:#}");
+                        }
+                    }
+                    None => {
+                        info!("Ctrl+Alt+Del requested by the agent");
+                        unsafe { SendSAS(false) };
+                    }
+                }
             }
         }
         let _ = unsafe { CloseHandle(event) };
