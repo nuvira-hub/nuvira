@@ -21,9 +21,14 @@
 //!   driver without it). Otherwise the driver writes them. Slice headers are
 //!   always the driver's. The first keyframe is checked to carry SPS and PPS,
 //!   otherwise the encoder is refused at start.
-//! - Input: BGRA converted to NV12 (BT.601 limited, like the other encoders) on
-//!   the CPU, copied into the surface through `vaDeriveImage`, or `vaPutImage`
-//!   where the surface cannot be mapped.
+//! - Input: BGRA converted to NV12 (BT.601 limited, like the other encoders).
+//!   Where the driver has video processing (`VAEntrypointVideoProc`) the BGRA
+//!   picture is copied as it is into an RGB surface and the GPU's video engine
+//!   converts it into the encoder's surface (`Vpp`): checked once against the
+//!   CPU's conversion on a test picture, and given up for the CPU if the colours
+//!   differ or the driver refuses (`NUVIRA_VAAPI_VPP=0` turns it off). Otherwise
+//!   converted on the CPU and copied into the surface through `vaDeriveImage`, or
+//!   `vaPutImage` where the surface cannot be mapped.
 //! - The display is opened once for the process and never terminated (see
 //!   `shared_display`).
 //! - If the driver fails during the session (screen too large, GPU reset) the
@@ -77,6 +82,27 @@ const BUF_MISC: c_int = 27;
 const MISC_FRAME_RATE: u32 = 0;
 const MISC_RATE_CONTROL: u32 = 1;
 const MISC_HRD: u32 = 5;
+
+/// Video processing (VPP): the BGRA → NV12 conversion on the GPU.
+const PROFILE_NONE: c_int = -1;
+const ENTRY_VIDEO_PROC: c_int = 10;
+const RT_FORMAT_RGB32: u32 = 0x0002_0000;
+const BUF_PROC_PIPELINE: c_int = 41;
+const SURFACE_ATTRIB_PIXEL_FORMAT: c_int = 1;
+const SURFACE_ATTRIB_SETTABLE: u32 = 2;
+const GENERIC_VALUE_INTEGER: c_int = 1;
+const COLOR_STANDARD_BT601: i32 = 1;
+const SOURCE_RANGE_REDUCED: u8 = 1;
+const SOURCE_RANGE_FULL: u8 = 2;
+/// `VAProcPipelineParameterBuffer` (libva 2.x, 64-bit): written as bytes at the
+/// offsets of the C header (checked with libva 2.17's `offsetof`).
+const PIPELINE_SIZE: usize = 224;
+const PIPELINE_SURFACE: usize = 0;
+const PIPELINE_OUTPUT_REGION: usize = 24;
+const PIPELINE_BACKGROUND: usize = 32;
+const PIPELINE_OUTPUT_STANDARD: usize = 36;
+const PIPELINE_INPUT_RANGE: usize = 133;
+const PIPELINE_OUTPUT_PROPERTIES: usize = 140;
 
 const PICTURE_INVALID: u32 = 1;
 const PICTURE_SHORT_TERM_REFERENCE: u32 = 8;
@@ -445,6 +471,10 @@ struct Display {
     rate_control: u32,
     /// The driver takes SPS and PPS from us.
     packed_headers: bool,
+    /// Video processing configuration, if the driver has one.
+    vpp_config: VAId,
+    /// Whether the GPU conversion gave the CPU's colours (checked once).
+    vpp_verdict: OnceLock<bool>,
     vendor: String,
     path: String,
 }
@@ -472,6 +502,12 @@ fn shared_display() -> Result<&'static Display> {
 
 impl Display {
     fn open() -> Result<Self> {
+        Self::open_with(true)
+    }
+
+    /// `encoder`: false only for the tests of the conversion, on drivers that
+    /// process video without encoding H.264 (Mesa's D3D12 driver on an Intel UHD).
+    fn open_with(encoder: bool) -> Result<Self> {
         let va = va()?;
         let paths: Vec<String> = match std::env::var("NUVIRA_VAAPI_DEVICE") {
             Ok(path) => vec![path],
@@ -482,7 +518,7 @@ impl Display {
             if !std::path::Path::new(&path).exists() {
                 continue;
             }
-            match Self::open_one(va, &path) {
+            match Self::open_one(va, &path, encoder) {
                 Ok(display) => return Ok(display),
                 Err(e) => errors.push(format!("{path}: {e:#}")),
             }
@@ -493,7 +529,7 @@ impl Display {
         bail!("{}", errors.join("; "))
     }
 
-    fn open_one(va: &'static Va, path: &str) -> Result<Self> {
+    fn open_one(va: &'static Va, path: &str, encoder: bool) -> Result<Self> {
         let file = File::options().read(true).write(true).open(path).context("not accessible")?;
         // SAFETY: plain libva calls; the display lives in `Display` and is terminated on drop.
         unsafe {
@@ -521,14 +557,401 @@ impl Display {
                 entrypoint: 0,
                 rate_control: 0,
                 packed_headers: false,
+                vpp_config: VA_INVALID_ID,
+                vpp_verdict: OnceLock::new(),
                 vendor,
                 path: path.into(),
             };
-            display.choose_profile()?;
+            if encoder {
+                display.choose_profile()?;
+            }
+            display.vpp_config = display.find_vpp();
             Ok(display)
         }
     }
 
+    /// The video processing configuration, if the driver offers one and
+    /// `NUVIRA_VAAPI_VPP` is not `0`.
+    fn find_vpp(&self) -> VAId {
+        if std::env::var("NUVIRA_VAAPI_VPP").is_ok_and(|v| v == "0") {
+            return VA_INVALID_ID;
+        }
+        let va = self.va;
+        // SAFETY: buffers sized as libva asks.
+        unsafe {
+            let max = (va.max_entrypoints)(self.dpy).max(1) as usize;
+            let mut list = vec![0 as c_int; max];
+            let mut n = 0;
+            if (va.query_entrypoints)(self.dpy, PROFILE_NONE, list.as_mut_ptr(), &mut n) != VA_STATUS_SUCCESS
+                || !list[..n.max(0) as usize].contains(&ENTRY_VIDEO_PROC)
+            {
+                return VA_INVALID_ID;
+            }
+            let mut config = VA_INVALID_ID;
+            let mut attrib = VAConfigAttrib { type_: ATTRIB_RT_FORMAT, value: RT_FORMAT_YUV420 };
+            let status =
+                (va.create_config)(self.dpy, PROFILE_NONE, ENTRY_VIDEO_PROC, &mut attrib, 1, &mut config);
+            if status != VA_STATUS_SUCCESS {
+                debug!("VA-API: no video processing configuration ({status:#x})");
+                return VA_INVALID_ID;
+            }
+            config
+        }
+    }
+
+    /// Converts a test picture on the GPU once and compares it with the CPU's
+    /// conversion: a driver whose colours differ (another matrix or range) keeps
+    /// the CPU conversion.
+    fn vpp_usable(&self) -> bool {
+        if self.vpp_config == VA_INVALID_ID {
+            return false;
+        }
+        *self.vpp_verdict.get_or_init(|| match vpp_check(self, 256, 64) {
+            Ok(diff) if diff <= VPP_TOLERANCE => {
+                info!(diff, "VA-API: colour conversion on the GPU");
+                true
+            }
+            Ok(diff) => {
+                warn!(diff, "VA-API: the GPU conversion gives other colours: on the CPU");
+                false
+            }
+            Err(e) => {
+                warn!("VA-API: no colour conversion on the GPU ({e:#}): on the CPU");
+                false
+            }
+        })
+    }
+}
+
+/// Largest difference allowed between the GPU's and the CPU's NV12 on flat colours
+/// (rounding and the GPU's own coefficients).
+const VPP_TOLERANCE: u8 = 4;
+
+/// The test picture: bands of flat colours 16 pixels wide (chroma is compared
+/// inside the bands, away from the edges, where filters may differ).
+fn vpp_pattern(w: usize, h: usize) -> Vec<u8> {
+    const COLOURS: [[u8; 4]; 8] = [
+        [0, 0, 0, 255],
+        [255, 255, 255, 255],
+        [0, 0, 255, 255],    // red (BGRA)
+        [0, 255, 0, 255],    // green
+        [255, 0, 0, 255],    // blue
+        [40, 180, 230, 255], // orange
+        [128, 128, 128, 255],
+        [200, 60, 120, 255],
+    ];
+    let mut data = vec![0u8; w * h * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let c = COLOURS[(x / 16 + y / 16) % COLOURS.len()];
+            data[(y * w + x) * 4..][..4].copy_from_slice(&c);
+        }
+    }
+    data
+}
+
+/// Converts the test picture on the GPU and returns the largest difference from
+/// the CPU's NV12 inside the colour blocks.
+fn vpp_check(d: &Display, w: u32, h: u32) -> Result<u8> {
+    let data = vpp_pattern(w as usize, h as usize);
+    let image = BgraImage { width: w, height: h, stride: w as usize * 4, data: &data };
+    let (wu, hu) = (w as usize, h as usize);
+    let mut cpu = vec![0u8; wu * hu * 3 / 2];
+    crate::convert::bgra_to_nv12(&image, &mut cpu, wu, hu);
+    let gpu = vpp_convert_read(d, &image)?;
+    let mut diff = 0u8;
+    // Inner pixels of each 16x16 block (rows and columns 4..12), luma and chroma.
+    for y in 0..hu {
+        for x in 0..wu {
+            if !(4..12).contains(&(x % 16)) || !(4..12).contains(&(y % 16)) {
+                continue;
+            }
+            diff = diff.max(cpu[y * wu + x].abs_diff(gpu[y * wu + x]));
+            if y % 2 == 0 && x % 2 == 0 {
+                let c = wu * hu + (y / 2) * wu + x;
+                diff = diff.max(cpu[c].abs_diff(gpu[c])).max(cpu[c + 1].abs_diff(gpu[c + 1]));
+            }
+        }
+    }
+    Ok(diff)
+}
+
+/// Converts `image` into a new NV12 surface on the GPU and reads it back packed
+/// (Y then UV, pitch = width).
+fn vpp_convert_read(d: &Display, image: &BgraImage) -> Result<Vec<u8>> {
+    let va = d.va;
+    let (w, h) = (image.width, image.height);
+    let mut surface = VA_INVALID_ID;
+    // SAFETY: plain libva calls; the surface and the converter are released below.
+    unsafe {
+        va.check(
+            (va.create_surfaces)(d.dpy, RT_FORMAT_YUV420, w, h, &mut surface, 1, std::ptr::null_mut(), 0),
+            "vaCreateSurfaces",
+        )?;
+        let result = (|| -> Result<Vec<u8>> {
+            let mut vpp = Vpp::new(d, w, h, surface)?;
+            let converted = vpp.convert(d, image, surface).and_then(|()| {
+                va.check((va.sync_surface)(d.dpy, surface), "vaSyncSurface")?;
+                read_nv12(d, surface, w as usize, h as usize)
+            });
+            vpp.destroy(d);
+            converted
+        })();
+        (va.destroy_surfaces)(d.dpy, &mut surface, 1);
+        result
+    }
+}
+
+/// Reads an NV12 surface back through `vaDeriveImage`.
+fn read_nv12(d: &Display, surface: VAId, w: usize, h: usize) -> Result<Vec<u8>> {
+    let va = d.va;
+    // SAFETY: the mapped image is read within its pitches and planes.
+    unsafe {
+        let mut img = Image::default();
+        va.check((va.derive_image)(d.dpy, surface, &mut img), "vaDeriveImage")?;
+        let mut ptr: *mut c_void = std::ptr::null_mut();
+        let mapped = va.check((va.map_buffer)(d.dpy, img.buf, &mut ptr), "image map");
+        let result = mapped.and_then(|()| {
+            if img.format.fourcc != FOURCC_NV12 {
+                bail!("surface read as {:#x}", img.format.fourcc);
+            }
+            let mut out = vec![0u8; w * h * 3 / 2];
+            let base = ptr.cast::<u8>();
+            for (plane, rows) in [(0usize, h), (1, h / 2)] {
+                let src = base.add(img.offsets[plane] as usize);
+                let pitch = img.pitches[plane] as usize;
+                for row in 0..rows {
+                    std::ptr::copy_nonoverlapping(
+                        src.add(row * pitch),
+                        out[plane * w * h + row * w..].as_mut_ptr(),
+                        w,
+                    );
+                }
+            }
+            Ok(out)
+        });
+        if !ptr.is_null() {
+            (va.unmap_buffer)(d.dpy, img.buf);
+        }
+        (va.destroy_image)(d.dpy, img.image_id);
+        result
+    }
+}
+
+/// `VASurfaceAttrib` with an integer value.
+#[repr(C)]
+struct SurfaceAttrib {
+    type_: c_int,
+    flags: u32,
+    value_type: c_int,
+    _pad: u32,
+    value: i64,
+}
+const _: () = assert!(size_of::<SurfaceAttrib>() == 24);
+
+/// The BGRA picture on the GPU and the video processing context that converts it
+/// into an NV12 surface (with the GPU's video engine, not its shaders).
+struct Vpp {
+    rgb: VAId,
+    context: VAId,
+    width: u32,
+    height: u32,
+    /// `vaDeriveImage` does not work on the RGB surface: `vaPutImage` from this.
+    put_image: Option<Image>,
+}
+
+impl Vpp {
+    /// For pictures of `width`x`height`, into `target` (an NV12 surface at least
+    /// that large).
+    fn new(d: &Display, width: u32, height: u32, mut target: VAId) -> Result<Self> {
+        let va = d.va;
+        let mut vpp = Self { rgb: VA_INVALID_ID, context: VA_INVALID_ID, width, height, put_image: None };
+        // SAFETY: libva calls with valid out-pointers; released by `destroy` on failure.
+        let created = unsafe {
+            (|| -> Result<()> {
+                // BGRX: the capture's alpha means nothing; BGRA where BGRX is missing.
+                let mut last = Err(anyhow!("no RGB surface"));
+                for fourcc in [*b"BGRX", *b"BGRA"] {
+                    let mut attrib = SurfaceAttrib {
+                        type_: SURFACE_ATTRIB_PIXEL_FORMAT,
+                        flags: SURFACE_ATTRIB_SETTABLE,
+                        value_type: GENERIC_VALUE_INTEGER,
+                        _pad: 0,
+                        value: u32::from_le_bytes(fourcc) as i64,
+                    };
+                    last = va.check(
+                        (va.create_surfaces)(
+                            d.dpy,
+                            RT_FORMAT_RGB32,
+                            width,
+                            height,
+                            &mut vpp.rgb,
+                            1,
+                            (&mut attrib as *mut SurfaceAttrib).cast(),
+                            1,
+                        ),
+                        "RGB surface",
+                    );
+                    if last.is_ok() {
+                        break;
+                    }
+                }
+                last?;
+                va.check(
+                    (va.create_context)(
+                        d.dpy,
+                        d.vpp_config,
+                        width as c_int,
+                        height as c_int,
+                        PROGRESSIVE,
+                        &mut target,
+                        1,
+                        &mut vpp.context,
+                    ),
+                    "video processing context",
+                )
+            })()
+        };
+        if let Err(e) = created {
+            vpp.destroy(d);
+            return Err(e);
+        }
+        Ok(vpp)
+    }
+
+    fn destroy(&mut self, d: &Display) {
+        let va = d.va;
+        // SAFETY: only what was created, once.
+        unsafe {
+            if let Some(image) = self.put_image.take() {
+                (va.destroy_image)(d.dpy, image.image_id);
+            }
+            if self.context != VA_INVALID_ID {
+                (va.destroy_context)(d.dpy, self.context);
+            }
+            if self.rgb != VA_INVALID_ID {
+                (va.destroy_surfaces)(d.dpy, &mut self.rgb, 1);
+            }
+        }
+        self.context = VA_INVALID_ID;
+        self.rgb = VA_INVALID_ID;
+    }
+
+    /// Copies `image` (its top-left `width`x`height`) to the GPU and converts it
+    /// into `target` as NV12, BT.601 limited range like the CPU conversion.
+    fn convert(&mut self, d: &Display, image: &BgraImage, target: VAId) -> Result<()> {
+        let va = d.va;
+        let (w, h) = (self.width as usize, self.height as usize);
+        // SAFETY: the mapped image is written within its pitch; the parameter
+        // buffer and the rectangle it points to live until vaEndPicture.
+        unsafe {
+            let mut img = Image::default();
+            let mut derived =
+                self.put_image.is_none() && (va.derive_image)(d.dpy, self.rgb, &mut img) == VA_STATUS_SUCCESS;
+            if derived && (img.format.bits_per_pixel != 32 || img.pitches[0] < (w * 4) as u32) {
+                (va.destroy_image)(d.dpy, img.image_id);
+                derived = false;
+            }
+            if !derived {
+                if self.put_image.is_none() {
+                    let mut format = ImageFormat {
+                        fourcc: u32::from_le_bytes(*b"BGRX"),
+                        byte_order: 1,
+                        bits_per_pixel: 32,
+                        depth: 24,
+                        red_mask: 0x00ff_0000,
+                        green_mask: 0x0000_ff00,
+                        blue_mask: 0x0000_00ff,
+                        ..Default::default()
+                    };
+                    let mut created = Image::default();
+                    va.check(
+                        (va.create_image)(d.dpy, &mut format, w as c_int, h as c_int, &mut created),
+                        "vaCreateImage (RGB)",
+                    )?;
+                    debug!("VA-API: RGB surface not mappable, vaPutImage");
+                    self.put_image = Some(created);
+                }
+                img = self.put_image.expect("image");
+            }
+            let mut ptr: *mut c_void = std::ptr::null_mut();
+            let mapped = va.check((va.map_buffer)(d.dpy, img.buf, &mut ptr), "RGB image map");
+            if let Err(e) = mapped {
+                if derived {
+                    (va.destroy_image)(d.dpy, img.image_id);
+                }
+                return Err(e);
+            }
+            let dst = ptr.cast::<u8>().add(img.offsets[0] as usize);
+            let pitch = img.pitches[0] as usize;
+            for row in 0..h {
+                std::ptr::copy_nonoverlapping(
+                    image.data[row * image.stride..].as_ptr(),
+                    dst.add(row * pitch),
+                    w * 4,
+                );
+            }
+            (va.unmap_buffer)(d.dpy, img.buf);
+            if derived {
+                (va.destroy_image)(d.dpy, img.image_id);
+            } else {
+                va.check(
+                    (va.put_image)(
+                        d.dpy,
+                        self.rgb,
+                        img.image_id,
+                        0,
+                        0,
+                        w as c_uint,
+                        h as c_uint,
+                        0,
+                        0,
+                        w as c_uint,
+                        h as c_uint,
+                    ),
+                    "vaPutImage (RGB)",
+                )?;
+            }
+
+            // VARectangle: x, y (i16), width, height (u16).
+            let region: [u16; 4] = [0, 0, w as u16, h as u16];
+            let mut params = [0u8; PIPELINE_SIZE];
+            params[PIPELINE_SURFACE..][..4].copy_from_slice(&self.rgb.to_le_bytes());
+            params[PIPELINE_OUTPUT_REGION..][..8].copy_from_slice(&(region.as_ptr() as u64).to_le_bytes());
+            params[PIPELINE_BACKGROUND..][..4].copy_from_slice(&0xff00_0000u32.to_le_bytes());
+            params[PIPELINE_OUTPUT_STANDARD..][..4].copy_from_slice(&COLOR_STANDARD_BT601.to_le_bytes());
+            params[PIPELINE_INPUT_RANGE] = SOURCE_RANGE_FULL;
+            // VAProcColorProperties: chroma siting, range, primaries, transfer, matrix
+            // (6: BT.601 / SMPTE 170M).
+            params[PIPELINE_OUTPUT_PROPERTIES..][..5].copy_from_slice(&[0, SOURCE_RANGE_REDUCED, 6, 6, 6]);
+            let mut buffer = VA_INVALID_ID;
+            va.check((va.begin_picture)(d.dpy, self.context, target), "vaBeginPicture (VPP)")?;
+            let mut result = va.check(
+                (va.create_buffer)(
+                    d.dpy,
+                    self.context,
+                    BUF_PROC_PIPELINE,
+                    PIPELINE_SIZE as c_uint,
+                    1,
+                    params.as_mut_ptr().cast(),
+                    &mut buffer,
+                ),
+                "pipeline buffer",
+            );
+            if result.is_ok() {
+                result = va
+                    .check((va.render_picture)(d.dpy, self.context, &mut buffer, 1), "vaRenderPicture (VPP)");
+            }
+            let ended = va.check((va.end_picture)(d.dpy, self.context), "vaEndPicture (VPP)");
+            if buffer != VA_INVALID_ID {
+                (va.destroy_buffer)(d.dpy, buffer);
+            }
+            result.and(ended)
+        }
+    }
+}
+
+impl Display {
     /// The first profile and entrypoint whose rate control follows a bitrate (CBR,
     /// else VBR); failing that, one with only constant QP, the bitrate then followed
     /// here. iHD on Intel Gen9 (Skylake to Comet Lake) gives only constant QP on the
@@ -619,6 +1042,8 @@ struct Session {
     /// Index in `recon` of the last reconstructed picture, if there is one.
     last: Option<usize>,
     nv12: Vec<u8>,
+    /// The conversion on the GPU, where it works; otherwise `nv12` on the CPU.
+    vpp: Option<Vpp>,
 }
 
 impl Session {
@@ -642,6 +1067,7 @@ impl Session {
             idr_id: 0,
             last: None,
             nv12: Vec::new(),
+            vpp: None,
         };
         // SAFETY: libva calls with valid out-pointers; what is created is released
         // by `destroy` (also when a later step fails).
@@ -716,11 +1142,20 @@ impl Session {
             s.destroy(d);
             return Err(e);
         }
+        if d.vpp_usable() {
+            match Vpp::new(d, width, height, s.input) {
+                Ok(vpp) => s.vpp = Some(vpp),
+                Err(e) => warn!("VA-API: colour conversion on the CPU ({e:#})"),
+            }
+        }
         Ok(s)
     }
 
     fn destroy(&mut self, d: &Display) {
         let va = d.va;
+        if let Some(mut vpp) = self.vpp.take() {
+            vpp.destroy(d);
+        }
         // SAFETY: only what was created, once (ids reset to invalid).
         unsafe {
             if let Some(image) = self.put_image.take() {
@@ -746,8 +1181,19 @@ impl Session {
         self.config = VA_INVALID_ID;
     }
 
-    /// Copies the image into the input surface as NV12.
+    /// Copies the image into the input surface as NV12: converted by the GPU where
+    /// it can, else on the CPU.
     fn upload(&mut self, d: &Display, image: &BgraImage) -> Result<()> {
+        if let Some(vpp) = &mut self.vpp {
+            match vpp.convert(d, image, self.input) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    warn!("VA-API: GPU colour conversion failed ({e:#}): on the CPU from now on");
+                    vpp.destroy(d);
+                    self.vpp = None;
+                }
+            }
+        }
         let va = d.va;
         let (w, h) = (self.width as usize, self.height as usize);
         self.nv12.resize(w * h * 3 / 2, 0);
@@ -1379,6 +1825,63 @@ impl VideoEncoder for VaapiEncoder {
 mod tests {
     use super::*;
 
+    /// The GPU conversion against the CPU's, and their times at 1080p. Skipped
+    /// without a VA driver that processes video. On a driver without H.264
+    /// encoding too (Mesa's D3D12 driver on the NUC's Intel UHD, in WSL).
+    #[test]
+    fn vpp_matches_cpu() {
+        let d = match Display::open_with(false) {
+            Ok(d) if d.vpp_config != VA_INVALID_ID => d,
+            Ok(_) => return eprintln!("no video processing: skipped"),
+            Err(e) => return eprintln!("no VA-API ({e:#}): skipped"),
+        };
+        eprintln!("driver: {}", d.vendor);
+        // Mesa's D3D12 driver in WSL has no RGB surfaces (only NV12 and P010): it
+        // fails here and the encoder keeps the CPU conversion.
+        let diff = match vpp_check(&d, 256, 64) {
+            Ok(diff) => diff,
+            Err(e) => return eprintln!("GPU conversion refused ({e:#}): the encoder converts on the CPU"),
+        };
+        eprintln!("largest difference on flat colours: {diff}");
+        assert!(diff <= VPP_TOLERANCE, "GPU colours differ by {diff}");
+
+        let (w, h) = (1920u32, 1080u32);
+        let data = vpp_pattern(w as usize, h as usize);
+        let image = BgraImage { width: w, height: h, stride: w as usize * 4, data: &data };
+        let gpu = vpp_convert_read(&d, &image).expect("1080p");
+        let mut cpu = vec![0u8; (w * h * 3 / 2) as usize];
+        crate::convert::bgra_to_nv12(&image, &mut cpu, w as usize, h as usize);
+        let max = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+        eprintln!("1080p: largest difference anywhere {max} (block edges included)");
+
+        let va = d.va;
+        let mut surface = VA_INVALID_ID;
+        // SAFETY: test surface, released at the end.
+        unsafe {
+            va.check(
+                (va.create_surfaces)(d.dpy, RT_FORMAT_YUV420, w, h, &mut surface, 1, std::ptr::null_mut(), 0),
+                "surface",
+            )
+            .unwrap();
+            let mut vpp = Vpp::new(&d, w, h, surface).unwrap();
+            let runs = 60;
+            let started = std::time::Instant::now();
+            for _ in 0..runs {
+                vpp.convert(&d, &image, surface).unwrap();
+                (va.sync_surface)(d.dpy, surface);
+            }
+            let gpu_ms = started.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+            let started = std::time::Instant::now();
+            for _ in 0..runs {
+                crate::convert::bgra_to_nv12(&image, &mut cpu, w as usize, h as usize);
+            }
+            let cpu_ms = started.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+            eprintln!("1080p: GPU (copy + conversion) {gpu_ms:.2} ms, CPU conversion {cpu_ms:.2} ms");
+            vpp.destroy(&d);
+            (va.destroy_surfaces)(d.dpy, &mut surface, 1);
+        }
+    }
+
     #[test]
     fn exp_golomb_and_nal() {
         let mut b = Bits::default();
@@ -1548,10 +2051,12 @@ fn driver_survives(settings: EncoderSettings) -> Result<()> {
             std::thread::sleep(Duration::from_millis(20));
         }
         if libc::WIFSIGNALED(status) {
-            return Err(format!("the VA-API driver crashed while trying it (signal {})", libc::WTERMSIG(status)));
+            return Err(format!(
+                "the VA-API driver crashed while trying it (signal {})",
+                libc::WTERMSIG(status)
+            ));
         }
         Ok(())
     });
     verdict.clone().map_err(|e| anyhow::anyhow!(e))
 }
-
