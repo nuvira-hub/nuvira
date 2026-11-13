@@ -33,7 +33,7 @@ use windows::Win32::System::JobObjects::{
 };
 use windows::Win32::System::RemoteDesktop::{
     WTS_CURRENT_SERVER_HANDLE, WTS_SESSION_INFOW, WTSActive, WTSClientProtocolType, WTSEnumerateSessionsW,
-    WTSFreeMemory, WTSGetActiveConsoleSessionId, WTSQuerySessionInformationW, WTSUserName,
+    WTSFreeMemory, WTSGetActiveConsoleSessionId, WTSQuerySessionInformationW, WTSQueryUserToken, WTSUserName,
 };
 use windows::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessAsUserW, GetCurrentProcess, GetExitCodeProcess,
@@ -96,7 +96,8 @@ fn has_user(id: u32) -> bool {
     session_info(id, WTSUserName).is_some_and(|name| name.len() > 2)
 }
 
-fn is_remote(id: u32) -> bool {
+/// A Remote Desktop session (not the console).
+pub fn is_remote(id: u32) -> bool {
     // WTSClientProtocolType: 0 console, 2 RDP.
     session_info(id, WTSClientProtocolType).is_some_and(|p| p.first() == Some(&2))
 }
@@ -208,6 +209,54 @@ impl AgentProcess {
         let _ = unsafe { TerminateProcess(self.process.0, 1) };
         self.wait(Duration::from_secs(5));
     }
+}
+
+/// The "Windows Security" screen (Ctrl+Alt+Del) in a Remote Desktop session.
+/// `SendSAS` reaches only the console; inside a Remote Desktop session Windows
+/// offers the same screen through the shell ("Windows Security" of the Start
+/// menu, `IShellDispatch4::WindowsSecurity`): Explorer is started as the
+/// session's user with that shell folder, and hands it to the running shell.
+pub fn windows_security_in(session: u32) -> Result<()> {
+    use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
+    use windows::Win32::System::Threading::CREATE_UNICODE_ENVIRONMENT;
+
+    let mut user = HANDLE::default();
+    unsafe { WTSQueryUserToken(session, &mut user) }.context("WTSQueryUserToken")?;
+    let user = Owned(user);
+    let mut env = std::ptr::null_mut();
+    unsafe { CreateEnvironmentBlock(&mut env, Some(user.0), false) }.context("CreateEnvironmentBlock")?;
+    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    let exe = format!(r"{windir}\explorer.exe");
+    let mut command: Vec<u16> = format!("\"{exe}\" shell:::{{2559a1f2-21d7-11d4-bdaf-00c04f60b9f0}}")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut desktop: Vec<u16> = "winsta0\\default".encode_utf16().chain(Some(0)).collect();
+    let startup = STARTUPINFOW {
+        cb: size_of::<STARTUPINFOW>() as u32,
+        lpDesktop: PWSTR(desktop.as_mut_ptr()),
+        ..Default::default()
+    };
+    let mut info = PROCESS_INFORMATION::default();
+    let started = unsafe {
+        CreateProcessAsUserW(
+            Some(user.0),
+            &HSTRING::from(exe.as_str()),
+            Some(PWSTR(command.as_mut_ptr())),
+            None,
+            None,
+            false,
+            CREATE_UNICODE_ENVIRONMENT,
+            Some(env),
+            &HSTRING::from(windir.as_str()),
+            &startup,
+            &mut info,
+        )
+    };
+    let _ = unsafe { DestroyEnvironmentBlock(env) };
+    started.context("starting Explorer for Windows Security")?;
+    let _ = (Owned(info.hProcess), Owned(info.hThread));
+    Ok(())
 }
 
 /// Primary copy of the service's token (SYSTEM), moved into the given session.

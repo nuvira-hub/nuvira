@@ -99,6 +99,8 @@ When a user connects to the PC with Remote Desktop their session leaves the cons
 
 Test of 2026-10-27 with a real Remote Desktop session (NUC → PC-LABORATORIO, Microsoft account): the service moved the agent into the Remote Desktop session within a second; there DXGI `DuplicateOutput` is refused (access denied) and the GDI capture took over at the session's 1920x1080; image, mouse and keyboard worked from NuviraHub (user). The first start of the agent in the new session failed once with `AssignProcessToJobObject: access denied` while Windows was moving the session, and succeeded at the retry 5 s later.
 
+**Ctrl+Alt+Del in a Remote Desktop session** (2026-11-13): `SendSAS` reaches only the console, so when the agent runs in a Remote Desktop session the service opens the session's "Windows Security" screen instead (lock, switch user, sign out, change password, Task Manager), as the Start menu of a Remote Desktop session does: Explorer started as the session's user (`WTSQueryUserToken`, its environment block) with the shell folder `shell:::{2559a1f2-21d7-11d4-bdaf-00c04f60b9f0}`, which the running shell turns into `IShellDispatch4::WindowsSecurity` (`windows_security_in` in `launch.rs`). The toolbar button and Ctrl+Alt+End work the same as at the console. Not tried live yet: it needs a Remote Desktop session to PC-LABORATORIO signed in with the owner's password, and the service of this version there.
+
 Remote Desktop with a Microsoft account needs its password stored on the PC: with "only Windows Hello sign-in for Microsoft accounts" on, or after signing in only with the PIN, sign-ins fail with `0xC000006A` (wrong password) until one sign-in with the password at the PC.
 
 ## Done since the first version
@@ -109,4 +111,3 @@ Remote Desktop with a Microsoft account needs its password stored on the PC: wit
 
 ## To do
 
-- Ctrl+Alt+Del inside a Remote Desktop session.
