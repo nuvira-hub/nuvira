@@ -193,6 +193,8 @@ struct SessionUi {
     /// "print") and what the person here switched off of it, from the strip.
     offered: Vec<String>,
     off: Vec<String>,
+    /// Viewers who joined the session (shared sessions): the strip names them.
+    guests: Vec<String>,
 }
 
 /// Settings saved in `app.json` in the data folder.
@@ -684,6 +686,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                 recording: false,
                 offered: Vec::new(),
                 off: Vec::new(),
+                guests: Vec::new(),
             });
             ui.chat.clear();
         }),
@@ -715,6 +718,18 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                 session.off = off;
             }
         }),
+        AgentEvent::Guests { names } => {
+            let joined = state.ui.lock().expect("state").session.as_ref().is_some_and(|s| names.len() > s.guests.len());
+            state.update(app, |ui| {
+                if let Some(session) = ui.session.as_mut() {
+                    session.guests = names;
+                }
+            });
+            // The person at the PC must see who else is watching.
+            if joined {
+                bring_to_front(app);
+            }
+        }
         AgentEvent::Rules { recording_required } => state.update(app, |ui| ui.recording_required = recording_required),
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
             ui.session = None;

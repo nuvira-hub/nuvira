@@ -72,6 +72,7 @@
   "status.service_stopped": "El servicio NuviraHub está detenido: este PC no es accesible",
 
   "session.strip": "{who} está controlando este equipo · {path}",
+  "session.strip_shared": "{who} y {others} están controlando este equipo · {path}",
   "session.strip_terminal": "{who} tiene un terminal abierto en este ordenador · {path}",
   "session.direct": "conexión directa",
   "session.relay": "a través del servidor",

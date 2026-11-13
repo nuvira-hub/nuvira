@@ -117,6 +117,7 @@ struct Snapshot {
     support: Option<AgentEvent>,
     recording: Option<AgentEvent>,
     permissions: Option<AgentEvent>,
+    guests: Option<AgentEvent>,
     rules: Option<AgentEvent>,
 }
 
@@ -138,6 +139,7 @@ impl Snapshot {
                 self.session = None;
                 self.recording = None;
                 self.permissions = None;
+                self.guests = None;
                 return;
             }
             AgentEvent::IncomingClosed { .. } => {
@@ -149,6 +151,7 @@ impl Snapshot {
             // Repeated with the session (an app opened during it still shows the notice).
             AgentEvent::Recording { .. } => &mut self.recording,
             AgentEvent::Permissions { .. } => &mut self.permissions,
+            AgentEvent::Guests { .. } => &mut self.guests,
             AgentEvent::Rules { .. } => &mut self.rules,
         };
         *slot = Some(event.clone());
@@ -162,6 +165,7 @@ impl Snapshot {
             &self.session,
             &self.recording,
             &self.permissions,
+            &self.guests,
             &self.incoming,
             &self.support,
         ].into_iter().flatten()
