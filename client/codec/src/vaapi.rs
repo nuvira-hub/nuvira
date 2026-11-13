@@ -796,6 +796,8 @@ const _: () = assert!(size_of::<PrimeDescriptor>() == 312);
 /// `DRM_FORMAT_MOD_LINEAR` and `DRM_FORMAT_MOD_INVALID`.
 const MOD_LINEAR: u64 = 0;
 const MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
+/// `I915_FORMAT_MOD_Y_TILED`.
+const MOD_I915_Y_TILED: u64 = 0x0100_0000_0000_0002;
 /// `VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_COMPOSED_LAYERS`.
 const EXPORT_READ_COMPOSED: u32 = 0x0001 | 0x0008;
 
@@ -807,8 +809,13 @@ fn dmabuf_modifiers(d: &Display) -> Vec<u64> {
     let mut list = Vec::new();
     match own_rgb_modifier(d) {
         Ok(m) if m != MOD_LINEAR && m != MOD_INVALID => list.push(m),
-        Ok(_) => {}
+        Ok(m) => debug!(modifier = format_args!("{m:#x}"), "VA-API: its RGB surfaces are linear"),
         Err(e) => debug!("VA-API: RGB surface not exported: {e:#}"),
+    }
+    // Intel's drivers make linear RGB surfaces but import the Y-tiled buffers the
+    // compositors render into; a refusal falls back to linear while running.
+    if d.vendor.contains("Intel") && !list.contains(&MOD_I915_Y_TILED) {
+        list.push(MOD_I915_Y_TILED);
     }
     list.push(MOD_LINEAR);
     list
