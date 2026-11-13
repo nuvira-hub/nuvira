@@ -227,6 +227,11 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .address-book-list { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px 4px; }
 .book-title { margin: 14px 14px 4px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .book-title:first-child { margin-top: 8px; }
+.book-head { display: flex; align-items: baseline; gap: 10px; }
+.book-head .book-title { flex: 1; }
+.book-head:first-child .book-title { margin-top: 8px; }
+.book-head .link { margin-right: 14px; font-size: 12px; }
+#address-book-message { white-space: pre-line; }
 .entry { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 10px; }
 .entry:hover { background: var(--hover); }
 .entry .avatar .presence {

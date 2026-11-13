@@ -605,5 +605,19 @@
   "tb.adapt_resolution_on": "Resolución remota adaptada a la ventana: clic para dejarla como estaba",
   "viewer.resolution_now": "Pantalla remota a {size}",
   "viewer.resolution_back": "Pantalla remota de vuelta a su propia resolución",
-  "viewer.resolution_failed": "Resolución remota no cambiada: {reason}"
+  "viewer.resolution_failed": "Resolución remota no cambiada: {reason}",
+
+  "book_csv.import": "Importar",
+  "book_csv.import_hint": "Añade o actualiza fichas desde un archivo CSV (columnas: id, name, company, contact, email, phone, group, tags, notes, password)",
+  "book_csv.export": "Exportar",
+  "book_csv.export_hint": "Guarda la libreta en un archivo CSV, sin las contraseñas",
+  "book_csv.import_title": "Archivo CSV para importar",
+  "book_csv.export_title": "Guardar la libreta como CSV",
+  "book_csv.line": "línea {line}: {reason}",
+  "book_csv.empty": "El archivo está vacío",
+  "book_csv.no_id_column": "El archivo no tiene la columna «id» con el ID de NuviraHub",
+  "book_csv.repeated": "ID ya presente más arriba en el archivo",
+  "book_csv.imported": "Importadas: {added} nuevas, {updated} actualizadas.",
+  "book_csv.skipped": "Líneas omitidas: {count}",
+  "book_csv.exported": "{count} fichas guardadas (sin contraseñas)."
 }

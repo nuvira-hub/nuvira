@@ -85,6 +85,15 @@ The app opens a signalling connection with `Register.api_only` (it does not appe
 - **Automatic add**: when the viewer reports `@connected` on its standard output, the app calls `AutoAdd` with the ID, the remote device's name and the password used.
 - If the token has expired or was revoked the app goes back to the sign-in panel; if the connection to the server dropped it reopens it with the saved token.
 
+## CSV (import and export)
+
+"Import" and "Export" next to each book's name (`client/app/src/book_csv.rs`, commands `address_book_import` and `address_book_export`): a backup, a spreadsheet, or another tool's list once the computers have their NuviraHub IDs.
+
+- **Columns:** `id` (the NuviraHub ID, 9 digits, spaces allowed), `name`, `company`, `contact`, `email`, `phone`, `group`, `tags` (separated by `;`, `|` or `,` inside the cell), `notes`, `password`. The header names them in any order, in English or in one of the app's languages ("Nome", "Cliente", "Gruppo", "Etichette"…); other columns are ignored; `id` is required. Commas or semicolons separate the fields (Excel with an Italian, French, German or Spanish locale writes semicolons); quoted cells may hold separators, quotes and line breaks; UTF-8 (with or without BOM) or an older Excel's ANSI.
+- **Import** (books the account may edit, the local one too): a device already in the book is updated, the others added. An empty cell keeps what the entry had, the password too: a CSV cannot clear a field. Rows without a valid ID, or repeating an ID of the file, are skipped and listed with their line ("line 3: the ID has 9 digits"), as are the entries the server refuses.
+- **Export:** the book's entries in the columns above, without the passwords (a CSV file is plain text), UTF-8 with BOM so that Excel reads the accents; a cell starting with `=`, `+`, `-` or `@` gets a leading `'` so that a spreadsheet keeps it as text.
+- Tried 2026-11-13 on PC-LABORATORIO (the app with its own data folder, UI Automation and the Windows dialogs): an Italian file with semicolons, a quoted note on two lines and a row without ID: "Imported: 2 new, 0 updated", "line 3: the ID has 9 digits", the entries in the group "Clienti" with their tags; then the export, read back. Unit tests in `book_csv.rs`.
+
 ## Tests
 
 - `server/internal/accounts/accounts_test.go`: sign-in, tokens, personal and shared books, visibility between accounts, administrator rights, encryption of the passwords, automatic add.
@@ -98,6 +107,4 @@ Tested on the NUC test server: rules received at registration; with the permanen
 
 ## To do
 
-- Groups or folders inside a book, online status of the devices in the list.
-- Two-factor authentication and sign-in policies (phase 5).
-- Import from RustDesk/Supremo address books.
+- Import from RustDesk/Supremo address books: their IDs are not NuviraHub IDs (a computer gets a new one when NuviraHub is installed), so their lists come in through CSV once the new IDs are written in (see "CSV").

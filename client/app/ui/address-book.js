@@ -155,7 +155,7 @@ function renderEntries() {
       : book.personal
         ? t("address_book.personal", { name: bookName(book) })
         : t("address_book.shared", { name: book.name });
-    children.push(el("p", "book-title", `${label} (${book.entries.length})`));
+    children.push(bookHead(book, `${label} (${book.entries.length})`));
     if (entries.length === 0) children.push(el("p", "empty", t("address_book.empty_book")));
     // The server sends them sorted by group: a heading where the group changes.
     let group = null;
@@ -167,6 +167,38 @@ function renderEntries() {
   }
   if (books.length && children.length === 0) children.push(el("p", "empty", t("address_book.not_found")));
   $("address-book-list").replaceChildren(...children);
+}
+
+// The book's name with Import and Export (CSV, docs/17-address-book.md).
+function bookHead(book, label) {
+  const head = el("div", "book-head");
+  head.append(el("p", "book-title", label));
+  if (canEditBook(book)) {
+    const imp = el("button", "link", t("book_csv.import"));
+    imp.title = t("book_csv.import_hint");
+    imp.addEventListener("click", async () => {
+      const done = await call("address_book_import", { bookId: book.id }, "address-book-message").catch(() => undefined);
+      if (!done) return;
+      const text = [t("book_csv.imported", { added: String(done.added), updated: String(done.updated) })];
+      if (done.skipped.length) text.push(t("book_csv.skipped", { count: String(done.skipped.length) }), ...done.skipped.slice(0, 8));
+      if (done.skipped.length > 8) text.push("…");
+      showMessage("address-book-message", text.join("\n"));
+      $("address-book-message").classList.toggle("ok", done.skipped.length === 0);
+    });
+    head.append(imp);
+  }
+  if (book.entries.length) {
+    const exp = el("button", "link", t("book_csv.export"));
+    exp.title = t("book_csv.export_hint");
+    exp.addEventListener("click", async () => {
+      const n = await call("address_book_export", { bookId: book.id }, "address-book-message").catch(() => undefined);
+      if (n == null) return;
+      showMessage("address-book-message", t("book_csv.exported", { count: String(n) }));
+      $("address-book-message").classList.add("ok");
+    });
+    head.append(exp);
+  }
+  return head;
 }
 
 // The personal and the local address book are named in the interface language.
