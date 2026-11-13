@@ -100,6 +100,11 @@ The `.deb` of main (4c581d7, built by the CI) on Ubuntu 26.04 (GNOME on Wayland,
 
 Seen on the way, not about this: a viewer started on Kubuntu after a restart waited for the locked KWallet for its own key (`viewer.key`) for the whole test instead of falling back to the file as the app does (20-linux.md, "To do").
 
+## Tests of 2026-11-13 (user switching, policy before the package)
+
+- **Two people, Fedora 44** (GNOME, GDM; installed for the whole computer, public server, ID 462 631 005, a test password through `policy.json`): a second account `nvtest`; from alessandro's session GDM's greeter opened for another user (`CreateTransientDisplay`), its agent kept the ID and the viewer saw the user list; clicked `nvtest` and typed its password from the viewer (`--click-at`, `--type-keys`): the ID handed to nvtest's agent (`/run/nuvira-session-1001`, nvtest's, 0700; alessandro's copy removed), the viewer saw nvtest's first sign-in (GNOME's welcome) with no dialog. Back to alessandro (`loginctl activate`): within half a second "the person's session is no longer the active one: its agent ends uid=1001", the ID handed to uid 1000, alessandro's desktop seen. Afterwards nvtest removed and the policy file put back.
+- **Policy first, then the package (the Ansible way), Ubuntu 26.04**: `/etc/nuvira/policy.json` with server, fingerprint and a password hash, then `apt-get install ./nuvira-linux-x64.deb` (the 0.24.0 release): the package's script installed for the whole computer by itself (`managed.json` with the policy's server and fingerprint, system service active, the agent as alessandro), and the policy's password worked. But the script also printed "permanent password: …", made up before the policy was applied, which did not work: fixed (the policies are read first, also on macOS); with the fix a deployment from nothing with the policy prints no password and the policy's one works. Afterwards `deploy --remove`, the folders removed and alessandro's own installation put back.
+
 ## Not yet
 
 - Macs: the same through a `.pkg` and a `.mobileconfig` profile (see nuvira-pro/docs/internal/30-platform-parity.md).
