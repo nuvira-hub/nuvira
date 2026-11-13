@@ -605,5 +605,19 @@
   "tb.adapt_resolution_on": "Risoluzione remota adattata alla finestra: clic per rimetterla com'era",
   "viewer.resolution_now": "Schermo remoto a {size}",
   "viewer.resolution_back": "Schermo remoto tornato alla sua risoluzione",
-  "viewer.resolution_failed": "Risoluzione remota non cambiata: {reason}"
+  "viewer.resolution_failed": "Risoluzione remota non cambiata: {reason}",
+
+  "book_csv.import": "Importa",
+  "book_csv.import_hint": "Aggiunge o aggiorna le schede da un file CSV (colonne: id, name, company, contact, email, phone, group, tags, notes, password)",
+  "book_csv.export": "Esporta",
+  "book_csv.export_hint": "Salva la rubrica in un file CSV, senza le password",
+  "book_csv.import_title": "File CSV da importare",
+  "book_csv.export_title": "Salva la rubrica come CSV",
+  "book_csv.line": "riga {line}: {reason}",
+  "book_csv.empty": "Il file è vuoto",
+  "book_csv.no_id_column": "Il file non ha la colonna «id» con l'ID NuviraHub",
+  "book_csv.repeated": "ID già presente più sopra nel file",
+  "book_csv.imported": "Importate: {added} nuove, {updated} aggiornate.",
+  "book_csv.skipped": "Righe saltate: {count}",
+  "book_csv.exported": "Salvate {count} schede (senza password)."
 }

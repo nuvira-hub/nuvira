@@ -605,5 +605,19 @@
   "tb.adapt_resolution_on": "Résolution distante adaptée à la fenêtre : cliquer pour la remettre comme avant",
   "viewer.resolution_now": "Écran distant en {size}",
   "viewer.resolution_back": "Écran distant revenu à sa propre résolution",
-  "viewer.resolution_failed": "Résolution distante non changée : {reason}"
+  "viewer.resolution_failed": "Résolution distante non changée : {reason}",
+
+  "book_csv.import": "Importer",
+  "book_csv.import_hint": "Ajoute ou met à jour des fiches depuis un fichier CSV (colonnes : id, name, company, contact, email, phone, group, tags, notes, password)",
+  "book_csv.export": "Exporter",
+  "book_csv.export_hint": "Enregistre le carnet dans un fichier CSV, sans les mots de passe",
+  "book_csv.import_title": "Fichier CSV à importer",
+  "book_csv.export_title": "Enregistrer le carnet en CSV",
+  "book_csv.line": "ligne {line} : {reason}",
+  "book_csv.empty": "Le fichier est vide",
+  "book_csv.no_id_column": "Le fichier n'a pas de colonne « id » avec l'ID NuviraHub",
+  "book_csv.repeated": "ID déjà présent plus haut dans le fichier",
+  "book_csv.imported": "Importées : {added} nouvelles, {updated} mises à jour.",
+  "book_csv.skipped": "Lignes ignorées : {count}",
+  "book_csv.exported": "{count} fiches enregistrées (sans mots de passe)."
 }

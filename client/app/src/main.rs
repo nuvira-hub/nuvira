@@ -11,6 +11,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod address_book;
+mod book_csv;
 mod branding;
 mod local_book;
 
@@ -1416,6 +1417,8 @@ fn main() {
             address_book::address_book_logout,
             address_book::address_book_refresh,
             address_book::address_book_save_entry,
+            address_book::address_book_import,
+            address_book::address_book_export,
             address_book::address_book_delete_entry,
             address_book::address_book_change_password,
             address_book::address_book_accounts,

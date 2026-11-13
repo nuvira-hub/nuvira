@@ -605,5 +605,19 @@
   "tb.adapt_resolution_on": "Entfernte Auflösung an das Fenster angepasst: klicken, um sie zurückzusetzen",
   "viewer.resolution_now": "Entfernter Bildschirm auf {size}",
   "viewer.resolution_back": "Entfernter Bildschirm wieder in seiner eigenen Auflösung",
-  "viewer.resolution_failed": "Entfernte Auflösung nicht geändert: {reason}"
+  "viewer.resolution_failed": "Entfernte Auflösung nicht geändert: {reason}",
+
+  "book_csv.import": "Importieren",
+  "book_csv.import_hint": "Fügt Einträge aus einer CSV-Datei hinzu oder aktualisiert sie (Spalten: id, name, company, contact, email, phone, group, tags, notes, password)",
+  "book_csv.export": "Exportieren",
+  "book_csv.export_hint": "Speichert das Adressbuch als CSV-Datei, ohne die Passwörter",
+  "book_csv.import_title": "CSV-Datei zum Importieren",
+  "book_csv.export_title": "Adressbuch als CSV speichern",
+  "book_csv.line": "Zeile {line}: {reason}",
+  "book_csv.empty": "Die Datei ist leer",
+  "book_csv.no_id_column": "Die Datei hat keine Spalte „id“ mit der NuviraHub-ID",
+  "book_csv.repeated": "ID steht weiter oben schon in der Datei",
+  "book_csv.imported": "Importiert: {added} neu, {updated} aktualisiert.",
+  "book_csv.skipped": "Übersprungene Zeilen: {count}",
+  "book_csv.exported": "{count} Einträge gespeichert (ohne Passwörter)."
 }

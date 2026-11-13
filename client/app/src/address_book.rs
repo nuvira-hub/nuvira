@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tracing::{info, warn};
 
-use crate::{NuviraApp, load_settings, local_book, save_settings};
+use crate::{NuviraApp, book_csv, load_settings, local_book, save_settings};
 
 /// Feature of servers with the address book module (accounts, shared books).
 pub const PRO_ADDRESS_BOOK: &str = "pro.address_book";
@@ -481,6 +481,103 @@ pub async fn address_book_save_entry(app: AppHandle, entry: EntryUi) -> Result<(
         call(&app, Call::PutEntry(entry.into())).await?;
     }
     refresh(&app).await
+}
+
+/// What an import did: entries added and changed, rows skipped ("line 4: reason").
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportUi {
+    pub added: usize,
+    pub updated: usize,
+    pub skipped: Vec<String>,
+}
+
+fn book_entries(app: &AppHandle, book_id: i64) -> Result<Vec<EntryUi>, String> {
+    let state = app.state::<NuviraApp>();
+    let ui = state.ui.lock().expect("state");
+    ui.books.iter().find(|b| b.id == book_id).map(|b| b.entries.clone()).ok_or_else(|| t("err.unexpected"))
+}
+
+/// Imports a CSV file into a book (docs/17-address-book.md, "CSV"): a device
+/// already in the book is updated, the others added. An empty cell keeps what the
+/// entry had (the password too). `None` when no file was picked.
+#[tauri::command]
+pub async fn address_book_import(app: AppHandle, book_id: i64) -> Result<Option<ImportUi>, String> {
+    let picked = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new().set_title(t("book_csv.import_title")).add_filter("CSV", &["csv", "txt"]).pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(path) = picked else { return Ok(None) };
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    // UTF-8, or the ANSI code page of an older Excel (Latin-1 for its accents).
+    let text = String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect());
+    let (entries, skipped) = book_csv::parse(&text).map_err(t)?;
+    let existing = book_entries(&app, book_id)?;
+    let mut result = ImportUi {
+        added: 0,
+        updated: 0,
+        skipped: skipped
+            .iter()
+            .map(|s| tf("book_csv.line", &[("line", &s.line.to_string()), ("reason", &t(s.reason))]))
+            .collect(),
+    };
+    for (line, mut e) in entries {
+        e.book_id = book_id;
+        let old = existing.iter().find(|x| x.device_id == e.device_id);
+        if let Some(old) = old {
+            e.id = old.id;
+            for (new, old) in [
+                (&mut e.name, &old.name),
+                (&mut e.company, &old.company),
+                (&mut e.contact, &old.contact),
+                (&mut e.email, &old.email),
+                (&mut e.phone, &old.phone),
+                (&mut e.notes, &old.notes),
+                (&mut e.group, &old.group),
+                (&mut e.password, &old.password),
+            ] {
+                if new.is_empty() {
+                    new.clone_from(old);
+                }
+            }
+            if e.tags.is_empty() {
+                e.tags.clone_from(&old.tags);
+            }
+        }
+        let saved = if book_id == local_book::BOOK_ID {
+            local_book::put(e)
+        } else {
+            call(&app, Call::PutEntry(e.into())).await.map(|_| ())
+        };
+        match saved {
+            Ok(()) if old.is_some() => result.updated += 1,
+            Ok(()) => result.added += 1,
+            Err(reason) => result.skipped.push(tf("book_csv.line", &[("line", &line.to_string()), ("reason", &reason)])),
+        }
+    }
+    info!(added = result.added, updated = result.updated, skipped = result.skipped.len(), "address book imported");
+    refresh(&app).await?;
+    Ok(Some(result))
+}
+
+/// Saves a book as a CSV file, without the device passwords. The number of
+/// entries written, `None` when no file was chosen.
+#[tauri::command]
+pub async fn address_book_export(app: AppHandle, book_id: i64) -> Result<Option<usize>, String> {
+    let entries = book_entries(&app, book_id)?;
+    let picked = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title(t("book_csv.export_title"))
+            .set_file_name("nuvirahub-address-book.csv")
+            .add_filter("CSV", &["csv"])
+            .save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some(path) = picked else { return Ok(None) };
+    std::fs::write(&path, book_csv::export(&entries)).map_err(|e| e.to_string())?;
+    info!(entries = entries.len(), "address book exported to {}", path.display());
+    Ok(Some(entries.len()))
 }
 
 #[tauri::command]
