@@ -817,7 +817,14 @@ fn dmabuf_modifiers(d: &Display) -> Vec<u64> {
     if d.vendor.contains("Intel") && !list.contains(&MOD_I915_Y_TILED) {
         list.push(MOD_I915_Y_TILED);
     }
-    list.push(MOD_LINEAR);
+    // Measured on the Kaby Lake-R laptop (docs/20-linux.md): importing Y-tiled
+    // buffers cost the agent a whole core against 16 % with linear ones, so linear
+    // comes first; NUVIRA_DMABUF_TILED=1 puts the tiled layouts first.
+    if std::env::var("NUVIRA_DMABUF_TILED").as_deref() == Ok("1") {
+        list.push(MOD_LINEAR);
+    } else {
+        list.insert(0, MOD_LINEAR);
+    }
     list
 }
 
