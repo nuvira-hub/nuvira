@@ -32,6 +32,8 @@ use crate::{Cmd, Screen, WheelAxis};
 
 /// `pointer` of `stream_output`: the cursor drawn into the picture.
 const POINTER_EMBEDDED: u32 = 2;
+/// `pointer` of `stream_output`: the pointer as stream metadata.
+const POINTER_METADATA: u32 = 4;
 /// `fake_input.axis`: vertical and horizontal wheel.
 const AXIS_VERTICAL: u32 = 0;
 const AXIS_HORIZONTAL: u32 = 1;
@@ -183,7 +185,10 @@ fn open() -> Result<Opened> {
     };
     let qh = queue.handle();
     let output = state.output.clone().context("no screen")?;
-    let stream = screencast.stream_output(&output, POINTER_EMBEDDED, &qh, ());
+    let metadata = crate::cursor::wanted();
+    crate::cursor::set_active(metadata);
+    let stream =
+        screencast.stream_output(&output, if metadata { POINTER_METADATA } else { POINTER_EMBEDDED }, &qh, ());
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while state.node.is_none() && state.failed.is_none() && !state.closed {
         if std::time::Instant::now() > deadline {

@@ -46,8 +46,16 @@ struct Params {
     // Samples per side averaged for each window pixel (1 = no shrinking).
     taps: u32,
     _pad: u32,
+    // The remote pointer drawn on top: its rectangle in the image (0..1), the
+    // part of its texture it fills, on or off.
+    cur0: vec2<f32>,
+    cur1: vec2<f32>,
+    cur_scale: vec2<f32>,
+    cur_on: u32,
+    _pad2: u32,
 };
 @group(0) @binding(4) var<uniform> params: Params;
+@group(0) @binding(5) var tex_cursor: texture_2d<f32>;
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
@@ -69,12 +77,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let y = (yuv.x - 16.0 / 255.0) * 1.164383;
     let u = yuv.y - 0.5;
     let v = yuv.z - 0.5;
-    let rgb = vec3<f32>(
+    var rgb = clamp(vec3<f32>(
         y + 1.596027 * v,
         y - 0.391762 * u - 0.812968 * v,
         y + 2.017232 * u,
-    );
-    return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    ), vec3<f32>(0.0), vec3<f32>(1.0));
+    if (params.cur_on == 1u) {
+        let t = (uv - params.cur0) / (params.cur1 - params.cur0);
+        if (all(t >= vec2<f32>(0.0)) && all(t < vec2<f32>(1.0))) {
+            let c = textureSampleLevel(tex_cursor, samp, t * params.cur_scale, 0.0);
+            rgb = mix(rgb, c.rgb, c.a);
+        }
+    }
+    return vec4<f32>(rgb, 1.0);
 }
 "#;
 
@@ -114,6 +129,28 @@ impl Viewport {
         Some((Viewport { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }, [u(x0), v(y0)], [u(x1), v(y1)]))
     }
 }
+
+/// The remote pointer's image (RGBA, not premultiplied).
+#[derive(Debug, Clone)]
+pub struct CursorShape {
+    pub serial: u32,
+    pub width: u32,
+    pub height: u32,
+    pub hot_x: u32,
+    pub hot_y: u32,
+    pub rgba: Arc<Vec<u8>>,
+}
+
+/// The remote pointer drawn on the image: its shape and its rectangle in the
+/// image, as fractions of it (left, top, width, height).
+#[derive(Debug, Clone)]
+pub struct CursorOverlay {
+    pub shape: CursorShape,
+    pub rect: [f32; 4],
+}
+
+/// Largest pointer image (side, in pixels).
+const CURSOR_TEXTURE: u32 = 256;
 
 /// How the image is placed in the window.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -181,7 +218,7 @@ pub fn fit(fw: u32, fh: u32, sw: u32, sh: u32) -> Viewport {
 }
 
 /// Size of the shader's `Params`: six f32 and two u32.
-const PARAMS_SIZE: u64 = 32;
+const PARAMS_SIZE: u64 = 64;
 
 struct Planes {
     width: u32,
@@ -202,6 +239,10 @@ pub struct GpuRenderer {
     sampler: wgpu::Sampler,
     /// `Params` of the shader.
     params: wgpu::Buffer,
+    /// The remote pointer: its texture, the serial uploaded, where it goes.
+    cursor_texture: wgpu::Texture,
+    cursor_serial: Option<u32>,
+    cursor: Option<CursorOverlay>,
     planes: Option<Planes>,
     view: View,
     pub adapter_info: String,
@@ -319,6 +360,7 @@ impl GpuRenderer {
                     },
                     count: None,
                 },
+                tex_entry(5),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -359,6 +401,17 @@ impl GpuRenderer {
             mapped_at_creation: false,
         });
 
+        let cursor_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cursor"),
+            size: wgpu::Extent3d { width: CURSOR_TEXTURE, height: CURSOR_TEXTURE, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
         Ok(Self {
             surface,
             device,
@@ -368,6 +421,9 @@ impl GpuRenderer {
             layout,
             sampler,
             params,
+            cursor_texture,
+            cursor_serial: None,
+            cursor: None,
             planes: None,
             view: View::default(),
             adapter_info,
@@ -401,6 +457,7 @@ impl GpuRenderer {
         let (y, u, v) = (plane("y", width, height), plane("u", cw, ch), plane("v", cw, ch));
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
         let (vy, vu, vv) = (view(&y), view(&u), view(&v));
+        let vc = view(&self.cursor_texture);
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("yuv"),
             layout: &self.layout,
@@ -410,6 +467,7 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&vv) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                 wgpu::BindGroupEntry { binding: 4, resource: self.params.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&vc) },
             ],
         });
         Planes { width, height, y, u, v, bind_group }
@@ -448,6 +506,30 @@ impl GpuRenderer {
         self.view = view;
     }
 
+    /// The remote pointer drawn on the image (`None`: not drawn). Whether the
+    /// picture changes.
+    pub fn set_cursor(&mut self, cursor: Option<CursorOverlay>) -> bool {
+        let same = match (&self.cursor, &cursor) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.shape.serial == b.shape.serial && a.rect == b.rect,
+            _ => false,
+        };
+        if let Some(c) = &cursor
+            && self.cursor_serial != Some(c.shape.serial)
+        {
+            let s = &c.shape;
+            self.queue.write_texture(
+                self.cursor_texture.as_image_copy(),
+                &s.rgba,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(s.width * 4), rows_per_image: Some(s.height) },
+                wgpu::Extent3d { width: s.width, height: s.height, depth_or_array_layers: 1 },
+            );
+            self.cursor_serial = Some(s.serial);
+        }
+        self.cursor = cursor;
+        !same
+    }
+
     pub fn render(&mut self) {
         let t = std::time::Instant::now();
         let frame = match self.surface.get_current_texture() {
@@ -484,6 +566,19 @@ impl GpuRenderer {
                     data.extend_from_slice(&f.to_le_bytes());
                 }
                 data.extend_from_slice(&n.to_le_bytes());
+                data.extend_from_slice(&0u32.to_le_bytes());
+                let (on, c) = match &self.cursor {
+                    Some(c) => (1u32, {
+                        let [x, y, w, h] = c.rect;
+                        let side = CURSOR_TEXTURE as f32;
+                        [x, y, x + w, y + h, c.shape.width as f32 / side, c.shape.height as f32 / side]
+                    }),
+                    None => (0, [0.0, 0.0, 1.0, 1.0, 1.0, 1.0]),
+                };
+                for f in c {
+                    data.extend_from_slice(&f.to_le_bytes());
+                }
+                data.extend_from_slice(&on.to_le_bytes());
                 data.extend_from_slice(&0u32.to_le_bytes());
                 self.queue.write_buffer(&self.params, 0, &data);
                 pass.set_viewport(vp.x, vp.y, vp.width, vp.height, 0.0, 1.0);
@@ -563,6 +658,14 @@ impl Renderer {
         match self {
             Renderer::Gpu(r) => r.set_view(view),
             Renderer::Cpu(r) => r.set_view(view),
+        }
+    }
+
+    /// The remote pointer drawn on the image; whether the picture changes.
+    pub fn set_cursor(&mut self, cursor: Option<CursorOverlay>) -> bool {
+        match self {
+            Renderer::Gpu(r) => r.set_cursor(cursor),
+            Renderer::Cpu(r) => r.set_cursor(cursor),
         }
     }
 }

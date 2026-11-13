@@ -23,6 +23,8 @@ const SC: &str = "org.gnome.Mutter.ScreenCast";
 
 /// `cursor-mode` of `RecordMonitor`: drawn into the image.
 const CURSOR_EMBEDDED: u32 = 1;
+/// `cursor-mode` of RecordMonitor: the pointer as stream metadata.
+const CURSOR_METADATA: u32 = 2;
 
 async fn proxy(
     bus: &Connection,
@@ -56,7 +58,10 @@ async fn open() -> Result<Opened> {
     let path: OwnedObjectPath = sc.call("CreateSession", &(options,)).await?;
     let cast = proxy(&bus, SC, path, "org.gnome.Mutter.ScreenCast.Session").await?;
     let mut options: HashMap<&str, Value> = HashMap::new();
-    options.insert("cursor-mode", Value::from(CURSOR_EMBEDDED));
+    // The pointer as metadata when the agent wants it (Mutter has it since 3.34).
+    let metadata = crate::cursor::wanted();
+    crate::cursor::set_active(metadata);
+    options.insert("cursor-mode", Value::from(if metadata { CURSOR_METADATA } else { CURSOR_EMBEDDED }));
     // An empty connector: the primary monitor.
     let stream_path: OwnedObjectPath = cast.call("RecordMonitor", &("", options)).await?;
     let stream = proxy(&bus, SC, stream_path.clone(), "org.gnome.Mutter.ScreenCast.Stream").await?;

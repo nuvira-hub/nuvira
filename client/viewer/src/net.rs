@@ -21,6 +21,13 @@ use winit::event_loop::EventLoopProxy;
 pub enum NetEvent {
     /// The person at the remote computer is being asked to accept.
     ConfirmationPending,
+    /// The remote pointer's image (RGBA, not premultiplied), when it changes.
+    CursorShape { serial: u32, width: u32, height: u32, hot_x: u32, hot_y: u32, rgba: std::sync::Arc<Vec<u8>> },
+    /// Where the remote pointer is, in pixels of the remote screen; not visible:
+    /// hidden, or drawn into the picture again.
+    CursorPosition { x: i32, y: i32, visible: bool, serial: u32 },
+    /// The remote screen's size changed (another screen, another resolution).
+    ScreenSize { width: u32, height: u32 },
     Connected {
         agent: String,
         /// Direct path; otherwise through the server's relay.
@@ -514,6 +521,8 @@ async fn handshake(
             print: !terminal_only && crate::printing::available(),
             recording: !terminal_only,
             audio: audio && !terminal_only && conn.max_datagram_size().is_some(),
+            // The remote pointer drawn here: its shape as this computer's pointer.
+            cursor: !terminal_only && std::env::var_os("NUVIRA_NO_CURSOR").is_none(),
             ..Default::default()
         })))
         .await?;
@@ -989,6 +998,28 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::VideoFormat(f)) }) => {
                         info!(w = f.width, h = f.height, "new video format");
+                        let _ = proxy.send_event(NetEvent::ScreenSize { width: f.width, height: f.height });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::CursorShape(s)) }) => {
+                        let (w, h) = (s.width.min(256), s.height.min(256));
+                        if w > 0 && h > 0 && s.bgra.len() >= (w * h * 4) as usize {
+                            let mut rgba = s.bgra;
+                            rgba.truncate((w * h * 4) as usize);
+                            for px in rgba.chunks_exact_mut(4) {
+                                px.swap(0, 2);
+                            }
+                            let _ = proxy.send_event(NetEvent::CursorShape {
+                                serial: s.serial,
+                                width: w,
+                                height: h,
+                                hot_x: s.hot_x.min(w - 1),
+                                hot_y: s.hot_y.min(h - 1),
+                                rgba: std::sync::Arc::new(rgba),
+                            });
+                        }
+                    }
+                    Some(ControlMessage { msg: Some(Msg::CursorPosition(p)) }) => {
+                        let _ = proxy.send_event(NetEvent::CursorPosition { x: p.x, y: p.y, visible: p.visible, serial: p.serial });
                     }
                     Some(_) => {}
                     None => return anyhow::Ok(()),

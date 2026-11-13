@@ -148,7 +148,7 @@ pub fn lock_screen_takes_input() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-pub use linux::set_dmabuf_default;
+pub use linux::set_dmabuf_modifiers;
 
 #[cfg(target_os = "linux")]
 pub fn wayland() -> bool {

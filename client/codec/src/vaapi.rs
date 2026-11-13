@@ -405,6 +405,8 @@ struct Va {
         c_uint,
     ) -> VAStatus,
     destroy_image: unsafe extern "C" fn(VADisplay, VAId) -> VAStatus,
+    /// `vaExportSurfaceHandle` (libva 2.1): absent from older libraries.
+    export_surface: Option<unsafe extern "C" fn(VADisplay, VAId, u32, u32, *mut c_void) -> VAStatus>,
 }
 
 fn va() -> Result<&'static Va> {
@@ -422,7 +424,9 @@ fn load() -> Result<Va> {
                 *$lib.get(concat!($name, "\0").as_bytes()).context($name)?
             };
         }
+        let export_surface = va.get(b"vaExportSurfaceHandle\0").ok().map(|s| *s);
         Ok(Va {
+            export_surface,
             get_display_drm: sym!(drm, "vaGetDisplayDRM"),
             initialize: sym!(va, "vaInitialize"),
             terminate: sym!(va, "vaTerminate"),
@@ -614,7 +618,9 @@ impl Display {
         *self.vpp_verdict.get_or_init(|| match vpp_check(self, 256, 64) {
             Ok(diff) if diff <= VPP_TOLERANCE => {
                 info!(diff, "VA-API: colour conversion on the GPU");
-                crate::set_dmabuf_import_ready();
+                let modifiers = dmabuf_modifiers(self);
+                info!(?modifiers, "VA-API: DMA-BUF layouts it imports");
+                crate::set_dmabuf_import_modifiers(modifiers);
                 true
             }
             Ok(diff) => {
@@ -786,6 +792,107 @@ struct PrimeLayer {
     pitch: [u32; 4],
 }
 const _: () = assert!(size_of::<PrimeDescriptor>() == 312);
+
+/// `DRM_FORMAT_MOD_LINEAR` and `DRM_FORMAT_MOD_INVALID`.
+const MOD_LINEAR: u64 = 0;
+const MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
+/// `I915_FORMAT_MOD_Y_TILED`.
+const MOD_I915_Y_TILED: u64 = 0x0100_0000_0000_0002;
+/// `VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_COMPOSED_LAYERS`.
+const EXPORT_READ_COMPOSED: u32 = 0x0001 | 0x0008;
+
+/// The DMA-BUF layouts the driver imports as RGB surfaces, best first: the layout
+/// of its own RGB surfaces (exported, then imported back to be sure) and linear.
+/// A compositor that can give that layout spares the GPU a copy into a linear
+/// buffer for every picture.
+fn dmabuf_modifiers(d: &Display) -> Vec<u64> {
+    let mut list = Vec::new();
+    match own_rgb_modifier(d) {
+        Ok(m) if m != MOD_LINEAR && m != MOD_INVALID => list.push(m),
+        Ok(m) => debug!(modifier = format_args!("{m:#x}"), "VA-API: its RGB surfaces are linear"),
+        Err(e) => debug!("VA-API: RGB surface not exported: {e:#}"),
+    }
+    // Intel's drivers make linear RGB surfaces but import the Y-tiled buffers the
+    // compositors render into; a refusal falls back to linear while running.
+    if d.vendor.contains("Intel") && !list.contains(&MOD_I915_Y_TILED) {
+        list.push(MOD_I915_Y_TILED);
+    }
+    // Measured on the Kaby Lake-R laptop (docs/20-linux.md): Mutter takes the tiled
+    // layout whenever offered, and it saves little (encoding 4.8 ms against 5.2,
+    // the agent 13 % of a core against 12 %): linear only, the layout tried the
+    // longest, unless NUVIRA_DMABUF_TILED=1.
+    if std::env::var("NUVIRA_DMABUF_TILED").as_deref() == Ok("1") {
+        list.push(MOD_LINEAR);
+        list
+    } else {
+        vec![MOD_LINEAR]
+    }
+}
+
+fn own_rgb_modifier(d: &Display) -> Result<u64> {
+    let va = d.va;
+    let export = va.export_surface.context("vaExportSurfaceHandle missing")?;
+    let (w, h) = (256u32, 64u32);
+    let mut surface = VA_INVALID_ID;
+    let mut attrib = SurfaceAttrib {
+        type_: SURFACE_ATTRIB_PIXEL_FORMAT,
+        flags: SURFACE_ATTRIB_SETTABLE,
+        value_type: GENERIC_VALUE_INTEGER,
+        _pad: 0,
+        value: u32::from_le_bytes(*b"BGRX") as i64,
+    };
+    // SAFETY: libva calls with valid pointers; the surfaces and the exported
+    // descriptors are released below.
+    unsafe {
+        va.check(
+            (va.create_surfaces)(d.dpy, RT_FORMAT_RGB32, w, h, &mut surface, 1, (&mut attrib as *mut SurfaceAttrib).cast(), 1),
+            "RGB surface",
+        )?;
+        let mut desc = PrimeDescriptor::default();
+        let exported = va.check(
+            export(d.dpy, surface, MEM_TYPE_DRM_PRIME_2 as u32, EXPORT_READ_COMPOSED, (&raw mut desc).cast()),
+            "vaExportSurfaceHandle",
+        );
+        (va.destroy_surfaces)(d.dpy, &mut surface, 1);
+        exported?;
+        let fds: Vec<c_int> = desc.objects[..desc.num_objects.min(4) as usize].iter().map(|o| o.fd).collect();
+        let modifier = desc.objects[0].modifier;
+        // Imported back as the compositor's pictures will be (one object, one plane).
+        let result = if desc.num_objects == 1 && desc.num_layers == 1 && desc.layers[0].num_planes == 1 {
+            let mut attribs = [
+                SurfaceAttrib {
+                    type_: SURFACE_ATTRIB_MEMORY_TYPE,
+                    flags: SURFACE_ATTRIB_SETTABLE,
+                    value_type: GENERIC_VALUE_INTEGER,
+                    _pad: 0,
+                    value: MEM_TYPE_DRM_PRIME_2,
+                },
+                SurfaceAttrib {
+                    type_: SURFACE_ATTRIB_EXTERNAL_BUFFER,
+                    flags: SURFACE_ATTRIB_SETTABLE,
+                    value_type: GENERIC_VALUE_POINTER,
+                    _pad: 0,
+                    value: (&raw mut desc) as i64,
+                },
+            ];
+            let mut back = VA_INVALID_ID;
+            let imported = va.check(
+                (va.create_surfaces)(d.dpy, RT_FORMAT_RGB32, w, h, &mut back, 1, attribs.as_mut_ptr().cast(), attribs.len() as c_uint),
+                "import of the exported surface",
+            );
+            if imported.is_ok() {
+                (va.destroy_surfaces)(d.dpy, &mut back, 1);
+            }
+            imported.map(|()| modifier)
+        } else {
+            Err(anyhow!("exported as {} objects, {} layers", desc.num_objects, desc.num_layers))
+        };
+        for fd in fds {
+            libc::close(fd);
+        }
+        result
+    }
+}
 
 /// The BGRA picture on the GPU and the video processing context that converts it
 /// into an NV12 surface (with the GPU's video engine, not its shaders).
@@ -1964,6 +2071,13 @@ impl VideoEncoder for VaapiEncoder {
         match self.encode_dmabuf_va(image, w, h, force_keyframe) {
             Ok(frame) if frame.data.is_empty() => Some(Ok(None)),
             Ok(frame) => Some(Ok(Some(frame))),
+            // A tiled layout the driver does not take after all: linear from now on
+            // (the capture negotiates again with the compositor).
+            Err(e) if image.modifier != MOD_LINEAR => {
+                warn!(modifier = format_args!("{:#x}", image.modifier), "VA-API: DMA-BUF import failed ({e:#}): linear buffers from now on");
+                crate::set_dmabuf_import_modifiers(vec![MOD_LINEAR]);
+                None
+            }
             Err(e) => {
                 warn!("VA-API: DMA-BUF import failed ({e:#}): the pictures go through RAM from now on");
                 self.dmabuf = false;

@@ -107,6 +107,11 @@ pub struct X11Capturer {
     last_pointer: Option<(i32, i32)>,
     /// Next capture, at most 60 per second.
     next: Instant,
+    /// The pointer as metadata for the viewers (nuvira_portal::cursor), its last
+    /// XFixes serial, and the generation of the pointer state last drawn or sent.
+    metadata: bool,
+    cursor_serial: Option<u32>,
+    cursor_generation: u64,
 }
 
 impl X11Capturer {
@@ -130,7 +135,9 @@ impl X11Capturer {
         } else {
             create_damage(&conn, root).inspect_err(|e| info!("X11 capture without XDamage: {e:#}")).ok()
         };
-        info!(width = w, height = h, cursor, shm = shm.is_some(), damage = damage.is_some(), "X11 capture");
+        let metadata = cursor && nuvira_portal::cursor::wanted();
+        nuvira_portal::cursor::set_active(metadata);
+        info!(width = w, height = h, cursor, metadata, shm = shm.is_some(), damage = damage.is_some(), "X11 capture");
         Ok(Self {
             conn,
             root,
@@ -145,7 +152,44 @@ impl X11Capturer {
             last_screen: Vec::new(),
             last_pointer: None,
             next: Instant::now(),
+            metadata,
+            cursor_serial: None,
+            cursor_generation: u64::MAX,
         })
+    }
+
+    /// The pointer for the viewers that draw it: its image when it changed (XFixes,
+    /// premultiplied ARGB, made straight BGRA) and its position.
+    fn publish_cursor(&mut self) {
+        let Some(c) = self.conn.xfixes_get_cursor_image().ok().and_then(|c| c.reply().ok()) else {
+            return;
+        };
+        let serial = c.cursor_serial;
+        let shape = (self.cursor_serial != Some(serial)).then(|| {
+            let (w, h) = (u32::from(c.width).min(256), u32::from(c.height).min(256));
+            let mut bgra = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let argb = c.cursor_image[(y * u32::from(c.width) + x) as usize];
+                    let a = argb >> 24;
+                    let straight = |shift: u32| if a == 0 { 0 } else { (((argb >> shift) & 0xFF) * 255 / a).min(255) as u8 };
+                    bgra.extend_from_slice(&[straight(0), straight(8), straight(16), a as u8]);
+                }
+            }
+            nuvira_portal::cursor::Shape {
+                serial,
+                width: w,
+                height: h,
+                hot_x: u32::from(c.xhot).min(w.saturating_sub(1)),
+                hot_y: u32::from(c.yhot).min(h.saturating_sub(1)),
+                bgra: std::sync::Arc::new(bgra),
+            }
+        });
+        self.cursor_serial = Some(serial);
+        nuvira_portal::cursor::publish(
+            shape,
+            nuvira_portal::cursor::Position { x: i32::from(c.x), y: i32::from(c.y), visible: true, serial },
+        );
     }
 
     /// Takes the events waiting: any damage notice means the screen changed.
@@ -248,7 +292,19 @@ impl Capturer for X11Capturer {
         std::thread::sleep(wait);
         self.next = Instant::now() + Duration::from_millis(16);
         self.drain_events()?;
-        let cursor_moved = self.cursor && self.cursor_changed();
+        let mut cursor_moved = self.cursor && self.cursor_changed();
+        // The viewers draw the pointer: it goes to them apart, the picture does not
+        // change for it. When it must be in the picture again, a new picture.
+        let apart = self.metadata && !nuvira_portal::cursor::composite();
+        if apart && cursor_moved {
+            self.publish_cursor();
+        }
+        let generation = nuvira_portal::cursor::generation();
+        let switched = self.metadata && !apart && generation != self.cursor_generation;
+        if apart {
+            cursor_moved = false;
+        }
+        cursor_moved |= switched;
         let check = self.last_check.elapsed() >= Duration::from_secs(1);
         if self.damage.is_some() && !self.damaged && !cursor_moved && !check && self.frame.is_some() {
             return Ok(None);
@@ -280,8 +336,12 @@ impl Capturer for X11Capturer {
         }
         let mut data = self.frame.take().map(|f| f.data).unwrap_or_default();
         data.clone_from(&self.last_screen);
-        if self.cursor {
+        if self.cursor && !apart {
             self.draw_cursor(&mut data);
+            self.cursor_generation = generation;
+        } else if apart && self.cursor_serial.is_none() {
+            // The first picture: the pointer goes to the viewers at once.
+            self.publish_cursor();
         }
         let (w, h) = (self.display.width, self.display.height);
         self.frame = Some(Frame {
