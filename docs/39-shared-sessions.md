@@ -38,4 +38,6 @@ The agent tells a joining viewer, in its `Hello`, that only the picture and the 
 - First try: the guest's mouse did nothing while the first viewer had not used its own input yet (the agent opened the input loop only with the first viewer's input stream, which shows with its first event). Fixed: the guests' events open the injector by themselves.
 - The installed app and service of this branch on PC-LABORATORIO (the 0.23.1 installation put back afterwards): with the desktop viewer and the web client connected, the app's strip read "PC-STUDIO-NUC e NuviraHub Web stanno controllando questo computer · connessione diretta" (screenshot of the user's session), and the guest's mouse worked through the service's agent.
 
-Not tested yet: confirmation of a guest by the person at the computer, a guest on a slow network (dropped frames, keyframe requests), Linux and macOS agents, three guests.
+- 2026-11-13, a Mac mini M1 (macOS 27.0, release 0.25.0, installed for the whole Mac): the NUC's viewer first, the web client joined; the guest saw the Mac's desktop and moved its pointer; the app's strip on the Mac read "PC-STUDIO-NUC and NuviraHub Web are controlling this computer · direct connection".
+
+Not tested yet: confirmation of a guest by the person at the computer, a guest on a slow network (dropped frames, keyframe requests), Linux agents, three guests.

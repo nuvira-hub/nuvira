@@ -58,6 +58,7 @@ Like the other permissions ([32](32-session-permissions.md)):
 
 - Recordings, 2026-11-13: unit test (3 s of video and a 440 Hz tone with 0.5 s of silence not sent, clocks 5 s apart): ffprobe reads `h264` 320x240 and `opus` 48 kHz stereo, both 3.0 s; decoded, the tone is at 440 Hz and the silence exactly from 1.0 to 1.5 s. A real session, PC-LABORATORIO's agent through the NAS's server to the NUC's viewer with `--record`, the three test tones played on PC-LABORATORIO: 1280x1024 video of 15.9 s and Opus track of 14.7 s, the three tones (9 s) from 5.5 s with the silence before them filled.
 - Web client, 2026-11-13: headless Edge 157 on the NUC (the web client's test bench: page on localhost, WebSocket to the NAS's server) towards PC-LABORATORIO's agent, the three test tones: 451 buffers, 9.02 s played, the mean frequency of the three tones (1314 Hz); with the sound button muted, the agent stopped capturing and nothing arrived during a whole tone; unmuted, the next tone complete.
+- macOS, 2026-11-13, a Mac mini M1 (macOS 27.0, release 0.25.0): the NUC's viewer recording the Mac playing the test tone: Opus track in the MP4, 451 packets, none lost. The Mac's viewer recording PC-LABORATORIO's three tones: the three tones complete in the Mac's MP4.
 
 ## To do
 
