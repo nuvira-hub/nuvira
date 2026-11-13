@@ -214,6 +214,7 @@
   "settings.terminal_hint": "Quien se conecta a este ordenador puede abrir un símbolo del sistema con los derechos del usuario conectado, sin ver el escritorio. La franja de arriba avisa cuando hay un terminal abierto.",
   "settings.tunnel_allowed": "Permitir túneles hacia la red local",
   "settings.tunnel_hint": "Con un servidor NuviraHub Pro, quien controla este ordenador puede alcanzar a través de él las direcciones de su red local, por ejemplo el panel web del router o el Escritorio remoto de otro PC. Nunca direcciones de internet.",
+  "settings.gnome_sign_in_again": "Cierra la sesión y vuelve a entrar una vez: hasta entonces la pantalla de bloqueo de GNOME cierra las sesiones remotas (GNOME inicia la extensión de NuviraHub al iniciar sesión).",
   "settings.unattended": "Acceso desatendido",
   "settings.unattended_hint": "Instala NuviraHub en este equipo para acceder a él aunque no haya nadie delante, también después de reiniciar, con una contraseña permanente. Se necesita una cuenta de administrador.",
   "settings.change_pw": "Cambiar la contraseña permanente",

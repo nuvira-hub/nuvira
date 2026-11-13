@@ -161,6 +161,45 @@ fn enable_in_settings() -> Result<()> {
     Ok(())
 }
 
+/// The extension is installed for this person (theirs, or the system's) but the
+/// GNOME Shell of this session has not loaded it: GNOME loads extensions when the
+/// session starts and has no way to load a new one from a folder later (tried on
+/// GNOME 50: `EnableExtension` answers false, `ReloadExtension` is gone; only
+/// `InstallRemoteExtension` does it, from extensions.gnome.org). Until the person
+/// signs out and in once, the lock screen closes remote sessions. False when it
+/// cannot tell (no GNOME, no `gdbus`).
+pub fn sign_in_again_needed() -> bool {
+    let gnome = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.to_ascii_uppercase().contains("GNOME"));
+    let installed =
+        user_dir().is_ok_and(|d| d.exists()) || Path::new(SYSTEM_EXTENSIONS).join(UUID).exists();
+    if !gnome || !installed {
+        return false;
+    }
+    let output = std::process::Command::new("gdbus")
+        .args([
+            "call",
+            "--session",
+            "--dest",
+            "org.gnome.Shell.Extensions",
+            "--object-path",
+            "/org/gnome/Shell/Extensions",
+            "--method",
+            "org.gnome.Shell.Extensions.GetExtensionInfo",
+            UUID,
+        ])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => !loaded(&String::from_utf8_lossy(&o.stdout)),
+        _ => false,
+    }
+}
+
+/// GNOME Shell knows the extension: `GetExtensionInfo` answers its properties
+/// (an empty dictionary for an extension it never loaded).
+fn loaded(info: &str) -> bool {
+    info.contains("'uuid'")
+}
+
 /// As the person: disables and removes it.
 pub fn uninstall_user() -> Result<()> {
     let dir = user_dir()?;
@@ -314,6 +353,12 @@ mod tests {
             "{m}"
         );
         assert!(m.contains("\"gdm\""));
+    }
+
+    #[test]
+    fn extension_info() {
+        assert!(!loaded("(@a{sv} {},)\n"));
+        assert!(loaded("({'uuid': <'remote-access@nuvirahub.dev'>, 'state': <1.0>, 'type': <1.0>},)\n"));
     }
 
     #[test]
