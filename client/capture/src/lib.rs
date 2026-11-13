@@ -15,6 +15,8 @@ pub mod desktop;
 mod gdi;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+pub mod dmabuf;
 #[cfg(target_os = "macos")]
 mod macos;
 pub mod resolution;
@@ -52,6 +54,9 @@ pub struct Frame {
     /// GPU mode (Windows): the image is in this BGRA texture and `data` is empty.
     #[cfg(windows)]
     pub texture: Option<::windows::Win32::Graphics::Direct3D11::ID3D11Texture2D>,
+    /// Linux with `NUVIRA_DMABUF=1`: the image is in this DMA-BUF and `data` is empty.
+    #[cfg(target_os = "linux")]
+    pub dmabuf: Option<std::sync::Arc<dmabuf::DmaBuf>>,
 }
 
 pub trait Capturer: Send {

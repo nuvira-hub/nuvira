@@ -91,6 +91,21 @@ impl Default for EncoderSettings {
 /// Long-term reference slots, with [`EncoderSettings::ltr`].
 pub const LTR_SLOTS: u8 = 2;
 
+/// A picture in a DMA-BUF (Linux), as the compositor shares it: one plane of a
+/// 32-bit RGB format.
+#[cfg(target_os = "linux")]
+pub struct DmaBufImage {
+    pub fd: std::os::fd::RawFd,
+    pub width: u32,
+    pub height: u32,
+    /// DRM fourcc (XRGB8888, ARGB8888, XBGR8888, ABGR8888).
+    pub drm_format: u32,
+    pub modifier: u64,
+    pub offset: u32,
+    pub stride: u32,
+    pub size: u32,
+}
+
 pub trait VideoEncoder: Send {
     fn name(&self) -> &'static str;
 
@@ -113,6 +128,19 @@ pub trait VideoEncoder: Send {
     /// The encoder wants frames as GPU textures instead of in RAM.
     fn accepts_textures(&self) -> bool {
         false
+    }
+
+    /// Encodes a picture left in a DMA-BUF, reduced to `size`, with no copy through
+    /// RAM (VA-API with video processing). `None` when it cannot: the caller reads
+    /// the buffer into RAM and calls [`encode`](Self::encode).
+    #[cfg(target_os = "linux")]
+    fn encode_dmabuf(
+        &mut self,
+        _image: &DmaBufImage,
+        _size: (u32, u32),
+        _force_keyframe: bool,
+    ) -> Option<anyhow::Result<Option<EncodedFrame>>> {
+        None
     }
 
     /// Changes the bitrate during the session (adaptive bitrate).

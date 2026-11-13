@@ -89,8 +89,13 @@ const ENTRY_VIDEO_PROC: c_int = 10;
 const RT_FORMAT_RGB32: u32 = 0x0002_0000;
 const BUF_PROC_PIPELINE: c_int = 41;
 const SURFACE_ATTRIB_PIXEL_FORMAT: c_int = 1;
+const SURFACE_ATTRIB_MEMORY_TYPE: c_int = 6;
+const SURFACE_ATTRIB_EXTERNAL_BUFFER: c_int = 7;
 const SURFACE_ATTRIB_SETTABLE: u32 = 2;
 const GENERIC_VALUE_INTEGER: c_int = 1;
+const GENERIC_VALUE_POINTER: c_int = 3;
+/// `VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2`: a surface made from DMA-BUFs.
+const MEM_TYPE_DRM_PRIME_2: i64 = 0x4000_0000;
 const COLOR_STANDARD_BT601: i32 = 1;
 const SOURCE_RANGE_REDUCED: u8 = 1;
 const SOURCE_RANGE_FULL: u8 = 2;
@@ -749,6 +754,38 @@ struct SurfaceAttrib {
 }
 const _: () = assert!(size_of::<SurfaceAttrib>() == 24);
 
+/// `VADRMPRIMESurfaceDescriptor` (va_drmcommon.h): the DMA-BUFs of a surface.
+#[repr(C)]
+#[derive(Default)]
+struct PrimeDescriptor {
+    fourcc: u32,
+    width: u32,
+    height: u32,
+    num_objects: u32,
+    objects: [PrimeObject; 4],
+    num_layers: u32,
+    layers: [PrimeLayer; 4],
+}
+
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct PrimeObject {
+    fd: c_int,
+    size: u32,
+    modifier: u64,
+}
+
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct PrimeLayer {
+    drm_format: u32,
+    num_planes: u32,
+    object_index: [u32; 4],
+    offset: [u32; 4],
+    pitch: [u32; 4],
+}
+const _: () = assert!(size_of::<PrimeDescriptor>() == 312);
+
 /// The BGRA picture on the GPU and the video processing context that converts it
 /// into an NV12 surface (with the GPU's video engine, not its shaders).
 struct Vpp {
@@ -912,11 +949,90 @@ impl Vpp {
                     "vaPutImage (RGB)",
                 )?;
             }
+        }
+        self.process(d, self.rgb, target, (self.width, self.height))
+    }
 
+    /// A DMA-BUF picture (the compositor's) imported as a surface and converted
+    /// into `target`, reduced to `out`: no copy through RAM, and the scaling for
+    /// the technician's window done by the video engine too.
+    fn convert_dmabuf(&mut self, d: &Display, image: &crate::DmaBufImage, target: VAId, out: (u32, u32)) -> Result<()> {
+        let va = d.va;
+        let fourcc = match &image.drm_format.to_le_bytes() {
+            b"XR24" => *b"BGRX",
+            b"AR24" => *b"BGRA",
+            b"XB24" => *b"RGBX",
+            b"AB24" => *b"RGBA",
+            other => bail!("DMA-BUF format {:?} not supported", String::from_utf8_lossy(other)),
+        };
+        let mut desc = PrimeDescriptor {
+            fourcc: u32::from_le_bytes(fourcc),
+            width: image.width,
+            height: image.height,
+            num_objects: 1,
+            num_layers: 1,
+            ..Default::default()
+        };
+        desc.objects[0] = PrimeObject { fd: image.fd, size: image.size, modifier: image.modifier };
+        desc.layers[0] = PrimeLayer {
+            drm_format: image.drm_format,
+            num_planes: 1,
+            object_index: [0; 4],
+            offset: [image.offset, 0, 0, 0],
+            pitch: [image.stride, 0, 0, 0],
+        };
+        let mut attribs = [
+            SurfaceAttrib {
+                type_: SURFACE_ATTRIB_MEMORY_TYPE,
+                flags: SURFACE_ATTRIB_SETTABLE,
+                value_type: GENERIC_VALUE_INTEGER,
+                _pad: 0,
+                value: MEM_TYPE_DRM_PRIME_2,
+            },
+            SurfaceAttrib {
+                type_: SURFACE_ATTRIB_EXTERNAL_BUFFER,
+                flags: SURFACE_ATTRIB_SETTABLE,
+                value_type: GENERIC_VALUE_POINTER,
+                _pad: 0,
+                value: (&raw mut desc) as i64,
+            },
+        ];
+        let mut surface = VA_INVALID_ID;
+        // SAFETY: the descriptor lives through the call (the driver imports the
+        // buffer: the descriptor is ours to close); the surface is destroyed below.
+        unsafe {
+            va.check(
+                (va.create_surfaces)(
+                    d.dpy,
+                    RT_FORMAT_RGB32,
+                    image.width,
+                    image.height,
+                    &mut surface,
+                    1,
+                    attribs.as_mut_ptr().cast(),
+                    attribs.len() as c_uint,
+                ),
+                "DMA-BUF import",
+            )?;
+        }
+        let result = self.process(d, surface, target, out);
+        // SAFETY: created above, once.
+        unsafe { (va.destroy_surfaces)(d.dpy, &mut surface, 1) };
+        result
+    }
+
+    /// The video engine converts `source` (all of it) into `target`'s top-left
+    /// `out` rectangle, BT.601 limited range like the CPU conversion.
+    fn process(&mut self, d: &Display, source: VAId, target: VAId, out: (u32, u32)) -> Result<()> {
+        let va = d.va;
+        let (w, h) = (out.0 as usize, out.1 as usize);
+        // SAFETY: the parameter buffer and the rectangle it points to live until
+        // vaEndPicture.
+        unsafe {
             // VARectangle: x, y (i16), width, height (u16).
             let region: [u16; 4] = [0, 0, w as u16, h as u16];
             let mut params = [0u8; PIPELINE_SIZE];
-            params[PIPELINE_SURFACE..][..4].copy_from_slice(&self.rgb.to_le_bytes());
+            params[PIPELINE_SURFACE..][..4].copy_from_slice(&source.to_le_bytes());
             params[PIPELINE_OUTPUT_REGION..][..8].copy_from_slice(&(region.as_ptr() as u64).to_le_bytes());
             params[PIPELINE_BACKGROUND..][..4].copy_from_slice(&0xff00_0000u32.to_le_bytes());
             params[PIPELINE_OUTPUT_STANDARD..][..4].copy_from_slice(&COLOR_STANDARD_BT601.to_le_bytes());
@@ -1701,6 +1817,8 @@ pub struct VaapiEncoder {
     qp_control: Option<QpControl>,
     /// The driver failed during the session: OpenH264 from then on.
     fallback: Option<OpenH264Encoder>,
+    /// DMA-BUF pictures are imported (until an import fails).
+    dmabuf: bool,
 }
 
 impl VaapiEncoder {
@@ -1716,6 +1834,7 @@ impl VaapiEncoder {
             new_rate: false,
             qp_control,
             fallback: None,
+            dmabuf: true,
         };
         // The keyframe must carry the parameter sets (ours or the driver's).
         let (w, h) = (320u32, 180u32);
@@ -1749,21 +1868,49 @@ impl VaapiEncoder {
         }
     }
 
-    fn encode_va(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<EncodedFrame> {
-        let (w, h) = crate::convert::even_size(image);
-        let (w, h) = (w as u32, h as u32);
+    fn session_for(&mut self, w: u32, h: u32) -> Result<()> {
         if self.session.as_ref().is_none_or(|s| (s.width, s.height) != (w, h)) {
             self.session_drop();
             self.session = Some(Session::new(self.display, w, h)?);
             debug!(w, h, "VA-API session");
             self.force_key = true;
         }
+        Ok(())
+    }
+
+    fn encode_va(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<EncodedFrame> {
+        let (w, h) = crate::convert::even_size(image);
+        let (w, h) = (w as u32, h as u32);
+        self.session_for(w, h)?;
+        let session = self.session.as_mut().context("VA-API session")?;
+        session.upload(self.display, image)?;
+        self.encode_input(force_keyframe)
+    }
+
+    /// A DMA-BUF picture converted (and reduced to `w`x`h`) on the GPU, then encoded.
+    fn encode_dmabuf_va(
+        &mut self,
+        image: &crate::DmaBufImage,
+        w: u32,
+        h: u32,
+        force_keyframe: bool,
+    ) -> Result<EncodedFrame> {
+        self.session_for(w, h)?;
+        let display = self.display;
+        let session = self.session.as_mut().context("VA-API session")?;
+        let input = session.input;
+        let vpp = session.vpp.as_mut().context("no video processing on this driver")?;
+        vpp.convert_dmabuf(display, image, input, (w, h))?;
+        self.encode_input(force_keyframe)
+    }
+
+    /// Encodes the session's input surface, already filled.
+    fn encode_input(&mut self, force_keyframe: bool) -> Result<EncodedFrame> {
         // Both taken: a keyframe asked for also satisfies the pending one.
         let pending = std::mem::take(&mut self.force_key);
         let key = force_keyframe || pending;
         let new_rate = std::mem::take(&mut self.new_rate);
         let session = self.session.as_mut().context("VA-API session")?;
-        session.upload(self.display, image)?;
         let qp = self.qp_control.as_ref().map(QpControl::qp);
         let data = session.encode(self.display, &self.settings, key, new_rate, qp)?;
         let keyframe = nal_types(&data).contains(&5);
@@ -1795,6 +1942,31 @@ impl VideoEncoder for VaapiEncoder {
             self.new_rate = true;
             if let Some(control) = &mut self.qp_control {
                 control.set_bitrate(bps);
+            }
+        }
+    }
+
+    fn encode_dmabuf(
+        &mut self,
+        image: &crate::DmaBufImage,
+        size: (u32, u32),
+        force_keyframe: bool,
+    ) -> Option<Result<Option<EncodedFrame>>> {
+        if self.fallback.is_some() || !self.dmabuf {
+            return None;
+        }
+        let w = size.0.min(image.width) & !1;
+        let h = size.1.min(image.height) & !1;
+        if w < 2 || h < 2 {
+            return None;
+        }
+        match self.encode_dmabuf_va(image, w, h, force_keyframe) {
+            Ok(frame) if frame.data.is_empty() => Some(Ok(None)),
+            Ok(frame) => Some(Ok(Some(frame))),
+            Err(e) => {
+                warn!("VA-API: DMA-BUF import failed ({e:#}): the pictures go through RAM from now on");
+                self.dmabuf = false;
+                None
             }
         }
     }

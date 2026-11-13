@@ -51,6 +51,8 @@ fn main() -> anyhow::Result<()> {
             captured_us: 0,
             #[cfg(windows)]
             texture: None,
+            #[cfg(target_os = "linux")]
+            dmabuf: None,
         };
         let path = format!("{path}.last.ppm");
         save_ppm(&path, &frame)?;

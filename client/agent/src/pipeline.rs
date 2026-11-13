@@ -31,6 +31,9 @@ struct Captured {
     /// GPU mode: the image is in this texture and `data` is empty.
     #[cfg(windows)]
     texture: Option<nuvira_codec::GpuTexture>,
+    /// The image is in this DMA-BUF and `data` is empty (Linux, `NUVIRA_DMABUF=1`).
+    #[cfg(target_os = "linux")]
+    dmabuf: Option<std::sync::Arc<nuvira_capture::dmabuf::DmaBuf>>,
 }
 
 #[derive(Default)]
@@ -166,6 +169,8 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
             captured_us: frame.captured_us,
             #[cfg(windows)]
             texture: frame.texture.clone().map(nuvira_codec::GpuTexture),
+            #[cfg(target_os = "linux")]
+            dmabuf: frame.dmabuf.clone(),
         };
         shared.captured.fetch_add(1, Ordering::Relaxed);
         let old = shared.slot.lock().expect("slot").replace(captured);
@@ -255,6 +260,9 @@ fn encode_loop(
     let mut encoded_at = (0, 0);
     // Reduced image for the encoders that take it from RAM.
     let mut scaled = Vec::new();
+    // A DMA-BUF picture read into RAM, when the encoder does not import it.
+    #[cfg(target_os = "linux")]
+    let (mut dmabuf_ram, mut dmabuf_warned) = (Vec::new(), false);
     let mut last_encoded = Instant::now() - Duration::from_secs(1);
     // Last encoded image: used to make a keyframe again on a still screen.
     let mut last: Option<Captured> = None;
@@ -338,7 +346,38 @@ fn encode_loop(
         }
 
         let t = Instant::now();
-        let result = match image_texture(image) {
+        // A DMA-BUF picture: imported by the encoder, else read into RAM first.
+        #[allow(unused_mut)]
+        let mut imported: Option<anyhow::Result<Option<nuvira_codec::EncodedFrame>>> = None;
+        #[cfg(target_os = "linux")]
+        let mut read: Option<Captured> = None;
+        #[cfg(target_os = "linux")]
+        if let Some(buf) = &image.dmabuf {
+            imported = encoder.encode_dmabuf(&dmabuf_image(buf), size, force_key);
+            if imported.is_none() {
+                let mut data = std::mem::take(&mut dmabuf_ram);
+                if let Err(e) = buf.read(&mut data) {
+                    if !std::mem::replace(&mut dmabuf_warned, true) {
+                        warn!("DMA-BUF picture not readable: {e:#}");
+                    }
+                    continue;
+                }
+                read = Some(Captured {
+                    width: buf.width,
+                    height: buf.height,
+                    stride: buf.width as usize * 4,
+                    data,
+                    captured_us: image.captured_us,
+                    dmabuf: None,
+                });
+            }
+        }
+        #[cfg(target_os = "linux")]
+        let image = read.as_ref().unwrap_or(image);
+        let result = if let Some(result) = imported {
+            result
+        } else {
+            match image_texture(image) {
             #[cfg(windows)]
             Some(texture) if encoder.accepts_textures() => {
                 encoder.encode_texture(texture, (image.width, image.height), size, force_key)
@@ -360,6 +399,7 @@ fn encode_loop(
                         force_key,
                     )
                 }
+            }
             }
         };
         let encoded = match result {
@@ -402,6 +442,22 @@ fn encode_loop(
 #[cfg(windows)]
 fn image_texture(image: &Captured) -> Option<&nuvira_codec::GpuTexture> {
     image.texture.as_ref()
+}
+
+/// The codec's description of a captured DMA-BUF.
+#[cfg(target_os = "linux")]
+fn dmabuf_image(buf: &nuvira_capture::dmabuf::DmaBuf) -> nuvira_codec::DmaBufImage {
+    use std::os::fd::AsRawFd;
+    nuvira_codec::DmaBufImage {
+        fd: buf.fd.as_raw_fd(),
+        width: buf.width,
+        height: buf.height,
+        drm_format: buf.drm_format,
+        modifier: buf.modifier,
+        offset: buf.offset,
+        stride: buf.stride,
+        size: buf.size,
+    }
 }
 
 #[cfg(not(windows))]

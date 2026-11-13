@@ -131,6 +131,7 @@ impl Capturer for X11Capturer {
             stride: usize::from(w) * 4,
             data,
             captured_us: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64),
+            dmabuf: None,
         });
         Ok(self.frame.as_ref())
     }
