@@ -23,6 +23,7 @@ use crate::net::NetEvent;
 const HTML: &str = include_str!("toolbar.html");
 const CHAT_HTML: &str = include_str!("chat.html");
 const NOTICE_HTML: &str = include_str!("notice.html");
+const MENU_HTML: &str = include_str!("menu.html");
 /// Sizes in logical pixels: open toolbar and the tab to reopen it.
 const BAR: (f64, f64) = (976.0, 38.0);
 /// Chat panel: width and maximum height, distance from the edges.
@@ -31,6 +32,10 @@ const CHAT_MARGIN: f64 = 12.0;
 const TAB: (f64, f64) = (56.0, 14.0);
 /// Message in the middle of the window, before the first image.
 const NOTICE: (f64, f64) = (520.0, 76.0);
+/// Drop-down menu: width, height of an item and of the padding.
+const MENU_WIDTH: f64 = 300.0;
+const MENU_ITEM: f64 = 40.0;
+const MENU_PADDING: f64 = 8.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -70,12 +75,21 @@ pub enum Action {
     SendFile,
     /// Opens the file manager window.
     FileManager,
+    /// Opens a drop-down menu (`quality`) under the button that starts this many
+    /// logical pixels from the toolbar's left edge.
+    Menu(String, i32),
+    /// The drop-down menu closed (a choice, Esc, a click elsewhere).
+    MenuClose,
 }
 
 impl Action {
     fn parse(s: &str) -> Option<Self> {
         if let Some(index) = s.strip_prefix("display:") {
             return index.parse().ok().map(Self::Display);
+        }
+        if let Some(rest) = s.strip_prefix("menu:") {
+            let (kind, x) = rest.split_once(':')?;
+            return Some(Self::Menu(kind.to_string(), x.parse().ok()?));
         }
         if let Some(text) = s.strip_prefix("chat:") {
             return Some(Self::ChatSend(text.to_string()));
@@ -106,6 +120,7 @@ impl Action {
             "chat" => Self::Chat,
             "sendfile" => Self::SendFile,
             "files" => Self::FileManager,
+            "menuclose" => Self::MenuClose,
             _ => return None,
         })
     }
@@ -214,6 +229,84 @@ impl ChatPanel {
     pub fn focus_session(&self) {
         let _ = self.webview.focus_parent();
     }
+}
+
+/// Drop-down menu of the toolbar (for now the quality): a WebView of its own under
+/// the button, hidden when not open. The toolbar's WebView is only as tall as the
+/// bar, and making it taller would cover the picture.
+pub struct Menu {
+    webview: WebView,
+    window: Arc<Window>,
+    open: bool,
+    _context: WebContext,
+}
+
+/// An item of the menu: the action sent when chosen, its name and hint as string keys.
+pub struct MenuItem<'a> {
+    pub action: &'a str,
+    pub label: &'a str,
+    pub hint: &'a str,
+    pub checked: bool,
+}
+
+impl Menu {
+    pub fn new(window: Arc<Window>, proxy: EventLoopProxy<NetEvent>) -> Result<Self> {
+        let bounds = menu_bounds(&window, 0.0, 1);
+        let (webview, context) = child_webview(&window, proxy, MENU_HTML, bounds, false).context("menu WebView")?;
+        // As the chat panel: GTK maps the window only when it handles its events.
+        #[cfg(target_os = "linux")]
+        {
+            while gtk::events_pending() {
+                gtk::main_iteration_do(false);
+            }
+            let _ = webview.set_visible(false);
+        }
+        Ok(Self { webview, window, open: false, _context: context })
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Opens under the button `x` logical pixels from the toolbar's left edge; it
+    /// takes the keyboard (arrows, Enter, Esc).
+    pub fn show(&mut self, x: f64, items: &[MenuItem]) {
+        let list: Vec<String> = items
+            .iter()
+            .map(|i| {
+                format!(
+                    "{{action:{},label:{},hint:{},checked:{}}}",
+                    js_string(i.action),
+                    js_string(i.label),
+                    js_string(i.hint),
+                    i.checked
+                )
+            })
+            .collect();
+        let _ = self.webview.set_bounds(menu_bounds(&self.window, x, items.len()));
+        let _ = self.webview.evaluate_script(&format!("window.nuvira && nuvira.show([{}])", list.join(",")));
+        let _ = self.webview.set_visible(true);
+        let _ = self.webview.focus();
+        self.open = true;
+    }
+
+    pub fn hide(&mut self) {
+        if self.open {
+            self.open = false;
+            let _ = self.webview.set_visible(false);
+            let _ = self.webview.focus_parent();
+        }
+    }
+}
+
+/// Under the toolbar, from the button's left edge, kept inside the window.
+fn menu_bounds(window: &Window, x: f64, items: usize) -> Rect {
+    let inner = window.inner_size().to_logical::<f64>(window.scale_factor());
+    let bar_left = ((inner.width - BAR.0.min(inner.width)) / 2.0).round();
+    let w = MENU_WIDTH.min(inner.width);
+    let h = (MENU_PADDING + MENU_ITEM * items as f64).min((inner.height - BAR.1 - 2.0).max(0.0));
+    let left = (bar_left + x).min(inner.width - w).max(0.0).round();
+    Rect { position: LogicalPosition::new(left, BAR.1 + 2.0).into(), size: LogicalSize::new(w, h).into() }
 }
 
 /// Message in the middle of the window while there is no image yet (connecting,
@@ -387,6 +480,13 @@ pub fn js_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_actions() {
+        assert_eq!(Action::parse("menu:quality:412"), Some(Action::Menu("quality".into(), 412)));
+        assert_eq!(Action::parse("menu:quality:x"), None);
+        assert_eq!(Action::parse("menuclose"), Some(Action::MenuClose));
+    }
 
     #[test]
     fn actions_and_escaping() {
