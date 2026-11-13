@@ -11,9 +11,10 @@ While a technician is connected, others can join the same session: a colleague c
 | Picture | yes | yes, the same frames |
 | Keyboard and mouse | yes | yes, through the same input (the person's "Keyboard and mouse" switch and the technician's limits apply to each) |
 | Choice of screen, resolution, quality | yes | no: they follow the first viewer |
-| Files, clipboard, terminal, tunnels, printing, sound, recording, privacy mode, restart | yes | no |
+| Sound of the computer | yes | yes, the same packets, each with its own mute button (from 0.26.0; when the first viewer has sound) |
+| Files, clipboard, terminal, tunnels, printing, recording, privacy mode, restart | yes | no |
 
-The agent tells a joining viewer, in its `Hello`, that only the picture and the keyboard are there: any viewer can join (the app's viewer, the web client of NuviraHub Pro, older versions), it shows only what it is offered. When the first viewer's session ends, the others end with it.
+The agent tells a joining viewer, in its `Hello`, that only the picture, the keyboard and the sound are there: any viewer can join (the app's viewer, the web client of NuviraHub Pro, older versions), it shows only what it is offered. When the first viewer's session ends, the others end with it.
 
 **The first technician is told.** Whoever started the session sees "PC-B joined this session: they see the screen and can use the keyboard and mouse" when someone joins, and "PC-B left the session" when they leave (the app's viewer and the web client, from 0.26.0; the control message `Guests`, ignored by older viewers).
 
@@ -27,6 +28,7 @@ The agent tells a joining viewer, in its `Hello`, that only the picture and the 
 ## How
 
 - **Agent** (`client/agent/src/shared.rs`): the session in progress puts a `Shared` in the agent's context once its picture is running (sessions through a server; LAN tests stay single). A request from the server while busy is accepted when a session can be joined; its connection goes through the same `Gate` (password, confirmation), then `guest_session` runs: the current `VideoFormat`, `Permissions` (input only), a video stream, the guest's input stream into the session's input loop (one injector for everyone, so the switch and the release of pressed keys work for all), `Ping`/`Pong` and `RequestKeyframe`.
+- **Sound.** The capture runs once: each packet sent to the first viewer (the same datagram, `0xA0` + sequence number + Opus) is copied to the guests that play sound (`Hello.audio`), through a broadcast channel of 64 packets; a guest that falls behind skips. Each viewer's mute button (`SetAudio`) counts: the capture runs while the first viewer or a guest wants sound, and the person's "Sound" switch stops it for everyone. A guest has sound only when the session has it (the first viewer plays sound, the rules and the computer allow it).
 - **Video.** The encoder runs once. Each frame sent to the first viewer is copied to every guest's queue (8 frames). A guest that falls behind loses frames, skips everything until the next keyframe, and asks for one; keyframes for guests are asked every 2 s at most, so a slow guest cannot fill the first viewer's network with them. The bitrate and the size of the picture follow the first viewer (its network, its window). A change of screen or resolution sends the new `VideoFormat` to the guests too.
 - **Video on a stream** for guests, never as datagrams.
 - **First viewer.** The same list as the control message `Guests { names }` (proto, field 32 of `ControlMessage`), at every change; the viewer compares it with the last one, counting each name (two windows of one computer have the same name), and shows who joined or left.
@@ -47,5 +49,7 @@ The agent tells a joining viewer, in its `Hello`, that only the picture and the 
 - 2026-11-13, a Linux agent (Linux Mint VM, X11) of the branch with `--ipc`, its temporary password, and a stand-in for the app on its socket answering the requests: the first viewer accepted; a second viewer refused at the computer ("access denied: connection not accepted on the device"); a third accepted, joined and saw the screen; the stand-in got `guests` with the name, then empty; the first viewer was told of the join and the leave.
 - 2026-11-13, the web client as the first viewer (bench, headless Edge) and a desktop viewer joining: the page showed "PC-STUDIO-NUC si è unito alla sessione…", then "…ha lasciato la sessione".
 - A slow guest, in a unit test (`shared::tests::slow_guest_waits_for_a_keyframe`): its queue of 8 frames full, the next is dropped, it waits for a keyframe and one is asked for, at most once in 2 s; the frames it had queued still come, nothing is shown until the keyframe.
+
+- 2026-11-13, branch `guests-audio`: PC-LABORATORIO's test agent through the NAS's server playing a tone in a loop, two desktop viewers on the NUC (each with `NUVIRA_AUDIO_DUMP`), the second joining 8 s after the first: the first received 2073 sound packets, the guest 1333, none lost, the same level in both recordings (RMS 3537 and 3487). Not tried live: a mute button pressed by one of them (the logic is in the unit test of `Shared`).
 
 Not tested yet: a guest on a real slow network.

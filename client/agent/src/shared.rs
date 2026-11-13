@@ -3,9 +3,10 @@
 //! A second technician (at most [`MAX_GUESTS`]) reaches the computer while someone
 //! is already connected: they go through the same access control (password,
 //! confirmation by the person at the PC), then see the same picture and use the
-//! same keyboard and mouse. The rest of the session (files, clipboard, terminal,
-//! tunnels, printing, sound, recording, privacy mode, the screen and its
-//! resolution) stays with the first viewer, and the agent says so in its Hello:
+//! same keyboard and mouse, and hear the same sound (each with its own mute
+//! button). The rest of the session (files, clipboard, terminal, tunnels,
+//! printing, recording, privacy mode, the screen and its resolution) stays with
+//! the first viewer, and the agent says so in its Hello:
 //! any viewer works as a guest, older ones too. The guests leave when the first
 //! viewer's session ends.
 //!
@@ -21,6 +22,7 @@ use anyhow::{Result, bail};
 use nuvira_proto::v1::{
     AuthResult, ControlMessage, Hello, InputEvent, Pong, VideoFrame, control_message::Msg,
 };
+use tokio::sync::{broadcast, watch};
 use nuvira_transport::{Connection, FramedRecv, FramedSend};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -61,6 +63,13 @@ pub struct Shared {
     events: mpsc::UnboundedSender<AgentEvent>,
     /// The guests' names, for the first viewer (`Guests` control message).
     names: tokio::sync::watch::Sender<Vec<String>>,
+    /// The computer's sound is sent in this session (the first viewer plays it).
+    pub audio_offered: bool,
+    /// The sound packets as sent to the first viewer (datagrams), for the guests.
+    audio: broadcast::Sender<Arc<Vec<u8>>>,
+    /// Guests that want the sound: the capture runs while the first viewer or one
+    /// of them does.
+    listeners: watch::Sender<usize>,
 }
 
 impl Shared {
@@ -70,6 +79,7 @@ impl Shared {
         input: mpsc::UnboundedSender<InputEvent>,
         input_offered: bool,
         events: mpsc::UnboundedSender<AgentEvent>,
+        audio_offered: bool,
     ) -> Self {
         Self {
             keyframe,
@@ -81,7 +91,24 @@ impl Shared {
             input_offered,
             events,
             names: tokio::sync::watch::channel(Vec::new()).0,
+            audio_offered,
+            audio: broadcast::channel(64).0,
+            listeners: watch::channel(0).0,
         }
+    }
+
+    /// A sound packet as sent to the first viewer, for the guests.
+    pub fn audio_packet(&self, datagram: &Arc<Vec<u8>>) {
+        let _ = self.audio.send(datagram.clone());
+    }
+
+    /// How many guests want the sound, at every change.
+    pub fn listeners(&self) -> watch::Receiver<usize> {
+        self.listeners.subscribe()
+    }
+
+    fn listen(&self, on: bool) {
+        self.listeners.send_modify(|n| *n = if on { *n + 1 } else { n.saturating_sub(1) });
     }
 
     /// The guests' names at every change, for the first viewer.
@@ -224,7 +251,9 @@ pub async fn guest_session(
         bail!("@agent.busy");
     };
     let input = shared.input_offered && !policy.no_input;
-    let answer = Hello { password_required: true, text: input, ..local_hello() };
+    // The sound where the first viewer has it, and this one plays it.
+    let audio = shared.audio_offered && hello.audio && !policy.no_audio && conn.max_datagram_size().is_some();
+    let answer = Hello { password_required: true, text: input, audio, ..local_hello() };
     ctrl_tx.send(&control(Msg::Hello(answer))).await?;
     let given = match ctrl_rx.recv::<ControlMessage>().await? {
         Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
@@ -283,6 +312,7 @@ pub async fn guest_session(
     // What the guest's session has: the keyboard and mouse, or nothing.
     let mut permissions = crate::permissions(0, 0);
     permissions.input = input;
+    permissions.audio = audio;
     ctrl_tx.send(&control(Msg::Permissions(permissions))).await?;
     let mut video_tx = FramedSend::new(conn.open_uni().await?);
 
@@ -318,6 +348,48 @@ pub async fn guest_session(
         }
         anyhow::Ok(())
     };
+    // The sound, while this guest's mute button is not pressed.
+    let (audio_on_tx, mut audio_on_rx) = watch::channel(audio);
+    let sound = async {
+        if !audio {
+            return std::future::pending().await;
+        }
+        struct Listening<'a>(&'a Shared, bool);
+        impl Listening<'_> {
+            fn set(&mut self, on: bool) {
+                if on != self.1 {
+                    self.0.listen(on);
+                    self.1 = on;
+                }
+            }
+        }
+        impl Drop for Listening<'_> {
+            fn drop(&mut self) {
+                self.set(false);
+            }
+        }
+        let mut listening = Listening(&shared, false);
+        let mut packets = shared.audio.subscribe();
+        loop {
+            listening.set(*audio_on_rx.borrow_and_update());
+            tokio::select! {
+                changed = audio_on_rx.changed() => {
+                    if changed.is_err() {
+                        return anyhow::Ok(());
+                    }
+                }
+                packet = packets.recv() => match packet {
+                    Ok(packet) if listening.1 => match conn.send_datagram(packet.as_ref().clone().into()) {
+                        Ok(()) => {}
+                        Err(quinn::SendDatagramError::ConnectionLost(e)) => return Err(e.into()),
+                        Err(e) => tracing::debug!("audio packet not sent to a guest: {e}"),
+                    },
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => return anyhow::Ok(()),
+                },
+            }
+        }
+    };
     let control_loop = async {
         while let Some(msg) = ctrl_rx.recv::<ControlMessage>().await? {
             match msg.msg {
@@ -329,6 +401,9 @@ pub async fn guest_session(
                     lost.store(true, Ordering::Relaxed);
                     shared.request_keyframe();
                 }
+                Some(Msg::SetAudio(set)) => {
+                    let _ = audio_on_tx.send(set.on && audio);
+                }
                 _ => {}
             }
         }
@@ -338,6 +413,7 @@ pub async fn guest_session(
         r = video => r,
         r = input_loop => r,
         r = control_loop => r,
+        r = sound => r,
     };
     if let Err(e) = &result {
         warn!("guest's session ended: {e:#}");
@@ -374,7 +450,7 @@ mod tests {
         let keyframe = Arc::new(AtomicBool::new(false));
         let (input, _input_rx) = mpsc::unbounded_channel();
         let (events, mut events_rx) = mpsc::unbounded_channel();
-        let shared = Shared::new(keyframe.clone(), display(), input, true, events);
+        let shared = Shared::new(keyframe.clone(), display(), input, true, events, true);
         let mut names = shared.subscribe();
 
         let (id, mut rx, lost) = shared.join("NuviraHub Web".into());
@@ -403,6 +479,17 @@ mod tests {
         assert_eq!(got, 8);
         shared.frame(&frame(11, true));
         assert!(matches!(rx.try_recv(), Ok(ToGuest::Frame(f)) if f.keyframe));
+
+        // The sound: guests that want it keep the capture going; the packets sent to
+        // the first viewer reach them.
+        let listeners = shared.listeners();
+        shared.listen(true);
+        shared.listen(true);
+        shared.listen(false);
+        assert_eq!(*listeners.borrow(), 1);
+        let mut packets = shared.audio.subscribe();
+        shared.audio_packet(&Arc::new(vec![0xA0, 1, 0, 0, 0, 9]));
+        assert_eq!(packets.try_recv().unwrap().as_slice(), [0xA0, 1, 0, 0, 0, 9]);
 
         shared.leave(id);
         assert!(names.borrow_and_update().is_empty());
