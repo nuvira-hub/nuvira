@@ -12,7 +12,9 @@
 //! Linux: X11, see `privacy_x11.rs` (gamma at zero, local devices switched off
 //! through XInput, in a child process); Wayland with GNOME, see
 //! `privacy_wayland.rs` (gamma at zero through Mutter, local devices grabbed by
-//! root: needs the system part of unattended access).
+//! root: needs the system part of unattended access); KDE Plasma 6.6 or later,
+//! see `privacy_kde.rs` (black windows left out of KWin's screencast, local
+//! devices grabbed by root).
 
 use anyhow::Result;
 
@@ -27,17 +29,20 @@ mod mac;
 pub(crate) use mac::{INJECTED_TAG, USER_DATA};
 
 #[cfg(target_os = "linux")]
-#[path = "privacy_x11.rs"]
-mod x11;
+#[path = "privacy_kde.rs"]
+mod kde;
 #[cfg(target_os = "linux")]
 #[path = "privacy_wayland.rs"]
 mod wayland;
+#[cfg(target_os = "linux")]
+#[path = "privacy_x11.rs"]
+mod x11;
 
 /// Linux: why privacy mode cannot start in this session, if it cannot.
 #[cfg(target_os = "linux")]
 fn check() -> Result<()> {
     if crate::wayland_session() {
-        wayland::check()
+        if kde::supported() { kde::check() } else { wayland::check() }
     } else if x11::available() {
         Ok(())
     } else {
@@ -106,7 +111,11 @@ pub fn overlay_if_asked() {
 pub fn recover() {
     #[cfg(target_os = "linux")]
     if crate::wayland_session() {
-        wayland::recover();
+        if kde::supported() {
+            kde::recover();
+        } else {
+            wayland::recover();
+        }
     } else {
         x11::recover();
     }

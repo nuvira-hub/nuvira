@@ -8,7 +8,8 @@
 //!   window, since Mutter's screencast cannot leave one out. Needs a driver with
 //!   a gamma ramp: virtual machines (virtio-gpu) have none, then privacy mode is
 //!   not offered (`NUVIRA_PRIVACY_NO_BLACK=1` offers it without the black, for
-//!   tests). Other compositors (KDE) have no such API: not offered.
+//!   tests). Other compositors have no such API: KDE Plasma 6.6 or later has
+//!   black windows left out of the capture instead (`privacy_kde.rs`).
 //! - Local mouse and keyboard: grabbed by root (`local_input`), which needs the
 //!   system part of unattended access.
 //!
