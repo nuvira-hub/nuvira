@@ -411,6 +411,7 @@
   "server.no_address_book": "das Adressbuch ist auf diesem Server nicht verfügbar",
   "server.blocked": "der Zugang zu diesem Server wurde gesperrt; wenn du einen Fehler vermutest, schreib an abuse@nuvirahub.dev",
   "server.rate_limited": "zu viele Anfragen: versuch es in einer Minute erneut",
+  "server.ip_not_allowed": "Verbindung von dieser IP-Adresse nicht erlaubt (Regeln des Servers)",
   "server.pro_required": "diese Funktion erfordert NuviraHub Pro auf dem Server",
   "server.license_required": "die NuviraHub-Pro-Lizenz dieses Servers fehlt, ist abgelaufen oder umfasst diese Funktion nicht",
   "server.old_version": "Protokollversion nicht unterstützt: Aktualisiere NuviraHub",

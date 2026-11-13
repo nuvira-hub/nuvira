@@ -411,6 +411,7 @@
   "server.no_address_book": "la rubrica non è disponibile su questo server",
   "server.blocked": "l'accesso a questo server è stato bloccato; se pensi sia un errore, scrivi a abuse@nuvirahub.dev",
   "server.rate_limited": "troppe richieste: riprova tra un minuto",
+  "server.ip_not_allowed": "connessione non consentita da questo indirizzo IP (regole del server)",
   "server.pro_required": "questa funzione richiede NuviraHub Pro sul server",
   "server.license_required": "la licenza NuviraHub Pro di questo server manca, è scaduta o non comprende questa funzione",
   "server.old_version": "versione del protocollo non supportata: aggiorna NuviraHub",

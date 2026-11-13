@@ -411,6 +411,7 @@
   "server.no_address_book": "la libreta de direcciones no está disponible en este servidor",
   "server.blocked": "el acceso a este servidor ha sido bloqueado; si crees que es un error, escribe a abuse@nuvirahub.dev",
   "server.rate_limited": "demasiadas solicitudes: inténtalo de nuevo en un minuto",
+  "server.ip_not_allowed": "conexión no permitida desde esta dirección IP (reglas del servidor)",
   "server.pro_required": "esta función requiere NuviraHub Pro en el servidor",
   "server.license_required": "la licencia NuviraHub Pro de este servidor falta, ha caducado o no incluye esta función",
   "server.old_version": "versión del protocolo no admitida: actualiza NuviraHub",

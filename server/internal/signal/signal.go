@@ -362,6 +362,17 @@ func (s *Server) connect(viewer *client, target, accountToken string) {
 		_ = viewer.send(errorMsg("@server.rate_limited", ""))
 		return
 	}
+	if ip, ok := relay.HostOf(viewer.conn.RemoteAddr()); ok {
+		for _, m := range s.modules {
+			if g, ok := m.(ext.ConnectGuard); ok {
+				if allowed, reason := g.AllowConnect(ip.String(), viewer.device.ID, target); !allowed {
+					s.log.Info("connection request refused by a module", "from", viewer.device.ID, "to", target, "address", ip, "reason", reason)
+					_ = viewer.send(errorMsg(reason, ""))
+					return
+				}
+			}
+		}
+	}
 	s.mu.Lock()
 	agent := s.online[target]
 	var p *pending
