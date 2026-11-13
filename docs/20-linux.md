@@ -16,6 +16,8 @@ Since 0.13.0 the app runs on Linux and controls other computers: ID, address boo
 
 The `.deb` and `.rpm` come from `client/app/linux/nfpm.yaml` (nfpm). The names carry no version, so the website can link the latest release. Runtime needs: WebKitGTK 4.1, GTK 3, libxkbcommon-x11.
 
+The packages also install the polkit action `io.github.nuvira-hub.nuvira.unattended` (`client/app/linux/io.github.nuvira-hub.nuvira.policy`, in `/usr/share/polkit-1/actions`), tied to `/usr/bin/nuvira` with `org.freedesktop.policykit.exec.path`: the administrator prompt of the app (pkexec of `nuvira service system`, to set up, change or remove unattended access) says "NuviraHub needs an administrator's password to change unattended access to this computer", in the five languages, instead of pkexec's own text with the command line. The archive (`install.sh`, in `~/.local`) has no such action: pkexec shows its own text there. The `.desktop` entries have their name, description, generic name and search keywords in the five languages. Tried 2026-11-13 on the Kubuntu VM (Plasma 6.6, Italian): KDE's window showed the Italian message; `desktop-file-validate` finds nothing in the entries.
+
 ## Windows and icons
 
 - **X11 only.** The viewer forces winit onto X11 (XWayland on a Wayland desktop): the child webviews of wry (toolbar, chat, notices) exist only on X11. `GDK_BACKEND=x11` keeps GTK on the same display; `WEBKIT_DISABLE_DMABUF_RENDERER=1` (unless set) avoids blank webviews with some drivers.
@@ -155,7 +157,6 @@ Kubuntu 26.04 (Plasma 6.6, `ksecretd`), automatic sign-in switched off, signed i
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
 - **Other desktops**: GNOME and KDE Plasma (2026-11-09) tested; Sway and Hyprland have no remote desktop portal (screen without input).
-- **polkit**: an action of our own, with a translated message, instead of pkexec's text with the command line; the `.desktop` entry's description in the five languages.
 - **Performance**: DMA-BUF capture, the cursor as metadata; VA-API on AMD and NVENC on a Linux installed (tried only through WSL); with VA-API the BGRA → NV12 conversion on the GPU (video processing, `VAEntrypointVideoProc`) instead of the CPU: on the Kaby Lake-R laptop it is 3.7 of the 8.9 ms a 1080p frame, and the encoding itself 3.3.
 - **Ubuntu 22.04 and Mint 21**: dropped in 0.14.0 (PipeWire too old); possible by loading PipeWire at run time.
 

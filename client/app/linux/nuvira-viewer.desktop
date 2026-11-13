@@ -1,7 +1,15 @@
 [Desktop Entry]
 Type=Application
 Name=NuviraHub session
+Name[it]=Sessione NuviraHub
+Name[fr]=Session NuviraHub
+Name[de]=NuviraHub-Sitzung
+Name[es]=Sesión de NuviraHub
 Comment=Remote session window of NuviraHub
+Comment[it]=Finestra della sessione remota di NuviraHub
+Comment[fr]=Fenêtre de la session à distance de NuviraHub
+Comment[de]=Fenster der Fernsitzung von NuviraHub
+Comment[es]=Ventana de la sesión remota de NuviraHub
 Exec=nuvira
 Icon=nuvira-viewer
 Terminal=false

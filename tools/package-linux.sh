@@ -36,8 +36,7 @@ cp LICENSE "$stage/"
 cat > "$stage/README.txt" <<EOF
 NuviraHub $version for Linux (x86-64)
 
-On Linux, for now, NuviraHub controls other computers: this computer
-cannot be controlled remotely yet.
+NuviraHub controls other computers, and lets them control this one.
 
 Install for the current user (no sudo):   ./install.sh
 Remove:                                   ./install.sh --uninstall
@@ -46,14 +45,18 @@ It needs these packages (on Ubuntu/Debian; most desktops have them):
   libwebkit2gtk-4.1-0 libgtk-3-0 libxkbcommon-x11-0 libpipewire-0.3-0
 
 It is built on Debian 12, so it needs glibc 2.36 and PipeWire 0.3.65 or
-later: Debian 12, Ubuntu 24.04, Linux Mint 22, Fedora 40 or later. It
-controls other computers with X11 and with Wayland; this computer can be
-controlled with a Wayland session.
+later: Debian 12, Ubuntu 24.04, Linux Mint 22, Fedora 40 or later. This
+computer can be controlled with an X11 session or a Wayland one (GNOME,
+KDE Plasma).
+
+The .deb and .rpm packages are better for unattended access: they also
+install the system's administrator prompt text and the automatic updates.
 EOF
 
 tar -C "$(dirname "$stage")" -czf "$out/nuvira-linux-x64.tar.gz" "nuvira-$version"
 cp client/app/linux/nfpm.yaml client/app/linux/postinstall.sh client/app/linux/preremove.sh \
-    client/app/linux/nuvira-update.service client/app/linux/nuvira-update.timer "$stage/"
+    client/app/linux/nuvira-update.service client/app/linux/nuvira-update.timer \
+    client/app/linux/io.github.nuvira-hub.nuvira.policy "$stage/"
 for packager in deb rpm; do
     (cd "$stage" && VERSION=$version nfpm package -f nfpm.yaml -p $packager -t "$out/nuvira-linux-x64.$packager")
 done

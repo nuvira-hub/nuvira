@@ -6,9 +6,9 @@ platform: linux
 version: ${VERSION}
 maintainer: NuviraHub <security@nuvirahub.dev>
 description: |
-  NuviraHub: remote desktop.
-  On Linux, for now, it controls other computers: this computer cannot be
-  controlled remotely yet.
+  NuviraHub: remote desktop and remote support.
+  It controls other computers, and lets them control this one: with a
+  password for each session, or with unattended access.
 vendor: NuviraHub
 homepage: https://nuvirahub.dev
 license: AGPL-3.0-or-later
@@ -22,6 +22,9 @@ contents:
     dst: /usr/share/applications/io.github.nuvira-hub.nuvira.desktop
   - src: nuvira-viewer.desktop
     dst: /usr/share/applications/nuvira-viewer.desktop
+  # The text of the administrator prompt (pkexec) for unattended access.
+  - src: io.github.nuvira-hub.nuvira.policy
+    dst: /usr/share/polkit-1/actions/io.github.nuvira-hub.nuvira.policy
   - src: icons/app-32.png
     dst: /usr/share/icons/hicolor/32x32/apps/io.github.nuvira-hub.nuvira.png
   - src: icons/app-128.png

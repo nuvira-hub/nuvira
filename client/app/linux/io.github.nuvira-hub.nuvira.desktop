@@ -1,7 +1,21 @@
 [Desktop Entry]
 Type=Application
 Name=NuviraHub
-Comment=Remote desktop: control other computers
+Comment=Remote desktop: control other computers, or let them control this one
+Comment[it]=Desktop remoto: controlla altri computer, o lascia che controllino questo
+Comment[fr]=Bureau à distance : contrôle d'autres ordinateurs, ou laisse-les contrôler celui-ci
+Comment[de]=Fernzugriff: andere Computer steuern oder diesen steuern lassen
+Comment[es]=Escritorio remoto: controla otros equipos o deja que controlen este
+GenericName=Remote desktop
+GenericName[it]=Desktop remoto
+GenericName[fr]=Bureau à distance
+GenericName[de]=Fernzugriff
+GenericName[es]=Escritorio remoto
+Keywords=remote;desktop;support;control;screen;
+Keywords[it]=remoto;desktop;assistenza;controllo;schermo;
+Keywords[fr]=distance;bureau;assistance;contrôle;écran;
+Keywords[de]=fern;desktop;support;steuerung;bildschirm;
+Keywords[es]=remoto;escritorio;soporte;control;pantalla;
 Exec=nuvira
 Icon=io.github.nuvira-hub.nuvira
 Terminal=false
