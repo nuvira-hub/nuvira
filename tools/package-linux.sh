@@ -2,8 +2,9 @@
 # Builds the Linux packages: nuvira-linux-x64.tar.gz (the app, its icons, the
 # .desktop files and install.sh), nuvira-linux-x64.deb and nuvira-linux-x64.rpm
 # (with nfpm). The names carry no version, for the "latest release" links of the
-# website. Build on the oldest distribution we support (Debian 12): the
-# binary needs a glibc at least as new as the build one.
+# website. Build on the oldest distribution we support (Ubuntu 22.04, with the
+# PipeWire headers of tools/pipewire-headers.sh): the binary needs a glibc at
+# least as new as the build one.
 #
 #   tools/package-linux.sh [out_dir]
 set -euo pipefail
@@ -44,8 +45,8 @@ Remove:                                   ./install.sh --uninstall
 It needs these packages (on Ubuntu/Debian; most desktops have them):
   libwebkit2gtk-4.1-0 libgtk-3-0 libxkbcommon-x11-0 libpipewire-0.3-0
 
-It is built on Debian 12, so it needs glibc 2.36 and PipeWire 0.3.65 or
-later: Debian 12, Ubuntu 24.04, Linux Mint 22, Fedora 40 or later. This
+It is built on Ubuntu 22.04, so it needs glibc 2.34 and PipeWire 0.3.48 or
+later: Ubuntu 22.04, Linux Mint 21, Debian 12, Fedora 36 or later. This
 computer can be controlled with an X11 session or a Wayland one (GNOME,
 KDE Plasma).
 

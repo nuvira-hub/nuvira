@@ -42,7 +42,7 @@
 | **Linux**, X11 session (Linux Mint, Xfce) | ✅ | ✅ | ✅ |
 | **macOS** 13 or later | ✅ | ✅ | ✅ |
 
-Linux packages are `.deb`, `.rpm` and `.tar.gz`, for 64-bit Debian 12, Ubuntu 24.04, Mint 22, Fedora 40 or later. On Wayland the system asks the person at the computer to allow remote control the first time; unattended access on GNOME uses GNOME's own remote desktop API and asks nothing. Tested with GNOME, KDE Plasma and Cinnamon.
+Linux packages are `.deb`, `.rpm` and `.tar.gz`, for 64-bit Ubuntu 22.04, Linux Mint 21, Debian 12, Fedora 36 or later. On Wayland the system asks the person at the computer to allow remote control the first time; unattended access on GNOME uses GNOME's own remote desktop API and asks nothing. Tested with GNOME, KDE Plasma and Cinnamon.
 
 <p align="center">
   <picture>

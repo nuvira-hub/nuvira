@@ -6,7 +6,9 @@ Since 0.13.0 the app runs on Linux and controls other computers: ID, address boo
 
 ## Packages
 
-`.github/workflows/client-linux.yml` builds them in a Debian 12 container with `tools/package-linux.sh`, at every change to the client and at every tag. The binary needs a glibc at least as new as the one it was built with (2.36), and the PipeWire bindings need PipeWire 0.3.65 or later: building on the oldest distribution we support keeps it running on the newer ones (Debian 12+, Ubuntu 24.04+, Mint 22+, Fedora 40+). Up to 0.13.0 it was built on Ubuntu 22.04, whose PipeWire 0.3.48 is too old for the bindings. The packages are a workflow artifact; they go into the GitHub release by hand, with the signed Windows files.
+`.github/workflows/client-linux.yml` builds them in an Ubuntu 22.04 container with `tools/package-linux.sh`, at every change to the client and at every tag. The binary needs a glibc at least as new as the one it was built with: building on the oldest distribution we support keeps it running on the newer ones (Ubuntu 22.04+, Mint 21+, Debian 12+, Fedora 36+; the binary asks for glibc 2.34).
+
+**PipeWire of Ubuntu 22.04.** The Rust bindings of PipeWire need the headers of 0.3.65 or later, and Ubuntu 22.04 has 0.3.48: from 0.14.0 to 0.25.0 the packages were built on Debian 12 and left Ubuntu 22.04 and Mint 21 out. Since 0.26.0 `tools/pipewire-headers.sh` puts the headers of 0.3.65 (SPA, PipeWire's API, a `version.h` and two `.pc` files) in `/opt/pw`, and the build (`PKG_CONFIG_PATH=/opt/pw/pkgconfig`) generates the bindings from them while linking against the system's `libpipewire-0.3.so.0` of 0.3.48. Rust links with `-z now`, so a function missing from the library would stop the program at start; a link that succeeds against 0.3.48 means none is missing. Tried 2026-11-13 in a container on the Ubuntu VM: the app and the CUPS backend built and linked; `objdump -T` shows glibc 2.34 at most and 20 PipeWire/SPA functions; `nuvira agent --help` runs in a clean `ubuntu:22.04` with only the runtime packages, and on Ubuntu 26.04. The packages are a workflow artifact; they go into the GitHub release by hand, with the signed Windows files.
 
 | File | For | Installs into |
 |---|---|---|
@@ -204,7 +206,6 @@ Kubuntu 26.04 (Plasma 6.6, `ksecretd`), automatic sign-in switched off, signed i
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.
 - **Other desktops**: GNOME and KDE Plasma (2026-11-09) tested; Sway and Hyprland have no remote desktop portal (screen without input).
 - **Performance**: DMA-BUF capture with the tiled modifiers the GPU prefers, and tried on KDE Plasma and AMD (on by default with VA-API, tried on Intel with GNOME only); the cursor as metadata; VA-API on AMD.
-- **Ubuntu 22.04 and Mint 21**: dropped in 0.14.0 (PipeWire too old); possible by loading PipeWire at run time.
 
 **Unattended access** (2026-11-06): the user service on Ubuntu 26.04 and Fedora 44 (Wayland) and Mint 22.3 (X11) starts at login and is reached with the permanent password with no app open; after a restart with automatic login both came back by themselves, and on Wayland the saved permission was accepted without a dialog. The app links to the service's agent and shows its ID.
 
