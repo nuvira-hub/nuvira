@@ -61,4 +61,4 @@ Like the other permissions ([32](32-session-permissions.md)):
 
 ## To do
 
-- Nothing open: sound with several viewers comes with shared sessions.
+- Sound for the viewers who join a session in progress ([39](39-shared-sessions.md)): only the first viewer has it.
