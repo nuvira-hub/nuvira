@@ -1,12 +1,23 @@
-//! X11 capture: the root window read with `GetImage`, the cursor drawn on top
-//! (XFixes). A first, simple version: no shared memory and no XDamage, so a
-//! still screen is detected by comparing the image with the previous one.
+//! X11 capture: the root window, the cursor drawn on top (XFixes).
+//!
+//! - **MIT-SHM**: the image comes through shared memory (`ShmGetImage`) instead of
+//!   the X socket (`GetImage`, which copies the whole screen through it each
+//!   time). Without the extension (a remote X server, a container) `GetImage`.
+//! - **XDamage**: the screen is read only when X says something changed on it, or
+//!   the pointer moved (it is not part of the root window's contents). Without the
+//!   extension the screen is read 60 times a second and compared with the last image.
+//! - Once a second the screen is read anyway and compared: if it changed with no
+//!   damage reported (some drivers or compositors), XDamage is left aside after
+//!   three such times and the screen is polled as without it.
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use tracing::info;
+use tracing::{info, warn};
 use x11rb::connection::Connection;
+use x11rb::protocol::Event;
+use x11rb::protocol::damage::{ConnectionExt as _, ReportLevel};
+use x11rb::protocol::shm::ConnectionExt as _;
 use x11rb::protocol::xfixes::ConnectionExt as _;
 use x11rb::protocol::xproto::{ConnectionExt as _, ImageFormat};
 use x11rb::rust_connection::RustConnection;
@@ -24,11 +35,72 @@ fn display(width: u32, height: u32) -> Display {
     Display { index: 0, name: "Screen".into(), left: 0, top: 0, width, height, primary: true }
 }
 
+/// A System V shared memory segment attached to the X server.
+struct Shm {
+    seg: u32,
+    addr: *mut u8,
+    size: usize,
+}
+
+impl Shm {
+    fn new(conn: &RustConnection, size: usize) -> Result<Self> {
+        let version = conn.shm_query_version()?.reply().context("MIT-SHM")?;
+        info!(major = version.major_version, minor = version.minor_version, "MIT-SHM");
+        // SAFETY: plain System V calls; the address is checked and detached in Drop.
+        unsafe {
+            let id = libc::shmget(libc::IPC_PRIVATE, size, libc::IPC_CREAT | 0o600);
+            if id < 0 {
+                bail!("shmget: {}", std::io::Error::last_os_error());
+            }
+            let addr = libc::shmat(id, std::ptr::null(), 0);
+            if addr as isize == -1 {
+                let e = std::io::Error::last_os_error();
+                libc::shmctl(id, libc::IPC_RMID, std::ptr::null_mut());
+                bail!("shmat: {e}");
+            }
+            let shm = Shm { seg: conn.generate_id()?, addr: addr.cast(), size };
+            let attached = conn.shm_attach(shm.seg, id as u32, false).map(|c| c.check());
+            // Removed now: it goes away when the last of the X server and this
+            // process detaches, also if the process is killed.
+            libc::shmctl(id, libc::IPC_RMID, std::ptr::null_mut());
+            match attached {
+                Ok(Ok(())) => Ok(shm),
+                Ok(Err(e)) => bail!("ShmAttach: {e}"),
+                Err(e) => bail!("ShmAttach: {e}"),
+            }
+        }
+    }
+
+    fn data(&self) -> &[u8] {
+        // SAFETY: `size` bytes mapped at `addr` while self lives; the X server
+        // writes them only during ShmGetImage, whose reply was awaited.
+        unsafe { std::slice::from_raw_parts(self.addr, self.size) }
+    }
+}
+
+// Only the capture thread uses it.
+unsafe impl Send for Shm {}
+
+impl Drop for Shm {
+    fn drop(&mut self) {
+        // SAFETY: attached in new(), detached once.
+        unsafe { libc::shmdt(self.addr.cast()) };
+    }
+}
+
 pub struct X11Capturer {
     conn: RustConnection,
     root: u32,
     display: Display,
     cursor: bool,
+    shm: Option<Shm>,
+    /// The Damage object on the root window, while it is trusted.
+    damage: Option<u32>,
+    /// Damage reported since the last read of the screen.
+    damaged: bool,
+    /// Changes found by the check of every second with no damage reported.
+    missed: u32,
+    last_check: Instant,
     frame: Option<Frame>,
     /// The image without the cursor, and the pointer position, to tell a still screen.
     last_screen: Vec<u8>,
@@ -46,17 +118,77 @@ impl X11Capturer {
         }
         let (root, w, h) = (root.root, root.width_in_pixels.into(), root.height_in_pixels.into());
         let cursor = conn.xfixes_query_version(4, 0).ok().and_then(|c| c.reply().ok()).is_some();
-        info!(width = w, height = h, cursor, "X11 capture");
+        let shm = if std::env::var_os("NUVIRA_X11_NO_SHM").is_some() {
+            None
+        } else {
+            Shm::new(&conn, w as usize * h as usize * 4)
+                .inspect_err(|e| info!("X11 capture without shared memory: {e:#}"))
+                .ok()
+        };
+        let damage = if std::env::var_os("NUVIRA_X11_NO_DAMAGE").is_some() {
+            None
+        } else {
+            create_damage(&conn, root).inspect_err(|e| info!("X11 capture without XDamage: {e:#}")).ok()
+        };
+        info!(width = w, height = h, cursor, shm = shm.is_some(), damage = damage.is_some(), "X11 capture");
         Ok(Self {
             conn,
             root,
             display: display(w, h),
             cursor,
+            shm,
+            damage,
+            damaged: true,
+            missed: 0,
+            last_check: Instant::now(),
             frame: None,
             last_screen: Vec::new(),
             last_pointer: None,
             next: Instant::now(),
         })
+    }
+
+    /// Takes the events waiting: any damage notice means the screen changed.
+    fn drain_events(&mut self) -> Result<()> {
+        while let Some(event) = self.conn.poll_for_event()? {
+            if let Event::DamageNotify(_) = event {
+                self.damaged = true;
+            }
+        }
+        Ok(())
+    }
+
+    /// The screen into `last_screen` when it differs from it; whether it did.
+    fn read_screen(&mut self) -> Result<bool> {
+        let (w, h) = (self.display.width as u16, self.display.height as u16);
+        let size = usize::from(w) * usize::from(h) * 4;
+        // Depth 24/32 in Z format: 4 bytes per pixel, B G R X on little-endian.
+        if let Some(shm) = &self.shm {
+            self.conn
+                .shm_get_image(self.root, 0, 0, w, h, !0, ImageFormat::Z_PIXMAP.into(), shm.seg, 0)?
+                .reply()
+                .context("X11 ShmGetImage")?;
+            let data = &shm.data()[..size];
+            if data == self.last_screen.as_slice() {
+                return Ok(false);
+            }
+            self.last_screen.clear();
+            self.last_screen.extend_from_slice(data);
+            return Ok(true);
+        }
+        let image = self
+            .conn
+            .get_image(ImageFormat::Z_PIXMAP, self.root, 0, 0, w, h, !0)?
+            .reply()
+            .context("X11 GetImage")?;
+        if image.data.len() < size {
+            bail!("X11 image too small");
+        }
+        if image.data == self.last_screen {
+            return Ok(false);
+        }
+        self.last_screen = image.data;
+        Ok(true)
     }
 
     /// Draws the cursor (ARGB, premultiplied) onto the BGRA image.
@@ -93,6 +225,15 @@ impl X11Capturer {
     }
 }
 
+/// A Damage object on the root window: one notice each time its damaged region
+/// goes from empty to not empty (emptied again with DamageSubtract).
+fn create_damage(conn: &RustConnection, root: u32) -> Result<u32> {
+    conn.damage_query_version(1, 1)?.reply().context("XDamage")?;
+    let damage = conn.generate_id()?;
+    conn.damage_create(damage, root, ReportLevel::NON_EMPTY)?.check().context("DamageCreate")?;
+    Ok(damage)
+}
+
 impl Capturer for X11Capturer {
     fn display(&self) -> &Display {
         &self.display
@@ -106,29 +247,47 @@ impl Capturer for X11Capturer {
         }
         std::thread::sleep(wait);
         self.next = Instant::now() + Duration::from_millis(16);
-        let (w, h) = (self.display.width as u16, self.display.height as u16);
-        let image = self
-            .conn
-            .get_image(ImageFormat::Z_PIXMAP, self.root, 0, 0, w, h, !0)?
-            .reply()
-            .context("X11 GetImage")?;
-        // Depth 24/32 in Z format: 4 bytes per pixel, B G R X on little-endian.
-        let mut data = image.data;
-        if data.len() < usize::from(w) * usize::from(h) * 4 {
-            bail!("X11 image too small");
-        }
+        self.drain_events()?;
         let cursor_moved = self.cursor && self.cursor_changed();
-        if data == self.last_screen && !cursor_moved {
+        let check = self.last_check.elapsed() >= Duration::from_secs(1);
+        if self.damage.is_some() && !self.damaged && !cursor_moved && !check && self.frame.is_some() {
             return Ok(None);
         }
-        self.last_screen.clone_from(&data);
+        if check {
+            self.last_check = Instant::now();
+        }
+        let damaged = std::mem::take(&mut self.damaged);
+        if let Some(damage) = self.damage {
+            // Emptied before reading: what changes from here is reported again.
+            self.conn.damage_subtract(damage, x11rb::NONE, x11rb::NONE)?;
+        }
+        let changed = self.read_screen()?;
+        if changed && !damaged && self.damage.is_some() && self.frame.is_some() {
+            // A change while reading may be reported just now.
+            self.drain_events()?;
+            if !std::mem::take(&mut self.damaged) {
+                self.missed += 1;
+                if self.missed >= 3 {
+                    warn!("XDamage does not report the changes of this screen: polling it instead");
+                    if let Some(damage) = self.damage.take() {
+                        let _ = self.conn.damage_destroy(damage);
+                    }
+                }
+            }
+        }
+        if !changed && !cursor_moved && self.frame.is_some() {
+            return Ok(None);
+        }
+        let mut data = self.frame.take().map(|f| f.data).unwrap_or_default();
+        data.clone_from(&self.last_screen);
         if self.cursor {
             self.draw_cursor(&mut data);
         }
+        let (w, h) = (self.display.width, self.display.height);
         self.frame = Some(Frame {
-            width: w.into(),
-            height: h.into(),
-            stride: usize::from(w) * 4,
+            width: w,
+            height: h,
+            stride: w as usize * 4,
             data,
             captured_us: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64),
         });
@@ -151,6 +310,18 @@ impl X11Capturer {
         let moved = self.last_pointer != Some(pos);
         self.last_pointer = Some(pos);
         moved
+    }
+}
+
+impl Drop for X11Capturer {
+    fn drop(&mut self) {
+        if let Some(damage) = self.damage.take() {
+            let _ = self.conn.damage_destroy(damage);
+        }
+        if let Some(shm) = &self.shm {
+            let _ = self.conn.shm_detach(shm.seg);
+        }
+        let _ = self.conn.flush();
     }
 }
 

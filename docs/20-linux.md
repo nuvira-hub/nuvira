@@ -39,7 +39,7 @@ On Wayland a program cannot read the screen or inject input by itself: it asks t
 
 ## Controlled computer on X11
 
-First version, tested on Linux Mint 22.3 Cinnamon. `client/capture/src/x11.rs` reads the root window with `GetImage` (no shared memory yet) and draws the cursor from XFixes on top; a still screen is detected by comparing the image and the pointer position with the previous ones. `client/input/src/x11.rs` injects with XTest: X key codes are the Linux ones plus 8, the wheel is clicks of buttons 4–7. The backend follows the session: `WAYLAND_DISPLAY` → portal, otherwise X11. No permission dialog on X11.
+Tested on Linux Mint 22.3 Cinnamon. `client/capture/src/x11.rs` reads the root window through shared memory (MIT-SHM, `ShmGetImage`; `GetImage` through the X socket without the extension) and draws the cursor from XFixes on top. With XDamage the screen is read only when X reports a change on it or the pointer moved; without it (or with `NUVIRA_X11_NO_DAMAGE=1`) it is read up to 60 times a second and compared with the last image. Once a second it is read and compared anyway: three changes that XDamage did not report and it is left aside for that session (logged). `NUVIRA_X11_NO_SHM=1` turns shared memory off. Measured 2026-11-13 on the Mint VM (1280x800, `probe` example, 10 s): still screen 2.56 s of CPU in the capture and 2.47 s in Xorg before, 0.08 s and 0.07 s now; with glxgears running 3.91 s and 51 fps before, 1.66 s and 58 fps now. `client/input/src/x11.rs` injects with XTest: X key codes are the Linux ones plus 8, the wheel is clicks of buttons 4–7. The backend follows the session: `WAYLAND_DISPLAY` → portal, otherwise X11. No permission dialog on X11.
 
 ## Hardware encoder (VA-API)
 
@@ -151,7 +151,6 @@ Kubuntu 26.04 (Plasma 6.6, `ksecretd`), automatic sign-in switched off, signed i
 
 ## To do
 
-- **X11, faster capture**: MIT-SHM and XDamage instead of `GetImage` and comparing images.
 - **GNOME's lock screen at once:** the extension works from the next sign-in; before it the lock still closes the session.
 - **Automatic updates**: signed apt and dnf repositories; the `linux-x64` channel for the archive.
 - **Several screens on Wayland**: one shared screen, chosen in the system dialog.

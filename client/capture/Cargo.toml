@@ -29,7 +29,7 @@ libc = "0.2"
 nuvira-portal = { path = "../portal" }
 nuvira-transport.workspace = true
 pipewire = "0.10"
-x11rb = { version = "0.13", features = ["randr", "xfixes"] }
+x11rb = { version = "0.13", features = ["damage", "randr", "shm", "xfixes"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
