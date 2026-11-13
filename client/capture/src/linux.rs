@@ -82,6 +82,10 @@ struct Image {
 /// `NUVIRA_DMABUF=1`: the compositor is asked for DMA-BUF buffers too (linear
 /// ones), for a VA-API encoder to import with no copy through RAM. Off by default
 /// until tried on real graphics cards.
+/// `SPA_VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED` (PipeWire 0.3.75; Debian 12's
+/// headers, which the packages are built with, do not have it yet).
+const VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED: u32 = 1 << 3;
+
 fn dmabuf_wanted() -> bool {
     std::env::var("NUVIRA_DMABUF").as_deref() == Ok("1")
 }
@@ -339,7 +343,7 @@ fn stream_loop(
             if state.dmabuf {
                 // The compositor left the modifier open: the one we take (linear,
                 // the only one offered) is sent back with the buffers we want.
-                let fixate = flags.bits() & spa::sys::SPA_VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED != 0;
+                let fixate = flags.bits() & VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED != 0;
                 match dmabuf_params(fixate) {
                     Ok(pods) => {
                         let mut params: Vec<&Pod> = pods.iter().filter_map(|p| Pod::from_bytes(p)).collect();
