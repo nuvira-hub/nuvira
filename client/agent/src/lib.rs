@@ -1445,10 +1445,15 @@ async fn session(
             if !audio_offered {
                 return std::future::pending().await;
             }
+            // Without a shared session no guest listens: a channel that never
+            // changes (its sender kept here; a dropped one would wake the loop
+            // at once, forever).
+            let (_no_guests, idle) = tokio::sync::watch::channel(0);
             let mut listeners = match &shared {
                 Some(s) => s.listeners(),
-                None => tokio::sync::watch::channel(0).1,
+                None => idle,
             };
+            let mut guests_gone = false;
             let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
             let mut capture: Option<nuvira_audio::capture::Capture> = None;
             let mut failed = false;
@@ -1481,9 +1486,9 @@ async fn session(
                         }
                     }
                     _ = audio_off.changed() => {}
-                    changed = listeners.changed() => {
+                    changed = listeners.changed(), if !guests_gone => {
                         if changed.is_err() {
-                            listeners = tokio::sync::watch::channel(0).1;
+                            guests_gone = true;
                         }
                     }
                     Some(packet) = rx.recv() => {
