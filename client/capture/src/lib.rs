@@ -18,7 +18,7 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub mod dmabuf;
 #[cfg(target_os = "macos")]
-mod macos;
+pub mod macos;
 #[cfg(target_os = "macos")]
 mod macos_pointer;
 pub mod resolution;
@@ -73,6 +73,10 @@ pub struct Frame {
     /// Linux, when the encoder imports DMA-BUFs: the image is in this DMA-BUF and `data` is empty.
     #[cfg(target_os = "linux")]
     pub dmabuf: Option<std::sync::Arc<dmabuf::DmaBuf>>,
+    /// macOS, when the encoder takes them: the image is in this ScreenCaptureKit
+    /// buffer (an IOSurface, on the GPU) and `data` is empty.
+    #[cfg(target_os = "macos")]
+    pub pixel_buffer: Option<std::sync::Arc<macos::PixelBuffer>>,
 }
 
 pub trait Capturer: Send {
@@ -89,6 +93,13 @@ pub trait Capturer: Send {
     #[cfg(windows)]
     fn enable_gpu_output(&mut self) -> Option<::windows::Win32::Graphics::Direct3D11::ID3D11Device> {
         None
+    }
+
+    /// macOS: frames stay in ScreenCaptureKit's buffers ([`Frame::pixel_buffer`]),
+    /// for VideoToolbox to encode with no copy. Whether the source does it.
+    #[cfg(target_os = "macos")]
+    fn enable_pixel_buffers(&mut self) -> bool {
+        false
     }
 }
 

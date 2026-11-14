@@ -34,6 +34,9 @@ struct Captured {
     /// The image is in this DMA-BUF and `data` is empty (Linux, with a VA-API encoder that imports it).
     #[cfg(target_os = "linux")]
     dmabuf: Option<std::sync::Arc<nuvira_capture::dmabuf::DmaBuf>>,
+    /// macOS: the image is in this ScreenCaptureKit buffer (GPU) and `data` is empty.
+    #[cfg(target_os = "macos")]
+    pixel_buffer: Option<std::sync::Arc<nuvira_capture::macos::PixelBuffer>>,
 }
 
 #[derive(Default)]
@@ -86,12 +89,16 @@ impl Pipeline {
         let shared = Arc::new(Shared::default());
         let mut pipeline = Self { shared: shared.clone(), threads: Vec::new() };
 
-        #[cfg_attr(not(windows), allow(unused_mut))]
+        #[cfg_attr(not(any(windows, target_os = "macos")), allow(unused_mut))]
         let mut capturer = open_capturer()?;
         #[cfg(windows)]
         let device = if gpu { capturer.enable_gpu_output().map(GpuDevice) } else { None };
         #[cfg(not(windows))]
         let device: Option<GpuDevice> = None;
+        // macOS: the frames stay on the GPU; VideoToolbox takes them as they are,
+        // another encoder gets them read into RAM.
+        #[cfg(target_os = "macos")]
+        capturer.enable_pixel_buffers();
         if gpu && device.is_none() {
             info!("the source does not offer images on the GPU: the encoder gets them from RAM");
         }
@@ -171,6 +178,8 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
             texture: frame.texture.clone().map(nuvira_codec::GpuTexture),
             #[cfg(target_os = "linux")]
             dmabuf: frame.dmabuf.clone(),
+            #[cfg(target_os = "macos")]
+            pixel_buffer: frame.pixel_buffer.clone(),
         };
         shared.captured.fetch_add(1, Ordering::Relaxed);
         let old = shared.slot.lock().expect("slot").replace(captured);
@@ -395,6 +404,33 @@ fn encode_loop(
             }
         }
         #[cfg(target_os = "linux")]
+        let image = read.as_ref().unwrap_or(image);
+        // macOS: a GPU buffer to VideoToolbox, else read into RAM.
+        #[cfg(target_os = "macos")]
+        let mut read: Option<Captured> = None;
+        #[cfg(target_os = "macos")]
+        if let Some(buffer) = &image.pixel_buffer {
+            imported = encoder.encode_pixel_buffer(buffer.as_ptr(), (image.width, image.height), size, force_key);
+            if imported.is_none() {
+                let row = image.width as usize * 4;
+                let mut data = shared.spare.lock().expect("spare").pop().unwrap_or_default();
+                data.clear();
+                buffer.with_pixels(|bytes, stride| {
+                    for y in 0..image.height as usize {
+                        data.extend_from_slice(&bytes[y * stride..][..row]);
+                    }
+                });
+                read = Some(Captured {
+                    width: image.width,
+                    height: image.height,
+                    stride: row,
+                    data,
+                    captured_us: image.captured_us,
+                    pixel_buffer: None,
+                });
+            }
+        }
+        #[cfg(target_os = "macos")]
         let image = read.as_ref().unwrap_or(image);
         let result = if let Some(result) = imported {
             result

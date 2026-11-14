@@ -208,10 +208,68 @@ struct Image {
     height: u32,
     stride: usize,
     data: Vec<u8>,
+    /// Kept on the GPU (`data` empty), when the encoder takes it.
+    buffer: Option<PixelBuffer>,
+}
+
+/// A `CVPixelBuffer` of ScreenCaptureKit (an IOSurface), retained while kept.
+pub struct PixelBuffer(*mut std::ffi::c_void);
+
+// SAFETY: CoreVideo buffers are reference counted and may be used from any
+// thread; this one is written only by the capture, before it hands it on.
+unsafe impl Send for PixelBuffer {}
+unsafe impl Sync for PixelBuffer {}
+
+#[link(name = "CoreVideo", kind = "framework")]
+unsafe extern "C" {
+    fn CVPixelBufferLockBaseAddress(buffer: *mut std::ffi::c_void, flags: u64) -> i32;
+    fn CVPixelBufferUnlockBaseAddress(buffer: *mut std::ffi::c_void, flags: u64) -> i32;
+    fn CVPixelBufferGetBaseAddress(buffer: *mut std::ffi::c_void) -> *mut u8;
+    fn CVPixelBufferGetBytesPerRow(buffer: *mut std::ffi::c_void) -> usize;
+    fn CVPixelBufferGetHeight(buffer: *mut std::ffi::c_void) -> usize;
+}
+
+impl PixelBuffer {
+    fn retain(ptr: *mut std::ffi::c_void) -> Self {
+        // SAFETY: a valid CoreVideo buffer, released in `drop`.
+        unsafe { core_foundation::base::CFRetain(ptr.cast_const()) };
+        Self(ptr)
+    }
+
+    pub fn as_ptr(&self) -> *mut std::ffi::c_void {
+        self.0
+    }
+
+    /// Its pixels for the CPU (to draw the pointer in, or to read them when the
+    /// encoder does not take GPU buffers): `f(bytes, stride)`.
+    pub fn with_pixels<T>(&self, f: impl FnOnce(&mut [u8], usize) -> T) -> Option<T> {
+        // SAFETY: locked for the CPU while the slice lives; the slice covers the
+        // rows CoreVideo reports.
+        unsafe {
+            if CVPixelBufferLockBaseAddress(self.0, 0) != 0 {
+                return None;
+            }
+            let base = CVPixelBufferGetBaseAddress(self.0);
+            let stride = CVPixelBufferGetBytesPerRow(self.0);
+            let len = stride * CVPixelBufferGetHeight(self.0);
+            let result = (!base.is_null()).then(|| f(std::slice::from_raw_parts_mut(base, len), stride));
+            CVPixelBufferUnlockBaseAddress(self.0, 0);
+            result
+        }
+    }
+}
+
+impl Drop for PixelBuffer {
+    fn drop(&mut self) {
+        // SAFETY: retained in `retain`.
+        unsafe { core_foundation::base::CFRelease(self.0.cast_const()) };
+    }
 }
 
 struct Handler {
     images: Mutex<SyncSender<Image>>,
+    /// Hand on the buffers themselves instead of copies.
+    gpu: Arc<AtomicBool>,
 }
 
 impl SCStreamOutputTrait for Handler {
@@ -224,12 +282,22 @@ impl SCStreamOutputTrait for Handler {
             return;
         }
         let Some(buffer) = sample.pixel_buffer() else { return };
+        if self.gpu.load(Ordering::Relaxed) {
+            let Ok(guard) = buffer.lock(CVPixelBufferLockFlags::READ_ONLY) else { return };
+            let (width, height, stride) = (guard.width() as u32, guard.height() as u32, guard.bytes_per_row());
+            drop(guard);
+            let image = Image { width, height, stride, data: Vec::new(), buffer: Some(PixelBuffer::retain(buffer.as_ptr())) };
+            if let Ok(images) = self.images.lock() {
+                let _ = images.try_send(image);
+            }
+            return;
+        }
         let Ok(guard) = buffer.lock(CVPixelBufferLockFlags::READ_ONLY) else { return };
         let Some(bytes) = (unsafe { guard.as_slice() }) else { return };
         let (width, height, stride) = (guard.width() as u32, guard.height() as u32, guard.bytes_per_row());
         let need = stride * height as usize;
         let Some(bytes) = bytes.get(..need) else { return };
-        let image = Image { width, height, stride, data: bytes.to_vec() };
+        let image = Image { width, height, stride, data: bytes.to_vec(), buffer: None };
         if let Ok(images) = self.images.lock()
             && let Err(TrySendError::Full(_)) = images.try_send(image)
         {
@@ -242,6 +310,7 @@ impl SCStreamOutputTrait for Handler {
 struct Running {
     stream: SCStream,
     images: Receiver<Image>,
+    gpu: Arc<AtomicBool>,
     /// Set by ScreenCaptureKit when the stream stopped by itself.
     stopped: Arc<AtomicBool>,
 }
@@ -346,6 +415,8 @@ pub struct ScreenCaptureKitCapturer {
     /// Part of the picture of all the screens: captured at the largest scale of
     /// them all ([`common_displays`]).
     common: bool,
+    /// The frames stay in ScreenCaptureKit's buffers (the encoder takes them).
+    gpu: bool,
     /// The display in global points (left, top, width, height) and its pixels
     /// per point.
     points: (f64, f64, f64, f64),
@@ -405,6 +476,7 @@ impl ScreenCaptureKitCapturer {
             woken_at: None,
             own_pointer,
             common,
+            gpu: false,
             points: (0.0, 0.0, 1.0, 1.0),
             scale: 1.0,
             pointer_shape: None,
@@ -457,7 +529,8 @@ impl ScreenCaptureKitCapturer {
             flag.store(true, Ordering::Relaxed);
         });
         let mut stream = SCStream::new_with_delegate(&filter, &config, on_error)?;
-        stream.add_output_handler(Handler { images: Mutex::new(tx) }, SCStreamOutputType::Screen)?;
+        let gpu = Arc::new(AtomicBool::new(self.gpu));
+        stream.add_output_handler(Handler { images: Mutex::new(tx), gpu: gpu.clone() }, SCStreamOutputType::Screen)?;
         stream.start_capture().map_err(|e| anyhow!("{e:?}")).context("@agent.screen_permission_mac")?;
         info!(name = screen.name, width = screen.width, height = screen.height, "ScreenCaptureKit capture");
         self.display_id = sc_display.display_id();
@@ -470,7 +543,7 @@ impl ScreenCaptureKitCapturer {
         self.drawn.forget();
         self.display = screen;
         self.hidden_generation = hidden_generation;
-        self.running = Some(Running { stream, images, stopped });
+        self.running = Some(Running { stream, images, gpu, stopped });
         Ok(())
     }
 
@@ -528,6 +601,7 @@ impl ScreenCaptureKitCapturer {
             stride: width as usize * 4,
             data: PLACEHOLDER.repeat(width as usize * height as usize),
             captured_us: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64),
+            pixel_buffer: None,
         });
         self.frame.as_ref()
     }
@@ -651,12 +725,19 @@ impl Capturer for ScreenCaptureKitCapturer {
                     stride: image.stride,
                     data: image.data,
                     captured_us: now_us,
+                    pixel_buffer: image.buffer.map(Arc::new),
                 };
                 // A new picture: what the pointer covered went with the old one.
                 self.drawn.forget();
                 if self.own_pointer && draw_wanted() {
-                    let (w, h, stride) = (frame.width, frame.height, frame.stride);
-                    self.drawn.draw(&mut frame.data, w, h, stride, false);
+                    let (w, h) = (frame.width, frame.height);
+                    let drawn = &mut self.drawn;
+                    match &frame.pixel_buffer {
+                        Some(buffer) => {
+                            buffer.with_pixels(|data, stride| drawn.draw(data, w, h, stride, false));
+                        }
+                        None => drawn.draw(&mut frame.data, w, h, frame.stride, false),
+                    }
                 }
                 self.frame = Some(frame);
                 return Ok(self.frame.as_ref());
@@ -669,11 +750,20 @@ impl Capturer for ScreenCaptureKitCapturer {
                 let redraw = if draw { drawn != Some(cursor::generation()) } else { drawn.is_some() };
                 if redraw {
                     // Only the pointer moved (or must come in or out): the same
-                    // picture with it drawn again.
-                    self.drawn.undo(&mut frame.data, frame.stride);
-                    if draw {
-                        let (w, h, stride) = (frame.width, frame.height, frame.stride);
-                        self.drawn.draw(&mut frame.data, w, h, stride, false);
+                    // picture with it drawn again (in the GPU buffer, as in RAM).
+                    let (w, h) = (frame.width, frame.height);
+                    let drawn = &mut self.drawn;
+                    let mut again = |data: &mut [u8], stride: usize| {
+                        drawn.undo(data, stride);
+                        if draw {
+                            drawn.draw(data, w, h, stride, false);
+                        }
+                    };
+                    match &frame.pixel_buffer {
+                        Some(buffer) => {
+                            buffer.with_pixels(&mut again);
+                        }
+                        None => again(&mut frame.data, frame.stride),
                     }
                     frame.captured_us = now_us;
                     return Ok(self.frame.as_ref());
@@ -687,6 +777,19 @@ impl Capturer for ScreenCaptureKitCapturer {
 
     fn last_frame(&self) -> Option<&Frame> {
         self.frame.as_ref()
+    }
+
+    fn enable_pixel_buffers(&mut self) -> bool {
+        // Part of all the screens: composed in RAM.
+        if self.common {
+            return false;
+        }
+        self.gpu = true;
+        if let Some(running) = &self.running {
+            running.gpu.store(true, Ordering::Relaxed);
+        }
+        info!("ScreenCaptureKit buffers go to the encoder with no copy");
+        true
     }
 }
 

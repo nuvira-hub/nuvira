@@ -55,6 +55,8 @@ fn main() -> anyhow::Result<()> {
             texture: None,
             #[cfg(target_os = "linux")]
             dmabuf: None,
+            #[cfg(target_os = "macos")]
+            pixel_buffer: None,
         };
         let path = format!("{path}.last.ppm");
         save_ppm(&path, &frame)?;

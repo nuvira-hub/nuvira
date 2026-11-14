@@ -161,6 +161,20 @@ pub trait VideoEncoder: Send {
         None
     }
 
+    /// macOS: encodes a captured `CVPixelBuffer` (on the GPU) of size `input` at
+    /// size `output` with no copy through RAM (VideoToolbox). `None`: this
+    /// encoder does not take them (the caller reads it into RAM).
+    #[cfg(target_os = "macos")]
+    fn encode_pixel_buffer(
+        &mut self,
+        _buffer: *mut std::ffi::c_void,
+        _input: (u32, u32),
+        _output: (u32, u32),
+        _force_keyframe: bool,
+    ) -> Option<anyhow::Result<Option<EncodedFrame>>> {
+        None
+    }
+
     /// Encodes a picture left in a DMA-BUF, reduced to `size`, with no copy through
     /// RAM (VA-API with video processing). `None` when it cannot: the caller reads
     /// the buffer into RAM and calls [`encode`](Self::encode).

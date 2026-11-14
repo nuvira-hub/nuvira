@@ -67,6 +67,8 @@ impl AllCapturer {
             texture: None,
             #[cfg(target_os = "linux")]
             dmabuf: None,
+            #[cfg(target_os = "macos")]
+            pixel_buffer: None,
         };
         Ok(Self { parts, display, frame, drawn: nuvira_pointer::Drawn::default() })
     }

@@ -110,6 +110,13 @@ unsafe extern "C" {
     ) -> OSStatus;
     fn VTCompressionSessionCompleteFrames(session: VTCompressionSessionRef, until: CMTime) -> OSStatus;
     fn VTCompressionSessionInvalidate(session: VTCompressionSessionRef);
+    fn VTPixelTransferSessionCreate(allocator: *const c_void, session: *mut *mut c_void) -> OSStatus;
+    fn VTPixelTransferSessionTransferImage(
+        session: *mut c_void,
+        source: CVPixelBufferRef,
+        destination: CVPixelBufferRef,
+    ) -> OSStatus;
+    fn VTPixelTransferSessionInvalidate(session: *mut c_void);
 }
 
 #[link(name = "CoreVideo", kind = "framework")]
@@ -124,6 +131,7 @@ unsafe extern "C" {
     static kCVImageBufferYCbCrMatrix_ITU_R_601_4: CFStringRef;
     static kCVImageBufferColorPrimaries_ITU_R_709_2: CFStringRef;
     static kCVImageBufferTransferFunction_ITU_R_709_2: CFStringRef;
+    static kCVImageBufferICCProfileKey: CFStringRef;
 
     fn CVPixelBufferPoolCreatePixelBuffer(
         allocator: *const c_void,
@@ -135,6 +143,7 @@ unsafe extern "C" {
     fn CVPixelBufferGetBaseAddress(buffer: CVPixelBufferRef) -> *mut c_void;
     fn CVPixelBufferGetBytesPerRow(buffer: CVPixelBufferRef) -> usize;
     fn CVBufferSetAttachment(buffer: CVPixelBufferRef, key: CFStringRef, value: CFTypeRef, mode: u32);
+    fn CVBufferRemoveAttachment(buffer: CVPixelBufferRef, key: CFStringRef);
 }
 
 #[link(name = "CoreMedia", kind = "framework")]
@@ -161,6 +170,7 @@ unsafe extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
     fn CFRelease(object: *const c_void);
+    fn CFRetain(object: *const c_void) -> *const c_void;
 }
 
 /// What the output callback hands to `encode`: Annex B data, `None` if dropped.
@@ -282,6 +292,8 @@ struct Session {
     low_latency: bool,
     /// `None`: not said by the session (the low-latency one does not).
     hardware: Option<bool>,
+    /// Scales captured GPU buffers to the session's size (made at the first).
+    transfer: *mut c_void,
 }
 
 impl Session {
@@ -352,7 +364,8 @@ impl Session {
             drop(unsafe { Box::from_raw(refcon) });
             bail!("VTCompressionSessionCreate: {status}");
         }
-        let mut this = Self { session, outputs, refcon, width, height, low_latency, hardware: None };
+        let mut this =
+            Self { session, outputs, refcon, width, height, low_latency, hardware: None, transfer: ptr::null_mut() };
         this.configure(settings)?;
         Ok(this)
     }
@@ -439,8 +452,8 @@ impl Session {
         value.downcast::<CFBoolean>().map(bool::from)
     }
 
-    /// Copies the image into a buffer of the session's pool.
-    fn pixel_buffer(&self, image: &BgraImage) -> Result<CVPixelBufferRef> {
+    /// A buffer of the session's pool (owned: released by the caller).
+    fn pool_buffer(&self) -> Result<CVPixelBufferRef> {
         let pool = unsafe { VTCompressionSessionGetPixelBufferPool(self.session) };
         if pool.is_null() {
             bail!("VideoToolbox without a buffer pool");
@@ -450,6 +463,12 @@ impl Session {
         if status != 0 || buffer.is_null() {
             bail!("CVPixelBufferPoolCreatePixelBuffer: {status}");
         }
+        Ok(buffer)
+    }
+
+    /// Copies the image into a buffer of the session's pool.
+    fn pixel_buffer(&self, image: &BgraImage) -> Result<CVPixelBufferRef> {
+        let buffer = self.pool_buffer()?;
         unsafe {
             if CVPixelBufferLockBaseAddress(buffer, 0) != 0 {
                 CFRelease(buffer);
@@ -463,33 +482,46 @@ impl Session {
                 ptr::copy_nonoverlapping(src.as_ptr(), base.add(y * pitch), row);
             }
             CVPixelBufferUnlockBaseAddress(buffer, 0);
-            // The colours of the source, so the conversion to YUV uses BT.601.
-            CVBufferSetAttachment(
-                buffer,
-                kCVImageBufferYCbCrMatrixKey,
-                kCVImageBufferYCbCrMatrix_ITU_R_601_4.cast(),
-                ATTACH_PROPAGATE,
-            );
-            CVBufferSetAttachment(
-                buffer,
-                kCVImageBufferColorPrimariesKey,
-                kCVImageBufferColorPrimaries_ITU_R_709_2.cast(),
-                ATTACH_PROPAGATE,
-            );
-            CVBufferSetAttachment(
-                buffer,
-                kCVImageBufferTransferFunctionKey,
-                kCVImageBufferTransferFunction_ITU_R_709_2.cast(),
-                ATTACH_PROPAGATE,
-            );
         }
+        colours(buffer);
         Ok(buffer)
     }
 
+    /// The captured buffer itself (on the GPU, no copy), or a buffer of the pool
+    /// with it scaled into it by `VTPixelTransferSession` (on the GPU too).
+    fn take_buffer(&mut self, buffer: CVPixelBufferRef, input: (u32, u32)) -> Result<CVPixelBufferRef> {
+        if input == (self.width, self.height) {
+            // SAFETY: a valid buffer of the caller's; retained for the release after encoding.
+            unsafe { CFRetain(buffer) };
+            colours(buffer);
+            return Ok(buffer);
+        }
+        if self.transfer.is_null() {
+            let status = unsafe { VTPixelTransferSessionCreate(ptr::null(), &mut self.transfer) };
+            if status != 0 || self.transfer.is_null() {
+                self.transfer = ptr::null_mut();
+                bail!("VTPixelTransferSessionCreate: {status}");
+            }
+        }
+        let scaled = self.pool_buffer()?;
+        let status = unsafe { VTPixelTransferSessionTransferImage(self.transfer, buffer, scaled) };
+        if status != 0 {
+            unsafe { CFRelease(scaled) };
+            bail!("VTPixelTransferSessionTransferImage: {status}");
+        }
+        colours(scaled);
+        Ok(scaled)
+    }
+
     fn encode(&mut self, image: &BgraImage, pts_us: i64, force_keyframe: bool) -> Result<Option<Vec<u8>>> {
+        let buffer = self.pixel_buffer(image)?;
+        self.encode_buffer(buffer, pts_us, force_keyframe)
+    }
+
+    /// Encodes `buffer` (owned: released here) and waits for its frame.
+    fn encode_buffer(&mut self, buffer: CVPixelBufferRef, pts_us: i64, force_keyframe: bool) -> Result<Option<Vec<u8>>> {
         // Leftovers of a frame that came out late.
         while self.outputs.try_recv().is_ok() {}
-        let buffer = self.pixel_buffer(image)?;
         let properties = force_keyframe.then(|| unsafe {
             CFDictionary::from_CFType_pairs(&[(
                 constant(kVTEncodeFrameOptionKey_ForceKeyFrame),
@@ -529,9 +561,41 @@ impl Session {
     }
 }
 
+/// The colours of the source, so the conversion to YUV uses BT.601.
+fn colours(buffer: CVPixelBufferRef) {
+    // SAFETY: a valid buffer; the keys and values are CoreVideo's constants.
+    unsafe {
+        // ScreenCaptureKit's buffers carry the display's ICC profile: VideoToolbox
+        // matched every frame's colours to it (an encoding twice as slow).
+        CVBufferRemoveAttachment(buffer, kCVImageBufferICCProfileKey);
+        CVBufferSetAttachment(
+            buffer,
+            kCVImageBufferYCbCrMatrixKey,
+            kCVImageBufferYCbCrMatrix_ITU_R_601_4.cast(),
+            ATTACH_PROPAGATE,
+        );
+        CVBufferSetAttachment(
+            buffer,
+            kCVImageBufferColorPrimariesKey,
+            kCVImageBufferColorPrimaries_ITU_R_709_2.cast(),
+            ATTACH_PROPAGATE,
+        );
+        CVBufferSetAttachment(
+            buffer,
+            kCVImageBufferTransferFunctionKey,
+            kCVImageBufferTransferFunction_ITU_R_709_2.cast(),
+            ATTACH_PROPAGATE,
+        );
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         unsafe {
+            if !self.transfer.is_null() {
+                VTPixelTransferSessionInvalidate(self.transfer);
+                CFRelease(self.transfer);
+            }
             VTCompressionSessionCompleteFrames(self.session, CMTIME_INVALID);
             VTCompressionSessionInvalidate(self.session);
             CFRelease(self.session);
@@ -595,6 +659,35 @@ impl VideoEncoder for VtEncoder {
         let Some(data) = session.encode(image, pts, key)? else { return Ok(None) };
         let keyframe = has_idr(&data);
         Ok(Some(EncodedFrame { data, keyframe, ..Default::default() }))
+    }
+
+    fn encode_pixel_buffer(
+        &mut self,
+        buffer: *mut c_void,
+        input: (u32, u32),
+        output: (u32, u32),
+        force_keyframe: bool,
+    ) -> Option<Result<Option<EncodedFrame>>> {
+        let (w, h) = (output.0 & !1, output.1 & !1);
+        if w == 0 || h == 0 || buffer.is_null() {
+            return Some(Ok(None));
+        }
+        Some((|| {
+            if self.session.as_ref().is_none_or(|s| (s.width, s.height) != (w, h)) {
+                self.session = None;
+                let session = Session::new(w, h, self.settings, self.require_hardware)?;
+                debug!(w, h, hardware = ?session.hardware, "VideoToolbox session");
+                self.session = Some(session);
+                self.force_key = true;
+            }
+            let key = force_keyframe || std::mem::take(&mut self.force_key);
+            let pts = self.start.elapsed().as_micros() as i64;
+            let session = self.session.as_mut().context("VideoToolbox session")?;
+            let taken = session.take_buffer(buffer, input)?;
+            let Some(data) = session.encode_buffer(taken, pts, key)? else { return Ok(None) };
+            let keyframe = has_idr(&data);
+            Ok(Some(EncodedFrame { data, keyframe, ..Default::default() }))
+        })())
     }
 }
 

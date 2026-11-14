@@ -37,6 +37,8 @@ impl SyntheticCapturer {
                 texture: None,
                 #[cfg(target_os = "linux")]
                 dmabuf: None,
+                #[cfg(target_os = "macos")]
+                pixel_buffer: None,
             },
             interval: Duration::from_secs(1) / fps.max(1),
             next: Instant::now(),
