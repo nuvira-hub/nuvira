@@ -46,6 +46,9 @@ struct Spares {
 pub struct XTestInjector {
     conn: RustConnection,
     root: u32,
+    /// The streamed part of the X screen (one monitor, or all of it).
+    left: i16,
+    top: i16,
     width: u16,
     height: u16,
     keys: HashSet<u8>,
@@ -61,7 +64,7 @@ impl XTestInjector {
         let root = &conn.setup().roots[screen];
         let (root, width, height) = (root.root, root.width_in_pixels, root.height_in_pixels);
         let (keys, buttons) = (HashSet::new(), HashSet::new());
-        Ok(Self { conn, root, width, height, keys, buttons, wheel: (0, 0), spares: None })
+        Ok(Self { conn, root, left: 0, top: 0, width, height, keys, buttons, wheel: (0, 0), spares: None })
     }
 
     fn fake(&self, kind: u8, detail: u8, x: i16, y: i16) {
@@ -208,8 +211,8 @@ impl InputInjector for XTestInjector {
     fn inject(&mut self, event: &InputEvent) -> Result<()> {
         match &event.event {
             Some(Event::MouseMove(m)) => {
-                let x = (m.x.clamp(0.0, 1.0) * f32::from(self.width.saturating_sub(1))).round() as i16;
-                let y = (m.y.clamp(0.0, 1.0) * f32::from(self.height.saturating_sub(1))).round() as i16;
+                let x = self.left + (m.x.clamp(0.0, 1.0) * f32::from(self.width.saturating_sub(1))).round() as i16;
+                let y = self.top + (m.y.clamp(0.0, 1.0) * f32::from(self.height.saturating_sub(1))).round() as i16;
                 self.fake(MOTION_NOTIFY_EVENT, 0, x, y);
             }
             Some(Event::MouseButton(b)) => self.button(b.button(), b.down),
@@ -222,8 +225,14 @@ impl InputInjector for XTestInjector {
         Ok(())
     }
 
-    fn set_screen(&mut self, _screen: ScreenRect) {
-        // The whole X screen is streamed.
+    fn set_screen(&mut self, screen: ScreenRect) {
+        // One monitor of the X screen, or all of it.
+        if screen.width > 0 && screen.height > 0 {
+            self.left = screen.left.clamp(0, i32::from(i16::MAX)) as i16;
+            self.top = screen.top.clamp(0, i32::from(i16::MAX)) as i16;
+            self.width = screen.width.min(u32::from(u16::MAX)) as u16;
+            self.height = screen.height.min(u32::from(u16::MAX)) as u16;
+        }
     }
 
     fn release_all(&mut self) {

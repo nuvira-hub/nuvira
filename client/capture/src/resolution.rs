@@ -635,8 +635,12 @@ mod platform {
     }
 
     impl Screen {
-        pub fn of(_display: &Display) -> Result<Self> {
-            // One display on X11: the whole screen, with one output turned on.
+        pub fn of(display: &Display) -> Result<Self> {
+            // A monitor of several: RandR names it after its output. One screen:
+            // the whole X screen, with one output turned on.
+            if let Ok(output) = open(Some(&display.name)) {
+                return Ok(Self { output });
+            }
             Ok(Self { output: open(None)? })
         }
 

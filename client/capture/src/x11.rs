@@ -1,4 +1,5 @@
-//! X11 capture: the root window, the cursor drawn on top (XFixes).
+//! X11 capture: the root window (one RandR monitor of it, or all of it), the
+//! cursor drawn on top (XFixes).
 //!
 //! - **MIT-SHM**: the image comes through shared memory (`ShmGetImage`) instead of
 //!   the X socket (`GetImage`, which copies the whole screen through it each
@@ -25,14 +26,54 @@ use x11rb::rust_connection::RustConnection;
 use crate::{Capturer, Display, Frame};
 
 /// The whole X screen, as one display.
+/// The monitors of the X screen (RandR 1.5), each one a screen of its own for
+/// the viewer; all of them is the whole X screen. One monitor, or no RandR: the
+/// X screen.
 pub fn displays() -> Result<Vec<Display>> {
     let (conn, screen) = x11rb::connect(None).context("X11 connection")?;
     let root = &conn.setup().roots[screen];
-    Ok(vec![display(root.width_in_pixels.into(), root.height_in_pixels.into())])
+    let whole = display(root.width_in_pixels.into(), root.height_in_pixels.into());
+    let monitors = monitors(&conn, root.root);
+    Ok(if monitors.len() < 2 { vec![whole] } else { monitors })
 }
 
 fn display(width: u32, height: u32) -> Display {
     Display { index: 0, name: "Screen".into(), left: 0, top: 0, width, height, primary: true }
+}
+
+/// The active RandR monitors, left to right (top to bottom on a tie).
+fn monitors(conn: &RustConnection, root: u32) -> Vec<Display> {
+    use x11rb::protocol::randr::ConnectionExt as _;
+    let version = conn.randr_query_version(1, 5).ok().and_then(|c| c.reply().ok());
+    if !version.is_some_and(|v| (v.major_version, v.minor_version) >= (1, 5)) {
+        return Vec::new();
+    }
+    let Some(reply) = conn.randr_get_monitors(root, true).ok().and_then(|c| c.reply().ok()) else {
+        return Vec::new();
+    };
+    let mut list: Vec<_> = reply.monitors.into_iter().filter(|m| m.width > 0 && m.height > 0).collect();
+    list.sort_by_key(|m| (m.x, m.y));
+    list.into_iter()
+        .enumerate()
+        .map(|(index, m)| {
+            let name = conn
+                .get_atom_name(m.name)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|r| String::from_utf8_lossy(&r.name).into_owned())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| format!("Screen {}", index + 1));
+            Display {
+                index,
+                name,
+                left: m.x.into(),
+                top: m.y.into(),
+                width: m.width.into(),
+                height: m.height.into(),
+                primary: m.primary,
+            }
+        })
+        .collect()
 }
 
 /// A System V shared memory segment attached to the X server.
@@ -115,13 +156,29 @@ pub struct X11Capturer {
 }
 
 impl X11Capturer {
-    pub fn new() -> Result<Self> {
+    /// `index`: a monitor of [`displays`] (`None`: the primary one, else the
+    /// leftmost), or [`crate::ALL_DISPLAYS`] for the whole X screen.
+    pub fn new(index: Option<usize>) -> Result<Self> {
         let (conn, screen) = x11rb::connect(None).context("X11 connection")?;
         let root = &conn.setup().roots[screen];
         if root.root_depth != 24 && root.root_depth != 32 {
             bail!("X screen with depth {} is not supported", root.root_depth);
         }
-        let (root, w, h) = (root.root, root.width_in_pixels.into(), root.height_in_pixels.into());
+        let mut area = display(root.width_in_pixels.into(), root.height_in_pixels.into());
+        let monitors = monitors(&conn, root.root);
+        if monitors.len() >= 2 {
+            area = if index == Some(crate::ALL_DISPLAYS) {
+                Display { index: crate::ALL_DISPLAYS, name: "all screens".into(), primary: false, ..area }
+            } else {
+                let pick = match index {
+                    Some(i) => monitors.iter().position(|m| m.index == i),
+                    None => monitors.iter().position(|m| m.primary).or(Some(0)),
+                };
+                monitors.into_iter().nth(pick.context("screen not found")?).context("screen not found")?
+            };
+        }
+        let root = root.root;
+        let (w, h) = (area.width, area.height);
         let cursor = conn.xfixes_query_version(4, 0).ok().and_then(|c| c.reply().ok()).is_some();
         let shm = if std::env::var_os("NUVIRA_X11_NO_SHM").is_some() {
             None
@@ -137,11 +194,22 @@ impl X11Capturer {
         };
         let metadata = cursor && nuvira_pointer::wanted();
         nuvira_pointer::set_active(metadata);
-        info!(width = w, height = h, cursor, metadata, shm = shm.is_some(), damage = damage.is_some(), "X11 capture");
+        info!(
+            name = area.name,
+            left = area.left,
+            top = area.top,
+            width = w,
+            height = h,
+            cursor,
+            metadata,
+            shm = shm.is_some(),
+            damage = damage.is_some(),
+            "X11 capture"
+        );
         Ok(Self {
             conn,
             root,
-            display: display(w, h),
+            display: area,
             cursor,
             shm,
             damage,
@@ -186,10 +254,10 @@ impl X11Capturer {
             }
         });
         self.cursor_serial = Some(serial);
-        nuvira_pointer::publish(
-            shape,
-            nuvira_pointer::Position { x: i32::from(c.x), y: i32::from(c.y), visible: true, serial },
-        );
+        // In the streamed monitor's pixels; hidden while it is on another one.
+        let (x, y) = (i32::from(c.x) - self.display.left, i32::from(c.y) - self.display.top);
+        let visible = (0..self.display.width as i32).contains(&x) && (0..self.display.height as i32).contains(&y);
+        nuvira_pointer::publish(shape, nuvira_pointer::Position { x, y, visible, serial });
     }
 
     /// Takes the events waiting: any damage notice means the screen changed.
@@ -205,11 +273,12 @@ impl X11Capturer {
     /// The screen into `last_screen` when it differs from it; whether it did.
     fn read_screen(&mut self) -> Result<bool> {
         let (w, h) = (self.display.width as u16, self.display.height as u16);
+        let (x, y) = (self.display.left as i16, self.display.top as i16);
         let size = usize::from(w) * usize::from(h) * 4;
         // Depth 24/32 in Z format: 4 bytes per pixel, B G R X on little-endian.
         if let Some(shm) = &self.shm {
             self.conn
-                .shm_get_image(self.root, 0, 0, w, h, !0, ImageFormat::Z_PIXMAP.into(), shm.seg, 0)?
+                .shm_get_image(self.root, x, y, w, h, !0, ImageFormat::Z_PIXMAP.into(), shm.seg, 0)?
                 .reply()
                 .context("X11 ShmGetImage")?;
             let data = &shm.data()[..size];
@@ -222,7 +291,7 @@ impl X11Capturer {
         }
         let image = self
             .conn
-            .get_image(ImageFormat::Z_PIXMAP, self.root, 0, 0, w, h, !0)?
+            .get_image(ImageFormat::Z_PIXMAP, self.root, x, y, w, h, !0)?
             .reply()
             .context("X11 GetImage")?;
         if image.data.len() < size {
@@ -241,8 +310,8 @@ impl X11Capturer {
             return;
         };
         let (w, h) = (self.display.width as i32, self.display.height as i32);
-        let left = i32::from(cursor.x) - i32::from(cursor.xhot);
-        let top = i32::from(cursor.y) - i32::from(cursor.yhot);
+        let left = i32::from(cursor.x) - i32::from(cursor.xhot) - self.display.left;
+        let top = i32::from(cursor.y) - i32::from(cursor.yhot) - self.display.top;
         for cy in 0..i32::from(cursor.height) {
             let y = top + cy;
             if !(0..h).contains(&y) {
@@ -386,7 +455,7 @@ impl Drop for X11Capturer {
     }
 }
 
-/// Opens capture of the whole X screen.
-pub fn open() -> Result<Box<dyn Capturer>> {
-    Ok(Box::new(X11Capturer::new()?))
+/// Opens capture of a monitor of the X screen, or of all of it.
+pub fn open(index: Option<usize>) -> Result<Box<dyn Capturer>> {
+    Ok(Box::new(X11Capturer::new(index)?))
 }

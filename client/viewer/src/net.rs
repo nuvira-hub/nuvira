@@ -1039,6 +1039,7 @@ async fn session(
                         }
                     }
                     Some(ControlMessage { msg: Some(Msg::CursorPosition(p)) }) => {
+                        tracing::trace!(x = p.x, y = p.y, visible = p.visible, "remote pointer position");
                         let _ = proxy.send_event(NetEvent::CursorPosition { x: p.x, y: p.y, visible: p.visible, serial: p.serial });
                     }
                     Some(_) => {}

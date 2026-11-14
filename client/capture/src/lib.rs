@@ -122,8 +122,12 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = index;
-        if wayland() { linux::open() } else { x11::open() }
+        if wayland() {
+            let _ = index;
+            linux::open()
+        } else {
+            x11::open(index)
+        }
     }
     #[cfg(target_os = "macos")]
     {
