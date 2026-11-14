@@ -18,10 +18,13 @@ During a session the screen of the controlled computer can take the size of the 
 |---|---|---|
 | Windows | `ChangeDisplaySettingsEx` on the screen's device (`\\.\DISPLAY1`), same colour depth, the same refresh rate when the mode has it; never `CDS_UPDATEREGISTRY`, so the mode saved in the registry stays the person's | The agent writes the changed screens in `resolution.txt` in its data folder (`C:\ProgramData\nuvira` for the service); when it starts again it puts each back to the registry mode and deletes the file |
 | macOS | `CGConfigureDisplayWithDisplayMode` with `kCGConfigureForAppOnly`, among the usable modes with the same pixels per point as now (a Retina mode stays Retina) | macOS itself restores the screen when the agent process ends, however it ends |
-| Linux X11 | XRandR: the CRTC of the one output turned on gets a mode of that output, the X screen is resized around it (grown first, shrunk after, as `xrandr` does), under a server grab | `resolution.txt` keeps the output's name and size; put back when the agent starts again |
-| Linux Wayland | Not available: the agent does not announce it | — |
+| Linux X11 | XRandR: the CRTC of the streamed monitor's output (RandR names a monitor after its output; with one screen, the one output turned on) gets a mode of that output, the X screen is resized around it (grown first, shrunk after, as `xrandr` does), under a server grab | `resolution.txt` keeps the output's name and size; put back when the agent starts again |
+| Linux Wayland, GNOME | `org.gnome.Mutter.DisplayConfig`: `ApplyMonitorsConfig` as *temporary* (not saved by GNOME) with the monitor at the streamed screen's position in the new mode, the scale kept when the mode takes it; with several monitors they are laid out again left to right (GNOME refuses overlaps and gaps). Offered when GNOME allows it (`ApplyMonitorsConfigAllowed`). After the change the capture opens a new portal or Mutter session (the screens' sizes are the session's) and the input follows it | `resolution.txt` keeps "gnome CONNECTOR W H"; put back when the agent starts again |
+| Linux Wayland, other desktops | Not available: the agent does not announce it | — |
 
-Not done: several screens turned on under X11 (one X screen holds them all: refused with "several screens turned on"), rotated screens under X11, screens captured through GDI on Windows (no device name).
+Not done: rotated screens under X11, screens captured through GDI on Windows (no device name), KDE Plasma on Wayland.
+
+Tried on Wayland 2026-11-14 (Ubuntu VM, GNOME 50, portal): a 1280x720 viewer area took the monitor from 1280x800 to 1360x768, clicks landed where aimed at the new size, 1280x800 came back at the end of the session.
 
 After a change the agent stops the capture and opens the same screen again, as when the technician picks another screen: new video format, list of screens and input area. DXGI refuses the duplication for a moment after a mode change (`E_ACCESSDENIED`), X11 gives one `BadMatch`: the capture retries every half second and goes on by itself.
 
