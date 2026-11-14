@@ -40,6 +40,8 @@ png.workspace = true
 nu-ansi-term.workspace = true
 windows = { workspace = true, features = [
     "Data_Pdf",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Dxgi",
     "Foundation",
     "Graphics_Imaging",
     "Storage",

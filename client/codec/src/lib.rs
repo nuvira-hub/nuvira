@@ -36,7 +36,7 @@ mod vtdec;
 #[cfg(windows)]
 pub use crate::mf::{MfEncoder, hardware_encoders};
 #[cfg(windows)]
-pub use crate::mfdec::MfDecoder;
+pub use crate::mfdec::{MfDecoder, SharedSurface};
 #[cfg(target_os = "linux")]
 pub use crate::nvenc::NvencEncoder;
 pub use crate::openh264::{OpenH264Decoder, OpenH264Encoder};
@@ -79,6 +79,10 @@ pub struct YuvFrame {
     /// ([`YuvFrame::with_planes`] reads them when needed).
     #[cfg(target_os = "macos")]
     pub surface: Option<std::sync::Arc<DecodedSurface>>,
+    /// Windows, decoded by Media Foundation for a Direct3D 12 renderer: the
+    /// picture is in this shared NV12 texture and the planes above are empty.
+    #[cfg(windows)]
+    pub shared: Option<std::sync::Arc<SharedSurface>>,
 }
 
 impl YuvFrame {
@@ -90,6 +94,16 @@ impl YuvFrame {
         {
             let mut frame = YuvFrame::default();
             surface.read(&mut frame);
+            return std::borrow::Cow::Owned(frame);
+        }
+        #[cfg(windows)]
+        if self.y.is_empty()
+            && let Some(shared) = &self.shared
+        {
+            let mut frame = YuvFrame::default();
+            if let Err(e) = shared.read(&mut frame) {
+                tracing::debug!("decoded texture not read: {e:#}");
+            }
             return std::borrow::Cow::Owned(frame);
         }
         std::borrow::Cow::Borrowed(self)
@@ -106,6 +120,8 @@ impl Clone for YuvFrame {
             v: self.v.clone(),
             #[cfg(target_os = "macos")]
             surface: self.surface.clone(),
+            #[cfg(windows)]
+            shared: self.shared.clone(),
         }
     }
 }
@@ -365,11 +381,14 @@ pub fn create_encoder(
 }
 
 /// H.264 decoder for this system: OpenH264, or the graphics card's with
-/// `NUVIRA_DECODER=hardware` (slower for now, see the `mfdec` module).
+/// `NUVIRA_DECODER=hardware` (see the `mfdec` and `vtdec` modules). On Windows
+/// its pictures stay on the GPU when the renderer asked for them
+/// ([`set_native_frames`]).
 pub fn best_decoder() -> anyhow::Result<Box<dyn VideoDecoder>> {
     #[cfg(windows)]
     if std::env::var("NUVIRA_DECODER").as_deref() == Ok("hardware") {
-        match MfDecoder::new() {
+        let decoder = if native_frames() { MfDecoder::native() } else { MfDecoder::new() };
+        match decoder {
             Ok(d) => return Ok(Box::new(d)),
             Err(e) => tracing::info!("hardware decoder not available ({e:#}): OpenH264"),
         }

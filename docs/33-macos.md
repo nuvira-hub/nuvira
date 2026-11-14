@@ -175,7 +175,7 @@ A virtual Retina screen made on the Mac mini (`CGVirtualDisplay`, private API: 1
 - **All the screens at once** was offered with two screens but failed (the combined capture existed only for Windows). Now each screen is captured at the largest scale of them (ScreenCaptureKit enlarges the normal one), side by side without gaps: 6400x2160, encoded at most at 4096 wide (VideoToolbox refused 6400x2160 and then failed every frame; every encoder now gets at most 4096 on a side and H.264 level 5.1's area).
 - **Clicks** were turned into points with the main screen's scale. Each position now goes to the screen that has it, with that screen's scale: clicks within a point of where they were aimed on both screens and on all of them.
 - **No copies to VideoToolbox:** ScreenCaptureKit's buffer goes to the encoder as it is (scaled on the GPU by a `VTPixelTransferSession` when the viewer's window is smaller); the pointer, when needed, is drawn into it. The display's ICC profile attached by ScreenCaptureKit is removed first (VideoToolbox matched every frame's colours to it). 1920x1080 encoded at 1212x682 with the pointer moving: 3.8 s of agent CPU in 15 s against 25.5 s before, 58 fps both.
-- **VideoToolbox decoder** for the viewer (`NUVIRA_DECODER=hardware`): identical pictures, but 4.6 ms a 1080p frame against 1.0 for OpenH264 on the M1, so not the default.
+- **VideoToolbox decoder** for the viewer (`NUVIRA_DECODER=hardware`): identical pictures, but 4.6 ms a 1080p frame against 1.0 for OpenH264 on the M1, so not the default. With the Metal renderer its IOSurfaces are drawn as they are (no copy to RAM): a 1080p 60 fps session took the same CPU (7.4 s in 20 s) and latency (45 ms) as OpenH264 on the Mac mini M1.
 
 ## Not tested yet
 

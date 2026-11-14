@@ -237,6 +237,9 @@ struct Planes {
     nv12: bool,
     #[cfg(target_os = "macos")]
     _surface: Option<std::sync::Arc<nuvira_codec::DecodedSurface>>,
+    /// Held while drawn: the decoder writes another one meanwhile.
+    #[cfg(windows)]
+    _shared: Option<std::sync::Arc<nuvira_codec::SharedSurface>>,
 }
 
 pub struct GpuRenderer {
@@ -257,6 +260,13 @@ pub struct GpuRenderer {
     view: View,
     pub adapter_info: String,
     pub backend: wgpu::Backend,
+    /// Direct3D 12 with NV12 textures: the adapter's LUID, to open the decoder's
+    /// shared textures (Windows).
+    #[cfg(windows)]
+    shared_luid: Option<(u32, i32)>,
+    /// The decoder's shared textures opened here, by their handle.
+    #[cfg(windows)]
+    opened: std::collections::HashMap<isize, wgpu::Texture>,
 }
 
 impl GpuRenderer {
@@ -313,9 +323,24 @@ impl GpuRenderer {
         // Only the minimum limits (WebGL2's) plus the card's maximum resolution are requested:
         // the viewer uses no compute shaders, and cards reached through OpenGL do not offer them.
         let required_limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
-        let (device, queue) = pollster::block_on(
-            adapter.request_device(&wgpu::DeviceDescriptor { required_limits, ..Default::default() }),
-        )
+        // Windows: NV12 textures, to draw Media Foundation's pictures as they are.
+        #[cfg(windows)]
+        let shared_luid = (backend == wgpu::Backend::Dx12
+            && adapter.features().contains(wgpu::Features::TEXTURE_FORMAT_NV12))
+        .then(|| adapter_luid(&adapter))
+        .flatten();
+        #[cfg(windows)]
+        let required_features =
+            if shared_luid.is_some() { wgpu::Features::TEXTURE_FORMAT_NV12 } else { wgpu::Features::empty() };
+        #[cfg(not(windows))]
+        let required_features = wgpu::Features::empty();
+        #[cfg(windows)]
+        nuvira_codec::set_native_frames(shared_luid.is_some());
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits,
+            required_features,
+            ..Default::default()
+        }))
         .with_context(|| format!("wgpu device on {adapter_info}"))?;
 
         let caps = surface.get_capabilities(&adapter);
@@ -442,6 +467,10 @@ impl GpuRenderer {
             view: View::default(),
             adapter_info,
             backend,
+            #[cfg(windows)]
+            shared_luid,
+            #[cfg(windows)]
+            opened: std::collections::HashMap::new(),
         })
     }
 
@@ -473,10 +502,34 @@ impl GpuRenderer {
     }
 
     /// The bind group of these plane textures.
-    fn planes_of(&self, width: u32, height: u32, y: wgpu::Texture, u: wgpu::Texture, v: wgpu::Texture, nv12: bool) -> Planes {
-        let view = |t: &wgpu::Texture| t.create_view(&Default::default());
-        let (vy, vu, vv) = (view(&y), view(&u), view(&v));
-        let vc = view(&self.cursor_texture);
+    fn planes_of(
+        &self,
+        width: u32,
+        height: u32,
+        y: wgpu::Texture,
+        u: wgpu::Texture,
+        v: wgpu::Texture,
+        nv12: bool,
+    ) -> Planes {
+        let view = |t: &wgpu::Texture, plane: u32| {
+            if t.format() == wgpu::TextureFormat::NV12 {
+                // One NV12 texture: its luma and its interleaved chroma.
+                let (aspect, format) = if plane == 0 {
+                    (wgpu::TextureAspect::Plane0, wgpu::TextureFormat::R8Unorm)
+                } else {
+                    (wgpu::TextureAspect::Plane1, wgpu::TextureFormat::Rg8Unorm)
+                };
+                t.create_view(&wgpu::TextureViewDescriptor {
+                    aspect,
+                    format: Some(format),
+                    ..Default::default()
+                })
+            } else {
+                t.create_view(&Default::default())
+            }
+        };
+        let (vy, vu, vv) = (view(&y, 0), view(&u, 1), view(&v, 2));
+        let vc = view(&self.cursor_texture, 0);
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("yuv"),
             layout: &self.layout,
@@ -499,14 +552,80 @@ impl GpuRenderer {
             nv12,
             #[cfg(target_os = "macos")]
             _surface: None,
+            #[cfg(windows)]
+            _shared: None,
         }
+    }
+
+    /// Windows with Direct3D 12: the decoder's shared NV12 texture drawn as it
+    /// is (opened once by its handle). False when it cannot be (another adapter
+    /// or backend).
+    #[cfg(windows)]
+    fn upload_shared(&mut self, shared: &std::sync::Arc<nuvira_codec::SharedSurface>) -> bool {
+        if self.shared_luid != Some(shared.luid) {
+            return false;
+        }
+        let key = shared.handle().0 as isize;
+        if !self.opened.contains_key(&key) {
+            // SAFETY: the renderer's Direct3D 12 device; the handle is the decoder's
+            // shared texture (NV12, of this size), alive while `shared` is.
+            let texture = unsafe {
+                let Some(hal) = self.device.as_hal::<wgpu::hal::api::Dx12>() else { return false };
+                let mut resource: Option<windows::Win32::Graphics::Direct3D12::ID3D12Resource> = None;
+                if let Err(e) = hal.raw_device().OpenSharedHandle(shared.handle(), &mut resource) {
+                    tracing::debug!("shared texture not opened: {e}");
+                    return false;
+                }
+                let Some(resource) = resource else { return false };
+                let size =
+                    wgpu::Extent3d { width: shared.width, height: shared.height, depth_or_array_layers: 1 };
+                let texture = wgpu::hal::dx12::Device::texture_from_raw(
+                    resource,
+                    wgpu::TextureFormat::NV12,
+                    wgpu::TextureDimension::D2,
+                    size,
+                    1,
+                    1,
+                );
+                self.device.create_texture_from_hal::<wgpu::hal::api::Dx12>(
+                    texture,
+                    &wgpu::TextureDescriptor {
+                        label: Some("decoded picture"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::NV12,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    },
+                    wgpu::TextureUses::RESOURCE,
+                )
+            };
+            // A few textures rotate; another size: the old ones are gone.
+            if self.opened.len() > 8 {
+                self.opened.clear();
+            }
+            self.opened.insert(key, texture);
+        }
+        let texture = self.opened[&key].clone();
+        let mut planes =
+            self.planes_of(shared.width, shared.height, texture.clone(), texture.clone(), texture, true);
+        planes._shared = Some(shared.clone());
+        self.planes = Some(planes);
+        true
     }
 
     /// macOS with Metal: the decoder's IOSurface drawn as it is, its two planes
     /// (Y, then the interleaved chroma) wrapped as textures with no copy. False
     /// when it cannot be done (another backend).
     #[cfg(target_os = "macos")]
-    fn upload_surface(&mut self, width: u32, height: u32, surface: &std::sync::Arc<nuvira_codec::DecodedSurface>) -> bool {
+    fn upload_surface(
+        &mut self,
+        width: u32,
+        height: u32,
+        surface: &std::sync::Arc<nuvira_codec::DecodedSurface>,
+    ) -> bool {
         use objc2_metal::{MTLDevice, MTLPixelFormat, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage};
         if self.backend != wgpu::Backend::Metal {
             return false;
@@ -524,10 +643,7 @@ impl GpuRenderer {
             unsafe {
                 let hal = self.device.as_hal::<wgpu::hal::api::Metal>()?;
                 let desc = MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
-                    mtl,
-                    w as usize,
-                    h as usize,
-                    false,
+                    mtl, w as usize, h as usize, false,
                 );
                 desc.setUsage(MTLTextureUsage::ShaderRead);
                 let raw = hal.raw_device().newTextureWithDescriptor_iosurface_plane(&desc, io, plane)?;
@@ -563,7 +679,8 @@ impl GpuRenderer {
         let Some(uv) = make(1, cw, ch, MTLPixelFormat::RG8Unorm, wgpu::TextureFormat::Rg8Unorm) else {
             return false;
         };
-        let v = make(1, cw, ch, MTLPixelFormat::RG8Unorm, wgpu::TextureFormat::Rg8Unorm).unwrap_or_else(|| uv.clone());
+        let v = make(1, cw, ch, MTLPixelFormat::RG8Unorm, wgpu::TextureFormat::Rg8Unorm)
+            .unwrap_or_else(|| uv.clone());
         let mut planes = self.planes_of(width, height, y, uv, v, true);
         planes._surface = Some(surface.clone());
         self.planes = Some(planes);
@@ -573,6 +690,17 @@ impl GpuRenderer {
     /// Uploads a decoded frame to the GPU.
     pub fn upload(&mut self, frame: &YuvFrame) {
         let _t = TraceTime("upload", std::time::Instant::now());
+        #[cfg(windows)]
+        if let Some(shared) = &frame.shared {
+            if self.upload_shared(shared) {
+                return;
+            }
+            let planes = frame.with_planes();
+            if !planes.y.is_empty() {
+                return self.upload(&planes);
+            }
+            return;
+        }
         #[cfg(target_os = "macos")]
         if let Some(surface) = &frame.surface {
             if self.upload_surface(frame.width, frame.height, surface) {
@@ -585,7 +713,10 @@ impl GpuRenderer {
             }
             return;
         }
-        let fits = self.planes.as_ref().is_some_and(|p| p.width == frame.width && p.height == frame.height && !p.nv12);
+        let fits = self
+            .planes
+            .as_ref()
+            .is_some_and(|p| p.width == frame.width && p.height == frame.height && !p.nv12);
         if !fits {
             self.planes = Some(self.create_planes(frame.width, frame.height));
         }
@@ -630,7 +761,11 @@ impl GpuRenderer {
             self.queue.write_texture(
                 self.cursor_texture.as_image_copy(),
                 &s.rgba,
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(s.width * 4), rows_per_image: Some(s.height) },
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(s.width * 4),
+                    rows_per_image: Some(s.height),
+                },
                 wgpu::Extent3d { width: s.width, height: s.height, depth_or_array_layers: 1 },
             );
             self.cursor_serial = Some(s.serial);
@@ -776,6 +911,17 @@ impl Renderer {
             Renderer::Gpu(r) => r.set_cursor(cursor),
             Renderer::Cpu(r) => r.set_cursor(cursor),
         }
+    }
+}
+
+/// The LUID of a Direct3D 12 adapter of wgpu.
+#[cfg(windows)]
+fn adapter_luid(adapter: &wgpu::Adapter) -> Option<(u32, i32)> {
+    // SAFETY: reading the description of the adapter wgpu made.
+    unsafe {
+        let hal = adapter.as_hal::<wgpu::hal::api::Dx12>()?;
+        let desc = hal.raw_adapter().GetDesc1().ok()?;
+        Some((desc.AdapterLuid.LowPart, desc.AdapterLuid.HighPart))
     }
 }
 
