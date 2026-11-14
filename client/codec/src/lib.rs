@@ -45,7 +45,7 @@ pub use crate::vaapi::VaapiEncoder;
 #[cfg(target_os = "macos")]
 pub use crate::vt::VtEncoder;
 #[cfg(target_os = "macos")]
-pub use crate::vtdec::VtDecoder;
+pub use crate::vtdec::{DecodedSurface, VtDecoder};
 
 /// BGRA image to encode (as it comes from capture).
 pub struct BgraImage<'a> {
@@ -74,6 +74,52 @@ pub struct YuvFrame {
     pub y: Vec<u8>,
     pub u: Vec<u8>,
     pub v: Vec<u8>,
+    /// macOS, decoded by VideoToolbox for a renderer that draws it as it is: the
+    /// picture stays in this IOSurface (NV12) and the planes above are empty
+    /// ([`YuvFrame::with_planes`] reads them when needed).
+    #[cfg(target_os = "macos")]
+    pub surface: Option<std::sync::Arc<DecodedSurface>>,
+}
+
+impl YuvFrame {
+    /// The frame with its planes in RAM: itself, or read from its surface.
+    pub fn with_planes(&self) -> std::borrow::Cow<'_, YuvFrame> {
+        #[cfg(target_os = "macos")]
+        if self.y.is_empty()
+            && let Some(surface) = &self.surface
+        {
+            let mut frame = YuvFrame::default();
+            surface.read(&mut frame);
+            return std::borrow::Cow::Owned(frame);
+        }
+        std::borrow::Cow::Borrowed(self)
+    }
+}
+
+impl Clone for YuvFrame {
+    fn clone(&self) -> Self {
+        Self {
+            width: self.width,
+            height: self.height,
+            y: self.y.clone(),
+            u: self.u.clone(),
+            v: self.v.clone(),
+            #[cfg(target_os = "macos")]
+            surface: self.surface.clone(),
+        }
+    }
+}
+
+/// Decoders give pictures that stay on the GPU (macOS: VideoToolbox's
+/// IOSurfaces), set by a renderer that draws them as they are.
+static NATIVE_FRAMES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_native_frames(on: bool) {
+    NATIVE_FRAMES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn native_frames() -> bool {
+    NATIVE_FRAMES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -328,8 +374,16 @@ pub fn best_decoder() -> anyhow::Result<Box<dyn VideoDecoder>> {
             Err(e) => tracing::info!("hardware decoder not available ({e:#}): OpenH264"),
         }
     }
-    // macOS too: VideoToolbox, read into RAM (slower than OpenH264 on Apple
+    // macOS: VideoToolbox when the renderer draws its IOSurfaces as they are
+    // (Metal); read into RAM only on request (slower than OpenH264 on Apple
     // silicon: 4.6 against 1.0 ms a 1080p frame on an M1, see `vtdec`).
+    #[cfg(target_os = "macos")]
+    if native_frames() && std::env::var("NUVIRA_DECODER").as_deref() != Ok("software") {
+        match VtDecoder::native() {
+            Ok(d) => return Ok(Box::new(d)),
+            Err(e) => tracing::info!("hardware decoder not available ({e:#}): OpenH264"),
+        }
+    }
     #[cfg(target_os = "macos")]
     if std::env::var("NUVIRA_DECODER").as_deref() == Ok("hardware") {
         match VtDecoder::new() {

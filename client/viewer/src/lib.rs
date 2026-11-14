@@ -1473,12 +1473,13 @@ impl ApplicationHandler<NetEvent> for App {
             NetEvent::FrameReady => {
                 let Some(frame) = self.slot.take() else { return };
                 if self.keep_last_frame {
+                    let planes = frame.yuv.with_planes();
                     let last = self.last_frame.get_or_insert_with(Default::default);
-                    last.width = frame.yuv.width;
-                    last.height = frame.yuv.height;
-                    last.y.clone_from(&frame.yuv.y);
-                    last.u.clone_from(&frame.yuv.u);
-                    last.v.clone_from(&frame.yuv.v);
+                    last.width = planes.width;
+                    last.height = planes.height;
+                    last.y.clone_from(&planes.y);
+                    last.u.clone_from(&planes.u);
+                    last.v.clone_from(&planes.v);
                 }
                 // The image is there: no more waiting message.
                 self.notice = None;

@@ -2063,6 +2063,15 @@ impl VideoEncoder for VaapiEncoder {
         if self.fallback.is_some() || !self.dmabuf {
             return None;
         }
+        // Intel's driver takes linear pictures with rows of a multiple of 64 bytes
+        // only: 1366 pixels (5464 bytes, as GNOME makes them) came out sheared. Not
+        // taken, and no DMA-BUFs asked any more: the compositor's shared memory.
+        if image.stride % 64 != 0 {
+            warn!(stride = image.stride, width = image.width, "DMA-BUF rows not aligned for the driver: shared memory instead");
+            self.dmabuf = false;
+            crate::set_dmabuf_import_modifiers(Vec::new());
+            return None;
+        }
         let w = size.0.min(image.width) & !1;
         let h = size.1.min(image.height) & !1;
         if w < 2 || h < 2 {

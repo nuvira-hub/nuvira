@@ -17,6 +17,10 @@ use std::ffi::c_void;
 use std::ptr;
 
 use anyhow::{Result, bail};
+use core_foundation::base::TCFType;
+use core_foundation::boolean::CFBoolean;
+use core_foundation::dictionary::CFDictionary;
+use core_foundation::string::CFString;
 
 use crate::{VideoDecoder, YuvFrame};
 
@@ -108,11 +112,50 @@ unsafe extern "C" {
     fn CVPixelBufferGetPixelFormatType(buffer: CVImageBufferRef) -> u32;
     fn CVPixelBufferGetBaseAddressOfPlane(buffer: CVImageBufferRef, plane: usize) -> *const u8;
     fn CVPixelBufferGetBytesPerRowOfPlane(buffer: CVImageBufferRef, plane: usize) -> usize;
+    fn CVPixelBufferGetIOSurface(buffer: CVImageBufferRef) -> *mut c_void;
+    static kCVPixelBufferIOSurfacePropertiesKey: *const c_void;
+    static kCVPixelBufferMetalCompatibilityKey: *const c_void;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
     fn CFRelease(object: CFTypeRef);
+    fn CFRetain(object: CFTypeRef) -> CFTypeRef;
+}
+
+/// A decoded picture kept on the GPU: VideoToolbox's buffer (an IOSurface,
+/// NV12), retained while a renderer uses it.
+pub struct DecodedSurface(CVImageBufferRef);
+
+// SAFETY: CoreVideo buffers are reference counted and may be read from any
+// thread; nobody writes this one after the decoder.
+unsafe impl Send for DecodedSurface {}
+unsafe impl Sync for DecodedSurface {}
+
+impl DecodedSurface {
+    fn retain(image: CVImageBufferRef) -> Self {
+        // SAFETY: a valid buffer, released in `drop`.
+        unsafe { CFRetain(image) };
+        Self(image)
+    }
+
+    /// Its IOSurface (owned by the buffer, valid while it lives).
+    pub fn io_surface(&self) -> *mut c_void {
+        // SAFETY: a valid buffer.
+        unsafe { CVPixelBufferGetIOSurface(self.0) }
+    }
+
+    /// Its pixels into I420 planes.
+    pub fn read(&self, frame: &mut YuvFrame) {
+        read_nv12(self.0, frame);
+    }
+}
+
+impl Drop for DecodedSurface {
+    fn drop(&mut self) {
+        // SAFETY: retained in `retain`.
+        unsafe { CFRelease(self.0) };
+    }
 }
 
 /// `kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` and `...FullRange`: NV12.
@@ -135,6 +178,8 @@ struct Output {
     frame: YuvFrame,
     ready: bool,
     status: OSStatus,
+    /// Keep the picture in its IOSurface instead of reading it.
+    native: bool,
 }
 
 // SAFETY: the session is used by one thread at a time (`&mut self`); decoding is
@@ -156,16 +201,39 @@ extern "C" fn on_frame(
     if status != 0 || image.is_null() {
         return;
     }
-    // SAFETY: a decoded picture handed to the callback, locked while read.
-    unsafe {
-        let format = CVPixelBufferGetPixelFormatType(image);
-        if format != NV12_VIDEO && format != NV12_FULL {
-            out.status = -1;
-            return;
+    // SAFETY: a decoded picture handed to the callback.
+    let format = unsafe { CVPixelBufferGetPixelFormatType(image) };
+    if format != NV12_VIDEO && format != NV12_FULL {
+        out.status = -1;
+        return;
+    }
+    if out.native {
+        let f = &mut out.frame;
+        // SAFETY: a valid buffer.
+        unsafe {
+            f.width = CVPixelBufferGetWidth(image) as u32;
+            f.height = CVPixelBufferGetHeight(image) as u32;
         }
+        f.y.clear();
+        f.u.clear();
+        f.v.clear();
+        f.surface = Some(std::sync::Arc::new(DecodedSurface::retain(image)));
+        out.ready = true;
+        return;
+    }
+    if !read_nv12(image, &mut out.frame) {
+        out.status = -2;
+        return;
+    }
+    out.ready = true;
+}
+
+/// NV12 `image` into I420 planes; false if it could not be locked.
+fn read_nv12(image: CVImageBufferRef, f: &mut YuvFrame) -> bool {
+    // SAFETY: a valid NV12 buffer, locked while read.
+    unsafe {
         if CVPixelBufferLockBaseAddress(image, READ_ONLY) != 0 {
-            out.status = -2;
-            return;
+            return false;
         }
         let (w, h) = (CVPixelBufferGetWidth(image), CVPixelBufferGetHeight(image));
         let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
@@ -173,7 +241,6 @@ extern "C" fn on_frame(
         let y_stride = CVPixelBufferGetBytesPerRowOfPlane(image, 0);
         let uv_base = CVPixelBufferGetBaseAddressOfPlane(image, 1);
         let uv_stride = CVPixelBufferGetBytesPerRowOfPlane(image, 1);
-        let f = &mut out.frame;
         f.width = w as u32;
         f.height = h as u32;
         f.y.clear();
@@ -194,7 +261,7 @@ extern "C" fn on_frame(
         }
         CVPixelBufferUnlockBaseAddress(image, READ_ONLY);
     }
-    out.ready = true;
+    true
 }
 
 /// The NAL units of an Annex B stream (without their start codes).
@@ -226,6 +293,13 @@ fn nal_units(data: &[u8]) -> Vec<&[u8]> {
 impl VtDecoder {
     pub fn new() -> Result<Self> {
         Ok(Self { session: ptr::null_mut(), format: ptr::null_mut(), sets: Vec::new(), out: Box::default() })
+    }
+
+    /// Pictures kept in their IOSurfaces ([`YuvFrame::surface`]), for a Metal renderer.
+    pub fn native() -> Result<Self> {
+        let mut decoder = Self::new()?;
+        decoder.out.native = true;
+        Ok(decoder)
     }
 
     fn close(&mut self) {
@@ -264,10 +338,26 @@ impl VtDecoder {
             bail!("CMVideoFormatDescriptionCreateFromH264ParameterSets: {status}");
         }
         let callback = OutputCallback { callback: on_frame, refcon: (&mut *self.out as *mut Output).cast() };
-        // SAFETY: a valid format; no decoder or image requirements (NV12 in the
-        // decoder's own format); the callback's refcon outlives the session.
+        // Native pictures: in IOSurfaces Metal can read.
+        let attributes = self.out.native.then(|| {
+            // SAFETY: CoreVideo's key constants.
+            let (surface_key, metal_key) = unsafe {
+                (
+                    CFString::wrap_under_get_rule(kCVPixelBufferIOSurfacePropertiesKey.cast()),
+                    CFString::wrap_under_get_rule(kCVPixelBufferMetalCompatibilityKey.cast()),
+                )
+            };
+            let empty: CFDictionary<CFString, CFBoolean> = CFDictionary::from_CFType_pairs(&[]);
+            CFDictionary::from_CFType_pairs(&[
+                (surface_key, empty.as_CFType()),
+                (metal_key, CFBoolean::true_value().as_CFType()),
+            ])
+        });
+        let attributes_ref = attributes.as_ref().map_or(ptr::null(), |a| a.as_concrete_TypeRef().cast());
+        // SAFETY: a valid format; no decoder requirements (NV12 in the decoder's
+        // own format); the callback's refcon outlives the session.
         let status = unsafe {
-            VTDecompressionSessionCreate(ptr::null(), self.format, ptr::null(), ptr::null(), &callback, &mut self.session)
+            VTDecompressionSessionCreate(ptr::null(), self.format, ptr::null(), attributes_ref, &callback, &mut self.session)
         };
         if status != 0 || self.session.is_null() {
             self.session = ptr::null_mut();

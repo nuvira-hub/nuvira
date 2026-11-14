@@ -273,6 +273,7 @@ mod tests {
             y: vec![235, 235, 82, 82, 235, 235, 82, 82],
             u: vec![128, 90],
             v: vec![128, 240],
+            ..Default::default()
         };
         // 2x1 destination inside a buffer 3 wide starting at column 1: each pixel
         // covers two source columns of the same colour.

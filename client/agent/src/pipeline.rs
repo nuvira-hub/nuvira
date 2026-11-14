@@ -386,6 +386,11 @@ fn encode_loop(
                     nuvira_capture::set_dmabuf_modifiers(nuvira_codec::dmabuf_import_modifiers());
                     continue;
                 }
+                // The encoder takes no DMA-BUFs any more (rows it cannot read): the
+                // capture goes to shared memory; this one is read into RAM.
+                if nuvira_codec::dmabuf_import_modifiers().is_empty() {
+                    nuvira_capture::set_dmabuf_modifiers(Vec::new());
+                }
                 let mut data = std::mem::take(&mut dmabuf_ram);
                 if let Err(e) = buf.read(&mut data) {
                     if !std::mem::replace(&mut dmabuf_warned, true) {

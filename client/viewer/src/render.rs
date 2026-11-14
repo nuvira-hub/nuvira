@@ -45,7 +45,8 @@ struct Params {
     pixel: vec2<f32>,
     // Samples per side averaged for each window pixel (1 = no shrinking).
     taps: u32,
-    _pad: u32,
+    // The chroma is one interleaved plane (NV12, in tex_u's red and green).
+    nv12: u32,
     // The remote pointer drawn on top: its rectangle in the image (0..1), the
     // part of its texture it fills, on or off.
     cur0: vec2<f32>,
@@ -69,7 +70,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             yuv += vec3<f32>(
                 textureSampleLevel(tex_y, samp, at, 0.0).r,
                 textureSampleLevel(tex_u, samp, at, 0.0).r,
-                textureSampleLevel(tex_v, samp, at, 0.0).r,
+                select(
+                    textureSampleLevel(tex_v, samp, at, 0.0).r,
+                    textureSampleLevel(tex_u, samp, at, 0.0).g,
+                    params.nv12 == 1u,
+                ),
             );
         }
     }
@@ -227,6 +232,11 @@ struct Planes {
     u: wgpu::Texture,
     v: wgpu::Texture,
     bind_group: wgpu::BindGroup,
+    /// The planes are a decoder's NV12 surface (the chroma interleaved in `u`),
+    /// kept alive while drawn.
+    nv12: bool,
+    #[cfg(target_os = "macos")]
+    _surface: Option<std::sync::Arc<nuvira_codec::DecodedSurface>>,
 }
 
 pub struct GpuRenderer {
@@ -296,6 +306,10 @@ impl GpuRenderer {
         let info = adapter.get_info();
         let adapter_info = format!("{} ({:?})", info.name, info.backend);
         let backend = info.backend;
+        // Metal draws VideoToolbox's pictures as they are: the decoder keeps them
+        // on the GPU.
+        #[cfg(target_os = "macos")]
+        nuvira_codec::set_native_frames(backend == wgpu::Backend::Metal);
         // Only the minimum limits (WebGL2's) plus the card's maximum resolution are requested:
         // the viewer uses no compute shaders, and cards reached through OpenGL do not offer them.
         let required_limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
@@ -455,6 +469,11 @@ impl GpuRenderer {
         };
         let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
         let (y, u, v) = (plane("y", width, height), plane("u", cw, ch), plane("v", cw, ch));
+        self.planes_of(width, height, y, u, v, false)
+    }
+
+    /// The bind group of these plane textures.
+    fn planes_of(&self, width: u32, height: u32, y: wgpu::Texture, u: wgpu::Texture, v: wgpu::Texture, nv12: bool) -> Planes {
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
         let (vy, vu, vv) = (view(&y), view(&u), view(&v));
         let vc = view(&self.cursor_texture);
@@ -470,13 +489,103 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&vc) },
             ],
         });
-        Planes { width, height, y, u, v, bind_group }
+        Planes {
+            width,
+            height,
+            y,
+            u,
+            v,
+            bind_group,
+            nv12,
+            #[cfg(target_os = "macos")]
+            _surface: None,
+        }
+    }
+
+    /// macOS with Metal: the decoder's IOSurface drawn as it is, its two planes
+    /// (Y, then the interleaved chroma) wrapped as textures with no copy. False
+    /// when it cannot be done (another backend).
+    #[cfg(target_os = "macos")]
+    fn upload_surface(&mut self, width: u32, height: u32, surface: &std::sync::Arc<nuvira_codec::DecodedSurface>) -> bool {
+        use objc2_metal::{MTLDevice, MTLPixelFormat, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage};
+        if self.backend != wgpu::Backend::Metal {
+            return false;
+        }
+        let io = surface.io_surface();
+        if io.is_null() {
+            return false;
+        }
+        // SAFETY: a valid IOSurface, kept alive by `surface` (stored in the planes).
+        let io: &objc2_io_surface::IOSurfaceRef = unsafe { &*io.cast() };
+        let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+        let make = |plane: usize, w: u32, h: u32, mtl: MTLPixelFormat, format: wgpu::TextureFormat| {
+            // SAFETY: the Metal device of this renderer; the texture uses the
+            // IOSurface's plane as its storage and is only read.
+            unsafe {
+                let hal = self.device.as_hal::<wgpu::hal::api::Metal>()?;
+                let desc = MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                    mtl,
+                    w as usize,
+                    h as usize,
+                    false,
+                );
+                desc.setUsage(MTLTextureUsage::ShaderRead);
+                let raw = hal.raw_device().newTextureWithDescriptor_iosurface_plane(&desc, io, plane)?;
+                let texture = wgpu::hal::metal::Device::texture_from_raw(
+                    raw,
+                    format,
+                    MTLTextureType::Type2D,
+                    1,
+                    1,
+                    wgpu::hal::CopyExtent { width: w, height: h, depth: 1 },
+                    None,
+                );
+                Some(self.device.create_texture_from_hal::<wgpu::hal::api::Metal>(
+                    texture,
+                    &wgpu::TextureDescriptor {
+                        label: Some("decoded plane"),
+                        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    },
+                    // Written by the decoder, read by the shader only.
+                    wgpu::TextureUses::RESOURCE,
+                ))
+            }
+        };
+        let Some(y) = make(0, width, height, MTLPixelFormat::R8Unorm, wgpu::TextureFormat::R8Unorm) else {
+            return false;
+        };
+        let Some(uv) = make(1, cw, ch, MTLPixelFormat::RG8Unorm, wgpu::TextureFormat::Rg8Unorm) else {
+            return false;
+        };
+        let v = make(1, cw, ch, MTLPixelFormat::RG8Unorm, wgpu::TextureFormat::Rg8Unorm).unwrap_or_else(|| uv.clone());
+        let mut planes = self.planes_of(width, height, y, uv, v, true);
+        planes._surface = Some(surface.clone());
+        self.planes = Some(planes);
+        true
     }
 
     /// Uploads a decoded frame to the GPU.
     pub fn upload(&mut self, frame: &YuvFrame) {
         let _t = TraceTime("upload", std::time::Instant::now());
-        let fits = self.planes.as_ref().is_some_and(|p| p.width == frame.width && p.height == frame.height);
+        #[cfg(target_os = "macos")]
+        if let Some(surface) = &frame.surface {
+            if self.upload_surface(frame.width, frame.height, surface) {
+                return;
+            }
+            // Not drawable as it is: its planes read into RAM.
+            let planes = frame.with_planes();
+            if !planes.y.is_empty() {
+                return self.upload(&planes);
+            }
+            return;
+        }
+        let fits = self.planes.as_ref().is_some_and(|p| p.width == frame.width && p.height == frame.height && !p.nv12);
         if !fits {
             self.planes = Some(self.create_planes(frame.width, frame.height));
         }
@@ -566,7 +675,7 @@ impl GpuRenderer {
                     data.extend_from_slice(&f.to_le_bytes());
                 }
                 data.extend_from_slice(&n.to_le_bytes());
-                data.extend_from_slice(&0u32.to_le_bytes());
+                data.extend_from_slice(&u32::from(planes.nv12).to_le_bytes());
                 let (on, c) = match &self.cursor {
                     Some(c) => (1u32, {
                         let [x, y, w, h] = c.rect;
@@ -625,7 +734,7 @@ impl Renderer {
     pub fn upload(&mut self, frame: &YuvFrame) {
         match self {
             Renderer::Gpu(r) => r.upload(frame),
-            Renderer::Cpu(r) => r.upload(frame),
+            Renderer::Cpu(r) => r.upload(&frame.with_planes()),
         }
     }
 

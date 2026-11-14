@@ -395,6 +395,8 @@ struct State {
     generation: u64,
     /// `in_ram()` when the formats were last offered.
     in_ram: bool,
+    /// The first DMA-BUF's layout was logged.
+    dmabuf_logged: bool,
     /// The pointer as metadata: the last picture (without it), to draw it again
     /// when only the pointer moves and it must be in the picture; the last
     /// bitmap, its serial, and the generation of the pointer drawn.
@@ -444,6 +446,7 @@ fn stream_loop(
         modifiers: modifiers.clone(),
         generation,
         in_ram: in_ram(),
+        dmabuf_logged: false,
         last: None,
         bitmap: Vec::new(),
         serial: 0,
@@ -499,7 +502,7 @@ fn stream_loop(
                 // of ours it can do) is sent back with the buffers we want.
                 let fixate = (flags.bits() & VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED != 0)
                     .then(|| choose_modifier(param, &state.modifiers, state.format.modifier()));
-                match dmabuf_params(fixate) {
+                match dmabuf_params(fixate, cursor::active()) {
                     Ok(pods) => {
                         let mut params: Vec<&Pod> = pods.iter().filter_map(|p| Pod::from_bytes(p)).collect();
                         if let Err(e) = stream.update_params(&mut params) {
@@ -573,6 +576,15 @@ fn stream_loop(
                 }
                 // SAFETY: a new descriptor of ours.
                 let fd = unsafe { <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(fd) };
+                if !std::mem::replace(&mut state.dmabuf_logged, true) {
+                    debug!(
+                        width = size.width,
+                        stride = chunk.stride(),
+                        offset = chunk.offset(),
+                        size = data.as_raw().maxsize,
+                        "DMA-BUF picture"
+                    );
+                }
                 let image = Image {
                     width: size.width,
                     height: size.height,
@@ -867,7 +879,9 @@ fn cursor_meta_param() -> Result<Vec<u8>> {
 
 /// After a DMA-BUF format: the buffers we take (DMA-BUFs), and the format with the
 /// modifier settled when the compositor asked for it.
-fn dmabuf_params(fixate: Option<u64>) -> Result<Vec<Vec<u8>>> {
+/// The buffers wanted as DMA-BUFs, the room for the pointer's metadata when it
+/// comes apart (`cursor`), and the modifier taken when the compositor left it open.
+fn dmabuf_params(fixate: Option<u64>, cursor: bool) -> Result<Vec<Vec<u8>>> {
     use pw::spa::pod::{Property, Value};
     let buffers = pw::spa::pod::Object {
         type_: pw::spa::utils::SpaTypes::ObjectParamBuffers.as_raw(),
@@ -877,12 +891,16 @@ fn dmabuf_params(fixate: Option<u64>) -> Result<Vec<Vec<u8>>> {
             Value::Int(1 << pw::spa::sys::SPA_DATA_DmaBuf),
         )],
     };
-    let (cursor, _) = pw::spa::pod::serialize::PodSerializer::serialize(
+    let cursor_meta = cursor;
+    let (buffers, _) = pw::spa::pod::serialize::PodSerializer::serialize(
         std::io::Cursor::new(Vec::new()),
         &Value::Object(buffers),
     )
     .map_err(|e| anyhow!("buffers: {e:?}"))?;
-    let mut pods = vec![cursor.into_inner()];
+    let mut pods = vec![buffers.into_inner()];
+    if cursor_meta {
+        pods.push(cursor_meta_param()?);
+    }
     if let Some(m) = fixate {
         pods.push(format_pod(Some(Modifiers::Fixed(m)))?);
     }

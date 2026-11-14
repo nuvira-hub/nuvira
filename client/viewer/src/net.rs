@@ -1545,13 +1545,7 @@ fn decode_loop(
             Ok(Some(yuv)) => {
                 waiting_key = false;
                 let decoded = DecodedFrame {
-                    yuv: YuvFrame {
-                        width: yuv.width,
-                        height: yuv.height,
-                        y: yuv.y.clone(),
-                        u: yuv.u.clone(),
-                        v: yuv.v.clone(),
-                    },
+                    yuv: yuv.clone(),
                     capture_us: frame.capture_us,
                     encode_us: frame.encode_us,
                     // Older agents: estimated from capture and encoding times.
