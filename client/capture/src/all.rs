@@ -2,6 +2,9 @@
 //! laid out as in the virtual desktop (gaps between screens of different sizes are
 //! black). The image goes through RAM: the screens may be on different graphics
 //! cards, and composing on the CPU costs a copy of each changed screen.
+//!
+//! The pointer (Windows) is drawn into the composed picture, not by each screen:
+//! they publish it in the composed picture's coordinates.
 
 use std::time::Duration;
 
@@ -16,6 +19,8 @@ pub struct AllCapturer {
     parts: Vec<Box<dyn Capturer>>,
     display: Display,
     frame: Frame,
+    /// The pointer drawn into `frame.data`.
+    drawn: nuvira_pointer::Drawn,
 }
 
 impl AllCapturer {
@@ -30,6 +35,8 @@ impl AllCapturer {
         // Even sizes: the encoders work on 2x2 chroma blocks.
         let (width, height) = (((right - left) as u32 + 1) & !1, ((bottom - top) as u32 + 1) & !1);
         let parts = screens.iter().map(|d| open(d.index)).collect::<Result<Vec<_>>>()?;
+        #[cfg(windows)]
+        crate::windows::set_nested(Some((left, top)));
         let display = Display {
             index: ALL_DISPLAYS,
             name: "all screens".into(),
@@ -51,7 +58,7 @@ impl AllCapturer {
             #[cfg(target_os = "linux")]
             dmabuf: None,
         };
-        Ok(Self { parts, display, frame })
+        Ok(Self { parts, display, frame, drawn: nuvira_pointer::Drawn::default() })
     }
 }
 
@@ -65,6 +72,9 @@ impl Capturer for AllCapturer {
         // seen within the timeout.
         let share = timeout / self.parts.len() as u32;
         let mut changed = false;
+        // The pointer comes out first: the screens' new pictures go under it.
+        let before = self.drawn.generation();
+        self.drawn.undo(&mut self.frame.data, self.frame.stride);
         for part in &mut self.parts {
             let (left, top) = (part.display().left, part.display().top);
             let Some(image) = part.next_frame(share)? else { continue };
@@ -79,11 +89,24 @@ impl Capturer for AllCapturer {
             self.frame.captured_us = image.captured_us;
             changed = true;
         }
-        Ok(changed.then_some(&self.frame))
+        let draw = !nuvira_pointer::active() || nuvira_pointer::composite();
+        if draw {
+            let (w, h, stride) = (self.frame.width, self.frame.height, self.frame.stride);
+            self.drawn.draw(&mut self.frame.data, w, h, stride, false);
+        }
+        let moved = self.drawn.generation() != before;
+        Ok((changed || (moved && self.frame.captured_us != 0)).then_some(&self.frame))
     }
 
     fn last_frame(&self) -> Option<&Frame> {
         (self.frame.captured_us != 0).then_some(&self.frame)
+    }
+}
+
+impl Drop for AllCapturer {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        crate::windows::set_nested(None);
     }
 }
 

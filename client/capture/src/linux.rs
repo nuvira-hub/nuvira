@@ -24,7 +24,7 @@ use pw::spa::pod::Pod;
 use tracing::{debug, info, warn};
 
 use crate::{Capturer, Display, Frame};
-use nuvira_portal::cursor;
+use nuvira_pointer as cursor;
 
 /// `struct spa_meta_cursor` (spa/buffer/meta.h): the pointer as stream metadata.
 #[repr(C)]
@@ -747,14 +747,18 @@ fn read_cursor(buffer: &pw::buffer::Buffer, state: &mut State) {
                     }
                 }
                 if bgra != state.bitmap {
-                    state.serial = state.serial.wrapping_add(1).max(1);
+                    let hot_x = meta.hot_x.clamp(0, w as i32 - 1) as u32;
+                    let hot_y = meta.hot_y.clamp(0, h as i32 - 1) as u32;
+                    // From the pixels: a shape seen again keeps its serial (viewers
+                    // that keep shapes are not sent it again).
+                    state.serial = cursor::serial_of(w, h, hot_x, hot_y, &bgra);
                     state.bitmap.clone_from(&bgra);
                     shape = Some(cursor::Shape {
                         serial: state.serial,
                         width: w,
                         height: h,
-                        hot_x: meta.hot_x.clamp(0, w as i32 - 1) as u32,
-                        hot_y: meta.hot_y.clamp(0, h as i32 - 1) as u32,
+                        hot_x,
+                        hot_y,
                         bgra: Arc::new(bgra),
                     });
                 }

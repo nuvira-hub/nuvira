@@ -107,7 +107,7 @@ pub struct X11Capturer {
     last_pointer: Option<(i32, i32)>,
     /// Next capture, at most 60 per second.
     next: Instant,
-    /// The pointer as metadata for the viewers (nuvira_portal::cursor), its last
+    /// The pointer as metadata for the viewers (nuvira_pointer), its last
     /// XFixes serial, and the generation of the pointer state last drawn or sent.
     metadata: bool,
     cursor_serial: Option<u32>,
@@ -135,8 +135,8 @@ impl X11Capturer {
         } else {
             create_damage(&conn, root).inspect_err(|e| info!("X11 capture without XDamage: {e:#}")).ok()
         };
-        let metadata = cursor && nuvira_portal::cursor::wanted();
-        nuvira_portal::cursor::set_active(metadata);
+        let metadata = cursor && nuvira_pointer::wanted();
+        nuvira_pointer::set_active(metadata);
         info!(width = w, height = h, cursor, metadata, shm = shm.is_some(), damage = damage.is_some(), "X11 capture");
         Ok(Self {
             conn,
@@ -176,7 +176,7 @@ impl X11Capturer {
                     bgra.extend_from_slice(&[straight(0), straight(8), straight(16), a as u8]);
                 }
             }
-            nuvira_portal::cursor::Shape {
+            nuvira_pointer::Shape {
                 serial,
                 width: w,
                 height: h,
@@ -186,9 +186,9 @@ impl X11Capturer {
             }
         });
         self.cursor_serial = Some(serial);
-        nuvira_portal::cursor::publish(
+        nuvira_pointer::publish(
             shape,
-            nuvira_portal::cursor::Position { x: i32::from(c.x), y: i32::from(c.y), visible: true, serial },
+            nuvira_pointer::Position { x: i32::from(c.x), y: i32::from(c.y), visible: true, serial },
         );
     }
 
@@ -295,11 +295,11 @@ impl Capturer for X11Capturer {
         let mut cursor_moved = self.cursor && self.cursor_changed();
         // The viewers draw the pointer: it goes to them apart, the picture does not
         // change for it. When it must be in the picture again, a new picture.
-        let apart = self.metadata && !nuvira_portal::cursor::composite();
+        let apart = self.metadata && !nuvira_pointer::composite();
         if apart && cursor_moved {
             self.publish_cursor();
         }
-        let generation = nuvira_portal::cursor::generation();
+        let generation = nuvira_pointer::generation();
         let switched = self.metadata && !apart && generation != self.cursor_generation;
         if apart {
             cursor_moved = false;

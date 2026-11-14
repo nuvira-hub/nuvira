@@ -3,6 +3,10 @@
 //! Slower (a full copy of the screen through the CPU at every frame) and without
 //! change notifications: the image is compared with the previous one and reported
 //! only if it changed. `NUVIRA_CAPTURE=gdi` forces it (tests).
+//!
+//! `BitBlt` leaves the pointer out: it is drawn into the copy with the system's own
+//! drawing (`DrawIconEx`, inverting pointers included), always: this capture does
+//! not give it apart to the viewers.
 
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
@@ -56,6 +60,10 @@ impl GdiCapturer {
         let memory = unsafe { CreateCompatibleDC(None) };
         let bitmap = unsafe { CreateDIBSection(Some(memory), &info, DIB_RGB_COLORS, &mut pixels, None, 0) }?;
         let old = unsafe { SelectObject(memory, bitmap.into()) };
+        // The viewers do not get the pointer apart from this capture.
+        if nuvira_pointer::active() {
+            nuvira_pointer::set_active(false);
+        }
         let name = &display.name;
         info!("GDI capture of {name} {w}x{h}");
         let stride = w as usize * 4;
@@ -101,6 +109,7 @@ impl GdiCapturer {
             let _ = crate::desktop::follow_input_desktop();
             return Ok(false);
         }
+        self.draw_pointer();
         // SAFETY: the DIB section holds w*h*4 bytes, rows from the top.
         let src = unsafe { std::slice::from_raw_parts(self.pixels, self.frame.data.len()) };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -117,6 +126,39 @@ impl GdiCapturer {
         }
         self.frame.captured_us = nuvira_proto::now_us();
         Ok(true)
+    }
+}
+
+impl GdiCapturer {
+    /// The system's pointer, drawn into the copy where it is on this screen.
+    fn draw_pointer(&self) {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CURSOR_SHOWING, CURSORINFO, DI_NORMAL, DrawIconEx, GetCursorInfo, GetIconInfo, HICON, ICONINFO,
+        };
+        let mut info = CURSORINFO { cbSize: size_of::<CURSORINFO>() as u32, ..Default::default() };
+        if unsafe { GetCursorInfo(&mut info) }.is_err()
+            || info.flags.0 & CURSOR_SHOWING.0 == 0
+            || info.hCursor.is_invalid()
+        {
+            return;
+        }
+        let icon = HICON(info.hCursor.0);
+        let mut icon_info = ICONINFO::default();
+        if unsafe { GetIconInfo(icon, &mut icon_info) }.is_err() {
+            return;
+        }
+        // GetIconInfo hands over copies of the two bitmaps.
+        unsafe {
+            if !icon_info.hbmMask.is_invalid() {
+                let _ = DeleteObject(icon_info.hbmMask.into());
+            }
+            if !icon_info.hbmColor.is_invalid() {
+                let _ = DeleteObject(icon_info.hbmColor.into());
+            }
+        }
+        let x = info.ptScreenPos.x - icon_info.xHotspot as i32 - self.display.left;
+        let y = info.ptScreenPos.y - icon_info.yHotspot as i32 - self.display.top;
+        let _ = unsafe { DrawIconEx(self.memory, x, y, icon, 0, 0, 0, None, DI_NORMAL) };
     }
 }
 

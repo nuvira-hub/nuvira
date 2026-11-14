@@ -260,7 +260,8 @@ pub async fn guest_session(
     // The pointer apart, to a guest that draws it; one that cannot gets it in the
     // picture (for everyone, while it stays).
     let cursor = shared.cursor_offered && hello.cursor;
-    let answer = Hello { password_required: true, text: input, audio, cursor, ..local_hello() };
+    let cursor_cache = cursor && hello.cursor_cache;
+    let answer = Hello { password_required: true, text: input, audio, cursor, cursor_cache, ..local_hello() };
     ctrl_tx.send(&control(Msg::Hello(answer))).await?;
     let given = match ctrl_rx.recv::<ControlMessage>().await? {
         Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
@@ -338,7 +339,7 @@ pub async fn guest_session(
 
     // Answers to the viewer's pings, sent by the loop that owns the control channel.
     let (pong_tx, mut pong_rx) = mpsc::unbounded_channel::<Pong>();
-    let mut pointer = crate::PointerSender::default();
+    let mut pointer = crate::PointerSender::new(cursor_cache);
     let mut pointer_tick = tokio::time::interval(Duration::from_millis(16));
     pointer_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let video = async {

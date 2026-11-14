@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+nuvira-pointer.workspace = true
 nuvira-proto.workspace = true
 tracing.workspace = true
 
@@ -22,6 +23,7 @@ features = [
     "Win32_Graphics_Gdi",
     "Win32_System_StationsAndDesktops",
     "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
 ]
 
 [target.'cfg(target_os = "linux")'.dependencies]

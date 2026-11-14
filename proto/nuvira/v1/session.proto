@@ -63,7 +63,8 @@ message ControlMessage {
 
 // From the agent, when Hello.cursor is on both sides: the remote pointer's image,
 // sent when it changes (the picture no longer has it). BGRA, not premultiplied,
-// at most 256x256; hot_x, hot_y: the point that clicks.
+// at most 256x256; hot_x, hot_y: the point that clicks. A shape seen again keeps
+// its serial (from its pixels; on X11 XFixes' own).
 message CursorShape {
   uint32 serial = 1;
   uint32 width = 2;
@@ -71,6 +72,9 @@ message CursorShape {
   uint32 hot_x = 4;
   uint32 hot_y = 5;
   bytes bgra = 6;
+  // With Hello.cursor_cache, instead of bgra: the same pixels as an RGBA PNG
+  // (a 32x32 pointer: some hundred bytes instead of 4 KB).
+  bytes png = 7;
 }
 
 // From the agent: where the remote pointer is, in pixels of the picture (its
@@ -429,6 +433,11 @@ message Hello {
   // CursorPosition). From the agent: the picture has no pointer and those
   // messages come; off, the pointer stays in the picture as before.
   bool cursor = 21;
+  // From the viewer (with cursor): it keeps the pointer shapes it got by serial
+  // (the last 32 at least), so a shape it has is not sent again and CursorPosition
+  // names it, and it reads CursorShape.png. From the agent: shapes come that way.
+  // Off (viewers of 0.26): every change of shape comes again, as bgra.
+  bool cursor_cache = 22;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

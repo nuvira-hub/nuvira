@@ -45,6 +45,9 @@ use crate::render::Renderer;
 struct Pointer {
     shape: Option<render::CursorShape>,
     os: Option<winit::window::CustomCursor>,
+    /// The shapes received, newest last (`Hello.cursor_cache`: the agent sends a
+    /// shape once and then names it by its serial).
+    kept: std::collections::VecDeque<(render::CursorShape, Option<winit::window::CustomCursor>)>,
     position: Option<(i32, i32, bool, u32)>,
     screen: (u32, u32),
     local: Option<(f32, f32)>,
@@ -1796,23 +1799,42 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::CursorShape { serial, width, height, hot_x, hot_y, rgba } => {
                 // As this computer's pointer while it controls (not when only watching).
-                match winit::window::CustomCursor::from_rgba(
+                let os = match winit::window::CustomCursor::from_rgba(
                     rgba.as_ref().clone(),
                     width as u16,
                     height as u16,
                     hot_x as u16,
                     hot_y as u16,
                 ) {
-                    Ok(source) => self.pointer.os = Some(event_loop.create_custom_cursor(source)),
-                    Err(e) => debug!("remote pointer not usable here: {e}"),
-                }
+                    Ok(source) => Some(event_loop.create_custom_cursor(source)),
+                    Err(e) => {
+                        debug!("remote pointer not usable here: {e}");
+                        None
+                    }
+                };
                 if self.pointer.shape.is_none() {
                     info!(width, height, "remote pointer drawn here");
                 }
-                self.pointer.shape = Some(render::CursorShape { serial, width, height, hot_x, hot_y, rgba });
+                let shape = render::CursorShape { serial, width, height, hot_x, hot_y, rgba };
+                let kept = &mut self.pointer.kept;
+                kept.retain(|(s, _)| s.serial != serial);
+                kept.push_back((shape.clone(), os.clone()));
+                if kept.len() > 32 {
+                    kept.pop_front();
+                }
+                self.pointer.os = os;
+                self.pointer.shape = Some(shape);
                 self.update_pointer();
             }
             NetEvent::CursorPosition { x, y, visible, serial } => {
+                // A shape sent before, named by its serial.
+                if self.pointer.shape.as_ref().is_none_or(|s| s.serial != serial)
+                    && let Some((shape, os)) = self.pointer.kept.iter().find(|(s, _)| s.serial == serial)
+                {
+                    debug!(serial, "pointer shape kept");
+                    self.pointer.shape = Some(shape.clone());
+                    self.pointer.os = os.clone();
+                }
                 self.pointer.position = Some((x, y, visible, serial));
                 self.update_pointer();
             }

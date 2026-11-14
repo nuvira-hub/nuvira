@@ -14,7 +14,7 @@ use nuvira_proto::v1::{
 };
 use nuvira_transport::{Fingerprint, FramedRecv, FramedSend};
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use winit::event_loop::EventLoopProxy;
 
 /// Events from the network to the window.
@@ -523,6 +523,9 @@ async fn handshake(
             audio: audio && !terminal_only && conn.max_datagram_size().is_some(),
             // The remote pointer drawn here: its shape as this computer's pointer.
             cursor: !terminal_only && std::env::var_os("NUVIRA_NO_CURSOR").is_none(),
+            // Shapes kept by serial and taken as PNG (NUVIRA_NO_CURSOR_CACHE: as a
+            // viewer of 0.26, for tests).
+            cursor_cache: std::env::var_os("NUVIRA_NO_CURSOR_CACHE").is_none(),
             ..Default::default()
         })))
         .await?;
@@ -1002,12 +1005,29 @@ async fn session(
                     }
                     Some(ControlMessage { msg: Some(Msg::CursorShape(s)) }) => {
                         let (w, h) = (s.width.min(256), s.height.min(256));
-                        if w > 0 && h > 0 && s.bgra.len() >= (w * h * 4) as usize {
+                        debug!(
+                            serial = s.serial,
+                            png = !s.png.is_empty(),
+                            bytes = s.png.len().max(s.bgra.len()),
+                            "pointer shape"
+                        );
+                        let rgba = if s.png.is_empty() {
                             let mut rgba = s.bgra;
-                            rgba.truncate((w * h * 4) as usize);
                             for px in rgba.chunks_exact_mut(4) {
                                 px.swap(0, 2);
                             }
+                            Some(rgba)
+                        } else {
+                            cursor_png(&s.png, s.width, s.height)
+                        };
+                        if let Some(mut rgba) = rgba
+                            && w > 0
+                            && h > 0
+                            && rgba.len() >= (w * h * 4) as usize
+                            && w == s.width
+                            && h == s.height
+                        {
+                            rgba.truncate((w * h * 4) as usize);
                             let _ = proxy.send_event(NetEvent::CursorShape {
                                 serial: s.serial,
                                 width: w,
@@ -1566,4 +1586,23 @@ fn decode_loop(
     }
     // End of the session: the recording is closed as it is.
     close(recorder.take(), None);
+}
+
+/// A pointer shape sent as PNG (`CursorShape.png`): RGBA pixels of the size
+/// announced, or `None`.
+fn cursor_png(data: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA);
+    let mut reader = decoder.read_info().ok()?;
+    let info = reader.info();
+    if (info.width, info.height) != (width, height) || width > 256 || height > 256 {
+        return None;
+    }
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let frame = reader.next_frame(&mut buf).ok()?;
+    if frame.color_type != png::ColorType::Rgba || frame.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    buf.truncate(frame.buffer_size());
+    Some(buf)
 }

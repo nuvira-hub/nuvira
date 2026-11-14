@@ -1,0 +1,10 @@
+[package]
+name = "nuvira-pointer"
+description = "The remote pointer apart from the picture: its shape and position, shared by the capture and the agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+png.workspace = true

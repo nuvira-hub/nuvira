@@ -1184,6 +1184,7 @@ async fn session(
     let video_datagrams = hello.video_datagrams && conn.max_datagram_size().is_some();
     // The pointer apart from the picture, to viewers that draw it (Linux, and not
     // with the DMA-BUF capture, which would lose it from recordings).
+    let cursor_cache = hello.cursor_cache;
     let cursor_offered = hello.cursor
         && !terminal_only
         && !recording_required
@@ -1221,6 +1222,7 @@ async fn session(
         paste: !terminal_only && !config.view_only && config.synthetic.is_none() && !policy.no_clipboard,
         audio: audio_offered,
         cursor: cursor_offered,
+        cursor_cache: cursor_offered && cursor_cache,
         ..local_hello()
     };
     // What the person at the PC can switch off: what this session has.
@@ -1549,7 +1551,7 @@ async fn session(
             pointer::set_recording(on);
         };
         // The pointer for this viewer, when it draws it.
-        let mut pointer_sender = pointer::Sender::default();
+        let mut pointer_sender = pointer::Sender::new(cursor_cache);
         let mut pointer_tick = tokio::time::interval(Duration::from_millis(16));
         pointer_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut changes = off.clone();
@@ -2461,37 +2463,33 @@ fn control(msg: Msg) -> ControlMessage {
 }
 
 /// What the viewer may do: what the session has, less what is switched off.
-/// The remote pointer apart from the picture (`Hello.cursor`, Linux): what to ask
-/// the capture for, when it must be drawn into the picture after all, and the
-/// messages for a viewer that draws it.
+/// The remote pointer apart from the picture (`Hello.cursor`; Linux and Windows):
+/// what to ask the capture for, when it must be drawn into the picture after all,
+/// and the messages for a viewer that draws it.
 mod pointer {
-    #[cfg(target_os = "linux")]
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+    use nuvira_pointer as cursor;
     use nuvira_proto::v1::control_message::Msg;
 
-    #[cfg(target_os = "linux")]
     static RECORDING: AtomicBool = AtomicBool::new(false);
-    #[cfg(target_os = "linux")]
     static PLAIN_GUESTS: AtomicUsize = AtomicUsize::new(0);
 
-    /// The capture can give it apart: Linux, without the DMA-BUF capture (the
-    /// pointer could not be drawn into those pictures for a recording).
+    /// The capture can give it apart. Linux: without the DMA-BUF capture (the
+    /// pointer could not be drawn into those pictures for a recording). Windows:
+    /// DXGI gives it apart (the GDI capture draws it in and says so).
     pub fn possible(plan: nuvira_codec::EncoderPlan) -> bool {
         #[cfg(target_os = "linux")]
         return plan == nuvira_codec::EncoderPlan::Software || nuvira_codec::dmabuf_import_modifiers().is_empty();
         #[cfg(not(target_os = "linux"))]
         {
             let _ = plan;
-            false
+            cfg!(windows)
         }
     }
 
     pub fn set_wanted(on: bool) {
-        #[cfg(target_os = "linux")]
-        nuvira_portal::cursor::set_wanted(on);
-        #[cfg(not(target_os = "linux"))]
-        let _ = on;
+        cursor::set_wanted(on);
     }
 
     /// At the end of the session: back to the pointer in the picture.
@@ -2503,94 +2501,101 @@ mod pointer {
         }
     }
 
-    #[cfg(target_os = "linux")]
     fn update() {
-        nuvira_portal::cursor::set_composite(
-            RECORDING.load(Ordering::Relaxed) || PLAIN_GUESTS.load(Ordering::Relaxed) > 0,
-        );
+        cursor::set_composite(RECORDING.load(Ordering::Relaxed) || PLAIN_GUESTS.load(Ordering::Relaxed) > 0);
     }
 
     /// The viewer records the session: the pointer goes into the picture.
     pub fn set_recording(on: bool) {
-        #[cfg(target_os = "linux")]
-        {
-            RECORDING.store(on, Ordering::Relaxed);
-            update();
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = on;
+        RECORDING.store(on, Ordering::Relaxed);
+        update();
     }
 
     /// A guest that cannot draw the pointer joins (or leaves): it needs it in the
     /// picture.
     pub fn plain_guest(joined: bool) {
-        #[cfg(target_os = "linux")]
-        {
-            if joined {
-                PLAIN_GUESTS.fetch_add(1, Ordering::Relaxed);
-            } else {
-                let _ = PLAIN_GUESTS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
-            }
-            update();
+        if joined {
+            PLAIN_GUESTS.fetch_add(1, Ordering::Relaxed);
+        } else {
+            let _ = PLAIN_GUESTS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
         }
-        #[cfg(not(target_os = "linux"))]
-        let _ = joined;
+        update();
     }
+
+    /// How many shapes a viewer with `Hello.cursor_cache` keeps at least.
+    const KEPT: usize = 32;
 
     /// The pointer's messages for one viewer, when they change.
     #[derive(Default)]
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub struct Sender {
         generation: Option<u64>,
         serial: u32,
         shown: bool,
+        /// The viewer keeps the shapes it got (`Hello.cursor_cache`): their serials,
+        /// the oldest first, and they go as PNG.
+        cache: bool,
+        sent: std::collections::VecDeque<u32>,
     }
 
     impl Sender {
+        pub fn new(cache: bool) -> Self {
+            Self { cache, ..Self::default() }
+        }
+
         pub fn poll(&mut self) -> Vec<Msg> {
-            #[cfg(target_os = "linux")]
+            let generation = cursor::generation();
+            if self.generation == Some(generation) {
+                return Vec::new();
+            }
+            self.generation = Some(generation);
+            let mut out = Vec::new();
+            // In the picture (a recording, a guest, a capture without it): the
+            // viewer hides its own.
+            if !cursor::active() || cursor::composite() {
+                if self.shown {
+                    self.shown = false;
+                    out.push(Msg::CursorPosition(nuvira_proto::v1::CursorPosition::default()));
+                }
+                return out;
+            }
+            let (shape, pos) = cursor::latest();
+            if let Some(s) = shape
+                && s.serial != self.serial
             {
-                use nuvira_portal::cursor;
-                let generation = cursor::generation();
-                if self.generation == Some(generation) {
-                    return Vec::new();
-                }
-                self.generation = Some(generation);
-                let mut out = Vec::new();
-                // In the picture (a recording, a guest, a compositor without it): the
-                // viewer hides its own.
-                if !cursor::active() || cursor::composite() {
-                    if self.shown {
-                        self.shown = false;
-                        out.push(Msg::CursorPosition(nuvira_proto::v1::CursorPosition::default()));
-                    }
-                    return out;
-                }
-                let (shape, pos) = cursor::latest();
-                if let Some(s) = shape
-                    && s.serial != self.serial
-                {
-                    self.serial = s.serial;
-                    out.push(Msg::CursorShape(nuvira_proto::v1::CursorShape {
+                self.serial = s.serial;
+                // A shape the viewer keeps is named by the position alone.
+                if !(self.cache && self.sent.contains(&s.serial)) {
+                    let mut msg = nuvira_proto::v1::CursorShape {
                         serial: s.serial,
                         width: s.width,
                         height: s.height,
                         hot_x: s.hot_x,
                         hot_y: s.hot_y,
-                        bgra: s.bgra.as_ref().clone(),
-                    }));
+                        ..Default::default()
+                    };
+                    let png = if self.cache { cursor::png_of(&s) } else { Vec::new() };
+                    if png.is_empty() {
+                        msg.bgra = s.bgra.as_ref().clone();
+                    } else {
+                        msg.png = png;
+                    }
+                    out.push(Msg::CursorShape(msg));
+                    if self.cache {
+                        self.sent.push_back(s.serial);
+                        if self.sent.len() > KEPT {
+                            self.sent.pop_front();
+                        }
+                    }
                 }
-                self.shown = pos.visible;
-                out.push(Msg::CursorPosition(nuvira_proto::v1::CursorPosition {
-                    x: pos.x,
-                    y: pos.y,
-                    visible: pos.visible,
-                    serial: pos.serial,
-                }));
-                out
             }
-            #[cfg(not(target_os = "linux"))]
-            Vec::new()
+            self.shown = pos.visible;
+            out.push(Msg::CursorPosition(nuvira_proto::v1::CursorPosition {
+                x: pos.x,
+                y: pos.y,
+                visible: pos.visible,
+                serial: pos.serial,
+            }));
+            out
         }
     }
 }
@@ -2669,6 +2674,7 @@ fn local_hello() -> Hello {
         app_version: env!("CARGO_PKG_VERSION").into(),
         password_required: false,
         cursor: false,
+        cursor_cache: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,

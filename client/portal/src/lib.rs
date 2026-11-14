@@ -15,7 +15,7 @@
 //! KWin's own protocols ([`kwin`]), see [`set_direct`].
 #![cfg(target_os = "linux")]
 
-pub mod cursor;
+pub use nuvira_pointer as cursor;
 mod kwin;
 mod mutter;
 

@@ -3452,6 +3452,7 @@ dependencies = [
  "nuvira-cups",
  "nuvira-i18n",
  "nuvira-input",
+ "nuvira-pointer",
  "nuvira-portal",
  "nuvira-proto",
  "nuvira-secret",
@@ -3518,6 +3519,7 @@ dependencies = [
  "core-graphics 0.25.0",
  "foreign-types",
  "libc",
+ "nuvira-pointer",
  "nuvira-portal",
  "nuvira-proto",
  "nuvira-transport",
@@ -3607,6 +3609,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nuvira-pointer"
+version = "0.26.0"
+dependencies = [
+ "png",
+]
+
+[[package]]
 name = "nuvira-portal"
 version = "0.26.0"
 dependencies = [
@@ -3614,6 +3623,7 @@ dependencies = [
  "ashpd 0.13.13",
  "futures-util",
  "libc",
+ "nuvira-pointer",
  "tokio",
  "tracing",
  "wayland-client",
