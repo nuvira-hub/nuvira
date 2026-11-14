@@ -18,7 +18,10 @@
 //! 4.2 ms for OpenH264, the copy and map alone 6 ms. Drawn directly (NUC, Intel
 //! UHD, 1080p 60 fps synthetic stream, 20 s, 2026-11-14): 6.4-7.6 s of viewer CPU
 //! against 7.9-8.5 for OpenH264, decoding 2.8-3.2 ms against 3.8-4.1, the same
-//! latency and frame rate, identical colours on screen.
+//! latency and frame rate, identical colours on screen. On a fast processor it
+//! loses: PC-FEDERICO (Ryzen 7 5700X, RTX 4060 Ti, same test) 5.5-6.4 s against
+//! 3.6-5.4 for OpenH264, decoding 3.7-5.2 ms against 1.3-2.7, latency 32-46 ms
+//! against 27-31.
 
 use anyhow::{Context, Result, anyhow, bail};
 use tracing::debug;
