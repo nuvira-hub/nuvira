@@ -433,6 +433,28 @@ fn kwin_greeter(uid: u32) -> Option<u32> {
     })
 }
 
+/// The greeter's compositor is up: on Wayland its socket exists, and a
+/// `kwin_wayland_wrapper` (which makes the socket before starting KWin) has
+/// started `kwin_wayland`. SDDM starts its compositor together with the greeter
+/// session; the agent started before it went through the plain program, which
+/// KWin does not authorise (seen on Kubuntu 26.04 after restarting SDDM).
+fn greeter_compositor_ready(session: &SessionInfo) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if session.kind != "wayland" {
+        return true;
+    }
+    if !Path::new(&format!("/run/user/{}/wayland-0", session.uid)).exists() {
+        return false;
+    }
+    // `comm` is cut at 15 characters.
+    let wrapper = std::fs::read_dir("/proc").into_iter().flatten().flatten().any(|entry| {
+        let dir = entry.path();
+        std::fs::read_to_string(dir.join("comm")).is_ok_and(|c| c.trim() == "kwin_wayland_wr")
+            && std::fs::metadata(&dir).is_ok_and(|m| m.uid() == session.uid)
+    });
+    !wrapper || kwin_greeter(session.uid).is_some()
+}
+
 /// KWin's authorisation for the greeter's agent: the program under its own path
 /// (a hard link to root's program, a copy across file systems, renewed when the
 /// program changes) and the `.desktop` file that names it.
@@ -640,6 +662,7 @@ pub fn run() -> Result<()> {
         if let Some(session) = &greeter
             && agent.is_none()
             && Instant::now() >= next_start
+            && greeter_compositor_ready(session)
         {
             if let Some(user) = &settings.user {
                 stop_user_service(user);
