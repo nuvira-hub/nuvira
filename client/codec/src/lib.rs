@@ -374,19 +374,14 @@ pub fn best_decoder() -> anyhow::Result<Box<dyn VideoDecoder>> {
             Err(e) => tracing::info!("hardware decoder not available ({e:#}): OpenH264"),
         }
     }
-    // macOS: VideoToolbox when the renderer draws its IOSurfaces as they are
-    // (Metal); read into RAM only on request (slower than OpenH264 on Apple
-    // silicon: 4.6 against 1.0 ms a 1080p frame on an M1, see `vtdec`).
-    #[cfg(target_os = "macos")]
-    if native_frames() && std::env::var("NUVIRA_DECODER").as_deref() != Ok("software") {
-        match VtDecoder::native() {
-            Ok(d) => return Ok(Box::new(d)),
-            Err(e) => tracing::info!("hardware decoder not available ({e:#}): OpenH264"),
-        }
-    }
+    // macOS, on request: VideoToolbox, its IOSurfaces drawn as they are when the
+    // renderer is Metal, read into RAM otherwise. Not the default: on a Mac mini
+    // M1 a 1080p 60 fps session took the same CPU and latency as OpenH264 (see
+    // `vtdec`).
     #[cfg(target_os = "macos")]
     if std::env::var("NUVIRA_DECODER").as_deref() == Ok("hardware") {
-        match VtDecoder::new() {
+        let decoder = if native_frames() { VtDecoder::native() } else { VtDecoder::new() };
+        match decoder {
             Ok(d) => return Ok(Box::new(d)),
             Err(e) => tracing::info!("hardware decoder not available ({e:#}): OpenH264"),
         }

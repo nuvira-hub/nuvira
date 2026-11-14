@@ -5,8 +5,11 @@
 //! Not the default, as on Windows (`mfdec`): measured on a Mac mini M1 (example
 //! `decbench`, 240 frames at 1080p) it took 4.6 ms a frame and about 1.8 ms of
 //! CPU, against 1.0 ms and 1.0 ms for OpenH264; the pictures were identical. It
-//! pays off only once the renderer draws the decoder's IOSurface directly.
-//! `NUVIRA_DECODER=hardware` selects it.
+//! `NUVIRA_DECODER=hardware` selects it. With the Metal renderer the IOSurface is
+//! drawn as it is ([`VtDecoder::native`], no reading): a session at 1080p and
+//! 60 fps from PC-LABORATORIO's synthetic source on the M1 took the same CPU
+//! (7.4 s in 20 s), latency (45 ms) and fps (53-58) as OpenH264, so neither is
+//! the default.
 //!
 //! The stream is Annex B (start codes) with the parameter sets before each
 //! keyframe: a new format description (and session) is made when they change,
