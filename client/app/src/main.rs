@@ -1344,6 +1344,12 @@ fn main() {
     if let Some(sub) = args.get(1).and_then(|a| a.to_str()).filter(|a| SUBCOMMANDS.contains(a)) {
         std::process::exit(run_subcommand(sub, &args[2..]));
     }
+    // As the subcommands: the version, without opening the window (a script asking
+    // for it would otherwise wait for the app to be closed).
+    if matches!(args.get(1).and_then(|a| a.to_str()), Some("--version" | "-V")) {
+        println!("nuvira {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     init_logging();
     nuvira_input::set_dpi_awareness();
     let mut settings = load_settings();

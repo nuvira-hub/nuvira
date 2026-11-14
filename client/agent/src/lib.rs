@@ -2463,7 +2463,7 @@ fn control(msg: Msg) -> ControlMessage {
 }
 
 /// What the viewer may do: what the session has, less what is switched off.
-/// The remote pointer apart from the picture (`Hello.cursor`; Linux and Windows):
+/// The remote pointer apart from the picture (`Hello.cursor`; Linux, Windows, macOS):
 /// what to ask the capture for, when it must be drawn into the picture after all,
 /// and the messages for a viewer that draws it.
 mod pointer {
@@ -2477,14 +2477,16 @@ mod pointer {
 
     /// The capture can give it apart. Linux: without the DMA-BUF capture (the
     /// pointer could not be drawn into those pictures for a recording). Windows:
-    /// DXGI gives it apart (the GDI capture draws it in and says so).
+    /// DXGI gives it apart (the GDI capture draws it in and says so). macOS: the
+    /// system gives its shape (otherwise ScreenCaptureKit draws it in and the
+    /// capture says so).
     pub fn possible(plan: nuvira_codec::EncoderPlan) -> bool {
         #[cfg(target_os = "linux")]
         return plan == nuvira_codec::EncoderPlan::Software || nuvira_codec::dmabuf_import_modifiers().is_empty();
         #[cfg(not(target_os = "linux"))]
         {
             let _ = plan;
-            cfg!(windows)
+            cfg!(any(windows, target_os = "macos"))
         }
     }
 

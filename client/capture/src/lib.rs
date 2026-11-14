@@ -19,6 +19,8 @@ mod linux;
 pub mod dmabuf;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod macos_pointer;
 pub mod resolution;
 mod synthetic;
 #[cfg(windows)]

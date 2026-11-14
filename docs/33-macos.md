@@ -10,7 +10,7 @@ Since 0.15.0 the app runs on macOS 13 or later (one universal `.app` for Apple s
 
 ## Controlled Mac
 
-- **Screen**: ScreenCaptureKit (`client/capture/src/macos.rs`), BGRA frames with the cursor, at the display's pixel size (2× on Retina).
+- **Screen**: ScreenCaptureKit (`client/capture/src/macos.rs`), BGRA frames at the display's pixel size (2× on Retina). The pointer is left out of the stream and sent apart to the viewers that draw it, drawn in by the capture for the others (see [20](20-linux.md#the-pointer-apart-from-the-picture)).
 - **Mouse and keyboard**: Quartz events posted at the HID level (`client/input/src/macos.rs`).
 - **Encoder**: H.264 with VideoToolbox (`client/codec/src/vt.rs`), the media engine of Apple Silicon or Quick Sync on Intel Macs. Low-latency rate control (one frame out for every frame in, Constrained Baseline) when the Mac has it, otherwise a real-time session in Main profile without B-frames. The BGRA frames go in as they are: the encoder converts them to YUV with BT.601, as the viewer expects. The output (AVCC) is turned into Annex B with SPS/PPS before every keyframe. With `--encoder auto` the agent measures it against OpenH264 at start and keeps the faster (hardware wins unless software is 25% faster); `--encoder hardware` refuses Apple's software encoder.
 - **Privacy mode**: black screens in a child process left out of the capture, local input dropped by an event tap; see [24-privacy-mode.md](24-privacy-mode.md#how-it-works-macos).
@@ -157,6 +157,16 @@ A Scaleway Mac mini M1 with nothing of NuviraHub on it; the release's `nuvira-ma
 - **Sound in recordings** ([38](38-remote-audio.md#in-recordings)): the NUC's viewer recording the Mac while it played the test tone with `afplay`: an Opus track next to the 1920x1080 video, 451 packets, none lost. The Mac as the viewer, recording PC-LABORATORIO playing the three test tones: the MP4 on the Mac has video 1280x1024 and the Opus track with the three tones complete, at their three levels.
 - **Cmd from a Mac to a Mac**: the viewer's side runs on macOS in the CI at every build (test `mac_to_mac_keeps_cmd`: towards a Mac, Cmd goes as Cmd and Control as Control; towards the others they are swapped), and the agent's side was tried on 2026-11-08 (Cmd from the Windows key into the Finder). A Mac towards itself sends the injected keys back into its own viewer window, so a test with two real Macs is still to do.
 
-## Not tested yet## Not tested yet
+## Tests of 2026-11-14 on the same Mac mini M1 (the pointer apart from the picture)
+
+A test agent built on the Mac (`~/nuvira-test/nuvira-agent`, allowed in Screen Recording with "+", run as a launchd job of the person's session so that macOS asks about the agent itself and not about SSH or `sudo`), viewers on the Ubuntu VM.
+
+- "pointer read from the system, apart from the picture", the shape 28x40 (the arrow with its shadow) and 23x22 (the I-beam over TextEdit), sent once each as PNG (648 and 389 bytes); going back to one the viewer kept, only the position.
+- A viewer that draws the pointer: no pointer in the picture, 2.9 pictures a second captured while only the pointer went round. A viewer that does not (`NUVIRA_NO_CURSOR=1`): 36 fps while it moved, the pointer drawn by the agent where it stopped; the same in a recording (`--record`).
+- Moving the pointer with `CGWarpMouseCursorPosition` does not change its shape (macOS updates it with real mouse events): the shapes were tried with the moves of Screen Sharing.
+- The Mac as the viewer towards PC-LABORATORIO (the Windows agent alternating arrow and I-beam): 2 shapes as PNG, then 19 times taken from the ones kept.
+- `nuvira --version` opened the app instead of printing the version (a script asking for it waited forever): now it prints it, as `nuvira agent --version` did.
+
+## Not tested yet
 
 Single sign-on; Mac to Mac (Cmd kept: needs a second Mac); several displays, a Retina/5K screen; a real MDM.

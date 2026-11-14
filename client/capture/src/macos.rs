@@ -1,6 +1,13 @@
-//! macOS capture: ScreenCaptureKit (`SCStream`) with BGRA frames and the cursor
-//! drawn in. macOS gives the images only once the person allowed NuviraHub in
-//! System Settings → Privacy & Security → Screen Recording.
+//! macOS capture: ScreenCaptureKit (`SCStream`) with BGRA frames. macOS gives the
+//! images only once the person allowed NuviraHub in System Settings → Privacy &
+//! Security → Screen Recording.
+//!
+//! The pointer: ScreenCaptureKit leaves it out (`showsCursor` off) and its
+//! position and shape are read from the system ([`crate::macos_pointer`]) and
+//! published for the viewers that draw it themselves (`nuvira_pointer`). For the
+//! others, a recording or a guest it is drawn into the picture here, keeping the
+//! pixels it covers so that a move of the pointer alone needs no new picture.
+//! When the system gives no shape, ScreenCaptureKit draws it in as before.
 //!
 //! The frames arrive on a queue of ScreenCaptureKit: the handler copies them
 //! into a channel of one image (a newer one replaces what the capture did not
@@ -33,8 +40,10 @@ use screencapturekit::cm::{CMSampleBufferExt, CMTime, SCFrameStatus};
 use screencapturekit::cv::CVPixelBufferLockFlags;
 use screencapturekit::prelude::*;
 use screencapturekit::stream::ErrorHandler;
-use tracing::info;
+use nuvira_pointer as cursor;
+use tracing::{debug, info};
 
+use crate::macos_pointer;
 use crate::{Capturer, Display, Frame};
 
 /// Processes whose windows the capture leaves out, with a change counter.
@@ -308,6 +317,19 @@ pub struct ScreenCaptureKitCapturer {
     /// Lock state at the last look, and the last user activity declared.
     locked: bool,
     woken_at: Option<Instant>,
+    /// The pointer is left out of the stream and handled here (the system gives
+    /// its shape).
+    own_pointer: bool,
+    /// The display in global points (left, top, width, height) and its pixels
+    /// per point.
+    points: (f64, f64, f64, f64),
+    scale: f64,
+    pointer_shape: Option<cursor::Shape>,
+    shape_checked: Option<Instant>,
+    /// Pixels of the last published position.
+    pointer_at: Option<(i32, i32, bool)>,
+    /// The pointer drawn into `frame.data`.
+    drawn: cursor::Drawn,
 }
 
 /// How often the lock state is read, and the placeholder sent.
@@ -318,10 +340,29 @@ const PLACEHOLDER_EVERY: Duration = Duration::from_secs(1);
 const WAKE_EVERY: Duration = Duration::from_secs(10);
 /// Dark grey of the placeholder (BGRA).
 const PLACEHOLDER: [u8; 4] = [0x2a, 0x26, 0x24, 0xff];
+/// How often the pointer's position is read while waiting for a picture, and
+/// its shape (the system says nothing when either changes).
+const POINTER_POLL: Duration = Duration::from_millis(8);
+const SHAPE_POLL: Duration = Duration::from_millis(50);
+
+/// The pointer must be in the picture: a viewer that does not draw it, a
+/// recording, a guest.
+fn draw_wanted() -> bool {
+    !cursor::active() || cursor::composite()
+}
 
 impl ScreenCaptureKitCapturer {
     pub fn new(index: Option<usize>) -> Result<Self> {
         let now = Instant::now();
+        let own_pointer = macos_pointer::shape(1.0).is_some();
+        if own_pointer {
+            info!("pointer read from the system, apart from the picture");
+        } else {
+            info!("pointer shape not given by the system: drawn in by ScreenCaptureKit");
+            if cursor::active() {
+                cursor::set_active(false);
+            }
+        }
         let mut capturer = Self {
             display: main_display(),
             index,
@@ -335,6 +376,13 @@ impl ScreenCaptureKitCapturer {
             awake: DisplayAwake::new(),
             locked: screen_locked(),
             woken_at: None,
+            own_pointer,
+            points: (0.0, 0.0, 1.0, 1.0),
+            scale: 1.0,
+            pointer_shape: None,
+            shape_checked: None,
+            pointer_at: None,
+            drawn: cursor::Drawn::default(),
         };
         if capturer.locked {
             // The display may already be off: turned on, then the stream opens
@@ -370,7 +418,7 @@ impl ScreenCaptureKitCapturer {
             .with_width(screen.width)
             .with_height(screen.height)
             .with_pixel_format(PixelFormat::BGRA)
-            .with_shows_cursor(true)
+            .with_shows_cursor(!self.own_pointer)
             .with_queue_depth(3)
             .with_minimum_frame_interval(&CMTime { value: 1, timescale: 60, flags: 1, epoch: 0 });
         let (tx, images) = std::sync::mpsc::sync_channel(1);
@@ -385,6 +433,13 @@ impl ScreenCaptureKitCapturer {
         stream.start_capture().map_err(|e| anyhow!("{e:?}")).context("@agent.screen_permission_mac")?;
         info!(name = screen.name, width = screen.width, height = screen.height, "ScreenCaptureKit capture");
         self.display_id = sc_display.display_id();
+        let frame = sc_display.frame();
+        self.points = (frame.origin.x, frame.origin.y, frame.size.width, frame.size.height);
+        self.scale = scale(self.display_id);
+        // A new stream: the pointer is published and drawn again.
+        self.pointer_shape = None;
+        self.pointer_at = None;
+        self.drawn.forget();
         self.display = screen;
         self.hidden_generation = hidden_generation;
         self.running = Some(Running { stream, images, stopped });
@@ -481,6 +536,52 @@ impl ScreenCaptureKitCapturer {
     }
 }
 
+impl ScreenCaptureKitCapturer {
+    /// The viewers asked for the pointer apart (or no longer). The shared state is
+    /// emptied on a change, so the pointer is published again.
+    fn follow_wanted(&mut self) {
+        let wanted = cursor::wanted();
+        if cursor::active() != wanted {
+            cursor::set_active(wanted);
+            self.pointer_at = None;
+        }
+    }
+
+    /// Reads the pointer and publishes what changed, in pixels of this display.
+    fn poll_pointer(&mut self) {
+        if self.shape_checked.is_none_or(|t| t.elapsed() >= SHAPE_POLL) {
+            self.shape_checked = Some(Instant::now());
+            if let Some((width, height, hot_x, hot_y, bgra)) = macos_pointer::shape(self.scale) {
+                let serial = cursor::serial_of(width, height, hot_x, hot_y, &bgra);
+                if self.pointer_shape.as_ref().is_none_or(|s| s.serial != serial) {
+                    if self.pointer_shape.is_none() {
+                        info!(width, height, "pointer shape from the system");
+                    } else {
+                        debug!(width, height, serial, "new pointer shape");
+                    }
+                    self.pointer_shape =
+                        Some(cursor::Shape { serial, width, height, hot_x, hot_y, bgra: Arc::new(bgra) });
+                    // Published with the position below.
+                    self.pointer_at = None;
+                }
+            }
+        }
+        let Some(shape) = &self.pointer_shape else { return };
+        let Some((x, y)) = macos_pointer::location() else { return };
+        let (left, top, width, height) = self.points;
+        let inside = x >= left && y >= top && x < left + width && y < top + height;
+        let at = (((x - left) * self.scale) as i32, ((y - top) * self.scale) as i32, inside);
+        if self.pointer_at == Some(at) {
+            return;
+        }
+        self.pointer_at = Some(at);
+        // Published again only when the shared state does not have it (a new
+        // shape, or emptied).
+        let fresh = (cursor::latest().0.as_ref().map(|p| p.serial) != Some(shape.serial)).then(|| shape.clone());
+        cursor::publish(fresh, cursor::Position { x: at.0, y: at.1, visible: inside, serial: shape.serial });
+    }
+}
+
 impl Capturer for ScreenCaptureKitCapturer {
     fn display(&self) -> &Display {
         &self.display
@@ -489,22 +590,63 @@ impl Capturer for ScreenCaptureKitCapturer {
     fn next_frame(&mut self, timeout: Duration) -> Result<Option<&Frame>> {
         self.follow_lock();
         self.apply_hidden();
-        let image = match &self.running {
-            None => return Ok(self.placeholder(timeout)),
-            Some(running) => match running.images.recv_timeout(timeout) {
-                Ok(image) => image,
-                Err(RecvTimeoutError::Timeout) => return Ok(None),
-                Err(RecvTimeoutError::Disconnected) => bail!("the screen stream ended"),
-            },
-        };
-        self.frame = Some(Frame {
-            width: image.width,
-            height: image.height,
-            stride: image.stride,
-            data: image.data,
-            captured_us: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64),
-        });
-        Ok(self.frame.as_ref())
+        if self.running.is_none() {
+            return Ok(self.placeholder(timeout));
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            // With the pointer handled here, it is read between the pictures.
+            let wait = if self.own_pointer { left.min(POINTER_POLL) } else { left };
+            let received = match self.running.as_ref().map(|r| r.images.recv_timeout(wait)) {
+                Some(Ok(image)) => Some(image),
+                Some(Err(RecvTimeoutError::Timeout)) | None => None,
+                Some(Err(RecvTimeoutError::Disconnected)) => bail!("the screen stream ended"),
+            };
+            if self.own_pointer {
+                self.follow_wanted();
+                self.poll_pointer();
+            }
+            let now_us = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_micros() as u64);
+            if let Some(image) = received {
+                let mut frame = Frame {
+                    width: image.width,
+                    height: image.height,
+                    stride: image.stride,
+                    data: image.data,
+                    captured_us: now_us,
+                };
+                // A new picture: what the pointer covered went with the old one.
+                self.drawn.forget();
+                if self.own_pointer && draw_wanted() {
+                    let (w, h, stride) = (frame.width, frame.height, frame.stride);
+                    self.drawn.draw(&mut frame.data, w, h, stride, false);
+                }
+                self.frame = Some(frame);
+                return Ok(self.frame.as_ref());
+            }
+            if self.own_pointer
+                && let Some(frame) = self.frame.as_mut()
+            {
+                let draw = draw_wanted();
+                let drawn = self.drawn.generation();
+                let redraw = if draw { drawn != Some(cursor::generation()) } else { drawn.is_some() };
+                if redraw {
+                    // Only the pointer moved (or must come in or out): the same
+                    // picture with it drawn again.
+                    self.drawn.undo(&mut frame.data, frame.stride);
+                    if draw {
+                        let (w, h, stride) = (frame.width, frame.height, frame.stride);
+                        self.drawn.draw(&mut frame.data, w, h, stride, false);
+                    }
+                    frame.captured_us = now_us;
+                    return Ok(self.frame.as_ref());
+                }
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+        }
     }
 
     fn last_frame(&self) -> Option<&Frame> {
