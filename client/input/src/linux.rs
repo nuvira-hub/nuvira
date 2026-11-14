@@ -22,6 +22,8 @@ const IBUS_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub struct PortalInjector {
     session: Arc<nuvira_portal::Session>,
+    /// The streamed picture in pixels: one screen of the session, or all of them.
+    screen: Option<ScreenRect>,
     keys: HashSet<u16>,
     buttons: HashSet<i32>,
     /// Wheel movement smaller than a notch, kept for the next event.
@@ -37,7 +39,15 @@ pub struct PortalInjector {
 impl PortalInjector {
     pub fn new() -> Result<Self> {
         let session = nuvira_portal::current().context("no remote desktop session: the screen is not shared")?;
-        Ok(Self { session, keys: HashSet::new(), buttons: HashSet::new(), wheel: (0, 0), layout: None, ibus: None })
+        Ok(Self {
+            session,
+            screen: None,
+            keys: HashSet::new(),
+            buttons: HashSet::new(),
+            wheel: (0, 0),
+            layout: None,
+            ibus: None,
+        })
     }
 
     fn key(&mut self, code: &str, down: bool) {
@@ -188,11 +198,13 @@ impl InputInjector for PortalInjector {
         }
         match &event.event {
             Some(Event::MouseMove(m)) => {
-                // Logical coordinates of the shared screen, as the portal wants them.
-                let screen = self.session.screen();
-                let x = f64::from(m.x.clamp(0.0, 1.0)) * f64::from(screen.width.saturating_sub(1));
-                let y = f64::from(m.y.clamp(0.0, 1.0)) * f64::from(screen.height.saturating_sub(1));
-                self.session.pointer_motion(x, y);
+                // Logical coordinates of the screen under the point, as the portal
+                // wants them.
+                let (index, fx, fy) = place(&self.session, self.screen, f64::from(m.x), f64::from(m.y));
+                let screen = self.session.screens()[index];
+                let x = fx * f64::from(screen.width.saturating_sub(1));
+                let y = fy * f64::from(screen.height.saturating_sub(1));
+                self.session.pointer_motion(index, x, y);
             }
             Some(Event::MouseButton(b)) => self.button(b.button(), b.down),
             Some(Event::MouseWheel(w)) => self.wheel(w.dx, w.dy),
@@ -205,8 +217,8 @@ impl InputInjector for PortalInjector {
         Ok(())
     }
 
-    fn set_screen(&mut self, _screen: ScreenRect) {
-        // There is one shared screen, the portal's.
+    fn set_screen(&mut self, screen: ScreenRect) {
+        self.screen = Some(screen);
     }
 
     fn release_all(&mut self) {
@@ -223,5 +235,57 @@ impl InputInjector for PortalInjector {
 impl Drop for PortalInjector {
     fn drop(&mut self) {
         self.release_all();
+    }
+}
+
+/// The screen of the session under the point `(x, y)` (fractions of the streamed
+/// picture) and the point's fractions of that screen. One screen streamed: that
+/// one (its pixel rectangle is the streamed one). All of them: the screen whose
+/// pixel rectangle has the point (the nearest when it falls in a gap).
+fn place(session: &nuvira_portal::Session, streamed: Option<ScreenRect>, x: f64, y: f64) -> (usize, f64, f64) {
+    let (x, y) = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+    let count = session.screens().len();
+    let Some(s) = streamed.filter(|_| count > 1) else { return (0, x, y) };
+    let rects: Vec<(i32, i32, u32, u32)> = (0..count).filter_map(|i| session.pixel_rect(i)).collect();
+    let rect = (s.left, s.top, s.width, s.height);
+    if let Some(i) = rects.iter().position(|r| *r == rect) {
+        return (i, x, y);
+    }
+    pick(&rects, rect, x, y)
+}
+
+/// See [`place`]: the screen of `rects` under the point of the picture `all`.
+fn pick(rects: &[(i32, i32, u32, u32)], all: (i32, i32, u32, u32), x: f64, y: f64) -> (usize, f64, f64) {
+    let px = f64::from(all.0) + x * f64::from(all.2);
+    let py = f64::from(all.1) + y * f64::from(all.3);
+    let distance = |r: &(i32, i32, u32, u32)| {
+        let dx = (f64::from(r.0) - px).max(px - f64::from(r.0 + r.2 as i32)).max(0.0);
+        let dy = (f64::from(r.1) - py).max(py - f64::from(r.1 + r.3 as i32)).max(0.0);
+        dx * dx + dy * dy
+    };
+    let Some((index, r)) = rects.iter().enumerate().min_by(|a, b| distance(a.1).total_cmp(&distance(b.1))) else {
+        return (0, x, y);
+    };
+    let fx = ((px - f64::from(r.0)) / f64::from(r.2.max(1))).clamp(0.0, 1.0);
+    let fy = ((py - f64::from(r.1)) / f64::from(r.3.max(1))).clamp(0.0, 1.0);
+    (index, fx, fy)
+}
+
+#[cfg(test)]
+mod place_tests {
+    use super::pick;
+
+    #[test]
+    fn all_the_screens() {
+        // 1920x1080 at 0,0 and 1280x1024 at 1920,0: the picture 3200x1080.
+        let rects = [(0, 0, 1920, 1080), (1920, 0, 1280, 1024)];
+        let all = (0, 0, 3200, 1080);
+        assert_eq!(pick(&rects, all, 0.3, 0.5), (0, 0.5, 0.5));
+        let (i, fx, fy) = pick(&rects, all, 0.8, 0.5);
+        assert_eq!(i, 1);
+        assert!((fx - 0.5).abs() < 1e-9 && (fy - 540.0 / 1024.0).abs() < 1e-9);
+        // Below the second screen (black there): its bottom edge.
+        assert_eq!(pick(&rects, all, 0.8, 0.999).0, 1);
+        assert_eq!(pick(&rects, all, 0.8, 0.999).2, 1.0);
     }
 }

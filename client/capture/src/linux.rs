@@ -89,15 +89,20 @@ fn portal_session(ask: bool) -> Result<Arc<nuvira_portal::Session>> {
     nuvira_portal::session(nuvira_transport::identity::data_dir().join(TOKEN_FILE), ask)
 }
 
-/// The shared screen, as the portal describes it. Without an open session there is
-/// nothing to list: asking would show the permission dialog.
+/// The shared screens, as the session describes them. Without an open session
+/// there is nothing to list: asking would show the permission dialog.
 pub fn displays() -> Vec<Display> {
-    nuvira_portal::current().map(|s| vec![display(&s.screen(), None)]).unwrap_or_default()
+    let Some(session) = nuvira_portal::current() else { return Vec::new() };
+    (0..session.screens().len()).map(|i| display(&session, i)).collect()
 }
 
-fn display(screen: &nuvira_portal::Screen, pixels: Option<(u32, u32)>) -> Display {
-    let (width, height) = pixels.unwrap_or((screen.width, screen.height));
-    Display { index: 0, name: "Screen".into(), left: 0, top: 0, width, height, primary: true }
+/// Screen `index` of the session, in pixels (see `Session::pixel_rect`).
+fn display(session: &nuvira_portal::Session, index: usize) -> Display {
+    let (left, top, width, height) = session.pixel_rect(index).unwrap_or((0, 0, 0, 0));
+    let several = session.screens().len() > 1;
+    let name = if several { format!("Screen {}", index + 1) } else { "Screen".into() };
+    let (left, top) = if several { (left, top) } else { (0, 0) };
+    Display { index, name, left, top, width, height, primary: index == 0 }
 }
 
 /// Image from the stream thread: size, stride, bytes, and whether the bytes are RGB
@@ -140,7 +145,8 @@ const VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED: u32 = 1 << 3;
 /// only with shared memory (the agent asks for one or the other): it can then be
 /// drawn into the picture when needed.
 fn dmabuf_wanted() -> Vec<u64> {
-    if cursor::wanted() {
+    // Part of all the screens: the picture is composed in RAM.
+    if cursor::wanted() || crate::nested().is_some() {
         return Vec::new();
     }
     let modifiers = DMABUF_MODIFIERS.lock().expect("modifiers").clone();
@@ -185,6 +191,8 @@ fn choose_modifier(param: &Pod, ours: &[u64], fallback: u64) -> u64 {
 }
 
 pub struct PipeWireCapturer {
+    /// The screen of the session it shows.
+    index: usize,
     display: Display,
     stream: Option<Stream>,
     frame: Option<Frame>,
@@ -195,9 +203,10 @@ pub struct PipeWireCapturer {
 }
 
 impl PipeWireCapturer {
-    pub fn new() -> Result<Self> {
-        let stream = Stream::open(true)?;
+    pub fn new(index: usize) -> Result<Self> {
+        let stream = Stream::open(true, index)?;
         Ok(Self {
+            index,
             display: stream.display.clone(),
             stream: Some(stream),
             frame: None,
@@ -214,7 +223,7 @@ impl PipeWireCapturer {
             std::thread::sleep(timeout);
             return Ok(false);
         }
-        match Stream::open(false) {
+        match Stream::open(false, self.index) {
             Ok(stream) => {
                 info!("screen sharing resumed");
                 self.stream = Some(stream);
@@ -325,28 +334,31 @@ struct Stream {
 }
 
 impl Stream {
-    fn open(ask: bool) -> Result<Self> {
+    fn open(ask: bool, index: usize) -> Result<Self> {
         let session = portal_session(ask)?;
-        let screen = session.screen();
+        let screen = *session.screens().get(index).context("screen not found")?;
         let fd = session.pipewire()?;
+        let thread_session = session.clone();
         let (images_tx, images) = std::sync::mpsc::sync_channel(1);
         let (spare, spare_rx) = std::sync::mpsc::channel();
         let (quit, quit_rx) = pw::channel::channel();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new().name("pipewire".into()).spawn(move || {
-            if let Err(e) = stream_loop(fd, screen.node_id, images_tx, spare_rx, quit_rx, &ready_tx) {
+            if let Err(e) =
+                stream_loop(fd, screen.node_id, index, thread_session, images_tx, spare_rx, quit_rx, &ready_tx)
+            {
                 let _ = ready_tx.send(Err(e));
             }
         })?;
-        let mut stream =
-            Self { display: display(&screen, None), images, spare, quit, thread: Some(thread), session };
+        let mut stream = Self { display: display(&session, index), images, spare, quit, thread: Some(thread), session };
         // The real size in pixels comes with the format (the portal gives the
         // logical one, smaller with a display scale above 100%).
         let size = ready_rx
             .recv_timeout(Duration::from_secs(10))
             .map_err(|_| anyhow!("no image format from PipeWire"))??;
-        stream.display = display(&screen, Some(size));
-        info!(?screen, width = size.0, height = size.1, "PipeWire capture");
+        stream.session.set_pixels(index, size.0, size.1);
+        stream.display = display(&stream.session, index);
+        info!(index, ?screen, width = size.0, height = size.1, "PipeWire capture");
         Ok(stream)
     }
 }
@@ -382,11 +394,18 @@ struct State {
     bitmap: Vec<u8>,
     serial: u32,
     drawn: u64,
+    /// The screen of the session this stream shows, to place the pointer in the
+    /// picture of all of them.
+    index: usize,
+    session: Arc<nuvira_portal::Session>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stream_loop(
     fd: std::os::fd::OwnedFd,
     node_id: u32,
+    index: usize,
+    session: Arc<nuvira_portal::Session>,
     images: SyncSender<Image>,
     spare: Receiver<Vec<u8>>,
     quit: pw::channel::Receiver<()>,
@@ -420,6 +439,8 @@ fn stream_loop(
         bitmap: Vec::new(),
         serial: 0,
         drawn: u64::MAX,
+        index,
+        session,
     };
     let ml = mainloop.clone();
     let _listener = stream
@@ -565,7 +586,7 @@ fn stream_loop(
             // An empty chunk: nothing changed (or only the cursor, with metadata).
             if len == 0 || stride <= 0 {
                 // The pointer moved and must be in the picture: the last picture again.
-                if cursor::active() && cursor::composite() && state.drawn != cursor::generation()
+                if cursor::active() && cursor::composite() && crate::nested().is_none() && state.drawn != cursor::generation()
                     && let Some(last) = &state.last
                 {
                     let mut out = state.pool.pop().unwrap_or_default();
@@ -590,7 +611,7 @@ fn stream_loop(
             out.clear();
             out.extend_from_slice(src);
             let image = Image { width: size.width, height: size.height, stride, data: out, rgb, dmabuf: None };
-            if cursor::active() && cursor::composite() {
+            if cursor::active() && cursor::composite() && crate::nested().is_none() {
                 // Kept without the pointer, to draw it again when only it moves.
                 let keep = Image { data: image.data.clone(), dmabuf: None, ..image };
                 state.last = Some(keep);
@@ -710,9 +731,17 @@ fn read_cursor(buffer: &pw::buffer::Buffer, state: &mut State) {
     if state.serial == 0 && meta.id != 0 {
         info!(id = meta.id, bitmap = meta.bitmap_offset, "pointer metadata from the compositor");
     }
+    // Part of all the screens: the pointer in the combined picture's coordinates,
+    // said only by the screen that has it.
+    let offset = crate::nested().map(|(ox, oy)| {
+        let (left, top, ..) = state.session.pixel_rect(state.index).unwrap_or_default();
+        (left - ox, top - oy)
+    });
     // id 0: no pointer on this screen (hidden, or on another one).
     if meta.id == 0 {
-        cursor::publish(None, cursor::Position { visible: false, serial: state.serial, ..Default::default() });
+        if offset.is_none() {
+            cursor::publish(None, cursor::Position { visible: false, serial: state.serial, ..Default::default() });
+        }
         return;
     }
     let mut shape = None;
@@ -765,7 +794,11 @@ fn read_cursor(buffer: &pw::buffer::Buffer, state: &mut State) {
             }
         }
     }
-    cursor::publish(shape, cursor::Position { x: meta.x, y: meta.y, visible: state.serial != 0, serial: state.serial });
+    let (dx, dy) = offset.unwrap_or((0, 0));
+    cursor::publish(
+        shape,
+        cursor::Position { x: meta.x + dx, y: meta.y + dy, visible: state.serial != 0, serial: state.serial },
+    );
 }
 
 /// Sends a picture with the pointer drawn in (it must be in the picture).
@@ -844,8 +877,26 @@ fn dmabuf_params(fixate: Option<u64>) -> Result<Vec<Vec<u8>>> {
     Ok(pods)
 }
 
-/// Opens the shared screen; `index` is ignored: the person chooses the screen in
-/// the portal dialog.
-pub fn open() -> Result<Box<dyn Capturer>> {
-    Ok(Box::new(PipeWireCapturer::new()?))
+/// Opens the capture of a shared screen (`None`: the first, the primary one), or
+/// of all of them with [`crate::ALL_DISPLAYS`].
+pub fn open(index: Option<usize>) -> Result<Box<dyn Capturer>> {
+    if index == Some(crate::ALL_DISPLAYS) {
+        let count = portal_session(true)?.screens().len();
+        if count >= 2 {
+            // Marked as part of all of them before the streams open: no DMA-BUF,
+            // the pointer left to the combined picture.
+            crate::set_nested(Some((0, 0)));
+            let parts: Result<Vec<Box<dyn Capturer>>> =
+                (0..count).map(|i| PipeWireCapturer::new(i).map(|c| Box::new(c) as Box<dyn Capturer>)).collect();
+            return match parts.and_then(crate::AllCapturer::from_parts) {
+                Ok(all) => Ok(Box::new(all)),
+                Err(e) => {
+                    crate::set_nested(None);
+                    Err(e)
+                }
+            };
+        }
+    }
+    let index = index.filter(|&i| i != crate::ALL_DISPLAYS).unwrap_or(0);
+    Ok(Box::new(PipeWireCapturer::new(index)?))
 }

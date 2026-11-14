@@ -40,7 +40,7 @@ use tracing::{debug, info, warn};
 
 pub use ashpd::desktop::remote_desktop::Axis as WheelAxis;
 
-/// The screen the person chose to share.
+/// A screen shared in the session (the person may choose several).
 #[derive(Debug, Clone, Copy)]
 pub struct Screen {
     /// PipeWire node of its stream.
@@ -54,7 +54,8 @@ pub struct Screen {
 
 enum Cmd {
     PipeWire(std::sync::mpsc::Sender<Result<OwnedFd>>),
-    Motion(f64, f64),
+    /// On the screen at that index of the session, in its logical coordinates.
+    Motion(usize, f64, f64),
     Button(i32, bool),
     Wheel(Axis, i32),
     Scroll(f64, f64),
@@ -65,7 +66,11 @@ enum Cmd {
 /// An open session. It closes when the last `Arc` is dropped.
 pub struct Session {
     cmds: mpsc::UnboundedSender<Cmd>,
-    screen: Screen,
+    /// The shared screens, the primary one first.
+    screens: Vec<Screen>,
+    /// The real pixel size of each screen, once its stream told it (the session
+    /// gives logical sizes, smaller with a display scale above 100%).
+    pixels: Mutex<Vec<Option<(u32, u32)>>>,
     /// False once the system closed the session (the person stopped sharing, or
     /// the screen stream ended).
     open: Arc<AtomicBool>,
@@ -121,7 +126,7 @@ impl Session {
 
     fn spawn(
         name: &str,
-        body: impl FnOnce(std::sync::mpsc::Sender<Result<Screen>>, mpsc::UnboundedReceiver<Cmd>, &AtomicBool)
+        body: impl FnOnce(std::sync::mpsc::Sender<Result<Vec<Screen>>>, mpsc::UnboundedReceiver<Cmd>, &AtomicBool)
         + Send
         + 'static,
     ) -> Result<Self> {
@@ -130,18 +135,48 @@ impl Session {
         let open = Arc::new(AtomicBool::new(true));
         let thread_open = open.clone();
         let thread = std::thread::Builder::new().name(name.into()).spawn(move || body(ready_tx, rx, &thread_open))?;
-        let screen = match ready_rx.recv().map_err(|_| anyhow!("{name} thread ended")).and_then(|r| r) {
-            Ok(screen) => screen,
+        let screens = match ready_rx.recv().map_err(|_| anyhow!("{name} thread ended")).and_then(|r| r) {
+            Ok(screens) if !screens.is_empty() => screens,
+            Ok(_) => {
+                let _ = thread.join();
+                bail!("no screen shared");
+            }
             Err(e) => {
                 let _ = thread.join();
                 return Err(e);
             }
         };
-        Ok(Self { cmds, screen, open, thread: Mutex::new(Some(thread)) })
+        let pixels = Mutex::new(vec![None; screens.len()]);
+        Ok(Self { cmds, screens, pixels, open, thread: Mutex::new(Some(thread)) })
     }
 
+    /// The first (primary) shared screen.
     pub fn screen(&self) -> Screen {
-        self.screen
+        self.screens[0]
+    }
+
+    pub fn screens(&self) -> &[Screen] {
+        &self.screens
+    }
+
+    /// The capture learnt the pixel size of a screen's stream.
+    pub fn set_pixels(&self, index: usize, width: u32, height: u32) {
+        if let Some(slot) = self.pixels.lock().unwrap_or_else(|e| e.into_inner()).get_mut(index) {
+            *slot = Some((width, height));
+        }
+    }
+
+    /// Where a screen is in pixels: its logical position times its scale (pixels
+    /// over logical size), and its pixel size (the logical one until the stream
+    /// told it). The pictures of all the screens are laid out so, and the clicks
+    /// on them are found so.
+    pub fn pixel_rect(&self, index: usize) -> Option<(i32, i32, u32, u32)> {
+        let screen = self.screens.get(index)?;
+        let pixels = self.pixels.lock().unwrap_or_else(|e| e.into_inner()).get(index).copied().flatten();
+        let (w, h) = pixels.unwrap_or((screen.width, screen.height));
+        let scale = if screen.width > 0 { f64::from(w) / f64::from(screen.width) } else { 1.0 };
+        let at = |v: i32| (f64::from(v) * scale).round() as i32;
+        Some((at(screen.left), at(screen.top), w, h))
     }
 
     pub fn is_open(&self) -> bool {
@@ -156,9 +191,9 @@ impl Session {
         rx.recv_timeout(Duration::from_secs(10)).map_err(|_| closed())?
     }
 
-    /// Mouse position in logical coordinates of the shared screen.
-    pub fn pointer_motion(&self, x: f64, y: f64) {
-        let _ = self.cmds.send(Cmd::Motion(x, y));
+    /// Mouse position in logical coordinates of the shared screen at `screen`.
+    pub fn pointer_motion(&self, screen: usize, x: f64, y: f64) {
+        let _ = self.cmds.send(Cmd::Motion(screen, x, y));
     }
 
     /// `button` is a Linux input code (`BTN_LEFT` = 0x110...).
@@ -203,7 +238,7 @@ impl Drop for Session {
 fn run(
     token_file: PathBuf,
     ask: bool,
-    ready: std::sync::mpsc::Sender<Result<Screen>>,
+    ready: std::sync::mpsc::Sender<Result<Vec<Screen>>>,
     mut cmds: mpsc::UnboundedReceiver<Cmd>,
     open_flag: &AtomicBool,
 ) {
@@ -215,7 +250,7 @@ fn run(
         }
     };
     rt.block_on(async {
-        let (remote, screencast, session, screen) = match open(&token_file, ask).await {
+        let (remote, screencast, session, screens) = match open(&token_file, ask).await {
             Ok(v) => v,
             Err(e) => {
                 let _ = ready.send(Err(for_viewer(e)));
@@ -229,8 +264,8 @@ fn run(
                 futures_util::stream::pending().boxed()
             }
         };
-        let _ = ready.send(Ok(screen));
-        let node = screen.node_id;
+        let nodes: Vec<u32> = screens.iter().map(|s| s.node_id).collect();
+        let _ = ready.send(Ok(screens));
         let mut failed = false;
         loop {
             let cmd = tokio::select! {
@@ -250,7 +285,8 @@ fn run(
                     let _ = reply.send(fd.context("PipeWire connection of the portal"));
                     continue;
                 }
-                Cmd::Motion(x, y) => {
+                Cmd::Motion(index, x, y) => {
+                    let node = nodes.get(index).or(nodes.first()).copied().unwrap_or_default();
                     let options = NotifyPointerMotionAbsoluteOptions::default();
                     remote.notify_pointer_motion_absolute(&session, node, x, y, options).await
                 }
@@ -302,7 +338,7 @@ fn state(down: bool) -> KeyState {
     if down { KeyState::Pressed } else { KeyState::Released }
 }
 
-type Opened = (RemoteDesktop, Screencast, ashpd::desktop::Session<RemoteDesktop>, Screen);
+type Opened = (RemoteDesktop, Screencast, ashpd::desktop::Session<RemoteDesktop>, Vec<Screen>);
 
 /// How long a session with the saved permission may take to start.
 const RESTORE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -362,7 +398,9 @@ async fn open_with(token_file: &std::path::Path, token: Option<&str>) -> Result<
             SelectSourcesOptions::default()
                 .set_cursor_mode(if metadata { CursorMode::Metadata } else { CursorMode::Embedded })
                 .set_sources(ashpd::enumflags2::BitFlags::from(SourceType::Monitor))
-                .set_multiple(false),
+                // Several screens may be shared: the viewer switches between them,
+                // or shows them all.
+                .set_multiple(true),
         )
         .await?
         .response()?;
@@ -373,18 +411,26 @@ async fn open_with(token_file: &std::path::Path, token: Option<&str>) -> Result<
     {
         warn!("cannot keep the remote desktop permission: {e}");
     }
-    let stream = started.streams().first().context("no screen shared")?;
-    let (width, height) = stream.size().unwrap_or((0, 0));
-    let (left, top) = stream.position().unwrap_or((0, 0));
-    let screen = Screen {
-        node_id: stream.pipe_wire_node_id(),
-        left,
-        top,
-        width: width.max(0) as u32,
-        height: height.max(0) as u32,
-    };
-    info!(?screen, "remote desktop session started");
-    Ok((remote, screencast, session, screen))
+    let screens: Vec<Screen> = started
+        .streams()
+        .iter()
+        .map(|stream| {
+            let (width, height) = stream.size().unwrap_or((0, 0));
+            let (left, top) = stream.position().unwrap_or((0, 0));
+            Screen {
+                node_id: stream.pipe_wire_node_id(),
+                left,
+                top,
+                width: width.max(0) as u32,
+                height: height.max(0) as u32,
+            }
+        })
+        .collect();
+    if screens.is_empty() {
+        bail!("no screen shared");
+    }
+    info!(?screens, "remote desktop session started");
+    Ok((remote, screencast, session, screens))
 }
 
 fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {

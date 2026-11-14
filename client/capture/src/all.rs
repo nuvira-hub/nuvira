@@ -3,8 +3,9 @@
 //! black). The image goes through RAM: the screens may be on different graphics
 //! cards, and composing on the CPU costs a copy of each changed screen.
 //!
-//! The pointer (Windows, macOS) is drawn into the composed picture, not by each
-//! screen: they publish it in the composed picture's coordinates.
+//! The pointer (Windows, macOS, Linux with it as metadata) is drawn into the
+//! composed picture, not by each screen: they publish it in the composed
+//! picture's coordinates.
 
 use std::time::Duration;
 
@@ -28,13 +29,23 @@ impl AllCapturer {
         if screens.len() < 2 {
             bail!("only one screen");
         }
+        let parts = screens.iter().map(|d| open(d.index)).collect::<Result<Vec<_>>>()?;
+        Self::from_parts(parts)
+    }
+
+    /// From the screens' captures already open: laid out as their displays say
+    /// (their real sizes are known only once open on Wayland).
+    pub fn from_parts(parts: Vec<Box<dyn Capturer>>) -> Result<Self> {
+        if parts.len() < 2 {
+            bail!("only one screen");
+        }
+        let screens: Vec<Display> = parts.iter().map(|p| p.display().clone()).collect();
         let left = screens.iter().map(|d| d.left).min().unwrap_or(0);
         let top = screens.iter().map(|d| d.top).min().unwrap_or(0);
         let right = screens.iter().map(|d| d.left + d.width as i32).max().unwrap_or(0);
         let bottom = screens.iter().map(|d| d.top + d.height as i32).max().unwrap_or(0);
         // Even sizes: the encoders work on 2x2 chroma blocks.
         let (width, height) = (((right - left) as u32 + 1) & !1, ((bottom - top) as u32 + 1) & !1);
-        let parts = screens.iter().map(|d| open(d.index)).collect::<Result<Vec<_>>>()?;
         crate::set_nested(Some((left, top)));
         let display = Display {
             index: ALL_DISPLAYS,

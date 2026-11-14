@@ -41,7 +41,6 @@ pub(crate) fn set_nested(origin: Option<(i32, i32)>) {
     *NESTED.lock().unwrap_or_else(|e| e.into_inner()) = origin;
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn nested() -> Option<(i32, i32)> {
     *NESTED.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -123,8 +122,7 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
     #[cfg(target_os = "linux")]
     {
         if wayland() {
-            let _ = index;
-            linux::open()
+            linux::open(index)
         } else {
             x11::open(index)
         }

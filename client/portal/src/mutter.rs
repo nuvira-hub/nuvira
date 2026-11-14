@@ -37,9 +37,39 @@ async fn proxy(
 
 struct Opened {
     remote: Proxy<'static>,
-    stream_path: String,
-    screen: Screen,
+    /// One stream for each monitor, the primary one first: its object path and
+    /// its screen.
+    streams: Vec<(String, Screen)>,
     closed: futures_util::stream::BoxStream<'static, ()>,
+}
+
+/// The connectors of the logical monitors (`org.gnome.Mutter.DisplayConfig`),
+/// the primary one first, then left to right. Empty when GNOME does not say:
+/// the primary monitor alone then.
+async fn connectors(bus: &Connection) -> Vec<String> {
+    type MonitorSpec = (String, String, String, String);
+    type Mode = (String, i32, i32, f64, f64, Vec<f64>, HashMap<String, OwnedValue>);
+    type Monitor = (MonitorSpec, Vec<Mode>, HashMap<String, OwnedValue>);
+    type Logical = (i32, i32, f64, u32, bool, Vec<MonitorSpec>, HashMap<String, OwnedValue>);
+    type State = (u32, Vec<Monitor>, Vec<Logical>, HashMap<String, OwnedValue>);
+    let path: OwnedObjectPath = match "/org/gnome/Mutter/DisplayConfig".try_into() {
+        Ok(path) => path,
+        Err(_) => return Vec::new(),
+    };
+    let Ok(config) = proxy(bus, "org.gnome.Mutter.DisplayConfig", path, "org.gnome.Mutter.DisplayConfig").await
+    else {
+        return Vec::new();
+    };
+    let state: State = match config.call("GetCurrentState", &()).await {
+        Ok(state) => state,
+        Err(e) => {
+            info!("GNOME's monitors not listed ({e}): the primary one alone");
+            return Vec::new();
+        }
+    };
+    let mut logical = state.2;
+    logical.sort_by_key(|l| (!l.4, l.0, l.1));
+    logical.into_iter().filter_map(|l| l.5.first().map(|m| m.0.clone())).collect()
 }
 
 async fn open() -> Result<Opened> {
@@ -57,32 +87,53 @@ async fn open() -> Result<Opened> {
     options.insert("remote-desktop-session-id", Value::from(session_id.as_str()));
     let path: OwnedObjectPath = sc.call("CreateSession", &(options,)).await?;
     let cast = proxy(&bus, SC, path, "org.gnome.Mutter.ScreenCast.Session").await?;
-    let mut options: HashMap<&str, Value> = HashMap::new();
     // The pointer as metadata when the agent wants it (Mutter has it since 3.34).
     let metadata = crate::cursor::wanted();
     crate::cursor::set_active(metadata);
-    options.insert("cursor-mode", Value::from(if metadata { CURSOR_METADATA } else { CURSOR_EMBEDDED }));
-    // An empty connector: the primary monitor.
-    let stream_path: OwnedObjectPath = cast.call("RecordMonitor", &("", options)).await?;
-    let stream = proxy(&bus, SC, stream_path.clone(), "org.gnome.Mutter.ScreenCast.Stream").await?;
-    let mut added = stream.receive_signal("PipeWireStreamAdded").await?;
+    // Every monitor: the viewer switches between them, or shows them all. An
+    // empty connector: the primary monitor.
+    let mut wanted = connectors(&bus).await;
+    if wanted.is_empty() {
+        wanted.push(String::new());
+    }
+    let mut recorded = Vec::new();
+    for connector in &wanted {
+        let mut options: HashMap<&str, Value> = HashMap::new();
+        options.insert("cursor-mode", Value::from(if metadata { CURSOR_METADATA } else { CURSOR_EMBEDDED }));
+        let stream_path: OwnedObjectPath = match cast.call("RecordMonitor", &(connector.as_str(), options)).await {
+            Ok(path) => path,
+            Err(e) if !recorded.is_empty() => {
+                warn!(connector, "monitor not recorded: {e}");
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let stream = proxy(&bus, SC, stream_path.clone(), "org.gnome.Mutter.ScreenCast.Stream").await?;
+        let added = stream.receive_signal("PipeWireStreamAdded").await?;
+        recorded.push((stream_path, stream, added));
+    }
 
     let closed = remote.receive_signal("Closed").await?.map(|_| ()).boxed();
     remote.call::<_, _, ()>("Start", &()).await.context("starting the remote desktop session")?;
-    let message = tokio::time::timeout(std::time::Duration::from_secs(10), added.next())
-        .await
-        .map_err(|_| anyhow!("no screen stream from GNOME"))?
-        .context("screen stream signal ended")?;
-    let node_id: u32 = message.body().deserialize()?;
-    let parameters: HashMap<String, OwnedValue> = stream.get_property("Parameters").await.unwrap_or_default();
-    let pair = |name: &str| -> Option<(i32, i32)> {
-        parameters.get(name).and_then(|v| <(i32, i32)>::try_from(v.try_clone().ok()?).ok())
-    };
-    let (left, top) = pair("position").unwrap_or((0, 0));
-    let (width, height) = pair("size").unwrap_or((0, 0));
-    let screen = Screen { node_id, left, top, width: width.max(0) as u32, height: height.max(0) as u32 };
-    info!(?screen, "GNOME remote desktop session started");
-    Ok(Opened { remote, stream_path: stream_path.to_string(), screen, closed })
+    let mut streams = Vec::new();
+    for (connector, (stream_path, stream, mut added)) in wanted.iter().zip(recorded) {
+        let message = tokio::time::timeout(std::time::Duration::from_secs(10), added.next())
+            .await
+            .map_err(|_| anyhow!("no screen stream from GNOME"))?
+            .context("screen stream signal ended")?;
+        let node_id: u32 = message.body().deserialize()?;
+        let parameters: HashMap<String, OwnedValue> = stream.get_property("Parameters").await.unwrap_or_default();
+        let pair = |name: &str| -> Option<(i32, i32)> {
+            parameters.get(name).and_then(|v| <(i32, i32)>::try_from(v.try_clone().ok()?).ok())
+        };
+        let (left, top) = pair("position").unwrap_or((0, 0));
+        let (width, height) = pair("size").unwrap_or((0, 0));
+        let screen = Screen { node_id, left, top, width: width.max(0) as u32, height: height.max(0) as u32 };
+        info!(connector, ?screen, "GNOME remote desktop stream");
+        streams.push((stream_path.to_string(), screen));
+    }
+    info!(screens = streams.len(), "GNOME remote desktop session started");
+    Ok(Opened { remote, streams, closed })
 }
 
 /// The user's PipeWire daemon: Mutter's (and KWin's) stream is a node of it.
@@ -99,7 +150,7 @@ pub(crate) fn pipewire_socket() -> Result<OwnedFd> {
 }
 
 pub(crate) fn run(
-    ready: std::sync::mpsc::Sender<Result<Screen>>,
+    ready: std::sync::mpsc::Sender<Result<Vec<Screen>>>,
     mut cmds: mpsc::UnboundedReceiver<Cmd>,
     open_flag: &AtomicBool,
 ) {
@@ -111,14 +162,15 @@ pub(crate) fn run(
         }
     };
     rt.block_on(async {
-        let Opened { remote, stream_path, screen, mut closed } = match open().await {
+        let Opened { remote, streams, mut closed } = match open().await {
             Ok(opened) => opened,
             Err(e) => {
                 let _ = ready.send(Err(e));
                 return;
             }
         };
-        let _ = ready.send(Ok(screen));
+        let paths: Vec<String> = streams.iter().map(|(p, _)| p.clone()).collect();
+        let _ = ready.send(Ok(streams.into_iter().map(|(_, s)| s).collect()));
         let mut failed = false;
         loop {
             let cmd = tokio::select! {
@@ -137,8 +189,9 @@ pub(crate) fn run(
                     let _ = reply.send(pipewire_socket());
                     continue;
                 }
-                Cmd::Motion(x, y) => {
-                    remote.call::<_, _, ()>("NotifyPointerMotionAbsolute", &(stream_path.as_str(), x, y)).await
+                Cmd::Motion(index, x, y) => {
+                    let path = paths.get(index).or(paths.first()).map(String::as_str).unwrap_or_default();
+                    remote.call::<_, _, ()>("NotifyPointerMotionAbsolute", &(path, x, y)).await
                 }
                 Cmd::Button(button, down) => remote.call::<_, _, ()>("NotifyPointerButton", &(button, down)).await,
                 Cmd::Wheel(axis, steps) => {

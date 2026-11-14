@@ -222,7 +222,7 @@ fn open() -> Result<Opened> {
 }
 
 pub(crate) fn run(
-    ready: std::sync::mpsc::Sender<Result<Screen>>,
+    ready: std::sync::mpsc::Sender<Result<Vec<Screen>>>,
     mut cmds: mpsc::UnboundedReceiver<Cmd>,
     open_flag: &AtomicBool,
 ) {
@@ -251,7 +251,7 @@ pub(crate) fn run(
                 return;
             }
         };
-        let _ = ready.send(Ok(screen));
+        let _ = ready.send(Ok(vec![screen]));
         let Some((fake, version)) = state.fake.clone() else { return };
         loop {
             tokio::select! {
@@ -263,7 +263,8 @@ pub(crate) fn run(
                             continue;
                         }
                         // KWin wants positions in the whole desktop's logical space.
-                        Cmd::Motion(x, y) => {
+                        // One screen at the sign-in screen: the greeter's.
+                        Cmd::Motion(_, x, y) => {
                             fake.pointer_motion_absolute(x + f64::from(screen.left), y + f64::from(screen.top));
                         }
                         Cmd::Button(button, down) => fake.button(button as u32, u32::from(down)),

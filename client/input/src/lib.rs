@@ -86,8 +86,10 @@ pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
     #[cfg(target_os = "linux")]
     {
         if wayland_session() {
-            let _ = screen;
-            Ok(Box::new(linux::PortalInjector::new()?))
+            // One screen of the session, or all of them.
+            let mut injector = linux::PortalInjector::new()?;
+            injector.set_screen(screen);
+            Ok(Box::new(injector))
         } else {
             // One monitor of the X screen, or all of it.
             let mut injector = x11::XTestInjector::new()?;

@@ -136,25 +136,31 @@ pub fn check() -> Result<()> {
 
 /// Gives a linear ramp to the screens left black by a killed privacy process.
 pub fn recover() {
-    let result = std::thread::spawn(|| -> Result<usize> {
-        let m = Mutter::connect()?;
-        let (serial, crtcs) = m.crtcs()?;
-        let mut fixed = 0;
-        for crtc in crtcs {
-            let current = m.gamma(serial, crtc)?;
-            if !current.0.is_empty() && is_black(&current) {
-                let ramp = linear(current.0.len());
-                m.set_gamma(serial, crtc, &(ramp.clone(), ramp.clone(), ramp))?;
-                fixed += 1;
+    // At most a few seconds: the agent starts with this, and a compositor that does
+    // not answer (seen with a headless GNOME Shell with two virtual monitors) kept
+    // it from ever registering. The thread goes on by itself after that.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = (|| -> Result<usize> {
+            let m = Mutter::connect()?;
+            let (serial, crtcs) = m.crtcs()?;
+            let mut fixed = 0;
+            for crtc in crtcs {
+                let current = m.gamma(serial, crtc)?;
+                if !current.0.is_empty() && is_black(&current) {
+                    let ramp = linear(current.0.len());
+                    m.set_gamma(serial, crtc, &(ramp.clone(), ramp.clone(), ramp))?;
+                    fixed += 1;
+                }
             }
-        }
-        Ok(fixed)
-    })
-    .join();
-    if let Ok(Ok(n)) = result
-        && n > 0
-    {
-        warn!(screens = n, "privacy mode of a killed process undone (gamma)");
+            Ok(fixed)
+        })();
+        let _ = tx.send(result);
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        Ok(Ok(n)) if n > 0 => warn!(screens = n, "privacy mode of a killed process undone (gamma)"),
+        Ok(_) => {}
+        Err(_) => warn!("GNOME did not answer about the screens' gamma: privacy mode not checked"),
     }
 }
 
