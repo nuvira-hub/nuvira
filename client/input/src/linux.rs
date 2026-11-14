@@ -188,9 +188,10 @@ fn ibus() -> bool {
 impl InputInjector for PortalInjector {
     fn inject(&mut self, event: &InputEvent) -> Result<()> {
         // The capture opens a new session when the system closed the old one
-        // (screen locked and unlocked): the input follows it.
-        if !self.session.is_open()
-            && let Some(session) = nuvira_portal::current()
+        // (screen locked and unlocked) or the screens changed (a resolution): the
+        // input follows it.
+        if let Some(session) = nuvira_portal::current()
+            && !Arc::ptr_eq(&session, &self.session)
         {
             self.session = session;
             self.keys.clear();

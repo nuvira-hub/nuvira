@@ -16,6 +16,7 @@
 #![cfg(target_os = "linux")]
 
 pub use nuvira_pointer as cursor;
+pub mod display_config;
 mod kwin;
 mod mutter;
 
@@ -102,6 +103,12 @@ pub fn session(token_file: PathBuf, ask: bool) -> Result<Arc<Session>> {
     let session = Arc::new(Session::start(token_file, ask)?);
     *current = Arc::downgrade(&session);
     Ok(session)
+}
+
+/// The screens changed (a resolution): the next capture opens a new session,
+/// whose screens have the new sizes; this one closes once its users let it go.
+pub fn forget() {
+    *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Weak::new();
 }
 
 /// The open session, if there is one.

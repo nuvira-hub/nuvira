@@ -9,8 +9,10 @@
 //!   saved in the registry stays the person's; recovery puts the registry mode back.
 //! - macOS: a configuration "for this program only" (`kCGConfigureForAppOnly`):
 //!   macOS itself restores the screen when the agent ends, however it ends.
-//! - Linux: XRandR on X11, with one screen turned on; the original size is written
-//!   down for recovery. Not on Wayland.
+//! - Linux: XRandR on X11 (the streamed monitor's output); on Wayland GNOME's
+//!   monitor configuration (`org.gnome.Mutter.DisplayConfig`, applied as
+//!   temporary). The original size is written down for recovery. Not on other
+//!   Wayland desktops.
 //!
 //! One session at a time changes a screen: another one is refused until it is back.
 
@@ -74,7 +76,7 @@ pub fn supported() -> bool {
     #[cfg(any(windows, target_os = "macos"))]
     return true;
     #[cfg(target_os = "linux")]
-    return !crate::wayland();
+    return !crate::wayland() || nuvira_portal::display_config::available();
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     false
 }
@@ -500,8 +502,212 @@ mod platform {
     }
 }
 
+/// Linux: XRandR on X11, GNOME's monitor configuration on Wayland.
 #[cfg(target_os = "linux")]
 mod platform {
+    use anyhow::Result;
+
+    use super::{Size, gnome, x11};
+    use crate::Display;
+
+    pub enum Screen {
+        X11(x11::Screen),
+        Gnome(gnome::Screen),
+    }
+
+    pub enum Original {
+        X11(x11::Original),
+        Gnome(gnome::Original),
+    }
+
+    impl Screen {
+        pub fn of(display: &Display) -> Result<Self> {
+            Ok(if crate::wayland() { Self::Gnome(gnome::Screen::of(display)?) } else { Self::X11(x11::Screen::of(display)?) })
+        }
+
+        pub fn key(&self) -> String {
+            match self {
+                Self::X11(s) => s.key(),
+                Self::Gnome(s) => s.key(),
+            }
+        }
+
+        pub fn current(&self) -> Result<Size> {
+            match self {
+                Self::X11(s) => s.current(),
+                Self::Gnome(s) => s.current(),
+            }
+        }
+
+        pub fn modes(&self) -> Result<Vec<Size>> {
+            match self {
+                Self::X11(s) => s.modes(),
+                Self::Gnome(s) => s.modes(),
+            }
+        }
+
+        pub fn set(&self, to: Size) -> Result<()> {
+            match self {
+                Self::X11(s) => s.set(to),
+                Self::Gnome(s) => s.set(to),
+            }
+        }
+
+        pub fn original(&self) -> Result<Original> {
+            Ok(match self {
+                Self::X11(s) => Original::X11(s.original()?),
+                Self::Gnome(s) => Original::Gnome(s.original()?),
+            })
+        }
+    }
+
+    impl Original {
+        pub fn size(&self) -> Size {
+            match self {
+                Self::X11(o) => o.size(),
+                Self::Gnome(o) => o.size(),
+            }
+        }
+
+        pub fn record(&self) -> String {
+            match self {
+                Self::X11(o) => o.record(),
+                Self::Gnome(o) => o.record(),
+            }
+        }
+
+        pub fn put_back(&self) -> Result<()> {
+            match self {
+                Self::X11(o) => o.put_back(),
+                Self::Gnome(o) => o.put_back(),
+            }
+        }
+    }
+
+    /// A line of the recovery file: "gnome CONNECTOR W H" for GNOME, "OUTPUT W H"
+    /// for X11.
+    pub fn recover(record: &str) -> Result<()> {
+        match record.strip_prefix(gnome::PREFIX) {
+            Some(rest) => gnome::recover(rest),
+            None => x11::recover(record),
+        }
+    }
+}
+
+/// GNOME on Wayland: the monitor of the streamed screen, through Mutter.
+#[cfg(target_os = "linux")]
+mod gnome {
+    use anyhow::{Context, Result, bail};
+    use nuvira_portal::display_config::{self as config, Monitor};
+
+    use super::Size;
+    use crate::Display;
+
+    pub const PREFIX: &str = "gnome ";
+
+    pub struct Screen {
+        monitor: Monitor,
+    }
+
+    /// The monitor whose logical position is the streamed screen's (the session
+    /// gives the screens' positions); the only one when there is one.
+    fn monitor_of(display: &Display) -> Result<Monitor> {
+        let monitors = config::monitors()?;
+        if monitors.len() == 1 {
+            return monitors.into_iter().next().context("no monitor");
+        }
+        let session = nuvira_portal::current().context("no screen shared")?;
+        let screen = *session.screens().get(display.index).context("the screen is gone")?;
+        monitors
+            .into_iter()
+            .find(|m| (m.x, m.y) == (screen.left, screen.top))
+            .context("@agent.resolution_unavailable")
+    }
+
+    fn by_connector(connector: &str) -> Result<Monitor> {
+        config::monitors()?.into_iter().find(|m| m.connector == connector).context("the screen is gone")
+    }
+
+    impl Screen {
+        pub fn of(display: &Display) -> Result<Self> {
+            Ok(Self { monitor: monitor_of(display)? })
+        }
+
+        pub fn key(&self) -> String {
+            self.monitor.connector.clone()
+        }
+
+        pub fn current(&self) -> Result<Size> {
+            // Read again: the monitor may have changed since this was made.
+            let now = by_connector(&self.monitor.connector)?;
+            let mode = now.mode(&now.current).context("current mode")?;
+            Ok(Size { width: mode.width, height: mode.height })
+        }
+
+        pub fn modes(&self) -> Result<Vec<Size>> {
+            let mut sizes: Vec<Size> =
+                self.monitor.modes.iter().map(|m| Size { width: m.width, height: m.height }).collect();
+            sizes.sort_by_key(|s| (s.width, s.height));
+            sizes.dedup();
+            Ok(sizes)
+        }
+
+        pub fn set(&self, to: Size) -> Result<()> {
+            set(&self.monitor.connector, to)
+        }
+
+        pub fn original(&self) -> Result<Original> {
+            Ok(Original { connector: self.monitor.connector.clone(), size: self.current()? })
+        }
+    }
+
+    fn set(connector: &str, to: Size) -> Result<()> {
+        let monitor = by_connector(connector)?;
+        let mode = config::mode_for(&monitor, to.width, to.height)?;
+        config::set_mode(connector, &mode)?;
+        // The session's screens keep the sizes they had: the capture opens a new
+        // one, and the input follows it.
+        nuvira_portal::forget();
+        Ok(())
+    }
+
+    pub struct Original {
+        connector: String,
+        size: Size,
+    }
+
+    impl Original {
+        pub fn size(&self) -> Size {
+            self.size
+        }
+
+        pub fn record(&self) -> String {
+            format!("{PREFIX}{} {} {}", self.connector, self.size.width, self.size.height)
+        }
+
+        pub fn put_back(&self) -> Result<()> {
+            set(&self.connector, self.size)
+        }
+    }
+
+    pub fn recover(record: &str) -> Result<()> {
+        let mut parts = record.rsplitn(3, ' ');
+        let (Some(h), Some(w), Some(connector)) = (parts.next(), parts.next(), parts.next()) else {
+            bail!("unreadable line");
+        };
+        let size = Size { width: w.parse()?, height: h.parse()? };
+        let monitor = by_connector(connector)?;
+        let now = monitor.mode(&monitor.current).map(|m| Size { width: m.width, height: m.height });
+        if now != Some(size) {
+            set(connector, size)?;
+        }
+        Ok(())
+    }
+}
+
+/// X11: XRandR.
+#[cfg(target_os = "linux")]
+mod x11 {
     use anyhow::{Context, Result, bail};
     use x11rb::connection::Connection;
     use x11rb::protocol::randr::{self, ConnectionExt as _};
