@@ -142,11 +142,12 @@ pub fn set_dmabuf_modifiers(modifiers: Vec<u64>) {
 const VIDEO_FLAG_MODIFIER_FIXATION_REQUIRED: u32 = 1 << 3;
 
 /// The modifiers to offer now (empty: no DMA-BUF). The pointer as metadata comes
-/// only with shared memory (the agent asks for one or the other): it can then be
-/// drawn into the picture when needed.
+/// with DMA-BUFs too; while it must be drawn into the picture (a recording, a
+/// guest, a viewer that does not draw it) the stream goes to shared memory, where
+/// the capture draws it, and back to DMA-BUFs after (see `in_ram`).
 fn dmabuf_wanted() -> Vec<u64> {
     // Part of all the screens: the picture is composed in RAM.
-    if cursor::wanted() || crate::nested().is_some() {
+    if in_ram() || crate::nested().is_some() {
         return Vec::new();
     }
     let modifiers = DMABUF_MODIFIERS.lock().expect("modifiers").clone();
@@ -155,6 +156,11 @@ fn dmabuf_wanted() -> Vec<u64> {
         Ok("0") => Vec::new(),
         _ => modifiers,
     }
+}
+
+/// The pointer comes apart and must be drawn into the picture: in RAM.
+fn in_ram() -> bool {
+    cursor::active() && cursor::composite()
 }
 
 /// The formats offered: DMA-BUF with `modifiers` first (if any), then shared memory.
@@ -387,6 +393,8 @@ struct State {
     /// The modifiers offered, and their generation.
     modifiers: Vec<u64>,
     generation: u64,
+    /// `in_ram()` when the formats were last offered.
+    in_ram: bool,
     /// The pointer as metadata: the last picture (without it), to draw it again
     /// when only the pointer moves and it must be in the picture; the last
     /// bitmap, its serial, and the generation of the pointer drawn.
@@ -435,6 +443,7 @@ fn stream_loop(
         pool: Vec::new(),
         modifiers: modifiers.clone(),
         generation,
+        in_ram: in_ram(),
         last: None,
         bitmap: Vec::new(),
         serial: 0,
@@ -509,10 +518,13 @@ fn stream_loop(
             }
         })
         .process(|stream, state| {
-            // The encoder's modifiers changed (an import that failed): negotiate again.
+            // The encoder's modifiers changed (an import that failed), or the pointer
+            // must come into the picture or may leave it: negotiate again.
             let generation = DMABUF_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
-            if generation != state.generation {
+            let ram = in_ram();
+            if generation != state.generation || ram != state.in_ram {
                 state.generation = generation;
+                state.in_ram = ram;
                 let modifiers = dmabuf_wanted();
                 if modifiers != state.modifiers {
                     info!(?modifiers, "PipeWire: formats offered again");

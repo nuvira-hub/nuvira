@@ -2475,19 +2475,14 @@ mod pointer {
     static RECORDING: AtomicBool = AtomicBool::new(false);
     static PLAIN_GUESTS: AtomicUsize = AtomicUsize::new(0);
 
-    /// The capture can give it apart. Linux: without the DMA-BUF capture (the
-    /// pointer could not be drawn into those pictures for a recording). Windows:
+    /// The capture can give it apart. Linux: also with the DMA-BUF capture (the
+    /// stream goes to shared memory while the pointer must be in the picture). Windows:
     /// DXGI gives it apart (the GDI capture draws it in and says so). macOS: the
     /// system gives its shape (otherwise ScreenCaptureKit draws it in and the
     /// capture says so).
     pub fn possible(plan: nuvira_codec::EncoderPlan) -> bool {
-        #[cfg(target_os = "linux")]
-        return plan == nuvira_codec::EncoderPlan::Software || nuvira_codec::dmabuf_import_modifiers().is_empty();
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = plan;
-            cfg!(any(windows, target_os = "macos"))
-        }
+        let _ = plan;
+        cfg!(any(windows, target_os = "linux", target_os = "macos"))
     }
 
     pub fn set_wanted(on: bool) {
