@@ -199,15 +199,29 @@ pub fn pack_view(width: u32, height: u32) -> u64 {
     ((width as u64) << 32) | height as u64
 }
 
+/// The largest picture the encoders take: H.264 level 5.1 (36 864 macroblocks,
+/// 4096x2304) and 4096 on a side, the hardware encoders' limit. All the screens
+/// side by side go beyond it (two 4K screens, or a Mac's screens at the Retina
+/// scale: 6400x2160 was refused by VideoToolbox, which then failed every frame).
+const MAX_SIDE: u32 = 4096;
+const MAX_AREA: u64 = 36_864 * 256;
+
 /// Size at which a `width`x`height` screen is encoded for a viewer area `view`
-/// (packed, 0 = full size): reduced to fit the area, aspect kept, even sizes;
-/// never larger than the screen.
+/// (packed, 0 = full size): reduced to fit the area and what the encoders take
+/// ([`MAX_SIDE`], [`MAX_AREA`]), aspect kept, even sizes; never larger than the
+/// screen.
 pub fn encoded_size(width: u32, height: u32, view: u64) -> (u32, u32) {
     let (vw, vh) = ((view >> 32) as u32, view as u32);
-    if vw == 0 || vh == 0 || (vw >= width && vh >= height) {
+    let limit = (f64::from(MAX_SIDE) / f64::from(width.max(1)))
+        .min(f64::from(MAX_SIDE) / f64::from(height.max(1)))
+        .min((MAX_AREA as f64 / (f64::from(width) * f64::from(height)).max(1.0)).sqrt());
+    if (vw == 0 || vh == 0 || (vw >= width && vh >= height)) && limit >= 1.0 {
         return (width, height);
     }
-    let scale = (vw as f64 / width as f64).min(vh as f64 / height as f64);
+    let mut scale = limit.min(1.0);
+    if vw > 0 && vh > 0 {
+        scale = scale.min(vw as f64 / width as f64).min(vh as f64 / height as f64);
+    }
     let fit = |n: u32| (((n as f64 * scale).round() as u32) & !1).max(64).min(n);
     (fit(width), fit(height))
 }
@@ -531,6 +545,14 @@ mod tests {
         // Odd sizes become even, and never below 64.
         assert_eq!(encoded_size(1920, 1080, pack_view(1001, 2000)), (1000, 562));
         assert_eq!(encoded_size(1920, 1080, pack_view(10, 10)), (64, 64));
+        // Beyond what the encoders take: all the screens of a Mac at the Retina
+        // scale, two 4K screens side by side.
+        assert_eq!(encoded_size(6400, 2160, 0), (4096, 1382));
+        assert_eq!(encoded_size(7680, 2160, 0), (4096, 1152));
+        assert_eq!(encoded_size(6400, 2160, pack_view(1212, 682)), (1212, 408));
+        // Within them: unchanged.
+        assert_eq!(encoded_size(4096, 2304, 0), (4096, 2304));
+        assert_eq!(encoded_size(3840, 2160, 0), (3840, 2160));
     }
 
     #[test]

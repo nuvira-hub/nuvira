@@ -3,8 +3,8 @@
 //! black). The image goes through RAM: the screens may be on different graphics
 //! cards, and composing on the CPU costs a copy of each changed screen.
 //!
-//! The pointer (Windows) is drawn into the composed picture, not by each screen:
-//! they publish it in the composed picture's coordinates.
+//! The pointer (Windows, macOS) is drawn into the composed picture, not by each
+//! screen: they publish it in the composed picture's coordinates.
 
 use std::time::Duration;
 
@@ -35,8 +35,7 @@ impl AllCapturer {
         // Even sizes: the encoders work on 2x2 chroma blocks.
         let (width, height) = (((right - left) as u32 + 1) & !1, ((bottom - top) as u32 + 1) & !1);
         let parts = screens.iter().map(|d| open(d.index)).collect::<Result<Vec<_>>>()?;
-        #[cfg(windows)]
-        crate::windows::set_nested(Some((left, top)));
+        crate::set_nested(Some((left, top)));
         let display = Display {
             index: ALL_DISPLAYS,
             name: "all screens".into(),
@@ -105,8 +104,7 @@ impl Capturer for AllCapturer {
 
 impl Drop for AllCapturer {
     fn drop(&mut self) {
-        #[cfg(windows)]
-        crate::windows::set_nested(None);
+        crate::set_nested(None);
     }
 }
 

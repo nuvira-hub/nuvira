@@ -27,8 +27,11 @@ use crate::{InputInjector, Piece, ScreenRect};
 const NOTCH: i32 = 120;
 
 pub struct QuartzInjector {
-    /// Position and size of the streamed screen, in points.
+    /// Position and size of the streamed picture, in the capture's pixels (one
+    /// screen, or all of them).
     screen: ScreenRect,
+    /// The screens as the capture lays them out, to turn its pixels into points.
+    layout: Vec<Screen>,
     keys: HashSet<u16>,
     buttons: HashSet<u8>,
     position: CGPoint,
@@ -44,7 +47,8 @@ impl QuartzInjector {
         let forced = std::env::var("NUVIRA_MAC_KEYBOARD").ok();
         info!(iso, forced = forced.as_deref().unwrap_or("no"), "Mac keyboard type");
         Ok(Self {
-            screen: points(screen),
+            screen,
+            layout: layout(),
             keys: HashSet::new(),
             buttons: HashSet::new(),
             position: CGPoint::new(0.0, 0.0),
@@ -68,10 +72,11 @@ impl QuartzInjector {
 
     fn move_to(&mut self, x: f32, y: f32) {
         let s = self.screen;
-        self.position = CGPoint::new(
+        let pixel = (
             f64::from(s.left) + f64::from(x.clamp(0.0, 1.0)) * f64::from(s.width.saturating_sub(1)),
             f64::from(s.top) + f64::from(y.clamp(0.0, 1.0)) * f64::from(s.height.saturating_sub(1)),
         );
+        self.position = to_points(&self.layout, s, pixel);
         // While a button is held, macOS wants "dragged" events, or drags do not work.
         let (kind, button) = if self.buttons.contains(&0) {
             (CGEventType::LeftMouseDragged, CGMouseButton::Left)
@@ -346,18 +351,72 @@ mod events {
     }
 }
 
-/// The capture gives the screen in pixels; Quartz events are in points (half
-/// as many on a Retina screen).
-fn points(screen: ScreenRect) -> ScreenRect {
-    let main = CGDisplay::main();
-    let pixels = main.pixels_wide().max(1) as f64;
-    let scale = (pixels / main.bounds().size.width.max(1.0)).max(1.0);
-    ScreenRect {
-        left: (f64::from(screen.left) / scale) as i32,
-        top: (f64::from(screen.top) / scale) as i32,
-        width: (f64::from(screen.width) / scale) as u32,
-        height: (f64::from(screen.height) / scale) as u32,
+/// A screen in points (Quartz events) and where the capture puts it in pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Screen {
+    /// Left, top, width, height in global points.
+    points: (f64, f64, f64, f64),
+    /// Left and top in the capture's pixels, and the screen's pixels per point.
+    pixels: (f64, f64),
+    scale: f64,
+}
+
+/// The screens as `nuvira_capture` lays them out: the position in points times
+/// the largest scale of them all, the size in the screen's own pixels.
+fn layout() -> Vec<Screen> {
+    let ids = CGDisplay::active_displays().unwrap_or_default();
+    let screens: Vec<(f64, f64, f64, f64, f64)> = ids
+        .into_iter()
+        .map(|id| {
+            let d = CGDisplay::new(id);
+            let b = d.bounds();
+            // The mode's pixels: `CGDisplayPixelsWide` gives points on a Retina screen.
+            let pixels = d.display_mode().map_or(0, |m| m.pixel_width()).max(d.pixels_wide());
+            let scale = (pixels as f64 / b.size.width.max(1.0)).max(1.0);
+            (b.origin.x, b.origin.y, b.size.width, b.size.height, scale)
+        })
+        .collect();
+    let most = screens.iter().map(|s| s.4).fold(1.0, f64::max);
+    screens
+        .into_iter()
+        .map(|(x, y, w, h, scale)| Screen { points: (x, y, w, h), pixels: (x * most, y * most), scale })
+        .collect()
+}
+
+/// The point of the capture's pixel `p`. One screen streamed: in that screen's
+/// pixels. All of them: every screen at the largest scale, side by side as in
+/// points (`nuvira_capture` captures them so), so a pixel over that scale is the
+/// point; the nearest screen's edge when it falls where there is none.
+fn to_points(layout: &[Screen], streamed: ScreenRect, p: (f64, f64)) -> CGPoint {
+    let most = layout.iter().map(|s| s.scale).fold(1.0, f64::max);
+    let one = layout.iter().any(|s| {
+        s.pixels.0 as i32 == streamed.left
+            && s.pixels.1 as i32 == streamed.top
+            && (s.points.2 * s.scale) as u32 == streamed.width
+    });
+    if !one {
+        let common: Vec<Screen> =
+            layout.iter().map(|s| Screen { scale: most, ..*s }).collect();
+        return on_screen(&common, p);
     }
+    on_screen(layout, p)
+}
+
+fn on_screen(layout: &[Screen], p: (f64, f64)) -> CGPoint {
+    let distance = |s: &Screen| {
+        let (w, h) = (s.points.2 * s.scale, s.points.3 * s.scale);
+        let dx = (s.pixels.0 - p.0).max(p.0 - (s.pixels.0 + w)).max(0.0);
+        let dy = (s.pixels.1 - p.1).max(p.1 - (s.pixels.1 + h)).max(0.0);
+        dx * dx + dy * dy
+    };
+    let Some(s) = layout.iter().min_by(|a, b| distance(a).total_cmp(&distance(b))) else {
+        return CGPoint::new(p.0, p.1);
+    };
+    let (x, y, w, h) = s.points;
+    CGPoint::new(
+        (x + (p.0 - s.pixels.0) / s.scale).clamp(x, x + w - 1.0),
+        (y + (p.1 - s.pixels.1) / s.scale).clamp(y, y + h - 1.0),
+    )
 }
 
 impl InputInjector for QuartzInjector {
@@ -375,7 +434,9 @@ impl InputInjector for QuartzInjector {
     }
 
     fn set_screen(&mut self, screen: ScreenRect) {
-        self.screen = points(screen);
+        self.screen = screen;
+        // Screens may have been added, moved or changed resolution.
+        self.layout = layout();
     }
 
     fn release_all(&mut self) {
@@ -540,5 +601,33 @@ mod tests {
         assert_eq!(iso_swap(mac_key_code("Backquote").unwrap()), 0x0A);
         assert_eq!(iso_swap(mac_key_code("IntlBackslash").unwrap()), 0x32);
         assert_eq!(iso_swap(0x00), 0x00);
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn retina_beside_a_normal_screen() {
+        // A Retina 1440x900 points main screen and a 1920x1080 one to its right.
+        let layout = [
+            Screen { points: (0.0, 0.0, 1440.0, 900.0), pixels: (0.0, 0.0), scale: 2.0 },
+            Screen { points: (1440.0, 0.0, 1920.0, 1080.0), pixels: (2880.0, 0.0), scale: 1.0 },
+        ];
+        let first = ScreenRect { left: 0, top: 0, width: 2880, height: 1800 };
+        let p = to_points(&layout, first, (100.0, 50.0));
+        assert_eq!((p.x, p.y), (50.0, 25.0));
+        // The second screen alone, in its own pixels (from 2880).
+        let second = ScreenRect { left: 2880, top: 0, width: 1920, height: 1080 };
+        let p = to_points(&layout, second, (2880.0 + 960.0, 540.0));
+        assert_eq!((p.x, p.y), (1440.0 + 960.0, 540.0));
+        // All of them: every screen at scale 2, the second one 3840x2160 from 2880.
+        let all = ScreenRect { left: 0, top: 0, width: 6720, height: 2160 };
+        let p = to_points(&layout, all, (2880.0 + 960.0, 540.0));
+        assert_eq!((p.x, p.y), (1440.0 + 480.0, 270.0));
+        // Below the Retina screen (black there): its bottom edge.
+        let p = to_points(&layout, all, (100.0, 2000.0));
+        assert_eq!((p.x, p.y), (50.0, 899.0));
     }
 }

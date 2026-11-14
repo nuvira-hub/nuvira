@@ -91,26 +91,44 @@ fn filter_for(content: &SCShareableContent, display: &SCDisplay, pids: &[i32]) -
     Ok(builder.build()?)
 }
 
-/// Pixels per point of a display (2 on a Retina screen).
-fn scale(display_id: u32) -> f64 {
+/// The real pixels of a display: those of its mode. `CGDisplayPixelsWide` gives
+/// points on a Retina screen (1280 for a 2560-pixel mode, seen on macOS 27).
+fn pixel_size(display_id: u32) -> (u32, u32) {
     let display = CGDisplay::new(display_id);
-    (display.pixels_wide() as f64 / display.bounds().size.width.max(1.0)).max(1.0)
+    match display.display_mode() {
+        Some(mode) if mode.pixel_width() > 0 => (mode.pixel_width() as u32, mode.pixel_height() as u32),
+        _ => (display.pixels_wide() as u32, display.pixels_high() as u32),
+    }
 }
 
-fn displays_of(content: &SCShareableContent) -> Vec<(SCDisplay, Display)> {
+/// Pixels per point of a display (2 on a Retina screen).
+fn scale(display_id: u32) -> f64 {
+    let points = CGDisplay::new(display_id).bounds().size.width.max(1.0);
+    (f64::from(pixel_size(display_id).0) / points).max(1.0)
+}
+
+/// The screens with their pixel sizes. Their positions are in points times the
+/// largest scale of them all: with a Retina screen beside a normal one, the
+/// combined picture of all the screens keeps them apart (the smaller one leaves a
+/// black margin) instead of overlapping them.
+///
+/// `common`: for the picture of all the screens, every screen at that largest
+/// scale (ScreenCaptureKit enlarges a normal screen), so that they sit side by
+/// side without gaps and a pixel is the same fraction of a point everywhere.
+fn displays_of(content: &SCShareableContent, common: bool) -> Vec<(SCDisplay, Display)> {
     let main = CGDisplay::main().id;
-    content
-        .displays()
-        .into_iter()
+    let list = content.displays();
+    let most = list.iter().map(|d| scale(d.display_id())).fold(1.0, f64::max);
+    list.into_iter()
         .enumerate()
         .map(|(index, d)| {
-            let s = scale(d.display_id());
+            let s = if common { most } else { scale(d.display_id()) };
             let frame = d.frame();
             let info = Display {
                 index,
                 name: format!("Screen {}", index + 1),
-                left: (frame.origin.x * s) as i32,
-                top: (frame.origin.y * s) as i32,
+                left: (frame.origin.x * most).round() as i32,
+                top: (frame.origin.y * most).round() as i32,
                 width: (f64::from(d.width()) * s) as u32,
                 height: (f64::from(d.height()) * s) as u32,
                 primary: d.display_id() == main,
@@ -127,15 +145,20 @@ fn content() -> Result<SCShareableContent> {
 
 /// CoreGraphics ID of the screen at `index` in [`displays`].
 pub fn display_id(index: usize) -> Result<u32> {
-    let list = displays_of(&content()?);
+    let list = displays_of(&content()?, false);
     if list.is_empty() && screen_locked() && index == 0 {
         return Ok(CGDisplay::main().id);
     }
     list.into_iter().nth(index).map(|(d, _)| d.display_id()).context("the screen is gone")
 }
 
+/// The screens as they are laid out in the picture of all of them.
+pub fn common_displays() -> Result<Vec<Display>> {
+    Ok(displays_of(&content()?, true).into_iter().map(|(_, d)| d).collect())
+}
+
 pub fn displays() -> Result<Vec<Display>> {
-    let list: Vec<Display> = displays_of(&content()?).into_iter().map(|(_, d)| d).collect();
+    let list: Vec<Display> = displays_of(&content()?, false).into_iter().map(|(_, d)| d).collect();
     if list.is_empty() && screen_locked() {
         return Ok(vec![main_display()]);
     }
@@ -150,8 +173,8 @@ fn main_display() -> Display {
         name: "Screen 1".into(),
         left: 0,
         top: 0,
-        width: main.pixels_wide() as u32,
-        height: main.pixels_high() as u32,
+        width: pixel_size(main.id).0,
+        height: pixel_size(main.id).1,
         primary: true,
     }
 }
@@ -320,6 +343,9 @@ pub struct ScreenCaptureKitCapturer {
     /// The pointer is left out of the stream and handled here (the system gives
     /// its shape).
     own_pointer: bool,
+    /// Part of the picture of all the screens: captured at the largest scale of
+    /// them all ([`common_displays`]).
+    common: bool,
     /// The display in global points (left, top, width, height) and its pixels
     /// per point.
     points: (f64, f64, f64, f64),
@@ -346,13 +372,14 @@ const POINTER_POLL: Duration = Duration::from_millis(8);
 const SHAPE_POLL: Duration = Duration::from_millis(50);
 
 /// The pointer must be in the picture: a viewer that does not draw it, a
-/// recording, a guest.
+/// recording, a guest (not when the screen is part of all of them: the combined
+/// picture gets it).
 fn draw_wanted() -> bool {
-    !cursor::active() || cursor::composite()
+    crate::nested().is_none() && (!cursor::active() || cursor::composite())
 }
 
 impl ScreenCaptureKitCapturer {
-    pub fn new(index: Option<usize>) -> Result<Self> {
+    pub fn new(index: Option<usize>, common: bool) -> Result<Self> {
         let now = Instant::now();
         let own_pointer = macos_pointer::shape(1.0).is_some();
         if own_pointer {
@@ -377,6 +404,7 @@ impl ScreenCaptureKitCapturer {
             locked: screen_locked(),
             woken_at: None,
             own_pointer,
+            common,
             points: (0.0, 0.0, 1.0, 1.0),
             scale: 1.0,
             pointer_shape: None,
@@ -403,7 +431,7 @@ impl ScreenCaptureKitCapturer {
 
     fn start(&mut self) -> Result<()> {
         let content = content()?;
-        let mut list = displays_of(&content);
+        let mut list = displays_of(&content, self.common);
         let pick = match self.index {
             Some(i) => list.iter().position(|(_, d)| d.index == i),
             None => list.iter().position(|(_, d)| d.primary).or(Some(0)),
@@ -435,7 +463,7 @@ impl ScreenCaptureKitCapturer {
         self.display_id = sc_display.display_id();
         let frame = sc_display.frame();
         self.points = (frame.origin.x, frame.origin.y, frame.size.width, frame.size.height);
-        self.scale = scale(self.display_id);
+        self.scale = f64::from(screen.width) / frame.size.width.max(1.0);
         // A new stream: the pointer is published and drawn again.
         self.pointer_shape = None;
         self.pointer_at = None;
@@ -575,6 +603,14 @@ impl ScreenCaptureKitCapturer {
             return;
         }
         self.pointer_at = Some(at);
+        // Part of all the screens: only the screen that has the pointer says where
+        // it is, in the coordinates of the combined picture.
+        let origin = crate::nested();
+        if origin.is_some() && !inside {
+            return;
+        }
+        let (dx, dy) = origin.map_or((0, 0), |(ox, oy)| (self.display.left - ox, self.display.top - oy));
+        let at = (at.0 + dx, at.1 + dy, inside);
         // Published again only when the shared state does not have it (a new
         // shape, or emptied).
         let fresh = (cursor::latest().0.as_ref().map(|p| p.serial) != Some(shape.serial)).then(|| shape.clone());
@@ -663,5 +699,10 @@ impl Drop for ScreenCaptureKitCapturer {
 }
 
 pub fn open(index: Option<usize>) -> Result<Box<dyn Capturer>> {
-    Ok(Box::new(ScreenCaptureKitCapturer::new(index)?))
+    Ok(Box::new(ScreenCaptureKitCapturer::new(index, false)?))
+}
+
+/// One screen of the picture of all of them, at the common scale.
+pub fn open_common(index: usize) -> Result<Box<dyn Capturer>> {
+    Ok(Box::new(ScreenCaptureKitCapturer::new(Some(index), true)?))
 }

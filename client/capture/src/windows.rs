@@ -11,7 +11,6 @@
 //! pixels it covers kept to take it out again), on the GPU path from a clean copy
 //! of the desktop, the small piece under it read back, drawn on and written again.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -35,27 +34,14 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::core::Interface;
 
-use crate::{Capturer, Display, Frame};
+use crate::{Capturer, Display, Frame, nested};
 
 /// Rotating GPU textures: while the encoder reads one, capture writes another.
 const GPU_POOL: usize = 3;
 
-/// All the screens at once ([`crate::AllCapturer`]): where its picture starts in the
-/// virtual desktop. Its screens publish the pointer in its coordinates and leave the
-/// drawing to it.
-static NESTED: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 /// The screen the pointer was last seen on: another screen saying it does not have
 /// it does not hide it.
 static OWNER: AtomicUsize = AtomicUsize::new(usize::MAX);
-
-/// Set by [`crate::AllCapturer`] while it lives.
-pub(crate) fn set_nested(origin: Option<(i32, i32)>) {
-    *NESTED.lock().unwrap_or_else(|e| e.into_inner()) = origin;
-}
-
-fn nested() -> Option<(i32, i32)> {
-    *NESTED.lock().unwrap_or_else(|e| e.into_inner())
-}
 
 /// The pointer must be in this capturer's pictures: a viewer that does not draw
 /// it, a recording, a guest (not when the screen is part of all of them).

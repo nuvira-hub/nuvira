@@ -31,6 +31,21 @@ mod x11;
 pub use all::{ALL_DISPLAYS, AllCapturer};
 pub use synthetic::SyntheticCapturer;
 
+/// All the screens at once ([`AllCapturer`]): where its picture starts in the
+/// virtual desktop. Its screens publish the pointer in its coordinates and leave the
+/// drawing to it.
+static NESTED: std::sync::Mutex<Option<(i32, i32)>> = std::sync::Mutex::new(None);
+
+/// Set by [`AllCapturer`] while it lives.
+pub(crate) fn set_nested(origin: Option<(i32, i32)>) {
+    *NESTED.lock().unwrap_or_else(|e| e.into_inner()) = origin;
+}
+
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub(crate) fn nested() -> Option<(i32, i32)> {
+    *NESTED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// A screen connected to the system.
 #[derive(Debug, Clone)]
 pub struct Display {
@@ -111,7 +126,13 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
         if wayland() { linux::open() } else { x11::open() }
     }
     #[cfg(target_os = "macos")]
-    return macos::open(index);
+    {
+        if index == Some(ALL_DISPLAYS) {
+            let screens = macos::common_displays()?;
+            return Ok(Box::new(AllCapturer::new(macos::open_common, &screens)?));
+        }
+        macos::open(index)
+    }
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = index;
