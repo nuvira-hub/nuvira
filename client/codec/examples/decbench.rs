@@ -5,11 +5,15 @@
 //! late (a frame must come out of the same call that takes it), and difference
 //! between the two images.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn main() {
     use std::time::Instant;
 
-    use nuvira_codec::{BgraImage, EncoderPlan, EncoderSettings, MfDecoder, OpenH264Decoder, VideoDecoder};
+    use nuvira_codec::{BgraImage, EncoderPlan, EncoderSettings, OpenH264Decoder, VideoDecoder};
+    #[cfg(windows)]
+    use nuvira_codec::MfDecoder as HardwareDecoder;
+    #[cfg(target_os = "macos")]
+    use nuvira_codec::VtDecoder as HardwareDecoder;
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -46,7 +50,7 @@ fn main() {
     println!("{} frames encoded with {}, {w}x{h}", stream.len(), enc.name());
 
     let mut soft = OpenH264Decoder::new().unwrap();
-    let mut hard = match MfDecoder::new() {
+    let mut hard = match HardwareDecoder::new() {
         Ok(d) => d,
         Err(e) => {
             println!("hardware decoder not available: {e:#}");
@@ -54,6 +58,20 @@ fn main() {
         }
     };
     let (mut t_soft, mut t_hard, mut late, mut diff_sum, mut diff_max) = (0u128, 0u128, 0, 0f64, 0f64);
+    // ONLY=soft|hard|none: one decoder alone (to measure its CPU time with `time`).
+    let only = std::env::var("ONLY").unwrap_or_default();
+    if !only.is_empty() {
+        let t = Instant::now();
+        for frame in &stream {
+            match only.as_str() {
+                "soft" => drop(soft.decode(frame).expect("openh264")),
+                "hard" => drop(hard.decode(frame).expect("hardware")),
+                _ => {}
+            }
+        }
+        println!("{only}: {:.2} ms/frame", t.elapsed().as_secs_f64() * 1000.0 / stream.len() as f64);
+        return;
+    }
     for (i, frame) in stream.iter().enumerate() {
         let t = Instant::now();
         let a = soft.decode(frame).expect("openh264").map(|f| f.y.clone());
@@ -84,5 +102,5 @@ fn main() {
     );
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn main() {}

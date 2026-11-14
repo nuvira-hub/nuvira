@@ -30,6 +30,8 @@ mod select;
 mod vaapi;
 #[cfg(target_os = "macos")]
 mod vt;
+#[cfg(target_os = "macos")]
+mod vtdec;
 
 #[cfg(windows)]
 pub use crate::mf::{MfEncoder, hardware_encoders};
@@ -42,6 +44,8 @@ pub use crate::openh264::{OpenH264Decoder, OpenH264Encoder};
 pub use crate::vaapi::VaapiEncoder;
 #[cfg(target_os = "macos")]
 pub use crate::vt::VtEncoder;
+#[cfg(target_os = "macos")]
+pub use crate::vtdec::VtDecoder;
 
 /// BGRA image to encode (as it comes from capture).
 pub struct BgraImage<'a> {
@@ -320,6 +324,15 @@ pub fn best_decoder() -> anyhow::Result<Box<dyn VideoDecoder>> {
     #[cfg(windows)]
     if std::env::var("NUVIRA_DECODER").as_deref() == Ok("hardware") {
         match MfDecoder::new() {
+            Ok(d) => return Ok(Box::new(d)),
+            Err(e) => tracing::info!("hardware decoder not available ({e:#}): OpenH264"),
+        }
+    }
+    // macOS too: VideoToolbox, read into RAM (slower than OpenH264 on Apple
+    // silicon: 4.6 against 1.0 ms a 1080p frame on an M1, see `vtdec`).
+    #[cfg(target_os = "macos")]
+    if std::env::var("NUVIRA_DECODER").as_deref() == Ok("hardware") {
+        match VtDecoder::new() {
             Ok(d) => return Ok(Box::new(d)),
             Err(e) => tracing::info!("hardware decoder not available ({e:#}): OpenH264"),
         }
