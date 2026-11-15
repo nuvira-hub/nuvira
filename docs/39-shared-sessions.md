@@ -18,6 +18,21 @@ The agent tells a joining viewer, in its `Hello`, that only the picture, the key
 
 **The first technician is told.** Whoever started the session sees "PC-B joined this session: they see the screen and can use the keyboard and mouse" when someone joins, and "PC-B left the session" when they leave (the app's viewer and the web client, from 0.26.0; the control message `Guests`, ignored by older viewers).
 
+## Handing the session over (2026-11-15)
+
+The technician who started the session can give it to a colleague who joined, and leave: the colleague carries on with everything (files, clipboard, terminal, tunnels, recording…), and the person at the computer is not asked again.
+
+- **Toolbar**: "Hand the session over to a colleague" (shown while a guest that can take it over is in the session) opens a menu with them; a choice asks for confirmation ("You leave the session and PC-B carries on…"). The first viewer then closes with "You handed the session over to PC-B".
+- **Protocol** (`session.proto`): `Hello.handover` on both sides; `Guests` also carries `ids` and `can_take_over` (a guest with `Hello.handover`); the first viewer sends `HandOver { guest }`. The agent sends the guest `HandedOver { token, from }` (24 characters, valid once, for one minute, for that device's ID only: `shared::Handover`), tells the first viewer `HandedOver { to }`, and ends the session (the guests' with it). The guest connects again by itself with `Auth.handover` = the token; the `Gate` accepts it as the start of a new session with access `handover` and no question at the computer (the person accepted that technician already, when it joined).
+- **The app at the computer** sees the session end and the colleague's start (`session_ended`, then `session_started` with its name).
+- The web client neither hands over nor takes over yet (it ignores the new fields; a guest from the browser is not offered in the menu). Tests: `--handover-after SECONDS` (hidden) hands over to the first guest that can take it, without asking.
+
+Tests of 2026-11-15:
+- PC-LABORATORIO's test agent (permanent password) through the NAS's server; the first viewer on PC-FEDERICO, the guest on PC-LABORATORIO: handed over after 12 s, the guest connected again in 2.5 s with the token ("access with the token of a session handed over") and had the full session (clipboard, files, terminal, tunnels); the first viewer closed with the notice.
+- Linux Mint's test agent with `--ipc`, its temporary password and confirmation, and a stand-in for the app on its socket accepting the requests: the first viewer on PC-LABORATORIO (Windows) and the Linux viewer on Mint each asked once at the computer; after the handover nobody was asked again (no third `incoming`), the app's events were `session_ended` then `session_started` with the Linux viewer, which had the full permissions.
+- In a unit test (`shared::tests::handover_goes_to_a_guest_that_can_take_it`): a guest that cannot take it over (the web client) is never handed it; the token goes to the right guest, once.
+- Not tried: macOS (no Mac this time; nothing in it is specific to a system), a token presented by another device or after the minute (checked by the `Gate`, not exercised live).
+
 ## At the computer
 
 - **Asked like any other.** A request arriving during a session goes through the same access control: with the temporary password and confirmation on, the person at the computer is asked ("Incoming connection") and can refuse; with the permanent password the rules decide as for the first one.

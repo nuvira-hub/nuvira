@@ -32,6 +32,11 @@ struct Args {
     #[arg(long)]
     list_displays: bool,
 
+    /// Prints the clipboard's files and text and exits (Windows: started by the
+    /// service's agent as the signed-in person, see `clip_user`).
+    #[arg(long, hide = true)]
+    clipboard_files: bool,
+
     /// Automated tests: writes the fingerprint (without --server) or "ID password" (with --server) to this file.
     #[arg(long, value_name = "FILE")]
     fingerprint_file: Option<std::path::PathBuf>,
@@ -173,7 +178,15 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         )
         .try_init();
     let args = Args::parse_from(args);
+    #[cfg(windows)]
+    if args.clipboard_files {
+        crate::clip_user::print();
+        return Ok(());
+    }
     nuvira_input::set_dpi_awareness();
+    // As the service's agent (SYSTEM): Explorer may read files pasted from the viewer.
+    #[cfg(windows)]
+    nuvira_clipboard::allow_session_user_calls();
 
     if args.list_displays {
         for d in nuvira_capture::displays()? {

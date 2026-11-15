@@ -25,6 +25,7 @@ pub mod api;
 pub mod fec;
 pub mod identity;
 pub mod keystore;
+pub mod nested;
 pub mod p2p;
 pub mod signal;
 pub mod ws;
@@ -177,6 +178,13 @@ pub(crate) fn transport_config() -> Arc<TransportConfig> {
 
 /// Agent endpoint: accepts connections on `bind`. Also returns the certificate fingerprint.
 pub fn server_endpoint(bind: SocketAddr) -> Result<(Endpoint, Fingerprint)> {
+    let (config, fingerprint) = server_config()?;
+    let endpoint = Endpoint::server(config, bind).with_context(|| format!("listening on {bind}"))?;
+    Ok((endpoint, fingerprint))
+}
+
+/// An agent's QUIC configuration with a new self-signed certificate, and its fingerprint.
+pub fn server_config() -> Result<(ServerConfig, Fingerprint)> {
     let cert = rcgen::generate_simple_self_signed(vec!["nuvira-agent".to_string()])?;
     let cert_der = CertificateDer::from(cert.cert.der().to_vec());
     let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der()));
@@ -190,8 +198,7 @@ pub fn server_endpoint(bind: SocketAddr) -> Result<(Endpoint, Fingerprint)> {
 
     let mut config = ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
     config.transport_config(transport_config());
-    let endpoint = Endpoint::server(config, bind).with_context(|| format!("listening on {bind}"))?;
-    Ok((endpoint, fingerprint))
+    Ok((config, fingerprint))
 }
 
 /// Viewer connection to an agent. Without an expected fingerprint any certificate is accepted.

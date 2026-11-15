@@ -77,6 +77,17 @@ impl From<TransportArg> for nuvira_transport::signal::TransportMode {
 /// In place of a password, this prefix carries the ticket of a support request
 /// (support queue): the viewer sends it as `Auth.support_ticket`.
 pub const SUPPORT_TICKET: &str = "\u{1}support-ticket:";
+/// Switch sides: serves a session of this computer's screen on the endpoint, with
+/// the password, until it ends (the app sets it with its agent code; without it the
+/// viewer does not offer switching sides).
+pub type ReverseHost =
+    fn(nuvira_transport::Endpoint, String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>>;
+pub static REVERSE_HOST: std::sync::OnceLock<ReverseHost> = std::sync::OnceLock::new();
+
+/// In place of the password: the token of a session handed over to this viewer.
+pub const HANDOVER_TOKEN: &str = "\u{1}handover:";
+/// How long a viewer a session was handed over to keeps trying to take it.
+const TAKEOVER_WAIT: Duration = Duration::from_secs(30);
 
 /// After a remote restart: the first attempt to reconnect (the computer takes a while
 /// to go down), the pause between the following ones and how long to keep trying.
@@ -183,6 +194,20 @@ struct Args {
     /// 3 s after connecting, before `--type-keys`.
     #[arg(long, value_name = "X,Y", hide = true)]
     click_at: Option<String>,
+    /// Switch sides, at the controlled computer: the window shows the screen of the
+    /// technician named here (started by the agent).
+    #[arg(long, value_name = "NAME", env = "NUVIRA_REVERSE_OF", hide = true, hide_env_values = true)]
+    reverse_of: Option<String>,
+    /// Automated tests: hands the session over, without asking, to the first guest
+    /// that can take it, as soon as there is one this many seconds after connecting.
+    #[arg(long, value_name = "SECONDS", hide = true)]
+    handover_after: Option<u64>,
+    /// Automated tests: switches sides this many seconds after connecting.
+    #[arg(long, value_name = "SECONDS", hide = true)]
+    switch_after: Option<u64>,
+    /// Automated tests: takes control back this many seconds after switching.
+    #[arg(long, value_name = "SECONDS", hide = true)]
+    switch_back_after: Option<u64>,
 
     /// TCP tunnel through the session (NuviraHub Pro): LOCAL:HOST:PORT, e.g.
     /// 13389:192.168.1.20:3389 (LOCAL 0 = any free port); HOST must be in the
@@ -484,8 +509,24 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         terminal_type: args.terminal_type.as_ref().map(|t| t.replace("\\n", "\r").into_bytes()),
         input_test: args.input_test.then_some(0),
         type_keys: (args.type_keys.is_some() || args.click_at.is_some()).then(|| {
-            (0, args.type_keys.as_deref().unwrap_or("").replace("\\n", "\n").replace("\\b", "\u{8}"))
+            let text = args.type_keys.as_deref().unwrap_or("").replace("\\n", "\n").replace("\\b", "\u{8}");
+            // Shortcuts: \A, \C, \V for Ctrl+A, C, V; \w waits a second.
+            let text = text
+                .replace("\\A", "\u{1}")
+                .replace("\\C", "\u{3}")
+                .replace("\\V", "\u{16}")
+                .replace("\\w", "\u{17}");
+            (0, text)
         }),
+        handover_after: args.handover_after.map(|s| (Duration::from_secs(s), None)),
+        reverse_of: args.reverse_of.clone().filter(|n| !n.is_empty()),
+        switch_test: args.switch_after.map(|a| SwitchTest {
+            after: Duration::from_secs(a),
+            back_after: args.switch_back_after.map(Duration::from_secs),
+            since: None,
+        }),
+        switch_offered: false,
+        switching: false,
         click_at: args.click_at.as_deref().and_then(|t| {
             let (x, y) = t.split_once(',')?;
             Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
@@ -516,6 +557,10 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         input_blocked: false,
         switched_off: Vec::new(),
         guests: Vec::new(),
+        guest_ids: Vec::new(),
+        guest_can_take_over: Vec::new(),
+        taking_over: None,
+        handed_to: None,
         pointer: Pointer::default(),
         exit_reason: None,
         closed_message: None,
@@ -615,6 +660,13 @@ struct App {
     switched_off: Vec<String>,
     /// Who joined this session (shared sessions), as the agent last said.
     guests: Vec<String>,
+    /// The guests' numbers in the session and whether each can take it over.
+    guest_ids: Vec<u64>,
+    guest_can_take_over: Vec<bool>,
+    /// The session was handed over to this viewer (since then): it connects again.
+    taking_over: Option<Instant>,
+    /// This viewer handed the session over (to whom): it ends.
+    handed_to: Option<String>,
     /// The remote pointer drawn here (Hello.cursor): its shape, as this
     /// computer's pointer too, and position; the remote screen's size; where this
     /// mouse last pointed in the picture (0..1).
@@ -653,6 +705,16 @@ struct App {
     type_keys: Option<(u32, String)>,
     /// `--click-at`.
     click_at: Option<(f32, f32)>,
+    /// `--handover-after`: the wait, and when the session started.
+    handover_after: Option<(Duration, Option<Instant>)>,
+    /// This window shows the screen of this technician (switch sides).
+    reverse_of: Option<String>,
+    /// The agent can open a window with this computer's screen (switch sides).
+    switch_offered: bool,
+    /// This computer's screen is shown there now.
+    switching: bool,
+    /// `--switch-after`, `--switch-back-after`.
+    switch_test: Option<SwitchTest>,
     /// `--terminal-log`.
     terminal_log: Option<std::fs::File>,
     /// Fit or real size, and the pan at real size.
@@ -847,8 +909,21 @@ impl App {
 
     /// The session ended while the remote computer restarts: the window stays open
     /// with a message, and a new attempt starts after a pause.
-    fn wait_for_restart(&mut self, reason: &str, pause: Duration) {
-        info!("waiting for the remote computer to restart ({reason}); trying again in {} s", pause.as_secs());
+    /// Switch sides ended (taken back, closed there, or failed): the window back.
+    fn switch_ended(&mut self, text: &str) {
+        self.switching = false;
+        if let Some(toolbar) = &self.toolbar {
+            toolbar.update("{switching:false}");
+        }
+        if let Some(window) = &self.window {
+            window.set_minimized(false);
+            window.focus_window();
+        }
+        self.notice(text, false);
+    }
+
+    /// The session's links are dropped (it ended), before connecting again.
+    fn drop_session(&mut self) {
         self.release_keys();
         self.input = None;
         self.control = None;
@@ -856,6 +931,51 @@ impl App {
         self.term_link = None;
         self.tunnel_link = None;
         self.net_thread = None;
+    }
+
+    /// Connects again after `pause` (NetEvent::Reconnect).
+    fn reconnect_after(&self, pause: Duration) {
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(pause);
+            let _ = proxy.send_event(NetEvent::Reconnect);
+        });
+    }
+
+    /// The handover menu: the guests that can take the session over.
+    fn handover_items(&self) -> Vec<(String, String)> {
+        self.guests
+            .iter()
+            .zip(&self.guest_ids)
+            .zip(&self.guest_can_take_over)
+            .filter(|(_, can)| **can)
+            .map(|((name, id), _)| (format!("handover:{id}"), name.clone()))
+            .collect()
+    }
+
+    /// Asks before handing the session over to guest `id`.
+    fn confirm_handover(&self, id: u64) {
+        let Some(name) = self.guest_ids.iter().position(|g| *g == id).and_then(|i| self.guests.get(i)).cloned() else {
+            return;
+        };
+        let text = tf("viewer.handover_confirm", &[("name", &name)]);
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let answer = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Info)
+                .set_title(t("viewer.handover_title"))
+                .set_description(text)
+                .set_buttons(rfd::MessageButtons::OkCancel)
+                .show();
+            if answer == rfd::MessageDialogResult::Ok {
+                let _ = proxy.send_event(NetEvent::Toolbar(toolbar::Action::HandOverConfirmed(id)));
+            }
+        });
+    }
+
+    fn wait_for_restart(&mut self, reason: &str, pause: Duration) {
+        info!("waiting for the remote computer to restart ({reason}); trying again in {} s", pause.as_secs());
+        self.drop_session();
         let text = tf("viewer.waiting_restart", &[("agent", &self.agent)]);
         match (&self.notice, &self.window) {
             (Some(notice), _) => notice.set_text(&text),
@@ -871,11 +991,7 @@ impl App {
         if let Some(toolbar) = &self.toolbar {
             toolbar.update("{restart:false}");
         }
-        let proxy = self.proxy.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(pause);
-            let _ = proxy.send_event(NetEvent::Reconnect);
-        });
+        self.reconnect_after(pause);
     }
 
     fn ctrl_alt_held(&self) -> bool {
@@ -891,6 +1007,11 @@ impl App {
 
     fn update_title(&self) {
         let Some(window) = &self.window else { return };
+        // Switch sides: the window says whose screen it is, not the statistics.
+        if let Some(name) = &self.reverse_of {
+            window.set_title(&tf("viewer.reverse_title", &[("name", name)]));
+            return;
+        }
         let s = &self.stats;
         let latency = if self.clock_offset_us.is_some() && s.frames > 0 {
             format!("{:.0} ms", s.latency_us as f64 / s.frames as f64 / 1000.0)
@@ -973,6 +1094,20 @@ impl App {
                 info!("restart of the remote computer requested");
                 self.send_control(Msg::Restart(nuvira_proto::v1::Restart {}));
             }
+            Action::HandOver(id) => self.confirm_handover(id),
+            Action::SwitchSides if self.switch_offered => {
+                let on = !self.switching;
+                info!(on, "switch sides asked");
+                self.send_control(Msg::SwitchSides(nuvira_proto::v1::SwitchSides { on, ..Default::default() }));
+                if !on {
+                    self.switch_ended(&t("viewer.switch_back"));
+                }
+            }
+            Action::SwitchSides => {}
+            Action::HandOverConfirmed(id) => {
+                info!(guest = id, "handing the session over");
+                self.send_control(Msg::HandOver(nuvira_proto::v1::HandOver { guest: id }));
+            }
             // Required by the server's rules: it cannot be stopped (the button is disabled).
             Action::Record if self.recording.required => {}
             Action::Record => {
@@ -995,6 +1130,22 @@ impl App {
             }
             Action::Display(index) => {
                 self.send_control(Msg::SelectDisplay(nuvira_proto::v1::SelectDisplay { index }));
+            }
+            Action::Menu(kind, x) if kind == "handover" => {
+                let items = self.handover_items();
+                if let Some(menu) = self.menu.as_mut() {
+                    let hint = t("tb.handover_hint");
+                    let list: Vec<toolbar::MenuItem> = items
+                        .iter()
+                        .map(|(action, name)| toolbar::MenuItem { action, label: name, hint: &hint, checked: false })
+                        .collect();
+                    if menu.is_open() || list.is_empty() {
+                        menu.hide();
+                    } else {
+                        menu.show(f64::from(x), &list);
+                        return;
+                    }
+                }
             }
             Action::Menu(kind, x) => {
                 if kind == "quality"
@@ -1159,6 +1310,14 @@ impl App {
             self.sound.unwrap_or(false)
         ));
     }
+}
+
+/// Automated tests of switching sides: when to switch and when to take control back.
+struct SwitchTest {
+    after: Duration,
+    back_after: Option<Duration>,
+    /// When the session started, then when it switched.
+    since: Option<Instant>,
 }
 
 /// "All the screens" in SelectDisplay and Displays.
@@ -1352,8 +1511,20 @@ impl ApplicationHandler<NetEvent> for App {
                 recording_required,
                 resolution,
                 audio,
+                switch_sides,
             } => {
                 self.remote_mac = remote_mac;
+                self.switch_offered = switch_sides;
+                self.switching = false;
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&format!("{{switchSides:{switch_sides},switching:false}}"));
+                }
+                if let Some(name) = self.reverse_of.clone() {
+                    if let Some(window) = &self.window {
+                        window.set_title(&tf("viewer.reverse_title", &[("name", &name)]));
+                    }
+                    self.notice(&tf("viewer.reverse_notice", &[("name", &name)]), false);
+                }
                 self.pointer = Pointer { screen: (width, height), ..Pointer::default() };
                 if let Some(window) = &self.window {
                     window.set_cursor(winit::window::CursorIcon::Default);
@@ -1369,6 +1540,16 @@ impl ApplicationHandler<NetEvent> for App {
                 if self.restarting.take().is_some() {
                     info!("connected again after the restart");
                     self.notice(&t("viewer.restart_back"), false);
+                }
+                if let Some((_, started)) = self.handover_after.as_mut() {
+                    started.get_or_insert_with(Instant::now);
+                }
+                if let Some(test) = self.switch_test.as_mut() {
+                    test.since.get_or_insert_with(Instant::now);
+                }
+                if self.taking_over.take().is_some() {
+                    info!("session taken over");
+                    self.notice(&t("viewer.took_over"), false);
                 }
                 if terminal && let Some(link) = self.term_link.clone() {
                     self.terminals.connect(link);
@@ -1526,6 +1707,31 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::Clock { rtt_us, offset_us } => {
                 self.send_feedback();
+                if let Some(test) = &self.switch_test
+                    && let Some(since) = test.since
+                {
+                    let wait = if self.switching { test.back_after } else { Some(test.after) };
+                    if wait.is_some_and(|w| since.elapsed() >= w) && self.switch_offered {
+                        let back = self.switching;
+                        info!(back, "switch sides (test)");
+                        if back {
+                            self.switch_test = None;
+                        } else if let Some(t) = self.switch_test.as_mut() {
+                            t.since = Some(Instant::now());
+                            // Once switched, the next step is taking it back (or nothing).
+                            t.after = Duration::MAX;
+                        }
+                        self.handle_toolbar(event_loop, toolbar::Action::SwitchSides);
+                    }
+                }
+                if let Some((wait, Some(started))) = self.handover_after
+                    && started.elapsed() >= wait
+                    && let Some(id) = self.handover_items().first().and_then(|(a, _)| a.strip_prefix("handover:")?.parse().ok())
+                {
+                    self.handover_after = None;
+                    info!(guest = id, "handing the session over (test)");
+                    self.send_control(nuvira_proto::v1::control_message::Msg::HandOver(nuvira_proto::v1::HandOver { guest: id }));
+                }
                 if let Some(n) = self.input_test.as_mut() {
                     *n += 1;
                     let x = if *n % 2 == 0 { 0.25 } else { 0.75 };
@@ -1551,14 +1757,19 @@ impl ApplicationHandler<NetEvent> for App {
                                     let _ = input.send(InputEvent { event: Some(event) });
                                     std::thread::sleep(Duration::from_millis(20));
                                 };
-                                for (code, shift) in text.chars().filter_map(test_key_code) {
-                                    if shift {
-                                        key("ShiftLeft", true);
+                                for c in text.chars() {
+                                    if c == '\u{17}' {
+                                        std::thread::sleep(Duration::from_secs(1));
+                                        continue;
+                                    }
+                                    let Some((code, modifier)) = test_key_code(c) else { continue };
+                                    if let Some(m) = modifier {
+                                        key(m, true);
                                     }
                                     key(&code, true);
                                     key(&code, false);
-                                    if shift {
-                                        key("ShiftLeft", false);
+                                    if let Some(m) = modifier {
+                                        key(m, false);
                                     }
                                 }
                                 info!("test text typed");
@@ -1851,7 +2062,51 @@ impl ApplicationHandler<NetEvent> for App {
                 }
                 self.update_toolbar_state();
             }
-            NetEvent::Guests(names) => {
+            NetEvent::SwitchSides { on: true, .. } => {
+                info!("switch sides: the other computer shows this screen");
+                self.switching = true;
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update("{switching:true}");
+                }
+                self.notice(&tf("viewer.switching", &[("agent", &self.agent)]), true);
+                // Out of the way: the other computer would see this window showing
+                // its own screen; the taskbar brings it back, with the button.
+                if let Some(window) = &self.window {
+                    window.set_minimized(true);
+                }
+            }
+            NetEvent::SwitchSides { on: false, error } => {
+                if self.switching || !error.is_empty() {
+                    let text = match error.as_str() {
+                        "" => tf("viewer.switch_closed", &[("agent", &self.agent)]),
+                        e => tf("viewer.switch_failed", &[("reason", e)]),
+                    };
+                    self.switch_ended(&text);
+                }
+            }
+            NetEvent::HandedOver(h) if h.token.is_empty() => {
+                info!(to = h.to, "session handed over");
+                self.handed_to = Some(h.to);
+            }
+            NetEvent::HandedOver(h) => {
+                info!(from = h.from, "the session was handed over to this viewer");
+                if let Some((target, _)) = self.connect.take() {
+                    self.connect = Some((target, Some(format!("{HANDOVER_TOKEN}{}", h.token))));
+                }
+                self.taking_over = Some(Instant::now());
+                self.notice(&tf("viewer.taking_over", &[("name", &h.from)]), true);
+            }
+            NetEvent::Guests(guests) => {
+                let names = guests.names;
+                self.guest_ids = guests.ids;
+                self.guest_can_take_over = guests.can_take_over;
+                // Agents that do not tell: nobody can take it over.
+                self.guest_can_take_over.resize(names.len(), false);
+                self.guest_ids.resize(names.len(), 0);
+                let handover = self.guest_can_take_over.iter().any(|c| *c);
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&format!("{{handover:{handover}}}"));
+                }
                 // Another technician joined or left: this one is told. Counted by
                 // name, since two can have the same (two windows of one computer).
                 let count = |list: &[String], name: &str| list.iter().filter(|n| *n == name).count();
@@ -1901,9 +2156,23 @@ impl ApplicationHandler<NetEvent> for App {
                 }
             }
             NetEvent::Reconnect => {
-                if self.restarting.is_some() && self.input.is_none() {
+                if (self.restarting.is_some() || self.taking_over.is_some()) && self.input.is_none() {
                     self.start_session();
                 }
+            }
+            NetEvent::Disconnected { reason, .. } if self.handed_to.is_some() => {
+                let to = self.handed_to.take().unwrap_or_default();
+                info!("disconnected after handing the session over: {reason}");
+                self.exit_reason = Some(format!("session handed over to {to}"));
+                self.closed_message = Some(tf("viewer.handed_over", &[("name", &to)]));
+                event_loop.exit();
+            }
+            // Handed over to this viewer: the session ends for everyone, and it
+            // connects again with the token (the agent may need a moment).
+            NetEvent::Disconnected { reason, .. } if self.taking_over.is_some_and(|t| t.elapsed() < TAKEOVER_WAIT) => {
+                info!("taking the session over ({reason}): connecting again");
+                self.drop_session();
+                self.reconnect_after(Duration::from_millis(if self.input.is_none() { 800 } else { 300 }));
             }
             NetEvent::Disconnected { reason, retry }
                 if retry && self.restarting.is_some_and(|since| since.elapsed() < RESTART_WAIT) =>
@@ -2085,14 +2354,19 @@ impl ApplicationHandler<NetEvent> for App {
 }
 
 /// `--type-keys`: the W3C code of a character on a US layout, and whether it needs Shift.
-fn test_key_code(c: char) -> Option<(String, bool)> {
+/// A test character's key and the modifier held with it (Shift for capitals,
+/// Ctrl for the control characters of Ctrl+A, C and V).
+fn test_key_code(c: char) -> Option<(String, Option<&'static str>)> {
     Some(match c {
-        'a'..='z' => (format!("Key{}", c.to_ascii_uppercase()), false),
-        'A'..='Z' => (format!("Key{c}"), true),
-        '0'..='9' => (format!("Digit{c}"), false),
-        ' ' => ("Space".into(), false),
-        '\n' => ("Enter".into(), false),
-        '\u{8}' => ("Backspace".into(), false),
+        'a'..='z' => (format!("Key{}", c.to_ascii_uppercase()), None),
+        'A'..='Z' => (format!("Key{c}"), Some("ShiftLeft")),
+        '0'..='9' => (format!("Digit{c}"), None),
+        ' ' => ("Space".into(), None),
+        '\n' => ("Enter".into(), None),
+        '\u{8}' => ("Backspace".into(), None),
+        '\u{1}' => ("KeyA".into(), Some("ControlLeft")),
+        '\u{3}' => ("KeyC".into(), Some("ControlLeft")),
+        '\u{16}' => ("KeyV".into(), Some("ControlLeft")),
         _ => return None,
     })
 }

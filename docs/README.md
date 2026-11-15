@@ -35,4 +35,5 @@
 | 36 | [Device key protected by the system](36-device-key.md) | DPAPI, Keychain, Secret Service, systemd-creds; migration of plain keys, hand-over to other accounts |
 | 37 | [Remote resolution adapted to the window](37-remote-resolution.md) | The remote screen takes the window's size (Windows, macOS, Linux X11), put back at the end; switch at the PC, Pro rule |
 | 38 | [Remote audio](38-remote-audio.md) | What the controlled computer plays comes out of the technician's speakers (Opus over QUIC datagrams); mute button; sent from Windows for now |
-| 39 | [Shared sessions](39-shared-sessions.md) | More technicians on the computer of a session in progress: the same picture and input, the rest stays with the first one |
+| 39 | [Shared sessions](39-shared-sessions.md) | More technicians on the computer of a session in progress: the same picture and input, the rest stays with the first one, who can hand the session over |
+| 40 | [Switch sides](40-switch-sides.md) | The technician shows their own screen to the person at the controlled computer, inside the same session (a QUIC connection within a stream) |

@@ -233,7 +233,7 @@ fn known_folders() -> Vec<PathBuf> {
 
 /// Runs `f` on a blocking thread as the user signed in on the session (agent =
 /// SYSTEM), or as is (agent = that user).
-async fn as_user<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+pub(crate) async fn as_user<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
     tokio::task::spawn_blocking(move || {
         #[cfg(windows)]
         {

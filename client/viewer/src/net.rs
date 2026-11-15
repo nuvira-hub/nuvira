@@ -58,6 +58,8 @@ pub enum NetEvent {
         recording_required: bool,
         /// It can adapt its screen's resolution to the window (SetResolution).
         resolution: bool,
+        /// Switch sides: it can open a window with this computer's screen.
+        switch_sides: bool,
         /// Its sound is played here (SetAudio switches it).
         audio: bool,
     },
@@ -196,7 +198,13 @@ pub enum NetEvent {
     /// Chat message from the person at the remote PC.
     Chat(String),
     /// Who joined this session (shared sessions), at every change.
-    Guests(Vec<String>),
+    Guests(nuvira_proto::v1::Guests),
+    /// The session was handed over: to this viewer (a token to connect again
+    /// with), or by it to a guest.
+    HandedOver(nuvira_proto::v1::HandedOver),
+    /// Switch sides: the window with this screen opened at the other computer
+    /// (`on`), or it ended (`error` empty when closed normally).
+    SwitchSides { on: bool, error: String },
     /// Click on the toolbar.
     Toolbar(crate::toolbar::Action),
     /// File manager: answer of the agent to a request.
@@ -503,7 +511,7 @@ async fn handshake(
     proxy: &EventLoopProxy<NetEvent>,
     terminal_only: bool,
     audio: bool,
-) -> Result<(FramedSend, FramedRecv, Option<FramedSend>, Option<FramedRecv>, bool)> {
+) -> Result<(FramedSend, FramedRecv, Option<FramedSend>, Option<FramedRecv>, bool, bool)> {
     let (send, recv) = conn.open_bi().await?;
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -526,6 +534,12 @@ async fn handshake(
             // Shapes kept by serial and taken as PNG (NUVIRA_NO_CURSOR_CACHE: as a
             // viewer of 0.26, for tests).
             cursor_cache: std::env::var_os("NUVIRA_NO_CURSOR_CACHE").is_none(),
+            // Files copied there offered on this clipboard, and the other way.
+            clipboard_files: !terminal_only,
+            // A session handed over to this viewer is taken over (it connects again).
+            handover: !terminal_only,
+            // Switch sides: this program can show its own screen (the app's).
+            switch_sides: !terminal_only && crate::REVERSE_HOST.get().is_some(),
             ..Default::default()
         })))
         .await?;
@@ -534,9 +548,12 @@ async fn handshake(
     };
     if agent.password_required {
         let password = password.with_context(|| nuvira_i18n::t("viewer.password_required"))?;
-        let auth = match password.strip_prefix(crate::SUPPORT_TICKET) {
-            Some(ticket) => nuvira_proto::v1::Auth { support_ticket: ticket.into(), ..Default::default() },
-            None => nuvira_proto::v1::Auth { password, ..Default::default() },
+        let auth = if let Some(ticket) = password.strip_prefix(crate::SUPPORT_TICKET) {
+            nuvira_proto::v1::Auth { support_ticket: ticket.into(), ..Default::default() }
+        } else if let Some(token) = password.strip_prefix(crate::HANDOVER_TOKEN) {
+            nuvira_proto::v1::Auth { handover: token.into(), ..Default::default() }
+        } else {
+            nuvira_proto::v1::Auth { password, ..Default::default() }
         };
         ctrl_tx.send(&control(Msg::Auth(auth))).await?;
         let mut answer = ctrl_rx.recv().await?;
@@ -575,8 +592,9 @@ async fn handshake(
             recording_required: false,
             resolution: false,
             audio: false,
+            switch_sides: false,
         });
-        return Ok((ctrl_tx, ctrl_rx, None, None, false));
+        return Ok((ctrl_tx, ctrl_rx, None, None, false, false));
     }
     let Some(ControlMessage { msg: Some(Msg::VideoFormat(format)) }) = ctrl_rx.recv().await? else {
         bail!("missing video format");
@@ -608,6 +626,7 @@ async fn handshake(
         recording_required: agent.recording_required,
         resolution: agent.resolution,
         audio: audio && agent.audio,
+        switch_sides: agent.switch_sides && crate::REVERSE_HOST.get().is_some(),
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -618,7 +637,7 @@ async fn handshake(
         false => Some(FramedRecv::new(conn.accept_uni().await?)),
     };
     tracing::debug!("video channel accepted");
-    Ok((ctrl_tx, ctrl_rx, Some(input_tx), video_rx, agent.audio))
+    Ok((ctrl_tx, ctrl_rx, Some(input_tx), video_rx, agent.audio, agent.clipboard_files))
 }
 
 async fn session(
@@ -639,7 +658,7 @@ async fn session(
     recording.set_upload(upload);
     // The remote computer's sound, played here (none without an output device).
     let mut player = start_player(terminal_only);
-    let (mut ctrl_tx, mut ctrl_rx, mut input_tx, video_rx, agent_audio) = tokio::select! {
+    let (mut ctrl_tx, mut ctrl_rx, mut input_tx, video_rx, agent_audio, agent_files) = tokio::select! {
         r = handshake(&conn, direct, password, &proxy, terminal_only, player.is_some()) => match r {
             Ok(channels) => channels,
             Err(e) => {
@@ -814,18 +833,31 @@ async fn session(
         },
     };
 
+    // Files copied through the clipboard, both ways (the list at once, the contents
+    // when pasted), with agents that do it and while the session allows it.
+    let files_by_clipboard = agent_files && clipboard.is_some();
+    let (sharing, mut paste_rx_files) = nuvira_clipboard::Sharing::new();
+    let (listed_tx, mut listed_rx) = mpsc::unbounded_channel::<nuvira_proto::v1::ClipboardFiles>();
+
     // After the video one, the agent's unidirectional streams carry images copied to
     // its clipboard, the files downloaded with the file manager and printed documents.
     let streams = {
         let clipboard = clipboard.clone();
+        let sharing = sharing.clone();
         let conn = conn.clone();
         let proxy = proxy.clone();
         async move {
             loop {
                 let mut rx = FramedRecv::new(conn.accept_uni().await?);
                 let (clipboard, proxy, downloads) = (clipboard.clone(), proxy.clone(), downloads.clone());
+                let sharing = sharing.clone();
                 tokio::spawn(async move {
                     let Ok(Some(first)) = rx.recv::<FileChunk>().await else { return };
+                    // The answer to a paste here of files copied there.
+                    if first.clipboard_file {
+                        sharing.receive(first, rx).await;
+                        return;
+                    }
                     if first.transfer_id != 0 {
                         let id = first.transfer_id;
                         let target = downloads.lock().expect("downloads").get(&id).cloned();
@@ -881,6 +913,9 @@ async fn session(
         // What is copied here goes to the agent while the session allows it (older
         // agents send no Permissions: always).
         let mut clipboard_allowed = true;
+        // Switch sides: this computer's screen served to the other one, while on.
+        let mut reverse = ReverseHosting::default();
+        let mut files_allowed = true;
         loop {
             tokio::select! {
                 _ = ping.tick() => {
@@ -900,6 +935,19 @@ async fn session(
                     }
                 }
                 Some(mut msg) = control_rx.recv() => {
+                    // Switch sides: served here, not a message for the agent.
+                    if let Msg::SwitchSides(s) = &msg {
+                        if s.on {
+                            if let Err(e) = reverse.start(&conn, &proxy).await {
+                                warn!("switch sides not started: {e:#}");
+                                let error = format!("{e:#}");
+                                let _ = proxy.send_event(NetEvent::SwitchSides { on: false, error });
+                            }
+                        } else {
+                            reverse.stop();
+                        }
+                        continue;
+                    }
                     if let Msg::Feedback(f) = &mut msg
                         && datagrams
                     {
@@ -910,10 +958,30 @@ async fn session(
                 }
                 Some(content) = clip_rx.recv(), if clipboard_allowed => match content {
                     nuvira_clipboard::Content::Text(text) => {
+                        sharing.forget();
                         ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text, ..Default::default() }))).await?;
                     }
+                    // Files: listed off the loop, offered to the agent.
+                    nuvira_clipboard::Content::Files(paths) => {
+                        sharing.forget();
+                        debug!(files = paths.len(), files_by_clipboard, files_allowed, "files copied here");
+                        if files_by_clipboard && files_allowed {
+                            let (sharing, listed_tx) = (sharing.clone(), listed_tx.clone());
+                            tokio::spawn(async move {
+                                match tokio::task::spawn_blocking(move || nuvira_clipboard::list::expand(&paths)).await {
+                                    Ok(Ok(listed)) => {
+                                        let _ = listed_tx.send(sharing.announce(listed));
+                                    }
+                                    Ok(Err(e)) => info!("copied files not offered: {e:#}"),
+                                    Err(e) => warn!("listing copied files: {e}"),
+                                }
+                            });
+                        }
+                    }
+                    nuvira_clipboard::Content::RemoteFiles(_) => {}
                     // On its own stream, not to hold up the control channel.
                     nuvira_clipboard::Content::Image(png) => {
+                        sharing.forget();
                         let conn = conn.clone();
                         tokio::spawn(async move {
                             let header = FileChunk { clipboard_image: true, ..Default::default() };
@@ -923,6 +991,17 @@ async fn session(
                         });
                     }
                 },
+                Some(list) = listed_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::ClipboardFiles(list))).await?;
+                }
+                // Files of the agent pasted here: their contents asked for.
+                Some(request) = paste_rx_files.recv() => {
+                    if files_by_clipboard && clipboard_allowed && files_allowed {
+                        ctrl_tx.send(&control(Msg::ClipboardFileRequest(request))).await?;
+                    } else {
+                        sharing.refuse(request.id, "files switched off");
+                    }
+                }
                 Some(()) = key_rx.recv() => {
                     ctrl_tx.send(&control(Msg::RequestKeyframe(RequestKeyframe {}))).await?;
                 }
@@ -956,7 +1035,17 @@ async fn session(
                         let _ = proxy.send_event(NetEvent::Chat(chat.text));
                     }
                     Some(ControlMessage { msg: Some(Msg::Guests(g)) }) => {
-                        let _ = proxy.send_event(NetEvent::Guests(g.names));
+                        let _ = proxy.send_event(NetEvent::Guests(g));
+                    }
+                    Some(ControlMessage { msg: Some(Msg::HandedOver(h)) }) => {
+                        let _ = proxy.send_event(NetEvent::HandedOver(h));
+                    }
+                    Some(ControlMessage { msg: Some(Msg::SwitchSides(s)) }) => {
+                        if !s.on {
+                            reverse.stop();
+                        }
+                        let error = nuvira_i18n::message(&s.error);
+                        let _ = proxy.send_event(NetEvent::SwitchSides { on: s.on, error });
                     }
                     Some(ControlMessage { msg: Some(Msg::ScreenState(s)) }) => {
                         let _ = proxy.send_event(NetEvent::ScreenLocked { locked: s.locked, input: s.input });
@@ -975,6 +1064,14 @@ async fn session(
                     Some(ControlMessage { msg: Some(Msg::Permissions(p)) }) => {
                         info!(?p, "permissions of the session");
                         clipboard_allowed = p.clipboard;
+                        files_allowed = p.files;
+                        if !(p.clipboard && p.files) {
+                            sharing.forget();
+                            // The agent's files leave this clipboard: a paste would only fail.
+                            if files_by_clipboard && let Some(clipboard) = &clipboard {
+                                let _ = clipboard.send(nuvira_clipboard::Content::RemoteFiles(nuvira_clipboard::RemoteFiles::none()).into());
+                            }
+                        }
                         let _ = proxy.send_event(NetEvent::Permissions {
                             input: p.input,
                             files: p.files,
@@ -998,6 +1095,33 @@ async fn session(
                         if let Some(clipboard) = &clipboard {
                             let _ = clipboard.send(nuvira_clipboard::Content::Text(clip.text).into());
                         }
+                    }
+                    // Files copied on the remote computer: offered on this clipboard.
+                    Some(ControlMessage { msg: Some(Msg::ClipboardFiles(list)) }) => {
+                        if files_by_clipboard
+                            && clipboard_allowed
+                            && files_allowed
+                            && let Some(clipboard) = &clipboard
+                        {
+                            info!(entries = list.files.len(), "files copied there: on the clipboard");
+                            let _ = clipboard.send(nuvira_clipboard::Content::RemoteFiles(sharing.remote(list)).into());
+                        }
+                    }
+                    // Files copied here, pasted there.
+                    Some(ControlMessage { msg: Some(Msg::ClipboardFileRequest(request)) }) => {
+                        let allowed = files_by_clipboard && clipboard_allowed && files_allowed;
+                        let (sharing, conn) = (sharing.clone(), conn.clone());
+                        tokio::spawn(async move {
+                            let opened = match (allowed, sharing.requested(&request)) {
+                                (false, _) => Err(anyhow::anyhow!("files switched off")),
+                                (true, Err(e)) => Err(e),
+                                (true, Ok(path)) => std::fs::File::open(&path)
+                                    .with_context(|| format!("opening {}", path.display())),
+                            };
+                            if let Err(e) = nuvira_clipboard::Sharing::answer(&conn, &request, opened).await {
+                                warn!("pasted file not sent: {e:#}");
+                            }
+                        });
                     }
                     Some(ControlMessage { msg: Some(Msg::VideoFormat(f)) }) => {
                         info!(w = f.width, h = f.height, "new video format");
@@ -1142,6 +1266,82 @@ async fn run_terminal(
             },
         }
     }
+}
+
+/// Switch sides, at the technician's: a session of this computer's screen served
+/// inside a stream of the session (`nuvira_transport::nested`), by the agent code
+/// the app hands over ([`crate::REVERSE_HOST`]).
+#[derive(Default)]
+struct ReverseHosting {
+    active: Option<(nuvira_transport::Endpoint, tokio::task::JoinHandle<()>)>,
+}
+
+impl ReverseHosting {
+    async fn start(&mut self, conn: &nuvira_transport::Connection, proxy: &EventLoopProxy<NetEvent>) -> Result<()> {
+        use nuvira_proto::v1::{ReverseOpen, StreamOpen, stream_open::Kind};
+        if self.active.is_some() {
+            return Ok(());
+        }
+        let host = *crate::REVERSE_HOST.get().context("not available in this program")?;
+        let password = random_secret();
+        let (config, fingerprint) = nuvira_transport::server_config()?;
+        let (mut send, recv) = conn.open_bi().await?;
+        let open = ReverseOpen {
+            password: password.clone(),
+            fingerprint: nuvira_transport::fingerprint_hex(&fingerprint),
+            name: nuvira_transport::device_name(),
+        };
+        send.write_all(&nuvira_proto::framing::encode(&StreamOpen { kind: Some(Kind::Reverse(open)) })).await?;
+        let endpoint = nuvira_transport::nested::server_over_stream(config, send, recv)?;
+        let proxy = proxy.clone();
+        let served = endpoint.clone();
+        let task = tokio::spawn(async move {
+            let result = host(served, password).await;
+            if let Err(e) = &result {
+                info!("switch sides ended: {e:#}");
+            }
+            let error = result.err().map(|e| format!("{e:#}")).unwrap_or_default();
+            let _ = proxy.send_event(NetEvent::SwitchSides { on: false, error });
+        });
+        info!("switch sides: serving this screen to the other computer");
+        self.active = Some((endpoint, task));
+        Ok(())
+    }
+
+    /// The technician takes control back (or the window closed): the stream ends,
+    /// and the window at the other computer with it.
+    fn stop(&mut self) {
+        if let Some((endpoint, task)) = self.active.take() {
+            info!("switch sides: stopped");
+            endpoint.close(0u32.into(), b"control taken back");
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                task.abort();
+            });
+        }
+    }
+}
+
+impl Drop for ReverseHosting {
+    fn drop(&mut self) {
+        if let Some((endpoint, task)) = self.active.take() {
+            endpoint.close(0u32.into(), b"session ended");
+            task.abort();
+        }
+    }
+}
+
+/// A password for the switched session (it travels inside the session).
+fn random_secret() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    (0..4)
+        .map(|i| {
+            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+            h.write_u32(i);
+            h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+            format!("{:016x}", h.finish())
+        })
+        .collect()
 }
 
 /// One connection through a tunnel: a stream to the agent, which connects to

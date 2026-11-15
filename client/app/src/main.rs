@@ -1333,7 +1333,38 @@ fn init_logging() {
 /// one file to download, copy and sign instead of four.
 const SUBCOMMANDS: [&str; 3] = ["agent", "viewer", "service"];
 
+/// Switch sides, at the technician's: this computer's screen served by the agent's
+/// code on the endpoint the viewer opened inside the session (screen, keyboard
+/// and mouse only: `nuvira_agent::serve_reverse`).
+fn reverse_host(
+    endpoint: nuvira_transport::Endpoint,
+    password: String,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>> {
+    Box::pin(async move {
+        let mut config = AgentConfig {
+            display: None,
+            synthetic: None,
+            bitrate_kbps: 8000,
+            fps: 30,
+            plan: EncoderPlan::Software,
+            fixed_bitrate: false,
+            view_only: false,
+        };
+        let settings = config.encoder_settings();
+        config.plan = tokio::task::spawn_blocking(move || {
+            nuvira_codec::plan_encoder(nuvira_codec::EncoderChoice::Auto, settings)
+        })
+        .await
+        .unwrap_or(EncoderPlan::Software);
+        nuvira_agent::serve_reverse(endpoint, config, nuvira_agent::Reverse { password }).await
+    })
+}
+
 fn main() {
+    // This program is both: the agent can open a viewer (switch sides), the viewer
+    // can serve this computer's screen.
+    nuvira_agent::reverse::set_viewer_available();
+    let _ = nuvira_viewer::REVERSE_HOST.set(reverse_host);
     // macOS: the black screens of privacy mode are this program started again.
     nuvira_input::privacy::overlay_if_asked();
     // Before anything can replace the file (an update).

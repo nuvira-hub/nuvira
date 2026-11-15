@@ -80,6 +80,12 @@ pub enum Action {
     Menu(String, i32),
     /// The drop-down menu closed (a choice, Esc, a click elsewhere).
     MenuClose,
+    /// Hands the session over to this guest (asks for confirmation first).
+    HandOver(u64),
+    /// Handing over confirmed in the dialog.
+    HandOverConfirmed(u64),
+    /// Switch sides: shows this computer's screen there, or takes control back.
+    SwitchSides,
 }
 
 impl Action {
@@ -90,6 +96,9 @@ impl Action {
         if let Some(rest) = s.strip_prefix("menu:") {
             let (kind, x) = rest.split_once(':')?;
             return Some(Self::Menu(kind.to_string(), x.parse().ok()?));
+        }
+        if let Some(id) = s.strip_prefix("handover:") {
+            return id.parse().ok().map(Self::HandOver);
         }
         if let Some(text) = s.strip_prefix("chat:") {
             return Some(Self::ChatSend(text.to_string()));
@@ -121,6 +130,7 @@ impl Action {
             "sendfile" => Self::SendFile,
             "files" => Self::FileManager,
             "menuclose" => Self::MenuClose,
+            "switch" => Self::SwitchSides,
             _ => return None,
         })
     }

@@ -58,7 +58,42 @@ message ControlMessage {
     Guests guests = 32;
     CursorShape cursor_shape = 33;
     CursorPosition cursor_position = 34;
+    ClipboardFiles clipboard_files = 35;
+    ClipboardFileRequest clipboard_file_request = 36;
+    HandOver hand_over = 37;
+    HandedOver handed_over = 38;
+    SwitchSides switch_sides = 39;
   }
+}
+
+// Files and folders copied on one side (both directions, to a side with
+// Hello.clipboard_files, while clipboard and files are allowed): the other side
+// offers them on its clipboard and asks for their contents only when they are
+// pasted (ClipboardFileRequest). A new list replaces the previous one.
+message ClipboardFiles {
+  // Numbers this list; requests name it, so a request for an older list fails.
+  uint32 list = 1;
+  // Every file and folder, folders before what they hold.
+  repeated ClipboardFile files = 2;
+}
+
+message ClipboardFile {
+  // Relative to the copied items' folder, "/" between parts ("photos/a.jpg").
+  string path = 1;
+  uint64 size = 2;
+  bool dir = 3;
+  // Last change, seconds since 1970 (0 = unknown).
+  int64 modified = 4;
+}
+
+// Asks for one file of a ClipboardFiles from `offset` on. The answer comes on a
+// unidirectional stream: FileChunk with clipboard_file and transfer_id = id
+// (or with error), then the data. Stopping the stream cancels it.
+message ClipboardFileRequest {
+  uint32 id = 1;
+  uint32 list = 2;
+  uint32 index = 3;
+  uint64 offset = 4;
 }
 
 // From the agent, when Hello.cursor is on both sides: the remote pointer's image,
@@ -92,6 +127,38 @@ message CursorPosition {
 // viewers ignore it.
 message Guests {
   repeated string names = 1;
+  // From agents with Hello.handover, one for each name: the guest's number in
+  // the session (for HandOver) and whether it can take the session over (a
+  // viewer with Hello.handover).
+  repeated uint64 ids = 2;
+  repeated bool can_take_over = 3;
+}
+
+// From the first viewer: hands the session over to the guest `guest` (an id of
+// Guests). The agent answers with HandedOver to both, then ends the session; the
+// guest connects again with the token (Auth.handover) and becomes the first viewer,
+// without the person at the PC being asked again.
+message HandOver {
+  uint64 guest = 1;
+}
+
+// From the agent. To the guest: the token for connecting again (valid once, for
+// a minute, for this viewer only) and who handed it over. To the first viewer:
+// `to`, whom it was handed to (token empty).
+message HandedOver {
+  string token = 1;
+  string from = 2;
+  string to = 3;
+}
+
+// Switch sides, from the agent: the window showing the viewer's screen opened
+// (`on`), or was closed or could not open (`on` false, `error` with the reason,
+// "@key" messages are translated). See StreamOpen.reverse.
+message SwitchSides {
+  bool on = 1;
+  string password = 2;
+  string fingerprint = 3;
+  string error = 4;
 }
 
 // From the viewer (to agents with Hello.audio): send the computer's sound, or stop
@@ -267,6 +334,10 @@ message FileChunk {
   // In the first chunk, agent -> viewer: the stream carries a document printed on the
   // agent's NuviraHub printer (PDF), `name` its title, to be printed at the viewer.
   bool print = 8;
+  // In the first chunk: the stream answers ClipboardFileRequest `transfer_id`
+  // (the data starts from its offset), or says why not in `error`.
+  bool clipboard_file = 9;
+  string error = 10;
 }
 
 // Chat message between the controlling side and the person at the PC (both directions).
@@ -373,6 +444,9 @@ message Auth {
   // Instead of a password: the ticket of a support request this device made
   // (support queue). The person at the PC is always asked to accept.
   string support_ticket = 2;
+  // Instead of a password: the token of HandedOver, for the guest a session was
+  // handed over to (not asked again at the PC).
+  string handover = 3;
 }
 
 message AuthResult {
@@ -438,6 +512,15 @@ message Hello {
   // names it, and it reads CursorShape.png. From the agent: shapes come that way.
   // Off (viewers of 0.26): every change of shape comes again, as bgra.
   bool cursor_cache = 22;
+  // Both sides: it offers files copied on the other side on its clipboard
+  // (ClipboardFiles) and answers ClipboardFileRequest for its own.
+  bool clipboard_files = 23;
+  // Both sides: the session can be handed over to a guest (HandOver); a viewer
+  // with it takes one over when handed to it.
+  bool handover = 24;
+  // Both sides: switch sides (SwitchSides): the viewer can show its own screen,
+  // the agent can open a window with it.
+  bool switch_sides = 25;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do
@@ -466,7 +549,21 @@ message StreamOpen {
   oneof kind {
     TerminalOpen terminal = 1;
     TunnelOpen tunnel = 2;
+    // Switch sides (agents with Hello.switch_sides): after this message the stream
+    // carries the QUIC datagrams of a session the viewer serves, each as a
+    // big-endian u16 length and the bytes. The agent opens, as the person signed
+    // in, a window connected to it; closing the stream (the technician takes
+    // control back) closes the window.
+    ReverseOpen reverse = 3;
   }
+}
+
+message ReverseOpen {
+  // The session's password and its certificate's SHA-256 (pinned by the window).
+  string password = 1;
+  string fingerprint = 2;
+  // Who is showing their screen (the window's title).
+  string name = 3;
 }
 
 // TCP tunnel: the agent connects to `host`:`port`, which must be in its local network

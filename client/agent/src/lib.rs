@@ -7,6 +7,8 @@
 
 mod abr;
 pub mod cli;
+#[cfg(windows)]
+pub mod clip_user;
 mod files;
 mod fsops;
 #[cfg(any(windows, unix))]
@@ -16,6 +18,7 @@ mod pipeline;
 mod printer;
 mod pty;
 mod restart;
+pub mod reverse;
 mod shared;
 mod switches;
 mod terminal;
@@ -356,7 +359,7 @@ pub async fn serve_direct(
         let peer = nuvira_transport::p2p::canonical(conn.remote_address());
         info!("viewer connected from {peer}");
         let result = match conn.accept_bi().await.context("control channel") {
-            Ok(streams) => session(conn.clone(), streams, &config, None).await,
+            Ok(streams) => session(conn.clone(), streams, &config, None, None).await,
             Err(e) => Err(e),
         };
         match &result {
@@ -400,6 +403,7 @@ pub async fn serve_via_server(
         waiting: Mutex::new(None),
         end_session: Notify::new(),
         shared: Mutex::new(None),
+        handover: Mutex::new(None),
         policy: Default::default(),
         support_ticket: Mutex::new(None),
         allow_privacy: AtomicBool::new(permissions.privacy),
@@ -536,6 +540,8 @@ struct SessionContext {
     switches: Mutex<Option<Arc<switches::Switches>>>,
     /// The session in progress, which other viewers can join ([`shared`]).
     shared: Mutex<Option<Arc<shared::Shared>>>,
+    /// The last session was handed over to a guest, who connects again with this.
+    handover: Mutex<Option<shared::Handover>>,
 }
 
 impl SessionContext {
@@ -947,7 +953,7 @@ async fn relayed_session(
         r = async {
             match request.join {
                 true => shared::guest_session(conn.clone(), streams, &gate).await,
-                false => session(conn.clone(), streams, &ctx.config, Some(&gate)).await,
+                false => session(conn.clone(), streams, &ctx.config, Some(&gate), None).await,
             }
         } => r,
         _ = ctx.end_session.notified() => {
@@ -992,6 +998,26 @@ impl Gate<'_> {
         let given = auth.password.as_str();
         let confirm_always = self.policy().confirm_always;
         let set = |access: &'static str| *self.access.lock().expect("access") = access;
+        // The guest a session was handed over to, with its token: the person at the
+        // PC accepted it already (not asked again).
+        if !auth.handover.is_empty() {
+            let mut slot = ctx.handover.lock().expect("handover");
+            let valid = !self.request.join
+                && slot.as_ref().is_some_and(|h| {
+                    h.at.elapsed() < shared::HANDOVER_VALID
+                        && h.viewer_id == self.request.viewer_id
+                        && same_secret(&auth.handover, &h.token)
+                });
+            if valid {
+                *slot = None;
+                drop(slot);
+                info!("access with the token of a session handed over");
+                set("handover");
+                return self.started();
+            }
+            set("wrong_password");
+            return Err(WRONG_PASSWORD.into());
+        }
         // The ticket of this device's support request, used once: it replaces the
         // password, never the consent of the person at the PC.
         let support = !auth.support_ticket.is_empty() && {
@@ -1081,18 +1107,71 @@ impl Gate<'_> {
     }
 }
 
+/// Switch sides: the technician's computer shows its screen to the person at the
+/// controlled one, inside the session already open (`nuvira_transport::nested`).
+/// The one viewer that connects must give `password`; it gets the picture, the
+/// keyboard and the mouse, nothing else (`reverse_policy`).
+pub struct Reverse {
+    pub password: String,
+}
+
+/// What the person at the controlled computer can do on the technician's: see and
+/// use the screen; no files, clipboard, terminal, tunnels, printing, recording,
+/// privacy mode, restart, resolution or sound.
+fn reverse_policy() -> nuvira_proto::v1::Policy {
+    nuvira_proto::v1::Policy {
+        no_files: true,
+        no_clipboard: true,
+        no_privacy: true,
+        no_terminal: true,
+        no_tunnel: true,
+        no_print: true,
+        no_record: true,
+        no_restart: true,
+        no_resolution: true,
+        no_audio: true,
+        ..Default::default()
+    }
+}
+
+/// Switch sides, at the technician's: serves the one session of `endpoint` (on a
+/// stream of the session in progress), with `reverse`'s password, until it ends.
+pub async fn serve_reverse(endpoint: quinn::Endpoint, config: AgentConfig, reverse: Reverse) -> Result<()> {
+    let incoming = tokio::time::timeout(Duration::from_secs(60), endpoint.accept())
+        .await
+        .context("the other computer did not open the window within 60 s")?
+        .context("closed before the other computer connected")?;
+    let conn = incoming.await.context("connection from the other computer")?;
+    info!("switch sides: the other computer sees this screen");
+    let result = match conn.accept_bi().await.context("control channel") {
+        Ok(streams) => session(conn.clone(), streams, &config, None, Some(&reverse)).await,
+        Err(e) => Err(e),
+    };
+    conn.close(0u32.into(), &close_reason(&result));
+    endpoint.close(0u32.into(), b"");
+    info!("switch sides: ended");
+    // The window closed by the person there is how it normally ends.
+    match result {
+        Err(e) if closed_normally(&e) => Ok(()),
+        r => r,
+    }
+}
+
 /// A session with a viewer already connected. With `gate` the viewer must
-/// authenticate (and possibly be confirmed) before receiving any image.
+/// authenticate (and possibly be confirmed) before receiving any image; with
+/// `reverse` (switch sides) it must give its password and gets the screen only.
 async fn session(
     conn: Connection,
     (send, recv): (quinn::SendStream, quinn::RecvStream),
     config: &AgentConfig,
     gate: Option<&Gate<'_>>,
+    reverse: Option<&Reverse>,
 ) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
-    // Rules of the server at the start of the session, with its limits (none without a server).
-    let policy = gate.map(Gate::policy).unwrap_or_default();
+    // Rules of the server at the start of the session, with its limits (none without
+    // a server; the screen only when the sides are switched).
+    let policy = gate.map(Gate::policy).or(reverse.map(|_| reverse_policy())).unwrap_or_default();
     // What the person at the PC switches off during the session.
     let (switches, off) = switches::channel();
 
@@ -1116,7 +1195,7 @@ async fn session(
     let terminal_refused = move || -> Option<&'static str> {
         if config.view_only || config.synthetic.is_some() {
             Some("@agent.terminal_unavailable")
-        } else if gate.is_some_and(|g| g.policy().no_terminal) {
+        } else if reverse.is_some() || gate.is_some_and(|g| g.policy().no_terminal) {
             Some("@agent.terminal_disabled")
         } else if gate.is_some_and(|g| !g.ctx.allow_terminal.load(Ordering::Relaxed)) {
             Some("@agent.terminal_not_allowed")
@@ -1185,6 +1264,8 @@ async fn session(
     // The pointer apart from the picture, to viewers that draw it (Linux, and not
     // with the DMA-BUF capture, which would lose it from recordings).
     let cursor_cache = hello.cursor_cache;
+    // The viewer offers files copied here on its clipboard, and serves its own.
+    let viewer_files = hello.clipboard_files;
     let cursor_offered = hello.cursor
         && !terminal_only
         && !recording_required
@@ -1200,7 +1281,7 @@ async fn session(
         && conn.max_datagram_size().is_some()
         && nuvira_audio::capture::available();
     let hello = Hello {
-        password_required: gate.is_some(),
+        password_required: gate.is_some() || reverse.is_some(),
         file_manager: !config.view_only && config.synthetic.is_none() && !policy.no_files,
         video_datagrams,
         privacy_mode: !config.view_only
@@ -1223,6 +1304,21 @@ async fn session(
         audio: audio_offered,
         cursor: cursor_offered,
         cursor_cache: cursor_offered && cursor_cache,
+        // Others can join only sessions through a server: then it can be handed over.
+        handover: gate.is_some() && !terminal_only,
+        // Switch sides: a window with the viewer's screen, for the person signed in
+        // (not inside a switched session, nor without a screen).
+        switch_sides: gate.is_some()
+            && reverse.is_none()
+            && !terminal_only
+            && config.synthetic.is_none()
+            && reverse::viewer_available(),
+        // Files through the clipboard: with the clipboard and the files.
+        clipboard_files: !terminal_only
+            && !config.view_only
+            && config.synthetic.is_none()
+            && !policy.no_clipboard
+            && !policy.no_files,
         ..local_hello()
     };
     // What the person at the PC can switch off: what this session has.
@@ -1242,6 +1338,10 @@ async fn session(
         }
     }
     switches.set_offered(offered);
+    let clipboard_files_offered = hello.clipboard_files;
+    // Switch sides: what the window reports goes to the viewer on the control channel.
+    let switch_offered = hello.switch_sides;
+    let (switch_tx, mut switch_rx) = mpsc::unbounded_channel::<nuvira_proto::v1::SwitchSides>();
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
     if let Some(gate) = gate {
         let given = match ctrl_rx.recv::<ControlMessage>().await? {
@@ -1272,6 +1372,18 @@ async fn session(
             bail!("{reason}");
         }
         *gate.ctx.switches.lock().expect("switches") = Some(switches.clone());
+    } else if let Some(reverse) = reverse {
+        let given = match ctrl_rx.recv::<ControlMessage>().await? {
+            Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
+            _ => bail!("the viewer did not send the password"),
+        };
+        let ok = same_secret(&given.password, &reverse.password);
+        let message = if ok { String::new() } else { WRONG_PASSWORD.to_string() };
+        ctrl_tx.send(&control(Msg::AuthResult(AuthResult { ok, message }))).await?;
+        if !ok {
+            tokio::time::sleep(Duration::from_millis(2000)).await;
+            bail!("{WRONG_PASSWORD}");
+        }
     }
     // Cleared at the end, however the session ends.
     let _clear = ClearSwitches(gate.map(|g| g.ctx));
@@ -1383,7 +1495,13 @@ async fn session(
     let clipboard = if offered & switches::CLIPBOARD == 0 {
         None
     } else {
-        match nuvira_clipboard::spawn_sync(move |content| clip_tx.send(content).is_ok()) {
+        // As SYSTEM, what cannot be read here is read by a helper started as the person.
+        #[cfg(windows)]
+        let fallback: Option<nuvira_clipboard::Fallback> =
+            nuvira_clipboard::running_as_system().then(|| Box::new(clip_user::read_as_user) as nuvira_clipboard::Fallback);
+        #[cfg(not(windows))]
+        let fallback = None;
+        match nuvira_clipboard::spawn_sync_with(move |content| clip_tx.send(content).is_ok(), fallback) {
             Ok(tx) => Some(tx),
             Err(e) => {
                 warn!("clipboard not shared: {e:#}");
@@ -1393,6 +1511,15 @@ async fn session(
     };
     // Images arrive on their own streams, received with the files.
     let clipboard_in = clipboard.clone();
+    // Files copied through the clipboard, both ways (the list at once, the
+    // contents when pasted): with the clipboard and the files, here and there.
+    let files_by_clipboard = viewer_files && clipboard_files_offered && clipboard.is_some();
+    let (sharing, mut paste_rx_files) = nuvira_clipboard::Sharing::new();
+    let (listed_tx, mut listed_rx) = mpsc::unbounded_channel::<nuvira_proto::v1::ClipboardFiles>();
+    let files_allowed = {
+        let off = off.clone();
+        move || files_by_clipboard && off.is_on(switches::CLIPBOARD) && off.is_on(switches::FILES)
+    };
 
     // With datagrams there is no video stream (QUIC shows a stream to the other side
     // only once something is written on it: the viewer would wait for it forever).
@@ -1560,7 +1687,7 @@ async fn session(
         // Who joined the session, told to this viewer (none in LAN sessions).
         let mut guests_rx = match &shared {
             Some(s) => s.subscribe(),
-            None => tokio::sync::watch::channel(Vec::new()).1,
+            None => tokio::sync::watch::channel(nuvira_proto::v1::Guests::default()).1,
         };
         loop {
             let msg = tokio::select! {
@@ -1569,8 +1696,12 @@ async fn session(
                     None => return anyhow::Ok(()),
                 },
                 Ok(()) = guests_rx.changed() => {
-                    let names = guests_rx.borrow_and_update().clone();
-                    ctrl_tx.send(&control(Msg::Guests(nuvira_proto::v1::Guests { names }))).await?;
+                    let guests = guests_rx.borrow_and_update().clone();
+                    ctrl_tx.send(&control(Msg::Guests(guests))).await?;
+                    continue;
+                }
+                Some(state) = switch_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::SwitchSides(state))).await?;
                     continue;
                 }
                 _ = pointer_tick.tick(), if cursor_offered => {
@@ -1581,6 +1712,14 @@ async fn session(
                 }
                 now = changes.changed() => {
                     ctrl_tx.send(&tell_permissions(now)).await?;
+                    // Files or clipboard switched off: the viewer's files leave this
+                    // clipboard (a paste would only fail), and ours are not served.
+                    if files_by_clipboard && now & (switches::FILES | switches::CLIPBOARD) != 0 {
+                        sharing.forget();
+                        if let Some(clipboard) = &clipboard {
+                            let _ = clipboard.send(nuvira_clipboard::Content::RemoteFiles(nuvira_clipboard::RemoteFiles::none()).into());
+                        }
+                    }
                     // Switched off by the person at the PC: the screen goes back at once.
                     if now & switches::RESOLUTION != 0 && nuvira_capture::resolution::adapted(owner, &display) {
                         let d = display.clone();
@@ -1606,14 +1745,34 @@ async fn session(
                 }
                 Some(content) = clip_rx.recv() => {
                     if !off.is_on(switches::CLIPBOARD) {
+                        sharing.forget();
                         continue;
                     }
                     match content {
                         nuvira_clipboard::Content::Text(text) => {
+                            sharing.forget();
                             ctrl_tx.send(&control(Msg::Clipboard(nuvira_proto::v1::Clipboard { text, ..Default::default() }))).await?;
                         }
+                        // Files: listed as the user signed in, offered to the viewer.
+                        nuvira_clipboard::Content::Files(paths) => {
+                            sharing.forget();
+                            tracing::debug!(files = paths.len(), allowed = files_allowed(), "files copied here");
+                            if files_allowed() {
+                                let (sharing, listed_tx) = (sharing.clone(), listed_tx.clone());
+                                tokio::spawn(async move {
+                                    match fsops::as_user(move || nuvira_clipboard::list::expand(&paths)).await {
+                                        Ok(listed) => {
+                                            let _ = listed_tx.send(sharing.announce(listed));
+                                        }
+                                        Err(e) => info!("copied files not offered: {e:#}"),
+                                    }
+                                });
+                            }
+                        }
+                        nuvira_clipboard::Content::RemoteFiles(_) => {}
                         // On its own stream, not to hold up the control channel.
                         nuvira_clipboard::Content::Image(png) => {
+                            sharing.forget();
                             let conn = conn.clone();
                             tokio::spawn(async move {
                                 let header = nuvira_proto::v1::FileChunk { clipboard_image: true, ..Default::default() };
@@ -1622,6 +1781,19 @@ async fn session(
                                 }
                             });
                         }
+                    }
+                    continue;
+                }
+                Some(list) = listed_rx.recv() => {
+                    ctrl_tx.send(&control(Msg::ClipboardFiles(list))).await?;
+                    continue;
+                }
+                // Files of the viewer pasted here: their contents asked for.
+                Some(request) = paste_rx_files.recv() => {
+                    if files_allowed() {
+                        ctrl_tx.send(&control(Msg::ClipboardFileRequest(request))).await?;
+                    } else {
+                        sharing.refuse(request.id, "files switched off");
                     }
                     continue;
                 }
@@ -1882,6 +2054,32 @@ async fn session(
                         let _ = clipboard.send(nuvira_clipboard::Incoming { content, then });
                     }
                 }
+                // Files copied at the viewer: offered on this clipboard.
+                Some(Msg::ClipboardFiles(list)) => {
+                    if files_allowed() && let Some(clipboard) = &clipboard {
+                        info!(entries = list.files.len(), "files copied at the viewer: on the clipboard");
+                        let _ = clipboard.send(nuvira_clipboard::Content::RemoteFiles(sharing.remote(list)).into());
+                    }
+                }
+                // Files copied here, pasted at the viewer: read as the user signed in.
+                Some(Msg::ClipboardFileRequest(request)) => {
+                    let allowed = files_allowed();
+                    let (sharing, conn, off) = (sharing.clone(), conn.clone(), off.clone());
+                    tokio::spawn(async move {
+                        let opened = match (allowed, sharing.requested(&request)) {
+                            (false, _) => Err(anyhow::anyhow!("@agent.files_switched_off")),
+                            (true, Err(e)) => Err(e),
+                            (true, Ok(path)) => fsops::as_user(move || {
+                                std::fs::File::open(&path).with_context(|| format!("opening {}", path.display()))
+                            })
+                            .await,
+                        };
+                        let sent = nuvira_clipboard::Sharing::answer(&conn, &request, opened);
+                        if let Some(Err(e)) = switches::until_off(off, switches::FILES, sent).await {
+                            warn!("pasted file not sent: {e:#}");
+                        }
+                    });
+                }
                 Some(Msg::Chat(chat)) => match &events {
                     Some(events) => {
                         let _ = events.send(AgentEvent::Chat { text: chat.text });
@@ -1897,6 +2095,31 @@ async fn session(
                 Some(Msg::SetAudio(set)) => {
                     info!(on = set.on, "sound of the session");
                     let _ = audio_on_tx.send(set.on);
+                }
+                // Handed over to a guest: its token goes to it, this session ends
+                // (and the guests' with it), and it connects again as the first viewer.
+                Some(Msg::HandOver(h)) => {
+                    let from = gate.map(|g| match g.request.viewer_name.as_str() {
+                        "" => g.request.viewer_id.clone(),
+                        name => name.to_string(),
+                    });
+                    let handed = match (gate, &shared, from) {
+                        (Some(g), Some(s), Some(from)) => s.hand_over(h.guest, &from).map(|t| (g, t)),
+                        _ => None,
+                    };
+                    match handed {
+                        Some((g, (token, viewer_id, name))) => {
+                            *g.ctx.handover.lock().expect("handover") =
+                                Some(shared::Handover { viewer_id, token, at: Instant::now() });
+                            info!(to = name, "session handed over");
+                            let told = nuvira_proto::v1::HandedOver { to: name, ..Default::default() };
+                            ctrl_tx.send(&control(Msg::HandedOver(told))).await?;
+                            // A moment for the guest to get its token before its session ends.
+                            tokio::time::sleep(Duration::from_millis(300)).await;
+                            return anyhow::Ok(());
+                        }
+                        None => warn!(guest = h.guest, "session not handed over: no such guest, or it cannot take it"),
+                    }
                 }
                 Some(Msg::SetPrivacy(set)) => {
                     let mut error = String::new();
@@ -2093,12 +2316,18 @@ async fn session(
                     let (file_tx, events, clipboard) = (file_tx.clone(), events.clone(), clipboard_in.clone());
                     let no_files = policy.no_files;
                     let off = off.clone();
+                    let sharing = sharing.clone();
                     tokio::spawn(async move {
                         let mut rx = FramedRecv::new(stream);
                         let first = match rx.recv::<nuvira_proto::v1::FileChunk>().await {
                             Ok(Some(first)) => first,
                             _ => return,
                         };
+                        // The answer to a paste here (asked only while allowed).
+                        if first.clipboard_file {
+                            sharing.receive(first, rx).await;
+                            return;
+                        }
                         // Rules of the server: no files (images of the clipboard are refused
                         // by having no clipboard, see above).
                         let switched_off = !off.is_on(switches::FILES);
@@ -2194,7 +2423,7 @@ async fn session(
         r = video => r.context("sending video"),
         r = control_loop => r.context("control channel"),
         r = input => r.context("input channel"),
-        r = accept_streams(&conn, (&terminal_refused, &tunnel_refused), &off) => r,
+        r = accept_streams(&conn, (&terminal_refused, &tunnel_refused), &off, switch_offered.then_some(&switch_tx)) => r,
         r = printing => r,
         r = audio => r.context("sound"),
     };
@@ -2252,7 +2481,7 @@ async fn terminal_session(
     };
     let result = tokio::select! {
         r = control => r.context("control channel"),
-        r = accept_streams(conn, refused, &off) => r,
+        r = accept_streams(conn, refused, &off, None) => r,
     };
     if let Some(gate) = gate {
         *gate.ctx.chat.lock().expect("chat") = None;
@@ -2271,11 +2500,13 @@ async fn accept_streams(
     conn: &Connection,
     (terminal_refused, tunnel_refused): Refusals<'_, impl Fn() -> Option<&'static str>, impl Fn() -> Option<&'static str>>,
     off: &switches::Off,
+    switch_sides: Option<&mpsc::UnboundedSender<nuvira_proto::v1::SwitchSides>>,
 ) -> Result<()> {
     use nuvira_proto::v1::{StreamOpen, stream_open::Kind};
     while let Ok((send, mut recv)) = conn.accept_bi().await {
         let (terminal, tunnel) = (terminal_refused(), tunnel_refused());
         let off = off.clone();
+        let switch_sides = switch_sides.cloned();
         tokio::spawn(async move {
             let open = match nuvira_transport::recv_one::<StreamOpen>(&mut recv).await {
                 Ok(Some(open)) => open,
@@ -2292,6 +2523,12 @@ async fn accept_streams(
                 Some(Kind::Tunnel(t)) => {
                     switches::until_off(off, switches::TUNNEL, tunnel::serve(send, recv, t, tunnel)).await.unwrap_or(Ok(()))
                 }
+                // Switch sides: the window with the viewer's screen (an agent that
+                // does not offer it closes the stream).
+                Some(Kind::Reverse(open)) => match switch_sides {
+                    Some(report) => reverse::open_window(send, recv, open, report).await,
+                    None => Ok(()),
+                },
                 None => Ok(()),
             };
             if let Err(e) = result {
@@ -2672,6 +2909,9 @@ fn local_hello() -> Hello {
         password_required: false,
         cursor: false,
         cursor_cache: false,
+        clipboard_files: false,
+        handover: false,
+        switch_sides: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,

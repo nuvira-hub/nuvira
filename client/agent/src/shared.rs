@@ -13,6 +13,12 @@
 //! The encoder runs once: its frames are copied to each guest. A guest that cannot
 //! keep up loses frames, waits for the next keyframe and asks for one (every 2 s at
 //! most); the bitrate follows the first viewer's network.
+//!
+//! Handing over: the first viewer can give the session to a guest that can take
+//! it over (`Hello.handover`). The guest gets a token valid once, for a minute and
+//! for its own device only; the session ends for everyone, and the guest connects
+//! again with the token as the first viewer, without the person at the PC being
+//! asked again ([`Handover`], checked by the `Gate`).
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -20,9 +26,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use nuvira_proto::v1::{
-    AuthResult, ControlMessage, Hello, InputEvent, Pong, VideoFrame, control_message::Msg,
+    AuthResult, ControlMessage, Guests, HandedOver, Hello, InputEvent, Pong, VideoFrame, control_message::Msg,
 };
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, oneshot, watch};
 use nuvira_transport::{Connection, FramedRecv, FramedSend};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -42,10 +48,26 @@ enum ToGuest {
 struct Guest {
     id: u64,
     name: String,
+    /// Its device's ID (the server's), which a handover is bound to.
+    viewer_id: String,
+    /// It can take the session over (`Hello.handover`).
+    takes_over: bool,
+    /// Where its handover token goes.
+    handover: Option<oneshot::Sender<HandedOver>>,
     tx: mpsc::Sender<ToGuest>,
     /// Frames were dropped: the next ones are useless until a keyframe.
     lost: Arc<AtomicBool>,
 }
+
+/// A session handed over to a guest: whoever presents `token` from `viewer_id`
+/// within [`HANDOVER_VALID`] starts a session as its first viewer, once.
+pub struct Handover {
+    pub viewer_id: String,
+    pub token: String,
+    pub at: Instant,
+}
+
+pub const HANDOVER_VALID: Duration = Duration::from_secs(60);
 
 /// The session in progress, as guests see it (`SessionContext::shared`).
 pub struct Shared {
@@ -61,8 +83,8 @@ pub struct Shared {
     /// The keyboard and mouse can be used in this session at all.
     input_offered: bool,
     events: mpsc::UnboundedSender<AgentEvent>,
-    /// The guests' names, for the first viewer (`Guests` control message).
-    names: tokio::sync::watch::Sender<Vec<String>>,
+    /// The guests, for the first viewer (`Guests` control message).
+    names: tokio::sync::watch::Sender<Guests>,
     /// The computer's sound is sent in this session (the first viewer plays it).
     pub audio_offered: bool,
     /// The sound packets as sent to the first viewer (datagrams), for the guests.
@@ -93,7 +115,7 @@ impl Shared {
             input,
             input_offered,
             events,
-            names: tokio::sync::watch::channel(Vec::new()).0,
+            names: tokio::sync::watch::channel(Guests::default()).0,
             audio_offered,
             audio: broadcast::channel(64).0,
             listeners: watch::channel(0).0,
@@ -115,15 +137,27 @@ impl Shared {
         self.listeners.send_modify(|n| *n = if on { *n + 1 } else { n.saturating_sub(1) });
     }
 
-    /// The guests' names at every change, for the first viewer.
-    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Vec<String>> {
+    /// The guests at every change, for the first viewer.
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<Guests> {
         self.names.subscribe()
     }
 
     /// The app and the first viewer learn who is in the session.
-    fn tell(&self, names: Vec<String>) {
-        self.names.send_replace(names.clone());
+    fn tell(&self, guests: Guests) {
+        let names = guests.names.clone();
+        self.names.send_replace(guests);
         let _ = self.events.send(AgentEvent::Guests { names });
+    }
+
+    /// Hands the session over to guest `id`, if it can take it over: its token is
+    /// sent to it. Returns the token, its device's ID and its name.
+    pub fn hand_over(&self, id: u64, from: &str) -> Option<(String, String, String)> {
+        let mut guests = self.guests.lock().expect("guests");
+        let guest = guests.iter_mut().find(|g| g.id == id && g.takes_over)?;
+        let token = crate::random_password() + &crate::random_password() + &crate::random_password();
+        let given = HandedOver { token: token.clone(), from: from.to_string(), to: String::new() };
+        guest.handover.take()?.send(given).ok()?;
+        Some((token, guest.viewer_id.clone(), guest.name.clone()))
     }
 
     /// A frame sent to the first viewer: a copy to every guest.
@@ -173,19 +207,21 @@ impl Shared {
         }
     }
 
-    fn join(&self, name: String) -> (u64, mpsc::Receiver<ToGuest>, Arc<AtomicBool>) {
+    fn join(&self, name: String, viewer_id: String, takes_over: bool) -> Joined {
         let (tx, rx) = mpsc::channel(8);
+        let (handover_tx, handover) = oneshot::channel();
         let lost = Arc::new(AtomicBool::new(true));
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let names = {
             let mut guests = self.guests.lock().expect("guests");
-            guests.push(Guest { id, name, tx, lost: lost.clone() });
+            let handover = Some(handover_tx);
+            guests.push(Guest { id, name, viewer_id, takes_over, handover, tx, lost: lost.clone() });
             names(&guests)
         };
         self.tell(names);
         *self.last_key.lock().expect("keyframe") = None;
         self.request_keyframe();
-        (id, rx, lost)
+        Joined { id, frames: rx, lost, handover }
     }
 
     fn leave(&self, id: u64) {
@@ -207,8 +243,20 @@ impl Shared {
     }
 }
 
-fn names(guests: &[Guest]) -> Vec<String> {
-    guests.iter().map(|g| g.name.clone()).collect()
+/// A guest's place in the session.
+struct Joined {
+    id: u64,
+    frames: mpsc::Receiver<ToGuest>,
+    lost: Arc<AtomicBool>,
+    handover: oneshot::Receiver<HandedOver>,
+}
+
+fn names(guests: &[Guest]) -> Guests {
+    Guests {
+        names: guests.iter().map(|g| g.name.clone()).collect(),
+        ids: guests.iter().map(|g| g.id).collect(),
+        can_take_over: guests.iter().map(|g| g.takes_over).collect(),
+    }
 }
 
 /// Ends the sharing of the session however it ends (`SessionContext::shared`).
@@ -305,7 +353,9 @@ pub async fn guest_session(
         "" => gate.request.viewer_id.clone(),
         name => name.to_string(),
     };
-    let (id, mut frames, lost) = shared.join(name);
+    let takes_over = hello.handover && !hello.terminal_only;
+    let Joined { id, mut frames, lost, handover } = shared.join(name, gate.request.viewer_id.clone(), takes_over);
+    let mut handover = Some(handover);
     struct Leave<'a>(&'a Shared, u64);
     impl Drop for Leave<'_> {
         fn drop(&mut self) {
@@ -365,6 +415,13 @@ pub async fn guest_session(
                     None => return anyhow::Ok(()),
                 },
                 Some(pong) = pong_rx.recv() => ctrl_tx.send(&control(Msg::Pong(pong))).await?,
+                // The first viewer handed the session over to this one: the token
+                // (the session ends right after, and it connects again with it).
+                Ok(given) = async { handover.as_mut().expect("once").await }, if handover.is_some() => {
+                    handover = None;
+                    info!("session handed over to this guest");
+                    ctrl_tx.send(&control(Msg::HandedOver(given))).await?;
+                }
             }
         }
     };
@@ -455,6 +512,26 @@ pub async fn guest_session(
 mod tests {
     use super::*;
 
+    /// Only a guest that can take the session over gets it, once, with its token.
+    #[test]
+    fn handover_goes_to_a_guest_that_can_take_it() {
+        let (input, _input_rx) = mpsc::unbounded_channel();
+        let (events, _events_rx) = mpsc::unbounded_channel();
+        let shared = Shared::new(Arc::new(AtomicBool::new(false)), display(), input, true, events, false, false);
+        let web = shared.join("NuviraHub Web".into(), "111".into(), false);
+        let mut desk = shared.join("PC-B".into(), "222".into(), true);
+        let guests = shared.subscribe().borrow().clone();
+        assert_eq!(guests.ids, [web.id, desk.id]);
+        assert_eq!(guests.can_take_over, [false, true]);
+        assert!(shared.hand_over(web.id, "PC-A").is_none(), "a guest that cannot take it over");
+        let (token, viewer_id, name) = shared.hand_over(desk.id, "PC-A").expect("handed over");
+        assert_eq!((viewer_id.as_str(), name.as_str()), ("222", "PC-B"));
+        assert_eq!(token.len(), 24);
+        let sent = desk.handover.try_recv().expect("token sent");
+        assert_eq!((sent.token, sent.from), (token, "PC-A".to_string()));
+        assert!(shared.hand_over(desk.id, "PC-A").is_none(), "only once");
+    }
+
     fn display() -> nuvira_capture::Display {
         nuvira_capture::Display {
             index: 0,
@@ -482,10 +559,10 @@ mod tests {
         let shared = Shared::new(keyframe.clone(), display(), input, true, events, true, false);
         let mut names = shared.subscribe();
 
-        let (id, mut rx, lost) = shared.join("NuviraHub Web".into());
+        let Joined { id, frames: mut rx, lost, .. } = shared.join("NuviraHub Web".into(), "1".into(), false);
         assert!(keyframe.swap(false, Ordering::Relaxed), "a keyframe for the new guest");
         assert!(lost.load(Ordering::Relaxed), "nothing shown before a keyframe");
-        assert_eq!(*names.borrow_and_update(), ["NuviraHub Web"]);
+        assert_eq!(names.borrow_and_update().names, ["NuviraHub Web"]);
         assert!(matches!(events_rx.try_recv(), Ok(AgentEvent::Guests { names }) if names == ["NuviraHub Web"]));
 
         // The guest's queue (8) fills up: the next frame is dropped and a keyframe
@@ -521,9 +598,9 @@ mod tests {
         assert_eq!(packets.try_recv().unwrap().as_slice(), [0xA0, 1, 0, 0, 0, 9]);
 
         shared.leave(id);
-        assert!(names.borrow_and_update().is_empty());
+        assert!(names.borrow_and_update().names.is_empty());
         // When the first viewer's session ends the guests' queues close.
-        let (_, mut rx2, _) = shared.join("PC-B".into());
+        let Joined { frames: mut rx2, .. } = shared.join("PC-B".into(), "2".into(), false);
         shared.end();
         assert!(rx2.try_recv().is_err() && rx2.is_closed());
     }
