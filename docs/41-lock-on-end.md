@@ -61,4 +61,9 @@ Viewer on PC-LABORATORIO or on the Mint VM, through the NAS server or the real o
 | Ubuntu 26.04, GNOME Wayland | Same | Locked (`LockedHint=yes`) |
 | Kubuntu 26.04, KDE Plasma Wayland | Same | Locked (`LockedHint=yes`) |
 
-Still to try: the Pro rule end to end (console → server → agent), macOS.
+- Pro rule end to end: the rule set in the web console of the Pro test server
+  (Ubuntu VM), the test agent on the Mint registered there without a setting of
+  its own: the viewer got `on=true forced=true`, the Mint was locked when the
+  session ended.
+
+Still to try: macOS.

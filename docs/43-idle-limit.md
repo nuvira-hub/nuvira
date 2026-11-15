@@ -44,5 +44,9 @@ folder), viewer in view-only mode:
 The web client shows the warning as a message at the bottom; its mouse over the
 screen is input, which counts.
 
-Not tried yet: the app's setting and the Pro rule end to end, macOS, the web
-client.
+- Pro rule end to end: 2 minutes set in the web console of the Pro test server,
+  the Mint's test agent registered there without a setting of its own: the
+  session ended after 120 s with the reason, then the computer was locked (the
+  rule "lock at the end" was on too).
+
+Not tried yet: the app's setting, macOS, the web client.

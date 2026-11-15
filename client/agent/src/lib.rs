@@ -2047,7 +2047,8 @@ async fn session(
                     let warn_from = limit_ms.saturating_sub(60_000);
                     if idle_ms >= warn_from && !idle_warned {
                         idle_warned = true;
-                        let warning = nuvira_proto::v1::IdleWarning { seconds: ((limit_ms - idle_ms) / 1000) as u32 };
+                        let seconds = ((limit_ms - idle_ms) / 1000) as u32;
+                        let warning = nuvira_proto::v1::IdleWarning { seconds };
                         ctrl_tx.send(&control(Msg::IdleWarning(warning))).await?;
                     } else if idle_ms < warn_from && idle_warned {
                         idle_warned = false;
