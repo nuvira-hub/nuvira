@@ -756,5 +756,7 @@
   "support.invite_code_bad": "El código de invitación tiene 10 letras y cifras (p. ej. abcde-fghjk)",
   "server.invite_invalid": "La invitación ya no es válida (caducada o ya usada): pide una nueva al técnico",
   "server.support_reserved": "Esta solicitud es para el técnico que envió la invitación",
-  "invite.public_server": "el servidor público NuviraHub"
+  "invite.public_server": "el servidor público NuviraHub",
+  "viewer.mic_none": "Este equipo no tiene micrófono",
+  "viewer.mic_failed": "El micrófono no se inició: {e}"
 }

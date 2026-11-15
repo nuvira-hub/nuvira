@@ -18,9 +18,15 @@ use crate::opus::Encoder;
 use crate::resample::{Resampler, to_stereo};
 use crate::{CHANNELS, FRAME, RATE};
 
-/// Whether this computer has a microphone (a default input device).
+/// Whether this computer has a microphone: a default input device that can record.
+/// On macOS without any input device cpal still answers a device (Core Audio's
+/// "unknown object"), which fails at the start with '!obj'.
 pub fn available() -> bool {
-    cpal::default_host().default_input_device().is_some()
+    input_device().is_some()
+}
+
+fn input_device() -> Option<cpal::Device> {
+    cpal::default_host().default_input_device().filter(|d| d.default_input_config().is_ok())
 }
 
 /// Captures until dropped.
@@ -92,7 +98,7 @@ fn run(stop: Arc<AtomicBool>, mut sink: impl FnMut(Vec<u8>), ready: mpsc::Sender
 /// The default input device, sending what it records to `tx`: the stream, its
 /// channels and rate.
 fn open(tx: mpsc::Sender<Vec<f32>>) -> Result<(cpal::Stream, usize, u32)> {
-    let device = cpal::default_host().default_input_device().context("no microphone")?;
+    let device = input_device().context("@viewer.mic_none")?;
     let supported = device.default_input_config()?;
     let (channels, rate) = (supported.channels() as usize, supported.sample_rate());
     let format = supported.sample_format();

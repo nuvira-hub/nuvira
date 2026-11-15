@@ -756,5 +756,7 @@
   "support.invite_code_bad": "Il codice invito ha 10 lettere e cifre (es. abcde-fghjk)",
   "server.invite_invalid": "L'invito non è più valido (scaduto o già usato): chiedine uno nuovo al tecnico",
   "server.support_reserved": "Questa richiesta è per il tecnico che ha mandato l'invito",
-  "invite.public_server": "il server pubblico NuviraHub"
+  "invite.public_server": "il server pubblico NuviraHub",
+  "viewer.mic_none": "Questo computer non ha un microfono",
+  "viewer.mic_failed": "Il microfono non è partito: {e}"
 }

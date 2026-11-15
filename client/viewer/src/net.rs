@@ -1017,7 +1017,11 @@ async fn session(
                                 Ok(mic) => microphone = Some(mic),
                                 Err(e) => {
                                     warn!("microphone not started: {e:#}");
-                                    let error = format!("{e:#}");
+                                    // A key the toolbar translates; a system's error as it is.
+                                    let error = match format!("{e:#}") {
+                                        e if e.starts_with('@') => e,
+                                        e => nuvira_i18n::tf("viewer.mic_failed", &[("e", &e)]),
+                                    };
                                     let _ = proxy.send_event(NetEvent::Microphone { on: false, error });
                                     continue;
                                 }
