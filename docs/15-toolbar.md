@@ -66,6 +66,10 @@ Agent on the Mint VM (X11, 1280x800, pointer moved with `xdotool` to a known pla
 
 - OpenH264: PNG 1152x720 (picture fitted to the window, scale 0.9), pointer at (360, 270) for (400, 300) on the Mint: right place, right colours.
 - `NUVIRA_DECODER=hardware` (Media Foundation, readback of the decoded texture): same result, pointer at (810, 540) for (900, 600).
+- Linux viewer (Mint): saved in the localised Pictures folder (`~/Immagini/NuviraHub`), pointer in place.
+- Web client (Firefox on the Mint, Pro test server): the bar's button downloaded `NuviraHub <date> <ID>.png` (the page names the computer by its ID when it was not opened from the address book).
+
+Not tried yet: the macOS viewer, the web client in Chrome and Safari.
 
 ## Related
 
