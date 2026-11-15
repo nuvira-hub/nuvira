@@ -755,5 +755,6 @@
   "support.invite_code": "Invitation code, if the technician gave you one",
   "support.invite_code_bad": "The invitation code has 10 letters and digits (e.g. abcde-fghjk)",
   "server.invite_invalid": "The invitation is not valid any more (expired or already used): ask the technician for a new one",
-  "server.support_reserved": "This request is for the technician who sent the invitation"
+  "server.support_reserved": "This request is for the technician who sent the invitation",
+  "invite.public_server": "the public NuviraHub server"
 }

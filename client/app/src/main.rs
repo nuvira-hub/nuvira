@@ -1589,14 +1589,17 @@ fn main() {
         service_server: Mutex::new(None),
     };
 
-    let file_invite = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .and_then(|name| file_config(&name).invite);
+    let started_invite = std::env::current_exe().ok().and_then(|p| file_invite(&p.to_string_lossy()));
     tauri::Builder::default()
         // One app at a time: another start (a nuvirahub:// link opened in the
         // browser) hands its link to this one and closes. First of the plugins.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| bring_to_front(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            bring_to_front(app);
+            // The program of an invitation's page started while this one runs.
+            if let Some((code, server)) = argv.first().and_then(|exe| file_invite(exe)) {
+                invite::receive(app, code, server);
+            }
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .manage(state)
@@ -1683,7 +1686,7 @@ fn main() {
             }
             start_update_checks(app.handle());
             start_agent(app.handle());
-            start_links(app.handle(), file_invite.clone());
+            start_links(app.handle(), started_invite.clone());
             address_book::restore(app.handle());
             address_book::start_presence(app.handle());
             Ok(())
@@ -1698,7 +1701,7 @@ fn main() {
 /// in the user's registry; Linux: a hidden .desktop file; macOS: the app's
 /// Info.plist), the link it was started with, the ones handed by later starts, and
 /// the invitation in the file name.
-fn start_links(app: &AppHandle, file_invite: Option<String>) {
+fn start_links(app: &AppHandle, file_invite: Option<(String, String)>) {
     use tauri_plugin_deep_link::DeepLinkExt;
     #[cfg(any(windows, target_os = "linux"))]
     if let Err(e) = app.deep_link().register_all() {
@@ -1715,10 +1718,16 @@ fn start_links(app: &AppHandle, file_invite: Option<String>) {
             invite::open_url(&handle, url.as_str());
         }
     });
-    if let Some(code) = file_invite {
-        let server = app.state::<NuviraApp>().ui.lock().expect("state").server.clone();
+    if let Some((code, server)) = file_invite {
         invite::receive(app, code, server);
     }
+}
+
+/// The invitation's code and server in a program's file name (`invite=`).
+fn file_invite(exe: &str) -> Option<(String, String)> {
+    let name = std::path::Path::new(exe).file_name()?.to_string_lossy().into_owned();
+    let config = file_config(&name);
+    Some((config.invite?, config.server.unwrap_or_default()))
 }
 
 /// Set by a start of this program that replaces the running one (restart, update):

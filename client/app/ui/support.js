@@ -21,7 +21,8 @@ function renderSupport(state) {
   renderNote(state);
   renderInvite(state);
   const available = supportAvailable(state);
-  $("sq-card").classList.toggle("hidden", !(available && state.controllable));
+  // An invitation's card shows the request itself.
+  $("sq-card").classList.toggle("hidden", !(available && state.controllable) || Boolean(state.invite));
   const open = Boolean(state.support);
   $("sq-form").classList.toggle("hidden", open);
   $("sq-open").classList.toggle("hidden", !open);
@@ -46,7 +47,7 @@ function renderInvite(state) {
   if (!inv) return;
   let text;
   if (inv.other_server && inv.server_locked) text = t("invite.locked", { server: inv.server });
-  else if (inv.other_server) text = t("invite.other_server", { server: inv.server, current: state.server || "NuviraHub" });
+  else if (inv.other_server) text = t("invite.other_server", { server: inv.server, current: state.server || t("invite.public_server") });
   else if (state.support) text = supportText(state.support);
   else if (state.support_error) text = "";
   else text = t("invite.waiting");
@@ -121,6 +122,10 @@ async function refreshQueue() {
     return;
   }
   checkForMe(requests);
+  // The invitations' uses change with the requests.
+  const count = requests.length;
+  if (count !== lastQueueCount) refreshInvites();
+  lastQueueCount = count;
   const list = $("queue-list");
   list.replaceChildren();
   $("queue-empty").classList.toggle("hidden", requests.length > 0);
@@ -173,6 +178,7 @@ async function refreshQueue() {
 // Requests made for this technician (invitations): the queue's icon gets a dot and
 // the window asks for attention, also while another section is open.
 let watchTimer = null;
+let lastQueueCount = -1;
 const seenForMe = new Set();
 
 function watchQueue(technician) {
