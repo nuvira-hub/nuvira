@@ -44,10 +44,10 @@ While muted by the person at the computer the viewer keeps capturing and sending
 | PC-LABORATORIO, the bar's button through UI Automation | Mint | on, then off: the agent followed both |
 | PC-LABORATORIO | Mint with the app of this build (IPC agent) | the strip's button muted it (the WAV stopped growing, the viewer showed the message) and unmuted it (growing again) |
 | PC-LABORATORIO, `--microphone` | Mint registered on the Pro test server with "No technician's microphone" | not offered: no capture, nothing played |
+| Mint (440 Hz tone) | PC-LABORATORIO's own speakers (Realtek), no WAV | 330 packets played, none lost, no underrun |
 
 Not tried yet: a Mac as viewer (microphone permission, entitlement) or as
-controlled computer; real speakers (playback was always written to a WAV file
-except in the remote sound's earlier tests of the same player); a Linux viewer
+controlled computer; real speakers on Linux (the VMs played into WAV files); a Linux viewer
 with a real microphone (only a monitor source); the web client (it has no
 microphone yet); the app's rules editor field (the console's checkbox and the
 limit of sessions without an account were tried in the console, through Firefox).
