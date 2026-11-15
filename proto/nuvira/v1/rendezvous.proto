@@ -307,7 +307,49 @@ message ApiRequest {
     // Answered with a Policy.
     GetAnonymousLimits get_anonymous_limits = 30;
     Policy put_anonymous_limits = 31;
+    // Invitation links (NuviraHub Pro, feature "pro.invite"), signed-in accounts:
+    // answered with an Invite, Invites, and nothing.
+    CreateInvite create_invite = 32;
+    ListInvites list_invites = 33;
+    DeleteInvite delete_invite = 34;
   }
+}
+
+// A link a technician sends a customer: it opens (or downloads) NuviraHub, which
+// asks this technician for support (docs/47-invitations.md).
+message CreateInvite {
+  // Valid for this long (1 to 720; 0: 24).
+  uint32 hours = 1;
+  // How many requests it can make (0: 1).
+  uint32 uses = 2;
+  string note = 3;
+  // The server as the technician's app has it ("host[:port]"): the customer's
+  // NuviraHub goes there.
+  string server = 4;
+}
+
+message ListInvites {}
+
+message DeleteInvite {
+  string code = 1;
+}
+
+message Invite {
+  string code = 1;
+  // The page of the invitation, when the server knows its public address
+  // (NUVIRA_PUBLIC_URL); otherwise the app makes it from the server's.
+  string url = 2;
+  string account = 3;
+  string note = 4;
+  // Unix seconds.
+  int64 created = 5;
+  int64 expires = 6;
+  uint32 uses = 7;
+  uint32 max_uses = 8;
+}
+
+message Invites {
+  repeated Invite invites = 1;
 }
 
 message GetAnonymousLimits {}
@@ -321,6 +363,9 @@ message SupportRequest {
   string name = 2;
   string message = 3;
   bool cancel = 4;
+  // An invitation's code (NuviraHub Pro, feature "pro.invite"): the request is
+  // for the technician who made it.
+  string invite = 5;
 }
 
 // To the device that asked: its place in the queue (1 = next), who took it, or
@@ -329,6 +374,10 @@ message SupportStatus {
   uint32 position = 1;
   string taken_by = 2;
   bool closed = 3;
+  // Why the request was not queued ("@key"), e.g. an expired invitation.
+  string error = 4;
+  // The technician the request is for (an invitation).
+  string invited_by = 5;
 }
 
 // What a computer is, sent by its agent at registration and every 15 minutes
@@ -408,6 +457,8 @@ message QueuedRequest {
   // Empty while waiting.
   string taken_by = 6;
   bool online = 7;
+  // The account the request is for (an invitation); only it can take it.
+  string for_account = 8;
 }
 
 message Queue {
@@ -462,6 +513,8 @@ message ApiResponse {
     TakenRequest taken = 15;
     DeviceInventory inventory = 16;
     Branding branding = 17;
+    Invite invite = 18;
+    Invites invites = 19;
   }
 }
 
