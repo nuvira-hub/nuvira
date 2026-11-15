@@ -62,6 +62,14 @@ pub enum NetEvent {
         switch_sides: bool,
         /// Its sound is played here (SetAudio switches it).
         audio: bool,
+        /// It can lock the computer when the session ends (SetLockOnEnd).
+        lock_on_end: bool,
+    },
+    /// Whether the remote computer will be locked when the session ends, and
+    /// whether its setting or the server's rules want it (no turning it off).
+    LockOnEnd {
+        on: bool,
+        forced: bool,
     },
     /// A document printed on the remote computer (PDF).
     PrintJob {
@@ -144,6 +152,8 @@ pub enum NetEvent {
         on: bool,
         error: String,
     },
+    /// A screenshot of the session was written (`Ok`: the file), or why not.
+    ScreenshotSaved(Result<std::path::PathBuf, String>),
     /// The decoding thread closed a recording: the files written, or why it broke.
     RecordingSaved {
         files: Vec<std::path::PathBuf>,
@@ -593,6 +603,7 @@ async fn handshake(
             resolution: false,
             audio: false,
             switch_sides: false,
+            lock_on_end: false,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None, false, false));
     }
@@ -627,6 +638,7 @@ async fn handshake(
         resolution: agent.resolution,
         audio: audio && agent.audio,
         switch_sides: agent.switch_sides && crate::REVERSE_HOST.get().is_some(),
+        lock_on_end: agent.lock_on_end,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -1081,6 +1093,9 @@ async fn session(
                             audio: p.audio,
                             switched_off: p.switched_off,
                         });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::LockOnEndState(l)) }) => {
+                        let _ = proxy.send_event(NetEvent::LockOnEnd { on: l.on, forced: l.forced });
                     }
                     Some(ControlMessage { msg: Some(Msg::RecordingState(r)) }) => {
                         let _ = proxy.send_event(NetEvent::Recording { on: r.on, error: r.error });

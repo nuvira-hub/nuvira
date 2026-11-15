@@ -670,6 +670,8 @@ pub struct PolicyUi {
     pub no_record: bool,
     pub no_resolution: bool,
     pub no_audio: bool,
+    #[serde(default)]
+    pub lock_on_end: bool,
 }
 
 impl From<pb::Policy> for PolicyUi {
@@ -688,6 +690,7 @@ impl From<pb::Policy> for PolicyUi {
             no_record: p.no_record,
             no_resolution: p.no_resolution,
             no_audio: p.no_audio,
+            lock_on_end: p.lock_on_end,
         }
     }
 }
@@ -708,6 +711,7 @@ impl From<PolicyUi> for pb::Policy {
             no_record: p.no_record,
             no_resolution: p.no_resolution,
             no_audio: p.no_audio,
+            lock_on_end: p.lock_on_end,
         }
     }
 }

@@ -25,6 +25,7 @@ Dark bar at the top centre of the session window (`client/viewer/src/toolbar.rs`
 | Two arrows | TCP tunnels (Pro, see [26-tcp-tunnel.md](26-tcp-tunnel.md)); only when the agent offers them | agent: tunnel streams |
 | Prompt | Opens a remote terminal window (see [25-remote-terminal.md](25-remote-terminal.md)); only when the agent offers it | agent: terminal stream |
 | Chat, Send file | See [16-clipboard-chat-files.md](16-clipboard-chat-files.md) | viewer, agent |
+| Camera | Screenshot: the picture on screen saved as PNG in the user's Pictures folder + `NuviraHub` (`XDG_PICTURES_DIR` on Linux), named like the recordings (`NuviraHub 2026-11-15 16.22.10 PC-NAME.png`), with the remote pointer drawn where it is; written on a thread of its own, then a message with the folder. The PNG has the size the picture arrives with: fitted to the window it is the scaled picture, at real size (1:1) the remote screen's own. Works with every decoder (the hardware ones' picture is read back from the GPU). Web client: the same button downloads the canvas as PNG. Tests: `--screenshot-after SECONDS` | viewer |
 | Power | Restarts the remote computer after a confirmation, then waits for it and connects again (see [27-remote-restart.md](27-remote-restart.md)); only with unattended access | agent: `Restart` |
 | Screen with two corners | The remote screen takes the window's size, as close as its modes allow, and goes back at the end (see [37-remote-resolution.md](37-remote-resolution.md)); off at the start, remembered; only when the agent can | agent: `SetResolution` |
 | Real size | 1:1 instead of fitting the window; the image follows the mouse, so moving it from one edge of the window to the other crosses the whole remote screen. `--actual-size` starts in this mode | viewer |
@@ -58,6 +59,13 @@ When the remote screen is larger than the window each window pixel averages seve
 
 - Bar, Ctrl+Alt+Del, view only, full screen, shrink and close towards PC-LABORATORIO: tested by the user.
 - Screen and quality change: session from the NUC (two screens) to the NUC itself in view-only mode, tested by the user.
+
+## Screenshot: tests of 2026-11-15
+
+Agent on the Mint VM (X11, 1280x800, pointer moved with `xdotool` to a known place), viewer on PC-LABORATORIO through the NAS server, `--screenshot-after 6`:
+
+- OpenH264: PNG 1152x720 (picture fitted to the window, scale 0.9), pointer at (360, 270) for (400, 300) on the Mint: right place, right colours.
+- `NUVIRA_DECODER=hardware` (Media Foundation, readback of the decoded texture): same result, pointer at (810, 540) for (900, 600).
 
 ## Related
 

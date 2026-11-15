@@ -199,17 +199,69 @@ fn footprints(from: usize, count: usize, start: f32, size: f32, src: usize) -> V
 
 /// Saves a frame as PNG at full resolution.
 pub fn write_png(frame: &YuvFrame, path: &std::path::Path) -> Result<()> {
+    write_screenshot(frame, None, path)
+}
+
+/// Saves a frame as PNG at full resolution, with the remote pointer drawn on it
+/// where it is (rectangle as fractions of the image, as the renderer gets it).
+pub fn write_screenshot(
+    frame: &YuvFrame,
+    cursor: Option<&CursorOverlay>,
+    path: &std::path::Path,
+) -> Result<()> {
     let (w, h) = (frame.width as usize, frame.height as usize);
+    anyhow::ensure!(w > 0 && h > 0 && frame.y.len() >= w * h, "no picture");
     let cols: Vec<(usize, usize)> = (0..w).map(|x| (x, x)).collect();
     let rows: Vec<(usize, usize)> = (0..h).map(|y| (y, y)).collect();
     let mut pixels = vec![0u32; w * h];
     yuv_to_rgb_scaled(frame, &cols, &rows, &mut pixels, w, 0);
+    if let Some(cursor) = cursor {
+        draw_cursor(&mut pixels, w, h, cursor);
+    }
     let rgb: Vec<u8> = pixels.iter().flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8]).collect();
     let file = std::io::BufWriter::new(std::fs::File::create(path)?);
     let mut encoder = png::Encoder::new(file, frame.width, frame.height);
     encoder.set_color(png::ColorType::Rgb);
     encoder.write_header()?.write_image_data(&rgb)?;
     Ok(())
+}
+
+/// Blends the pointer (straight-alpha RGBA) onto 0RGB pixels, scaled to its
+/// rectangle with the nearest pixel.
+fn draw_cursor(pixels: &mut [u32], w: usize, h: usize, cursor: &CursorOverlay) {
+    let s = &cursor.shape;
+    let (sw, sh) = (s.width as usize, s.height as usize);
+    if sw == 0 || sh == 0 || s.rgba.len() < sw * sh * 4 {
+        return;
+    }
+    let x0 = (cursor.rect[0] * w as f32).round() as i64;
+    let y0 = (cursor.rect[1] * h as f32).round() as i64;
+    let cw = ((cursor.rect[2] * w as f32).round() as i64).max(1);
+    let ch = ((cursor.rect[3] * h as f32).round() as i64).max(1);
+    for dy in 0..ch {
+        let y = y0 + dy;
+        if y < 0 || y >= h as i64 {
+            continue;
+        }
+        let sy = (dy as usize * sh / ch as usize).min(sh - 1);
+        for dx in 0..cw {
+            let x = x0 + dx;
+            if x < 0 || x >= w as i64 {
+                continue;
+            }
+            let sx = (dx as usize * sw / cw as usize).min(sw - 1);
+            let k = (sy * sw + sx) * 4;
+            let a = s.rgba[k + 3] as u32;
+            if a == 0 {
+                continue;
+            }
+            let dst = &mut pixels[y as usize * w + x as usize];
+            let mix = |src: u8, shift: u32| {
+                ((src as u32 * a + ((*dst >> shift) & 0xff) * (255 - a)) / 255) << shift
+            };
+            *dst = mix(s.rgba[k], 16) | mix(s.rgba[k + 1], 8) | mix(s.rgba[k + 2], 0);
+        }
+    }
 }
 
 #[inline(always)]

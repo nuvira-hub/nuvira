@@ -136,6 +136,10 @@ struct UiState {
     recording_allowed: bool,
     /// The server's rules record every session: the setting is locked.
     recording_required: bool,
+    /// This PC is locked when a session ends (settings).
+    lock_on_end: bool,
+    /// The server's rules lock it at the end of every session: the setting is locked.
+    lock_required: bool,
     /// Sessions towards other computers are recorded from the start (settings).
     record_sessions: bool,
     /// Folder of the recordings.
@@ -229,6 +233,9 @@ struct Settings {
     /// The person at this PC does not allow recordings of the sessions.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_recording: bool,
+    /// This PC is locked when a session ends.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    lock_on_end: bool,
     /// Sessions towards other computers are recorded from the start.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     record_sessions: bool,
@@ -734,7 +741,10 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                 bring_to_front(app);
             }
         }
-        AgentEvent::Rules { recording_required } => state.update(app, |ui| ui.recording_required = recording_required),
+        AgentEvent::Rules { recording_required, lock_required } => state.update(app, |ui| {
+            ui.recording_required = recording_required;
+            ui.lock_required = lock_required;
+        }),
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
             ui.session = None;
             if let Some(e) = error {
@@ -1019,6 +1029,17 @@ fn set_recording_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool)
     Ok(())
 }
 
+/// This PC locked when a session ends, or not (kept like [`set_privacy_allowed`]).
+#[tauri::command]
+fn set_lock_on_end(app: AppHandle, state: State<NuviraApp>, on: bool) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.lock_on_end = on;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.send(AgentCommand::LockOnEnd { on });
+    state.update(&app, |ui| ui.lock_on_end = on);
+    Ok(())
+}
+
 /// Folder where the session window saves the recordings.
 fn record_dir(settings: &Settings) -> PathBuf {
     settings.record_dir.as_ref().map(PathBuf::from).unwrap_or_else(nuvira_viewer::default_recording_dir)
@@ -1068,6 +1089,7 @@ fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
     let _ = commands.send(AgentCommand::AllowTunnel { allow: !settings.no_tunnel });
     let _ = commands.send(AgentCommand::AllowPrint { allow: !settings.no_print });
     let _ = commands.send(AgentCommand::AllowRecording { allow: !settings.no_recording });
+    let _ = commands.send(AgentCommand::LockOnEnd { on: settings.lock_on_end });
 }
 
 #[tauri::command]
@@ -1403,6 +1425,7 @@ fn main() {
             tunnel_allowed: !settings.no_tunnel,
             print_allowed: !settings.no_print,
             recording_allowed: !settings.no_recording,
+            lock_on_end: settings.lock_on_end,
             record_sessions: settings.record_sessions,
             record_dir: recordings,
             server_managed: policy_server().is_some(),
@@ -1428,6 +1451,7 @@ fn main() {
             new_password,
             set_privacy_allowed,
             set_recording_allowed,
+            set_lock_on_end,
             set_record_sessions,
             choose_record_dir,
             open_record_dir,

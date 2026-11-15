@@ -23,6 +23,7 @@ const LIMITS = [
   ["no_restart", "admin.policy_restart"],
   ["no_resolution", "admin.policy_resolution"],
   ["no_audio", "admin.policy_audio"],
+  ["lock_on_end", "admin.policy_lock"],
   ["no_record", "admin.policy_no_record"],
   ["record_always", "admin.policy_record"],
 ];
@@ -542,6 +543,7 @@ function showPolicy(policy) {
   $("policy-restart").checked = policy.no_restart;
   $("policy-resolution").checked = policy.no_resolution;
   $("policy-audio").checked = policy.no_audio;
+  $("policy-lock").checked = policy.lock_on_end;
   $("policy-no-record").checked = policy.no_record;
   $("policy-record").checked = policy.record_always;
 }
@@ -560,6 +562,7 @@ $("policy-form").addEventListener("submit", async (e) => {
     no_restart: $("policy-restart").checked,
     no_resolution: $("policy-resolution").checked,
     no_audio: $("policy-audio").checked,
+    lock_on_end: $("policy-lock").checked,
     no_record: $("policy-no-record").checked,
     record_always: $("policy-record").checked,
   };

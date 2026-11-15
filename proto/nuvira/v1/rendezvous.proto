@@ -131,6 +131,8 @@ message Policy {
   bool no_resolution = 12;
   // The computer's sound is never sent to the viewer.
   bool no_audio = 13;
+  // The computer is locked when a session ends (the viewer cannot turn it off).
+  bool lock_on_end = 14;
 }
 
 // ---------------------------------------------------------------------------

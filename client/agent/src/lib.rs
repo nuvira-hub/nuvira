@@ -14,6 +14,7 @@ mod fsops;
 #[cfg(any(windows, unix))]
 pub mod ipc;
 mod inventory;
+mod lock;
 mod pipeline;
 mod printer;
 mod pty;
@@ -203,6 +204,9 @@ pub enum AgentEvent {
     /// Rules of the server that the app shows (at the registration and when they change).
     Rules {
         recording_required: bool,
+        /// The computer is locked at the end of every session.
+        #[serde(default)]
+        lock_required: bool,
     },
     /// State of this device's support request (support queue, NuviraHub Pro):
     /// its place in the queue, who took it, or closed.
@@ -256,6 +260,11 @@ pub enum AgentCommand {
     AllowRecording {
         allow: bool,
     },
+    /// The person at the PC wants the computer locked when a session ends, or not
+    /// (kept like `AllowPrivacy`).
+    LockOnEnd {
+        on: bool,
+    },
     /// Switches something off (or back on) for the session in progress only, from the
     /// strip of the app: `name` as in [`AgentEvent::Permissions`].
     Switch {
@@ -278,6 +287,9 @@ struct Permissions {
     print: bool,
     #[serde(default = "yes")]
     recording: bool,
+    /// Lock the computer when a session ends.
+    #[serde(default)]
+    lock_on_end: bool,
 }
 
 fn yes() -> bool {
@@ -293,7 +305,14 @@ impl Permissions {
         std::fs::read_to_string(Self::path())
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(Self { privacy: true, terminal: true, tunnel: true, print: true, recording: true })
+            .unwrap_or(Self {
+                privacy: true,
+                terminal: true,
+                tunnel: true,
+                print: true,
+                recording: true,
+                lock_on_end: false,
+            })
     }
 
     fn save(self) {
@@ -411,6 +430,8 @@ pub async fn serve_via_server(
         allow_tunnel: AtomicBool::new(permissions.tunnel),
         allow_print: AtomicBool::new(permissions.print),
         allow_recording: AtomicBool::new(permissions.recording),
+        lock_on_end: AtomicBool::new(permissions.lock_on_end),
+        lock_asked: AtomicBool::new(false),
         features: Mutex::new(Vec::new()),
         unattended: opts.unattended,
         restarting: Mutex::new(None),
@@ -542,6 +563,10 @@ struct SessionContext {
     shared: Mutex<Option<Arc<shared::Shared>>>,
     /// The last session was handed over to a guest, who connects again with this.
     handover: Mutex<Option<shared::Handover>>,
+    /// The person at the PC wants it locked when a session ends ([`AgentCommand::LockOnEnd`]).
+    lock_on_end: AtomicBool,
+    /// The viewer of the session in progress asked for the lock at the end (`SetLockOnEnd`).
+    lock_asked: AtomicBool,
 }
 
 impl SessionContext {
@@ -552,6 +577,7 @@ impl SessionContext {
             tunnel: self.allow_tunnel.load(Ordering::Relaxed),
             print: self.allow_print.load(Ordering::Relaxed),
             recording: self.allow_recording.load(Ordering::Relaxed),
+            lock_on_end: self.lock_on_end.load(Ordering::Relaxed),
         }
         .save();
     }
@@ -572,7 +598,10 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
         "rules of the server"
     );
     // The app shows the setting of the recordings locked when the rules want them.
-    let _ = ctx.events.send(AgentEvent::Rules { recording_required: policy.record_always });
+    let _ = ctx.events.send(AgentEvent::Rules {
+        recording_required: policy.record_always,
+        lock_required: policy.lock_on_end,
+    });
     *ctx.policy.lock().expect("policy") = policy;
 }
 
@@ -602,6 +631,7 @@ fn merge_limits(a: nuvira_proto::v1::Policy, b: &nuvira_proto::v1::Policy) -> nu
         no_record: a.no_record || b.no_record,
         no_resolution: a.no_resolution || b.no_resolution,
         no_audio: a.no_audio || b.no_audio,
+        lock_on_end: a.lock_on_end || b.lock_on_end,
     }
 }
 
@@ -770,6 +800,7 @@ async fn signal_loop(
                                 .unwrap_or_default(),
                         });
                         if !join {
+                            lock_after(&ctx, &request, outcome.connected.is_some());
                             ctx.busy.fetch_sub(1, Ordering::Relaxed);
                             let _ = ctx.events.send(AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) });
                         }
@@ -856,6 +887,13 @@ async fn signal_loop(
                 Some(AgentCommand::AllowRecording { allow }) => {
                     if ctx.allow_recording.swap(allow, Ordering::Relaxed) != allow {
                         info!(allow, "session recording allowed by the person at the PC");
+                        ctx.save_permissions();
+                    }
+                    None
+                }
+                Some(AgentCommand::LockOnEnd { on }) => {
+                    if ctx.lock_on_end.swap(on, Ordering::Relaxed) != on {
+                        info!(on, "lock at the end of sessions, by the person at the PC");
                         ctx.save_permissions();
                     }
                     None
@@ -969,6 +1007,37 @@ async fn relayed_session(
         info!("session ended");
     }
     result
+}
+
+/// Whether the computer is locked when the session in progress ends: by the
+/// computer's setting, the server's rules (with this session's limits) or the
+/// viewer's request.
+fn lock_wanted(ctx: &SessionContext, request: &Request) -> (bool, bool) {
+    let forced = ctx.lock_on_end.load(Ordering::Relaxed)
+        || merge_limits(*ctx.policy.lock().expect("policy"), &request.limits).lock_on_end;
+    (forced || ctx.lock_asked.load(Ordering::Relaxed), forced)
+}
+
+/// At the end of a session (not a guest's): locks the computer when wanted, unless
+/// the session was handed over (the guest carries on) or the computer is restarting.
+fn lock_after(ctx: &SessionContext, request: &Request, connected: bool) {
+    let (wanted, _) = lock_wanted(ctx, request);
+    ctx.lock_asked.store(false, Ordering::Relaxed);
+    if !wanted || !connected || !lock::available() {
+        return;
+    }
+    if ctx.restarting.lock().expect("restarting").is_some() {
+        info!("not locked: the computer is restarting");
+        return;
+    }
+    if ctx.handover.lock().expect("handover").is_some() {
+        info!("not locked: the session was handed over");
+        return;
+    }
+    match lock::lock() {
+        Ok(()) => info!("computer locked at the end of the session"),
+        Err(e) => warn!("computer not locked at the end of the session: {e:#}"),
+    }
 }
 
 /// See [`SessionContext::restarting`].
@@ -1335,6 +1404,7 @@ async fn session(
             && !terminal_only
             && config.synthetic.is_none()
             && reverse::viewer_available(),
+        lock_on_end: gate.is_some() && lock::available(),
         // Files through the clipboard: with the clipboard and the files.
         clipboard_files: !terminal_only
             && !config.view_only
@@ -1394,6 +1464,7 @@ async fn session(
             bail!("{reason}");
         }
         *gate.ctx.switches.lock().expect("switches") = Some(switches.clone());
+        gate.ctx.lock_asked.store(false, Ordering::Relaxed);
     } else if let Some(reverse) = reverse {
         let given = match ctrl_rx.recv::<ControlMessage>().await? {
             Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
@@ -1479,6 +1550,12 @@ async fn session(
     }
     // After the video format: older viewers want it right after AuthResult.
     ctrl_tx.send(&tell_permissions(off.mask())).await?;
+    // Whether the computer will be locked at the end (after VideoFormat: the viewer
+    // reads that first).
+    if let Some(g) = gate.filter(|g| !g.request.join && lock::available()) {
+        let (on, forced) = lock_wanted(g.ctx, g.request);
+        ctrl_tx.send(&control(Msg::LockOnEndState(nuvira_proto::v1::LockOnEndState { on, forced }))).await?;
+    }
     // Capture in progress: the control channel replaces it when the screen changes.
     let pipeline = std::sync::Mutex::new(Some(first));
     let (screen_tx, mut screen_rx) = tokio::sync::watch::channel(screen_rect(&display));
@@ -2120,6 +2197,15 @@ async fn session(
                 Some(Msg::SetAudio(set)) => {
                     info!(on = set.on, "sound of the session");
                     let _ = audio_on_tx.send(set.on);
+                }
+                Some(Msg::SetLockOnEnd(set)) => {
+                    if let Some(g) = gate.filter(|g| !g.request.join) {
+                        info!(on = set.on, "lock at the end asked by the viewer");
+                        g.ctx.lock_asked.store(set.on, Ordering::Relaxed);
+                        let (on, forced) = lock_wanted(g.ctx, g.request);
+                        let state = nuvira_proto::v1::LockOnEndState { on, forced };
+                        ctrl_tx.send(&control(Msg::LockOnEndState(state))).await?;
+                    }
                 }
                 // Handed over to a guest: its token goes to it, this session ends
                 // (and the guests' with it), and it connects again as the first viewer.
@@ -2943,6 +3029,7 @@ fn local_hello() -> Hello {
         clipboard_files: false,
         handover: false,
         switch_sides: false,
+        lock_on_end: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,

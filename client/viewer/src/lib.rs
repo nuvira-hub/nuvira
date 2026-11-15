@@ -235,6 +235,15 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     send_file: Vec<PathBuf>,
 
+    /// Locks the remote computer when the session ends (also from the toolbar).
+    #[arg(long)]
+    lock_on_end: bool,
+
+    /// Tests: this many seconds after connecting, takes a screenshot as the
+    /// toolbar's button does (Pictures/NuviraHub).
+    #[arg(long, hide = true, value_name = "SECONDS")]
+    screenshot_after: Option<u64>,
+
     /// File manager, automated tests: downloads this remote file into --download-dir
     /// once connected (repeatable), then exits when all transfers are over.
     #[arg(long, value_name = "REMOTE_FILE")]
@@ -451,6 +460,10 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     let mut app = App {
         keep_last_frame: args.snapshot.is_some(),
         last_frame: None,
+        shown: None,
+        saving_screenshot: false,
+        screenshot_after: args.screenshot_after,
+        lock: LockOnEnd { wanted: args.lock_on_end, ..LockOnEnd::default() },
         slot: Arc::new(FrameSlot::default()),
         started,
         report: Report::default(),
@@ -624,10 +637,30 @@ struct Recording {
     required: bool,
 }
 
+/// Locking the remote computer when the session ends (`SetLockOnEnd`).
+#[derive(Default)]
+struct LockOnEnd {
+    /// The agent can.
+    available: bool,
+    /// Asked for (`--lock-on-end`, the toolbar): asked again after a reconnection.
+    wanted: bool,
+    /// What the agent says: it will lock, and its setting or the rules want it.
+    on: bool,
+    forced: bool,
+}
+
 struct App {
     /// Keeps a copy of the last frame for `--snapshot`.
     keep_last_frame: bool,
     last_frame: Option<nuvira_codec::YuvFrame>,
+    /// The picture on screen now, for a screenshot (the toolbar's button).
+    shown: Option<nuvira_codec::YuvFrame>,
+    /// A screenshot is being written (one at a time).
+    saving_screenshot: bool,
+    /// `--screenshot-after`.
+    screenshot_after: Option<u64>,
+    /// Locking the remote computer at the end of the session.
+    lock: LockOnEnd,
     slot: Arc<FrameSlot>,
     started: Instant,
     report: Report,
@@ -1116,6 +1149,13 @@ impl App {
                 self.send_view_size();
                 self.send_control(Msg::SetRecording(nuvira_proto::v1::SetRecording { on: !self.recording.on }));
             }
+            Action::Screenshot => self.screenshot(),
+            Action::LockOnEnd if self.lock.available && !self.lock.forced => {
+                self.lock.wanted = !self.lock.on;
+                info!(on = self.lock.wanted, "lock of the remote computer at the end asked");
+                self.send_control(Msg::SetLockOnEnd(nuvira_proto::v1::SetLockOnEnd { on: self.lock.wanted }));
+            }
+            Action::LockOnEnd => {}
             Action::Sound => {
                 if let Some(on) = self.sound {
                     info!(on = !on, "sound of the remote computer");
@@ -1245,6 +1285,59 @@ impl App {
             info!("file to send: {}", path.display());
             let _ = files.send(net::Outgoing::File(path));
         }
+    }
+
+    /// Saves the picture on screen as PNG in Pictures/NuviraHub, with the remote
+    /// pointer drawn where it is, on a thread of its own (a 4K picture takes a
+    /// moment to convert and compress).
+    fn screenshot(&mut self) {
+        if self.saving_screenshot {
+            return;
+        }
+        let Some(frame) = &self.shown else {
+            self.notice(&t("viewer.screenshot_none"), false);
+            return;
+        };
+        let frame = frame.clone();
+        let cursor = self.pointer_overlay();
+        let dir = recorder::pictures_dir();
+        let stem = recorder::file_stem(&self.agent);
+        let proxy = self.proxy.clone();
+        self.saving_screenshot = true;
+        std::thread::spawn(move || {
+            let result = (|| -> anyhow::Result<PathBuf> {
+                std::fs::create_dir_all(&dir).with_context(|| dir.display().to_string())?;
+                let path = (1..)
+                    .map(|n| match n {
+                        1 => dir.join(format!("{stem}.png")),
+                        n => dir.join(format!("{stem} ({n}).png")),
+                    })
+                    .find(|p| !p.exists())
+                    .expect("a free name");
+                let planes = frame.with_planes();
+                cpu::write_screenshot(&planes, cursor.as_ref(), &path)
+                    .with_context(|| path.display().to_string())?;
+                Ok(path)
+            })();
+            let _ = proxy.send_event(NetEvent::ScreenshotSaved(result.map_err(|e| format!("{e:#}"))));
+        });
+    }
+
+    /// The remote pointer as it is now, wherever it is (for a screenshot).
+    fn pointer_overlay(&self) -> Option<render::CursorOverlay> {
+        let p = &self.pointer;
+        let (x, y, visible, serial) = p.position?;
+        let s = p.shape.as_ref().filter(|s| s.serial == serial && visible)?;
+        let (sw, sh) = (p.screen.0.max(1) as f32, p.screen.1.max(1) as f32);
+        Some(render::CursorOverlay {
+            shape: s.clone(),
+            rect: [
+                (x - s.hot_x as i32) as f32 / sw,
+                (y - s.hot_y as i32) as f32 / sh,
+                s.width as f32 / sw,
+                s.height as f32 / sh,
+            ],
+        })
     }
 
     /// The remote pointer: this computer's pointer takes its shape while this
@@ -1512,8 +1605,19 @@ impl ApplicationHandler<NetEvent> for App {
                 resolution,
                 audio,
                 switch_sides,
+                lock_on_end,
             } => {
                 self.remote_mac = remote_mac;
+                self.lock.available = lock_on_end;
+                self.lock.on = false;
+                self.lock.forced = false;
+                if lock_on_end && self.lock.wanted {
+                    let set = nuvira_proto::v1::SetLockOnEnd { on: true };
+                    self.send_control(nuvira_proto::v1::control_message::Msg::SetLockOnEnd(set));
+                }
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&format!("{{lockAvailable:{lock_on_end},lockOn:false,lockForced:false}}"));
+                }
                 self.switch_offered = switch_sides;
                 self.switching = false;
                 if let Some(toolbar) = &self.toolbar {
@@ -1639,6 +1743,13 @@ impl ApplicationHandler<NetEvent> for App {
                 for path in std::mem::take(&mut self.pending_files) {
                     self.send_file(path);
                 }
+                if let Some(secs) = self.screenshot_after.take() {
+                    let proxy = self.proxy.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_secs(secs));
+                        let _ = proxy.send_event(NetEvent::Toolbar(toolbar::Action::Screenshot));
+                    });
+                }
                 if let Some(toolbar) = &self.toolbar {
                     let name = if agent.is_empty() { &self.agent } else { &agent };
                     let path = if direct { "direct" } else { "relay" };
@@ -1652,7 +1763,7 @@ impl ApplicationHandler<NetEvent> for App {
                 self.update_title();
             }
             NetEvent::FrameReady => {
-                let Some(frame) = self.slot.take() else { return };
+                let Some(mut frame) = self.slot.take() else { return };
                 if self.keep_last_frame {
                     let planes = frame.yuv.with_planes();
                     let last = self.last_frame.get_or_insert_with(Default::default);
@@ -1669,6 +1780,7 @@ impl ApplicationHandler<NetEvent> for App {
                 renderer.upload(&frame.yuv);
                 renderer.render();
                 let render_us = t.elapsed().as_micros() as u64;
+                self.shown = Some(std::mem::take(&mut frame.yuv));
                 tracing::trace!("frame shown in {render_us} µs");
                 self.report.render_us += render_us;
                 if let Some(offset) = self.clock_offset_us {
@@ -1900,6 +2012,28 @@ impl ApplicationHandler<NetEvent> for App {
                 self.recording.asked = false;
                 self.send_view_size();
                 self.update_toolbar_state();
+            }
+            NetEvent::LockOnEnd { on, forced } => {
+                info!(on, forced, "lock of the remote computer at the end");
+                self.lock.on = on;
+                self.lock.forced = forced;
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&format!("{{lockOn:{on},lockForced:{forced}}}"));
+                }
+            }
+            NetEvent::ScreenshotSaved(result) => {
+                self.saving_screenshot = false;
+                match result {
+                    Ok(path) => {
+                        info!("screenshot saved: {}", path.display());
+                        let dir = path.parent().unwrap_or(&path).display().to_string();
+                        self.notice(&tf("viewer.screenshot_saved", &[("dir", &dir)]), false);
+                    }
+                    Err(e) => {
+                        error!("screenshot: {e}");
+                        self.notice(&tf("viewer.screenshot_failed", &[("reason", &e)]), true);
+                    }
+                }
             }
             NetEvent::RecordingSaved { files, error } => {
                 match error {

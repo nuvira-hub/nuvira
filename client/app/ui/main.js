@@ -115,6 +115,15 @@ $("print-allowed").addEventListener("change", async (e) => {
   }
 });
 
+$("lock-on-end").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_lock_on_end", { on: e.target.checked });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !e.target.checked;
+  }
+});
+
 $("recording-allowed").addEventListener("change", async (e) => {
   try {
     await invoke("set_recording_allowed", { allowed: e.target.checked });
@@ -220,6 +229,9 @@ function render(state) {
   $("recording-allowed").checked = state.recording_allowed || state.recording_required;
   $("recording-allowed").disabled = state.recording_required;
   $("recording-required").classList.toggle("hidden", !state.recording_required);
+  $("lock-on-end").checked = state.lock_on_end || state.lock_required;
+  $("lock-on-end").disabled = state.lock_required;
+  $("lock-required").classList.toggle("hidden", !state.lock_required);
   $("record-sessions").checked = state.record_sessions;
   $("record-dir").textContent = state.record_dir;
   $("print-auto").classList.toggle("hidden", !state.print_auto);

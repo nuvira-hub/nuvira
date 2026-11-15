@@ -37,3 +37,4 @@
 | 38 | [Remote audio](38-remote-audio.md) | What the controlled computer plays comes out of the technician's speakers (Opus over QUIC datagrams); mute button; sent from Windows for now |
 | 39 | [Shared sessions](39-shared-sessions.md) | More technicians on the computer of a session in progress: the same picture and input, the rest stays with the first one, who can hand the session over |
 | 40 | [Switch sides](40-switch-sides.md) | The technician shows their own screen to the person at the controlled computer, inside the same session (a QUIC connection within a stream) |
+| 41 | [Lock the computer when the session ends](41-lock-on-end.md) | Setting at the computer, Pro rule or the technician's choice for one session; how Windows, Linux and macOS lock |

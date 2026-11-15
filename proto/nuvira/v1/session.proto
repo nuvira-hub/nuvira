@@ -63,7 +63,25 @@ message ControlMessage {
     HandOver hand_over = 37;
     HandedOver handed_over = 38;
     SwitchSides switch_sides = 39;
+    SetLockOnEnd set_lock_on_end = 40;
+    LockOnEndState lock_on_end_state = 41;
   }
+}
+
+// From the viewer (agents with Hello.lock_on_end): lock the computer when this
+// session ends (true), or not (false). It cannot undo what the computer's setting
+// or the server's rules want.
+message SetLockOnEnd {
+  bool on = 1;
+}
+
+// From the agent, after AuthResult and after every SetLockOnEnd: whether the
+// computer will be locked when the session ends, and whether that is wanted by the
+// computer's own setting or the server's rules (`forced`: the viewer cannot turn
+// it off). Not when the session is handed over or the computer restarts.
+message LockOnEndState {
+  bool on = 1;
+  bool forced = 2;
 }
 
 // Files and folders copied on one side (both directions, to a side with
@@ -521,6 +539,9 @@ message Hello {
   // Both sides: switch sides (SwitchSides): the viewer can show its own screen,
   // the agent can open a window with it.
   bool switch_sides = 25;
+  // From the agent: it can lock the computer when the session ends
+  // (SetLockOnEnd, LockOnEndState).
+  bool lock_on_end = 26;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

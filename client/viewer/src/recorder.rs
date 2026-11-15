@@ -308,33 +308,56 @@ pub fn file_stem(device: &str) -> String {
 
 /// The user's Videos folder (Movies on macOS) + NuviraHub.
 pub fn default_dir() -> PathBuf {
-    videos_dir().join("NuviraHub")
+    user_dir(Folder::Videos).join("NuviraHub")
+}
+
+/// The user's Pictures folder + NuviraHub: screenshots of the session.
+pub fn pictures_dir() -> PathBuf {
+    user_dir(Folder::Pictures).join("NuviraHub")
+}
+
+#[derive(Clone, Copy)]
+enum Folder {
+    Videos,
+    Pictures,
 }
 
 #[cfg(windows)]
-fn videos_dir() -> PathBuf {
-    use windows::Win32::UI::Shell::{FOLDERID_Videos, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
+fn user_dir(folder: Folder) -> PathBuf {
+    use windows::Win32::UI::Shell::{FOLDERID_Pictures, FOLDERID_Videos, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
+    let (id, fallback) = match folder {
+        Folder::Videos => (&FOLDERID_Videos, "Videos"),
+        Folder::Pictures => (&FOLDERID_Pictures, "Pictures"),
+    };
     // SAFETY: the returned string is freed with CoTaskMemFree.
     unsafe {
-        match SHGetKnownFolderPath(&FOLDERID_Videos, KF_FLAG_DEFAULT, None) {
+        match SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None) {
             Ok(p) => {
                 let path = PathBuf::from(p.to_string().unwrap_or_default());
                 windows::Win32::System::Com::CoTaskMemFree(Some(p.0 as _));
                 path
             }
-            Err(_) => std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default().join("Videos"),
+            Err(_) => std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default().join(fallback),
         }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn videos_dir() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("Movies")
+fn user_dir(folder: Folder) -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    home.join(match folder {
+        Folder::Videos => "Movies",
+        Folder::Pictures => "Pictures",
+    })
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn videos_dir() -> PathBuf {
+fn user_dir(folder: Folder) -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let (key, fallback) = match folder {
+        Folder::Videos => ("XDG_VIDEOS_DIR=", "Videos"),
+        Folder::Pictures => ("XDG_PICTURES_DIR=", "Pictures"),
+    };
     // XDG_VIDEOS_DIR="$HOME/Video" in ~/.config/user-dirs.dirs (localised names).
     let config =
         std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".config"));
@@ -342,7 +365,7 @@ fn videos_dir() -> PathBuf {
         .ok()
         .and_then(|text| {
             text.lines().find_map(|l| {
-                let value = l.trim().strip_prefix("XDG_VIDEOS_DIR=")?.trim_matches('"');
+                let value = l.trim().strip_prefix(key)?.trim_matches('"');
                 let path = match value.strip_prefix("$HOME") {
                     Some(rest) => home.join(rest.trim_start_matches('/')),
                     None => PathBuf::from(value),
@@ -350,7 +373,7 @@ fn videos_dir() -> PathBuf {
                 (path != home).then_some(path)
             })
         })
-        .unwrap_or_else(|| home.join("Videos"))
+        .unwrap_or_else(|| home.join(fallback))
 }
 
 /// Year, month, day, hour, minute, second of the local clock.

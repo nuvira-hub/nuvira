@@ -114,8 +114,14 @@
   <button id="privacy" data-i18n-title="tb.privacy" hidden>
     <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M4 5l16 10"/></svg>
   </button>
+  <button id="screenshot" data-i18n-title="tb.screenshot">
+    <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+  </button>
   <button id="record" data-i18n-title="tb.record" hidden>
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle class="dot-rec" cx="12" cy="12" r="4"/></svg>
+  </button>
+  <button id="lock" data-i18n-title="tb.lock_on_end" hidden>
+    <svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
   </button>
   <button id="restart" data-i18n-title="tb.restart" hidden>
     <svg viewBox="0 0 24 24"><path d="M12 2v10M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
@@ -148,7 +154,7 @@
   for (const node of document.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
 
   const send = (action) => window.ipc.postMessage(action);
-  for (const id of ["switch", "sendfile", "files", "terminal", "tunnels", "chat", "sas", "viewonly", "sound", "privacy", "record", "restart", "resolution", "actual", "fullscreen", "collapse", "expand", "close"]) {
+  for (const id of ["switch", "sendfile", "files", "terminal", "tunnels", "chat", "sas", "viewonly", "sound", "privacy", "screenshot", "record", "lock", "restart", "resolution", "actual", "fullscreen", "collapse", "expand", "close"]) {
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
@@ -214,6 +220,14 @@
       }
       if ("privacy" in state) document.getElementById("privacy").classList.toggle("on", state.privacy);
       if ("restart" in state) document.getElementById("restart").hidden = !state.restart;
+      if ("lockAvailable" in state) document.getElementById("lock").hidden = !state.lockAvailable;
+      if ("lockOn" in state) {
+        const b = document.getElementById("lock");
+        b.classList.toggle("on", state.lockOn);
+        // Wanted by the computer's setting or the server's rules: it cannot be turned off.
+        b.disabled = Boolean(state.lockForced);
+        b.title = t(state.lockForced ? "tb.lock_on_end_forced" : state.lockOn ? "tb.lock_on_end_on" : "tb.lock_on_end");
+      }
       if ("recordingAvailable" in state) document.getElementById("record").hidden = !state.recordingAvailable;
       if ("recording" in state) {
         const b = document.getElementById("record");
