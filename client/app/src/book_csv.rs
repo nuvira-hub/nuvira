@@ -225,6 +225,25 @@ mod tests {
     }
 
     #[test]
+    fn reads_aliases() {
+        let text = "id,name
+Ufficio-Mario,Mario
+123-456-789,Rossi
+ab,Corto
+caffè,Accento
+";
+        let (entries, skipped) = parse(text).unwrap();
+        let ids: Vec<&str> = entries.iter().map(|(_, e)| e.device_id.as_str()).collect();
+        assert_eq!(ids, ["ufficio-mario", "123456789"]);
+        assert_eq!(
+            skipped,
+            [Skipped { line: 4, reason: "err.id_digits" }, Skipped { line: 5, reason: "err.id_digits" }]
+        );
+        let back = export(&entries.iter().map(|(_, e)| e.clone()).collect::<Vec<_>>());
+        assert!(back.contains("ufficio-mario"), "{back}");
+    }
+
+    #[test]
     fn export_and_back() {
         let e = EntryUi {
             device_id: "111222333".into(),
