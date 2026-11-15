@@ -1473,6 +1473,12 @@ async fn session(
     let recording_required = policy.record_always && !terminal_only;
     let viewer_records = hello.recording;
     let viewer_two_factor = hello.two_factor;
+    // The wallpaper can be hidden in sessions through a server, with a screen.
+    let wallpaper_state = gate
+        .filter(|g| !g.request.join && !terminal_only && config.synthetic.is_none())
+        .filter(|_| nuvira_capture::wallpaper::available())
+        .map(|g| g.ctx.access_dir.join(WALLPAPER_STATE));
+    let _wallpaper = RestoreWallpaper(wallpaper_state.clone());
     // Minutes without activity after which the session ends: the computer's
     // setting and the server's rules, the shorter (0: never). Not for guests nor
     // terminal-only sessions.
@@ -1610,6 +1616,7 @@ async fn session(
             && reverse::viewer_available(),
         lock_on_end: gate.is_some() && lock::available(),
         idle_limit: idle_limit > 0,
+        wallpaper: wallpaper_state.is_some(),
         // Files through the clipboard: with the clipboard and the files.
         clipboard_files: !terminal_only
             && !config.view_only
@@ -2460,6 +2467,22 @@ async fn session(
                     info!(on = set.on, "sound of the session");
                     let _ = audio_on_tx.send(set.on);
                 }
+                Some(Msg::SetWallpaper(set)) => {
+                    if let Some(state) = wallpaper_state.clone() {
+                        info!(hidden = set.hidden, "wallpaper asked by the viewer");
+                        let done = tokio::task::spawn_blocking(move || match set.hidden {
+                            true => nuvira_capture::wallpaper::hide(&state),
+                            false => {
+                                nuvira_capture::wallpaper::restore(&state);
+                                Ok(())
+                            }
+                        })
+                        .await?;
+                        if let Err(e) = done {
+                            warn!("wallpaper not hidden: {e:#}");
+                        }
+                    }
+                }
                 Some(Msg::SetLockOnEnd(set)) => {
                     if let Some(g) = gate.filter(|g| !g.request.join) {
                         info!(on = set.on, "lock at the end asked by the viewer");
@@ -3247,6 +3270,21 @@ impl Drop for RestoreScreens {
 
 fn recover_screens(dir: &std::path::Path) {
     nuvira_capture::resolution::recover(&dir.join("resolution.txt"));
+    nuvira_capture::wallpaper::recover(&dir.join(WALLPAPER_STATE));
+}
+
+/// What the wallpaper was, while a session keeps it hidden (`SetWallpaper`).
+const WALLPAPER_STATE: &str = "wallpaper.txt";
+
+/// Puts the wallpaper back at the end of the session, however it ends.
+struct RestoreWallpaper(Option<PathBuf>);
+
+impl Drop for RestoreWallpaper {
+    fn drop(&mut self) {
+        if let Some(state) = &self.0 {
+            nuvira_capture::wallpaper::restore(state);
+        }
+    }
 }
 
 /// Stops the capture and opens screen `index` (`fallback` if it cannot be opened):
@@ -3298,6 +3336,7 @@ fn local_hello() -> Hello {
         lock_on_end: false,
         two_factor: false,
         idle_limit: false,
+        wallpaper: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,

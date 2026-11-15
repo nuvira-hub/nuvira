@@ -69,6 +69,8 @@ pub enum NetEvent {
         audio: bool,
         /// It can lock the computer when the session ends (SetLockOnEnd).
         lock_on_end: bool,
+        /// It can hide its wallpaper (SetWallpaper).
+        wallpaper: bool,
     },
     /// Whether the remote computer will be locked when the session ends, and
     /// whether its setting or the server's rules want it (no turning it off).
@@ -628,6 +630,7 @@ async fn handshake(
             audio: false,
             switch_sides: false,
             lock_on_end: false,
+            wallpaper: false,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None, false, false));
     }
@@ -663,6 +666,7 @@ async fn handshake(
         audio: audio && agent.audio,
         switch_sides: agent.switch_sides && crate::REVERSE_HOST.get().is_some(),
         lock_on_end: agent.lock_on_end,
+        wallpaper: agent.wallpaper,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);

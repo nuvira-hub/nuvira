@@ -703,5 +703,8 @@
   "settings.idle_minutes": "Après {minutes} minutes",
   "settings.idle_hint": "Quand la personne qui contrôle cet ordinateur n'utilise ni clavier, ni souris, ni fichiers pendant ce temps, la session se ferme (un avertissement arrive une minute avant).",
   "settings.idle_required": "Les règles de ton organisation ferment les sessions après {minutes} minutes sans activité.",
-  "admin.policy_idle": "Fermer les sessions sans activité après (minutes, 0 jamais)"
+  "admin.policy_idle": "Fermer les sessions sans activité après (minutes, 0 jamais)",
+  "settings.sessions": "Mes sessions",
+  "settings.hide_wallpaper": "Masquer le fond d'écran des ordinateurs que je contrôle",
+  "settings.hide_wallpaper_hint": "Un fond uni à la place de l'image pendant la session : moins de données sur les connexions lentes. L'image revient à la fin."
 }

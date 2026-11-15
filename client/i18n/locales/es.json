@@ -703,5 +703,8 @@
   "settings.idle_minutes": "Tras {minutes} minutos",
   "settings.idle_hint": "Cuando quien controla este equipo no usa teclado, ratón ni archivos durante ese tiempo, la sesión se cierra (un minuto antes llega un aviso).",
   "settings.idle_required": "Las reglas de tu organización cierran las sesiones tras {minutes} minutos sin actividad.",
-  "admin.policy_idle": "Cerrar las sesiones sin actividad tras (minutos, 0 nunca)"
+  "admin.policy_idle": "Cerrar las sesiones sin actividad tras (minutos, 0 nunca)",
+  "settings.sessions": "Mis sesiones",
+  "settings.hide_wallpaper": "Ocultar el fondo de pantalla de los equipos que controlo",
+  "settings.hide_wallpaper_hint": "Un fondo liso en lugar de la imagen durante la sesión: menos datos en conexiones lentas. La imagen vuelve al final."
 }

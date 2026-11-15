@@ -68,7 +68,15 @@ message ControlMessage {
     CodeRequired code_required = 42;
     IdleWarning idle_warning = 43;
     Activity activity = 44;
+    SetWallpaper set_wallpaper = 45;
   }
+}
+
+// From the viewer (agents with Hello.wallpaper): the desktop wallpaper of the
+// controlled computer hidden (a plain background compresses better), or shown
+// again. The agent puts it back at the end of the session anyway.
+message SetWallpaper {
+  bool hidden = 1;
 }
 
 // From the agent (sessions with an idle limit: the computer's setting or the
@@ -575,6 +583,8 @@ message Hello {
   // From the agent: the session ends after a time without activity
   // (IdleWarning first); the viewer answers with Activity.
   bool idle_limit = 28;
+  // From the agent: it can hide its desktop wallpaper (SetWallpaper).
+  bool wallpaper = 29;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

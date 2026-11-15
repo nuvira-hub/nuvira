@@ -703,5 +703,8 @@
   "settings.idle_minutes": "Dopo {minutes} minuti",
   "settings.idle_hint": "Quando chi controlla questo computer non usa tastiera, mouse o file per quel tempo, la sessione si chiude (un minuto prima arriva un avviso).",
   "settings.idle_required": "Le regole della tua organizzazione chiudono le sessioni dopo {minutes} minuti senza attività.",
-  "admin.policy_idle": "Chiudi le sessioni senza attività dopo (minuti, 0 mai)"
+  "admin.policy_idle": "Chiudi le sessioni senza attività dopo (minuti, 0 mai)",
+  "settings.sessions": "Le mie sessioni",
+  "settings.hide_wallpaper": "Nascondi lo sfondo dei computer che controllo",
+  "settings.hide_wallpaper_hint": "Uno sfondo a tinta unita al posto dell'immagine durante la sessione: meno dati sulle connessioni lente. L'immagine torna alla fine."
 }

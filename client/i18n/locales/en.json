@@ -703,5 +703,8 @@
   "settings.idle_minutes": "After {minutes} minutes",
   "settings.idle_hint": "When whoever controls this computer uses neither keyboard nor mouse nor files for that long, the session ends (a warning comes one minute before).",
   "settings.idle_required": "Your organisation's rules end sessions after {minutes} minutes without activity.",
-  "admin.policy_idle": "End sessions without activity after (minutes, 0 never)"
+  "admin.policy_idle": "End sessions without activity after (minutes, 0 never)",
+  "settings.sessions": "My sessions",
+  "settings.hide_wallpaper": "Hide the wallpaper of the computers I control",
+  "settings.hide_wallpaper_hint": "A plain background instead of the picture during the session: less data on slow connections. The picture is put back at the end."
 }

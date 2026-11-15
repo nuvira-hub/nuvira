@@ -22,6 +22,7 @@ pub mod macos;
 #[cfg(target_os = "macos")]
 mod macos_pointer;
 pub mod resolution;
+pub mod wallpaper;
 mod synthetic;
 #[cfg(windows)]
 mod windows;

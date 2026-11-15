@@ -239,6 +239,11 @@ struct Args {
     #[arg(long)]
     lock_on_end: bool,
 
+    /// Hides the remote computer's wallpaper during the session (put back at the
+    /// end): a plain background needs less bandwidth.
+    #[arg(long)]
+    hide_wallpaper: bool,
+
     /// Tests: this many seconds after connecting, takes a screenshot as the
     /// toolbar's button does (Pictures/NuviraHub).
     #[arg(long, hide = true, value_name = "SECONDS")]
@@ -465,6 +470,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         screenshot_after: args.screenshot_after,
         lock: LockOnEnd { wanted: args.lock_on_end, ..LockOnEnd::default() },
         idle_warned: false,
+        hide_wallpaper: args.hide_wallpaper,
         slot: Arc::new(FrameSlot::default()),
         started,
         report: Report::default(),
@@ -663,6 +669,8 @@ struct App {
     screenshot_after: Option<u64>,
     /// Locking the remote computer at the end of the session.
     lock: LockOnEnd,
+    /// `--hide-wallpaper`: asked again at every connection.
+    hide_wallpaper: bool,
     /// The agent warned that the session ends without activity: the next local
     /// mouse or key event answers (`Activity`).
     idle_warned: bool,
@@ -1651,7 +1659,12 @@ impl ApplicationHandler<NetEvent> for App {
                 audio,
                 switch_sides,
                 lock_on_end,
+                wallpaper,
             } => {
+                if wallpaper && self.hide_wallpaper {
+                    let set = nuvira_proto::v1::SetWallpaper { hidden: true };
+                    self.send_control(nuvira_proto::v1::control_message::Msg::SetWallpaper(set));
+                }
                 self.remote_mac = remote_mac;
                 self.lock.available = lock_on_end;
                 self.lock.on = false;

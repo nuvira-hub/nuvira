@@ -149,6 +149,8 @@ struct UiState {
     idle_required: u32,
     /// Sessions towards other computers are recorded from the start (settings).
     record_sessions: bool,
+    /// Sessions towards other computers hide their wallpaper (settings).
+    hide_wallpaper: bool,
     /// Folder of the recordings.
     record_dir: String,
     /// Documents of remote computers go to this printer without asking (chosen in the
@@ -249,6 +251,9 @@ struct Settings {
     /// Sessions towards other computers are recorded from the start.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     record_sessions: bool,
+    /// Sessions towards other computers hide their wallpaper.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    hide_wallpaper: bool,
     /// Linux and macOS: the server the sign-in screen's agent was given last by this app.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     signin_server: Option<String>,
@@ -1087,6 +1092,16 @@ fn set_record_sessions(app: AppHandle, state: State<NuviraApp>, on: bool) -> Res
     Ok(())
 }
 
+/// Sessions towards other computers hide their wallpaper, or not.
+#[tauri::command]
+fn set_hide_wallpaper(app: AppHandle, state: State<NuviraApp>, on: bool) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.hide_wallpaper = on;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.update(&app, |ui| ui.hide_wallpaper = on);
+    Ok(())
+}
+
 /// Lets the technician pick another folder for the recordings.
 #[tauri::command]
 async fn choose_record_dir(app: AppHandle) -> Result<(), String> {
@@ -1237,6 +1252,9 @@ pub(crate) fn launch_viewer(
     if !terminal {
         if settings.record_sessions {
             command.arg("--record");
+        }
+        if settings.hide_wallpaper {
+            command.arg("--hide-wallpaper");
         }
         command.arg("--record-dir").arg(record_dir(&settings));
     }
@@ -1464,6 +1482,7 @@ fn main() {
             lock_on_end: settings.lock_on_end,
             idle_minutes: settings.idle_minutes,
             record_sessions: settings.record_sessions,
+            hide_wallpaper: settings.hide_wallpaper,
             record_dir: recordings,
             server_managed: policy_server().is_some(),
             service_managed: service_managed(),
@@ -1494,6 +1513,7 @@ fn main() {
             access_ui::access_totp_check,
             access_ui::access_save,
             set_record_sessions,
+            set_hide_wallpaper,
             choose_record_dir,
             open_record_dir,
             set_terminal_allowed,

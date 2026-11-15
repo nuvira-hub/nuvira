@@ -144,6 +144,15 @@ $("recording-allowed").addEventListener("change", async (e) => {
   }
 });
 
+$("hide-wallpaper").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_hide_wallpaper", { on: e.target.checked });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !e.target.checked;
+  }
+});
+
 $("record-sessions").addEventListener("change", async (e) => {
   try {
     await invoke("set_record_sessions", { on: e.target.checked });
@@ -250,6 +259,7 @@ function render(state) {
   $("lock-on-end").disabled = state.lock_required;
   $("lock-required").classList.toggle("hidden", !state.lock_required);
   $("record-sessions").checked = state.record_sessions;
+  $("hide-wallpaper").checked = state.hide_wallpaper;
   $("record-dir").textContent = state.record_dir;
   $("print-auto").classList.toggle("hidden", !state.print_auto);
   $("print-auto-text").textContent = state.print_auto ? t("settings.print_auto", { printer: state.print_auto }) : "";
