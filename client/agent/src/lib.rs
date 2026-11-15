@@ -240,6 +240,12 @@ pub enum AgentEvent {
         position: u32,
         taken_by: String,
         closed: bool,
+        /// Why the request was not queued ("@key"), e.g. an expired invitation.
+        #[serde(default)]
+        error: String,
+        /// The technician the request is for (an invitation).
+        #[serde(default)]
+        invited_by: String,
     },
 }
 
@@ -261,6 +267,9 @@ pub enum AgentCommand {
     /// Asks the server's team for support (support queue, NuviraHub Pro).
     RequestSupport {
         message: String,
+        /// An invitation's code: the request is for the technician who made it.
+        #[serde(default)]
+        invite: String,
     },
     CancelSupport,
     /// The person at the PC allows privacy mode or not (app settings). Kept in the
@@ -909,10 +918,15 @@ async fn signal_loop(
                     if status.closed {
                         *ctx.support_ticket.lock().expect("support") = None;
                     }
+                    if !status.error.is_empty() {
+                        warn!(error = status.error, "support request refused");
+                    }
                     let _ = ctx.events.send(AgentEvent::Support {
                         position: status.position,
                         taken_by: status.taken_by,
                         closed: status.closed,
+                        error: status.error,
+                        invited_by: status.invited_by,
                     });
                     None
                 }
@@ -946,15 +960,16 @@ async fn signal_loop(
                     ctx.end_session.notify_waiters();
                     None
                 }
-                Some(AgentCommand::RequestSupport { message }) => {
+                Some(AgentCommand::RequestSupport { message, invite }) => {
                     let ticket = support_ticket();
                     *ctx.support_ticket.lock().expect("support") = Some(ticket.clone());
-                    info!("support requested");
+                    info!(invitation = !invite.is_empty(), "support requested");
                     Some(client_message::Msg::SupportRequest(nuvira_proto::v1::SupportRequest {
                         ticket,
                         name: device_name.clone(),
                         message,
                         cancel: false,
+                        invite,
                     }))
                 }
                 Some(AgentCommand::AllowPrivacy { allow }) => {

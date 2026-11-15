@@ -14,6 +14,7 @@ mod access_ui;
 mod address_book;
 mod book_csv;
 mod branding;
+mod invite;
 mod local_book;
 
 use std::path::PathBuf;
@@ -110,6 +111,10 @@ struct UiState {
     account: Option<address_book::AccountUi>,
     /// This computer's support request, while it is open (support queue).
     support: Option<SupportUi>,
+    /// Why the last support request was refused ("@key"), e.g. an expired invitation.
+    support_error: Option<String>,
+    /// An invitation link received and not finished yet (invite.rs).
+    invite: Option<invite::InviteUi>,
     /// A session just ended: the interface asks the technician for a note.
     note_request: Option<NoteRequestUi>,
     books: Vec<address_book::BookUi>,
@@ -184,10 +189,12 @@ struct NoteRequestUi {
 
 /// State of this computer's support request: its place in the queue (0 until the
 /// server answers) and who took it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 struct SupportUi {
     position: u32,
     taken_by: String,
+    /// The technician it is for (an invitation, docs/47-invitations.md).
+    invited_by: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -281,6 +288,8 @@ struct Settings {
 struct FileConfig {
     server: Option<String>,
     server_key: Option<String>,
+    /// An invitation's code (`invite=`, the program downloaded from its page).
+    invite: Option<String>,
 }
 
 fn file_config(file_name: &str) -> FileConfig {
@@ -295,12 +304,13 @@ fn file_config(file_name: &str) -> FileConfig {
         _ => stem,
     };
     let Some((_, options)) = stem.split_once('-') else { return FileConfig::default() };
-    let (mut host, mut port, mut key) = (None, None, None);
+    let (mut host, mut port, mut key, mut invite) = (None, None, None, None);
     for option in options.split(',') {
         match option.trim().split_once('=') {
             Some(("host", v)) if !v.is_empty() => host = Some(v.to_string()),
             Some(("port", v)) if v.parse::<u16>().is_ok() => port = Some(v.to_string()),
             Some(("key", v)) if nuvira_transport::parse_fingerprint(v).is_ok() => key = Some(v.to_string()),
+            Some(("invite", v)) if invite::valid_code(&invite::normalize(v)) => invite = Some(invite::normalize(v)),
             _ => {}
         }
     }
@@ -311,6 +321,7 @@ fn file_config(file_name: &str) -> FileConfig {
             None => host,
         }),
         server_key: key,
+        invite,
     }
 }
 
@@ -414,7 +425,7 @@ fn open_support(app: AppHandle) -> Result<(), String> {
 fn apply_file_config(settings: &mut Settings) {
     let name =
         std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
-    let FileConfig { server: Some(server), server_key } = file_config(&name.unwrap_or_default()) else {
+    let FileConfig { server: Some(server), server_key, .. } = file_config(&name.unwrap_or_default()) else {
         return;
     };
     if settings.server == server && settings.server_key == server_key {
@@ -695,12 +706,15 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
             ui.alias = alias;
             ui.alias_error = error;
         }),
-        AgentEvent::Online { device_id, websocket } => state.update(app, |ui| {
-            ui.status = "online".into();
-            ui.device_id = Some(device_id);
-            ui.websocket = websocket;
-            ui.error = None;
-        }),
+        AgentEvent::Online { device_id, websocket } => {
+            state.update(app, |ui| {
+                ui.status = "online".into();
+                ui.device_id = Some(device_id);
+                ui.websocket = websocket;
+                ui.error = None;
+            });
+            invite::try_send(app);
+        }
         AgentEvent::Offline { reason } => state.update(app, |ui| {
             ui.status = "offline".into();
             ui.error = Some(reason);
@@ -718,8 +732,15 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
             });
             bring_to_front(app);
         }
-        AgentEvent::Support { position, taken_by, closed } => state.update(app, |ui| {
-            ui.support = (!closed).then_some(SupportUi { position, taken_by });
+        AgentEvent::Support { position, taken_by, closed, error, invited_by } => state.update(app, |ui| {
+            let taken = !taken_by.is_empty();
+            ui.support = (!closed).then_some(SupportUi { position, taken_by, invited_by });
+            if !error.is_empty() {
+                ui.support_error = Some(error);
+            } else if closed || taken {
+                // Taken (or ended): the invitation did its part.
+                ui.invite = None;
+            }
         }),
         AgentEvent::IncomingClosed { session_id } => state.update(app, |ui| {
             if ui.incoming.as_ref().is_some_and(|i| i.session_id == session_id) {
@@ -1245,12 +1266,34 @@ fn connect_entry(app: AppHandle, state: State<NuviraApp>, id: i64, terminal: Opt
 
 /// Asks the server's team for support (support queue, NuviraHub Pro).
 #[tauri::command]
-fn request_support(app: AppHandle, state: State<NuviraApp>, message: String) -> Result<(), String> {
+fn request_support(
+    app: AppHandle,
+    state: State<NuviraApp>,
+    message: String,
+    invite: Option<String>,
+) -> Result<(), String> {
+    // An invitation's code typed by the person (docs/47-invitations.md).
+    let invite = invite.map(|c| invite::normalize(&c)).unwrap_or_default();
+    if !invite.is_empty() && !invite::valid_code(&invite) {
+        return Err(t("support.invite_code_bad"));
+    }
     let commands = state.commands.lock().expect("commands").clone();
     let commands = commands.ok_or_else(|| t("support.not_online"))?;
-    commands.send(AgentCommand::RequestSupport { message }).map_err(|_| t("support.not_online"))?;
-    state.update(&app, |ui| ui.support = Some(SupportUi { position: 0, taken_by: String::new() }));
+    commands.send(AgentCommand::RequestSupport { message, invite }).map_err(|_| t("support.not_online"))?;
+    state.update(&app, |ui| {
+        ui.support = Some(SupportUi::default());
+        ui.support_error = None;
+    });
     Ok(())
+}
+
+/// The technician's attention for a request made for them (the taskbar flashes,
+/// the dock bounces), without taking the focus.
+#[tauri::command]
+fn request_attention(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.request_user_attention(Some(UserAttentionType::Informational));
+    }
 }
 
 #[tauri::command]
@@ -1506,6 +1549,7 @@ fn main() {
         return;
     }
     init_logging();
+    wait_for_predecessor();
     nuvira_input::set_dpi_awareness();
     let mut settings = load_settings();
     apply_file_config(&mut settings);
@@ -1545,7 +1589,15 @@ fn main() {
         service_server: Mutex::new(None),
     };
 
+    let file_invite = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .and_then(|name| file_config(&name).invite);
     tauri::Builder::default()
+        // One app at a time: another start (a nuvirahub:// link opened in the
+        // browser) hands its link to this one and closes. First of the plugins.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| bring_to_front(app)))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
@@ -1577,6 +1629,12 @@ fn main() {
             repair_service,
             request_support,
             cancel_support,
+            request_attention,
+            invite::accept_invite,
+            invite::dismiss_invite,
+            address_book::invite_create,
+            address_book::invites_list,
+            address_book::invite_delete,
             session_note,
             address_book::support_queue,
             address_book::device_inventory,
@@ -1617,7 +1675,7 @@ fn main() {
             i18n,
             set_language
         ])
-        .setup(|app| {
+        .setup(move |app| {
             if let Some(b) = branding::get().filter(|b| !b.name.is_empty())
                 && let Some(window) = app.get_webview_window("main")
             {
@@ -1625,6 +1683,7 @@ fn main() {
             }
             start_update_checks(app.handle());
             start_agent(app.handle());
+            start_links(app.handle(), file_invite.clone());
             address_book::restore(app.handle());
             address_book::start_presence(app.handle());
             Ok(())
@@ -1633,6 +1692,61 @@ fn main() {
         .expect("starting the application");
     // Leaves time for the agent's connections to close.
     std::thread::sleep(Duration::from_millis(100));
+}
+
+/// nuvirahub:// links (invitations): this program is the scheme's handler (Windows:
+/// in the user's registry; Linux: a hidden .desktop file; macOS: the app's
+/// Info.plist), the link it was started with, the ones handed by later starts, and
+/// the invitation in the file name.
+fn start_links(app: &AppHandle, file_invite: Option<String>) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    #[cfg(any(windows, target_os = "linux"))]
+    if let Err(e) = app.deep_link().register_all() {
+        tracing::warn!("nuvirahub:// links not registered: {e}");
+    }
+    if let Ok(Some(urls)) = app.deep_link().get_current() {
+        for url in urls {
+            invite::open_url(app, url.as_str());
+        }
+    }
+    let handle = app.clone();
+    app.deep_link().on_open_url(move |event| {
+        for url in event.urls() {
+            invite::open_url(&handle, url.as_str());
+        }
+    });
+    if let Some(code) = file_invite {
+        let server = app.state::<NuviraApp>().ui.lock().expect("state").server.clone();
+        invite::receive(app, code, server);
+    }
+}
+
+/// Set by a start of this program that replaces the running one (restart, update):
+/// the new one waits for it to end, or it would hand over to it and close (one app
+/// at a time).
+const WAIT_PID: &str = "NUVIRA_WAIT_PID";
+
+fn wait_for_predecessor() {
+    let Some(pid) = std::env::var(WAIT_PID).ok().and_then(|p| p.parse::<u32>().ok()) else { return };
+    // SAFETY: at the start of main, before other threads read the environment.
+    unsafe { std::env::remove_var(WAIT_PID) };
+    let started = std::time::Instant::now();
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+        if let Ok(process) = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+            unsafe {
+                WaitForSingleObject(process, 15_000);
+                let _ = CloseHandle(process);
+            }
+        }
+    }
+    #[cfg(unix)]
+    while started.elapsed() < Duration::from_secs(15) && unsafe { libc::kill(pid as i32, 0) } == 0 {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    info!(pid, waited_ms = started.elapsed().as_millis() as u64, "previous app ended");
 }
 
 /// The app has no console of its own: from a command prompt its output must go to
@@ -2011,7 +2125,10 @@ async fn apply_update(app: AppHandle) -> Result<(), String> {
         let _ = std::fs::remove_file(&download);
         applied.map_err(error)?;
         info!("updated to {}: restarting", manifest.version);
-        std::process::Command::new(started_as()).spawn().map_err(|e| error(e.into()))?;
+        std::process::Command::new(started_as())
+            .env(WAIT_PID, std::process::id().to_string())
+            .spawn()
+            .map_err(|e| error(e.into()))?;
         app.exit(0);
         Ok(())
     }
@@ -2028,7 +2145,10 @@ async fn apply_update(app: AppHandle) -> Result<(), String> {
         }
         let _ = std::fs::remove_file(&download);
         info!("updated to {}: restarting", manifest.version);
-        std::process::Command::new(&exe).spawn().map_err(|e| error(e.into()))?;
+        std::process::Command::new(&exe)
+            .env(WAIT_PID, std::process::id().to_string())
+            .spawn()
+            .map_err(|e| error(e.into()))?;
         app.exit(0);
         Ok(())
     }
@@ -2044,6 +2164,7 @@ fn restart_app(app: AppHandle) -> Result<(), String> {
     let program = started_as();
     info!("restarting with the installed program {}", program.display());
     std::process::Command::new(&program)
+        .env(WAIT_PID, std::process::id().to_string())
         .spawn()
         .map_err(|e| tf("update.failed", &[("e", &e.to_string())]))?;
     app.exit(0);
@@ -2105,5 +2226,9 @@ mod tests {
         assert_eq!(file_config("nuvira-host=a.example,key=123.exe").server_key, None);
         // Without host nothing applies.
         assert_eq!(file_config(&format!("nuvira-key={KEY}.exe")), FileConfig::default());
+        // The program of an invitation's page.
+        let c = file_config(&format!("NuviraHub-host=nuvira.example.com,port=21216,key={KEY},invite=abcdefghjk (1).exe"));
+        assert_eq!((c.server.as_deref(), c.invite.as_deref()), (Some("nuvira.example.com:21216"), Some("abcdefghjk")));
+        assert_eq!(file_config("NuviraHub-host=a.example,invite=short.exe").invite, None);
     }
 }

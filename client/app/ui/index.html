@@ -21,6 +21,7 @@
     </button>
     <button class="nav hidden" data-section="queue" id="nav-queue" data-i18n-title="nav.queue">
       <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/></svg>
+      <span class="badge-dot hidden" id="queue-new"></span>
     </button>
     <button class="nav hidden" data-section="admin" id="nav-admin" data-i18n-title="nav.admin">
       <svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
@@ -98,6 +99,18 @@
           </p>
         </div>
 
+        <!-- An invitation link received (invite.rs, docs/47-invitations.md) -->
+        <div id="invite-card" class="this-pc invite-card hidden">
+          <strong data-i18n="invite.title">Support invitation</strong>
+          <p id="invite-text"></p>
+          <p id="invite-error" class="message hidden"></p>
+          <div class="actions">
+            <span class="spacer"></span>
+            <button type="button" id="invite-dismiss" data-i18n="invite.dismiss">Close</button>
+            <button type="button" id="invite-accept" class="primary hidden" data-i18n="invite.switch">Use this server and ask for support</button>
+          </div>
+        </div>
+
         <div id="sq-card" class="this-pc sq-card collapsed hidden">
           <button type="button" id="sq-toggle" class="sq-toggle" aria-expanded="false" aria-controls="sq-form">
             <strong data-i18n="support.ask_title">Ask for support</strong>
@@ -106,6 +119,7 @@
           <form id="sq-form" class="stack">
             <span class="hint" data-i18n="support.ask_hint">Your request goes to the support team: the first free technician connects, and you accept.</span>
             <input id="sq-message" maxlength="500" data-i18n-placeholder="support.message" placeholder="What do you need? (optional)">
+            <input id="sq-invite" class="mono" maxlength="20" autocomplete="off" spellcheck="false" data-i18n-placeholder="support.invite_code" placeholder="Invitation code, if the technician gave you one">
             <div class="actions"><span class="spacer"></span><button type="submit" class="primary" data-i18n="support.ask">Ask for support</button></div>
           </form>
           <div id="sq-open" class="stack hidden">
@@ -170,6 +184,34 @@
         <p id="queue-error" class="message hidden"></p>
         <p id="queue-empty" class="hint hidden" data-i18n="queue.empty">Nobody is waiting.</p>
         <div id="queue-list" class="stack"></div>
+
+        <!-- Invitation links (NuviraHub Pro, feature "pro.invite") -->
+        <div id="invites" class="hidden">
+          <h2 data-i18n="invite.links">Invitation links</h2>
+          <p class="hint" data-i18n="invite.links_hint">A link for a customer: it opens NuviraHub (or downloads it) and asks you for support. Only you can take the request.</p>
+          <form id="invite-form" class="inline-form">
+            <select id="invite-hours">
+              <option value="1" data-i18n="invite.hours_1">1 hour</option>
+              <option value="4" data-i18n="invite.hours_4">4 hours</option>
+              <option value="24" selected data-i18n="invite.hours_24">1 day</option>
+              <option value="168" data-i18n="invite.hours_168">1 week</option>
+            </select>
+            <select id="invite-uses">
+              <option value="1" selected data-i18n="invite.uses_1">once</option>
+              <option value="5" data-i18n="invite.uses_5">5 times</option>
+              <option value="20" data-i18n="invite.uses_20">20 times</option>
+            </select>
+            <input id="invite-note" maxlength="200" data-i18n-placeholder="invite.note" placeholder="Note (e.g. the customer's name)">
+            <button type="submit" class="primary" data-i18n="invite.create">Create the link</button>
+          </form>
+          <div id="invite-made" class="invite-made hidden">
+            <input id="invite-made-url" class="mono" readonly>
+            <button type="button" id="invite-made-copy" data-i18n="invite.copy">Copy the link</button>
+            <span id="invite-made-code" class="hint"></span>
+          </div>
+          <p id="invite-list-error" class="message hidden"></p>
+          <div id="invite-list" class="stack"></div>
+        </div>
       </section>
 
       <!-- Administration -->

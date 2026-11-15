@@ -57,6 +57,10 @@ cat > "$app/Contents/Info.plist" <<EOF
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>© 2026 Alessandro Blason · AGPL-3.0</string>
+    <key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLName</key><string>NuviraHub invitation</string>
+        <key>CFBundleURLSchemes</key><array><string>nuvirahub</string></array>
+    </dict></array>
     <key>NSMicrophoneUsageDescription</key><string>NuviraHub sends your voice to the computer you control, while you turn on the microphone in the session.</string>
 </dict>
 </plist>

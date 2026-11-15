@@ -851,6 +851,79 @@ pub struct QueueItemUi {
     since: i64,
     /// Empty while waiting.
     taken_by: String,
+    /// The account it is for (an invitation); only it can take it.
+    for_account: String,
+}
+
+/// An invitation link (NuviraHub Pro, feature "pro.invite", docs/47-invitations.md).
+#[derive(Debug, Clone, Serialize)]
+pub struct InviteOut {
+    /// As people read it: "abcde-fghjk".
+    code: String,
+    /// The page to send: the server's public address (NUVIRA_PUBLIC_URL), or made
+    /// from the server's address.
+    url: String,
+    account: String,
+    note: String,
+    /// Seconds since 1970.
+    created: i64,
+    expires: i64,
+    uses: u32,
+    max_uses: u32,
+}
+
+fn invite_out(app: &AppHandle, inv: pb::Invite) -> InviteOut {
+    let code = if inv.code.len() == 10 { format!("{}-{}", &inv.code[..5], &inv.code[5..]) } else { inv.code };
+    let url = if inv.url.is_empty() {
+        // The server's web address: the one its updates come from, without the path.
+        let server = app.state::<NuviraApp>().ui.lock().expect("state").server.clone();
+        let base = nuvira_update::base_url(
+            nuvira_transport::signal::server_or_public(&server),
+            None,
+            nuvira_transport::signal::DEFAULT_PORT,
+        );
+        format!("{}/i/{code}", base.trim_end_matches("/nuvira/update"))
+    } else {
+        inv.url
+    };
+    InviteOut {
+        code,
+        url,
+        account: inv.account,
+        note: inv.note,
+        created: inv.created,
+        expires: inv.expires,
+        uses: inv.uses,
+        max_uses: inv.max_uses,
+    }
+}
+
+/// Makes an invitation link for this technician, valid `hours` and `uses` times.
+#[tauri::command]
+pub async fn invite_create(app: AppHandle, hours: u32, uses: u32, note: String) -> Result<InviteOut, String> {
+    let server = app.state::<NuviraApp>().ui.lock().expect("state").server.clone();
+    let server = nuvira_transport::signal::server_or_public(&server).to_string();
+    let Some(ApiResult::Invite(inv)) =
+        call(&app, Call::CreateInvite(pb::CreateInvite { hours, uses, note, server })).await?
+    else {
+        return Err(t("err.server_too_old"));
+    };
+    info!("invitation created");
+    Ok(invite_out(&app, inv))
+}
+
+/// This technician's invitations (all of them for an administrator), newest first.
+#[tauri::command]
+pub async fn invites_list(app: AppHandle) -> Result<Vec<InviteOut>, String> {
+    let Some(ApiResult::Invites(list)) = call(&app, Call::ListInvites(pb::ListInvites {})).await? else {
+        return Ok(Vec::new());
+    };
+    Ok(list.invites.into_iter().map(|i| invite_out(&app, i)).collect())
+}
+
+#[tauri::command]
+pub async fn invite_delete(app: AppHandle, code: String) -> Result<(), String> {
+    call(&app, Call::DeleteInvite(pb::DeleteInvite { code })).await.map(|_| ())
 }
 
 /// The support queue of the server (any signed-in account sees it).
@@ -869,6 +942,7 @@ pub async fn support_queue(app: AppHandle) -> Result<Vec<QueueItemUi>, String> {
             message: r.message,
             since: r.since,
             taken_by: r.taken_by,
+            for_account: r.for_account,
         })
         .collect())
 }
