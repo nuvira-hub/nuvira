@@ -864,7 +864,10 @@ type Policy struct {
 	// The computer's sound is never sent to the viewer.
 	NoAudio bool `protobuf:"varint,13,opt,name=no_audio,json=noAudio,proto3" json:"no_audio,omitempty"`
 	// The computer is locked when a session ends (the viewer cannot turn it off).
-	LockOnEnd     bool `protobuf:"varint,14,opt,name=lock_on_end,json=lockOnEnd,proto3" json:"lock_on_end,omitempty"`
+	LockOnEnd bool `protobuf:"varint,14,opt,name=lock_on_end,json=lockOnEnd,proto3" json:"lock_on_end,omitempty"`
+	// Sessions end after this many minutes without activity from the viewer
+	// (keyboard, mouse, files); 0: never. Merged with others, the shortest wins.
+	IdleMinutes   uint32 `protobuf:"varint,15,opt,name=idle_minutes,json=idleMinutes,proto3" json:"idle_minutes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -995,6 +998,13 @@ func (x *Policy) GetLockOnEnd() bool {
 		return x.LockOnEnd
 	}
 	return false
+}
+
+func (x *Policy) GetIdleMinutes() uint32 {
+	if x != nil {
+		return x.IdleMinutes
+	}
+	return 0
 }
 
 type Upload struct {
@@ -5263,7 +5273,7 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"Registered\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12)\n" +
 	"\x06policy\x18\x02 \x01(\v2\x11.nuvira.v1.PolicyR\x06policy\x12\x1a\n" +
-	"\bfeatures\x18\x03 \x03(\tR\bfeatures\"\xc1\x03\n" +
+	"\bfeatures\x18\x03 \x03(\tR\bfeatures\"\xe4\x03\n" +
 	"\x06Policy\x12%\n" +
 	"\x0econfirm_always\x18\x01 \x01(\bR\rconfirmAlways\x12\x19\n" +
 	"\bno_files\x18\x02 \x01(\bR\anoFiles\x12!\n" +
@@ -5282,7 +5292,8 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\tno_record\x18\v \x01(\bR\bnoRecord\x12#\n" +
 	"\rno_resolution\x18\f \x01(\bR\fnoResolution\x12\x19\n" +
 	"\bno_audio\x18\r \x01(\bR\anoAudio\x12\x1e\n" +
-	"\vlock_on_end\x18\x0e \x01(\bR\tlockOnEnd\"c\n" +
+	"\vlock_on_end\x18\x0e \x01(\bR\tlockOnEnd\x12!\n" +
+	"\fidle_minutes\x18\x0f \x01(\rR\vidleMinutes\"c\n" +
 	"\x06Upload\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x1d\n" +
 	"\n" +

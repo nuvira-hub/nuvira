@@ -544,6 +544,7 @@ function showPolicy(policy) {
   $("policy-resolution").checked = policy.no_resolution;
   $("policy-audio").checked = policy.no_audio;
   $("policy-lock").checked = policy.lock_on_end;
+  $("policy-idle").value = String(policy.idle_minutes || 0);
   $("policy-no-record").checked = policy.no_record;
   $("policy-record").checked = policy.record_always;
 }
@@ -563,6 +564,7 @@ $("policy-form").addEventListener("submit", async (e) => {
     no_resolution: $("policy-resolution").checked,
     no_audio: $("policy-audio").checked,
     lock_on_end: $("policy-lock").checked,
+    idle_minutes: Math.max(0, Math.min(1440, Number($("policy-idle").value) || 0)),
     no_record: $("policy-no-record").checked,
     record_always: $("policy-record").checked,
   };

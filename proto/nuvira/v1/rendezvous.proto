@@ -133,6 +133,9 @@ message Policy {
   bool no_audio = 13;
   // The computer is locked when a session ends (the viewer cannot turn it off).
   bool lock_on_end = 14;
+  // Sessions end after this many minutes without activity from the viewer
+  // (keyboard, mouse, files); 0: never. Merged with others, the shortest wins.
+  uint32 idle_minutes = 15;
 }
 
 // ---------------------------------------------------------------------------

@@ -190,6 +190,15 @@ func MergeLimits(a, b *pb.Policy) *pb.Policy {
 	a.NoResolution = a.NoResolution || b.NoResolution
 	a.NoAudio = a.NoAudio || b.NoAudio
 	a.LockOnEnd = a.LockOnEnd || b.LockOnEnd
+	a.IdleMinutes = ShorterIdle(a.IdleMinutes, b.IdleMinutes)
+	return a
+}
+
+// ShorterIdle is the shorter of two idle limits in minutes (0: none).
+func ShorterIdle(a, b uint32) uint32 {
+	if a == 0 || (b != 0 && b < a) {
+		return b
+	}
 	return a
 }
 
@@ -197,7 +206,7 @@ func MergeLimits(a, b *pb.Policy) *pb.Policy {
 func AnyLimit(p *pb.Policy) bool {
 	return p != nil && (p.ConfirmAlways || p.NoFiles || p.NoClipboard || p.NoPrivacy || p.NoTerminal ||
 		p.NoTunnel || p.NoPrint || p.RecordAlways || p.NoInput || p.NoRestart || p.NoRecord || p.NoResolution || p.NoAudio ||
-		p.LockOnEnd)
+		p.LockOnEnd || p.IdleMinutes > 0)
 }
 
 // UploadDesk is implemented by modules that take files from the devices (session

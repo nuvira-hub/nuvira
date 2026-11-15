@@ -694,5 +694,14 @@
   "access.save": "Salva le regole",
   "access.saving": "Salvataggio…",
   "access.saved": "Regole salvate.",
-  "access.signin_old": "La schermata di accesso mantiene le regole precedenti finché non viene inserita la password di un amministratore."
+  "access.signin_old": "La schermata di accesso mantiene le regole precedenti finché non viene inserita la password di un amministratore.",
+  "viewer.idle_warning": "Nessuna attività: la sessione si chiude tra {seconds} s. Muovi il mouse su questa finestra per restare collegato.",
+  "viewer.idle_over": "Ancora collegato",
+  "agent.idle_ended": "sessione chiusa dopo un periodo senza attività",
+  "settings.idle": "Chiudi le sessioni senza attività",
+  "settings.idle_never": "Mai",
+  "settings.idle_minutes": "Dopo {minutes} minuti",
+  "settings.idle_hint": "Quando chi controlla questo computer non usa tastiera, mouse o file per quel tempo, la sessione si chiude (un minuto prima arriva un avviso).",
+  "settings.idle_required": "Le regole della tua organizzazione chiudono le sessioni dopo {minutes} minuti senza attività.",
+  "admin.policy_idle": "Chiudi le sessioni senza attività dopo (minuti, 0 mai)"
 }

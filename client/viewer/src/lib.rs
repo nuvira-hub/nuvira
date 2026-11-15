@@ -464,6 +464,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         saving_screenshot: false,
         screenshot_after: args.screenshot_after,
         lock: LockOnEnd { wanted: args.lock_on_end, ..LockOnEnd::default() },
+        idle_warned: false,
         slot: Arc::new(FrameSlot::default()),
         started,
         report: Report::default(),
@@ -662,6 +663,9 @@ struct App {
     screenshot_after: Option<u64>,
     /// Locking the remote computer at the end of the session.
     lock: LockOnEnd,
+    /// The agent warned that the session ends without activity: the next local
+    /// mouse or key event answers (`Activity`).
+    idle_warned: bool,
     slot: Arc<FrameSlot>,
     started: Instant,
     report: Report,
@@ -1305,6 +1309,14 @@ impl App {
             info!("file to send: {}", path.display());
             let _ = files.send(net::Outgoing::File(path));
         }
+    }
+
+    /// Answers the agent's idle warning.
+    fn still_here(&mut self) {
+        self.idle_warned = false;
+        info!("activity after the idle warning");
+        self.send_control(nuvira_proto::v1::control_message::Msg::Activity(nuvira_proto::v1::Activity {}));
+        self.notice(&t("viewer.idle_over"), false);
     }
 
     /// Saves the picture on screen as PNG in Pictures/NuviraHub, with the remote
@@ -2046,6 +2058,18 @@ impl ApplicationHandler<NetEvent> for App {
                 self.send_view_size();
                 self.update_toolbar_state();
             }
+            NetEvent::IdleWarning(seconds) => {
+                self.idle_warned = seconds > 0;
+                if seconds > 0 {
+                    info!(seconds, "the session ends soon without activity");
+                    self.notice(&tf("viewer.idle_warning", &[("seconds", &seconds.to_string())]), true);
+                    if let Some(window) = &self.window {
+                        window.request_user_attention(Some(winit::window::UserAttentionType::Informational));
+                    }
+                } else {
+                    self.notice(&t("viewer.idle_over"), false);
+                }
+            }
             NetEvent::LockOnEnd { on, forced } => {
                 info!(on, forced, "lock of the remote computer at the end");
                 self.lock.on = on;
@@ -2303,7 +2327,13 @@ impl ApplicationHandler<NetEvent> for App {
                     chat.add(false, &text);
                 }
             }
-            NetEvent::Toolbar(action) => self.handle_toolbar(event_loop, action),
+            NetEvent::Toolbar(action) => {
+                // A click on the bar is the person there too.
+                if self.idle_warned {
+                    self.still_here();
+                }
+                self.handle_toolbar(event_loop, action)
+            }
             NetEvent::RestartUsers { others } => {
                 info!(?others, "other people signed in on the remote computer");
                 if std::mem::take(&mut self.restart_check_pending) {
@@ -2373,6 +2403,18 @@ impl ApplicationHandler<NetEvent> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // The person is there: the agent's idle warning is answered.
+        if self.idle_warned
+            && matches!(
+                event,
+                WindowEvent::CursorMoved { .. }
+                    | WindowEvent::MouseInput { .. }
+                    | WindowEvent::MouseWheel { .. }
+                    | WindowEvent::KeyboardInput { .. }
+            )
+        {
+            self.still_here();
+        }
         if self.terminals.owns(id) {
             self.terminals.window_event(id, &event);
             if self.terminal_only && self.terminals.is_empty() {

@@ -39,3 +39,4 @@
 | 40 | [Switch sides](40-switch-sides.md) | The technician shows their own screen to the person at the controlled computer, inside the same session (a QUIC connection within a stream) |
 | 41 | [Lock the computer when the session ends](41-lock-on-end.md) | Setting at the computer, Pro rule or the technician's choice for one session; how Windows, Linux and macOS lock |
 | 42 | [Rules of unattended access](42-access-rules.md) | Computers allowed, two-factor code (TOTP) and access profiles; where they are kept and how the app saves them |
+| 43 | [End sessions without activity](43-idle-limit.md) | Minutes without keyboard, mouse or files after which a session ends; setting at the computer, Pro rule, warning one minute before |

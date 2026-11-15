@@ -143,6 +143,10 @@ struct UiState {
     lock_required: bool,
     /// The rules of unattended access, as the agent tells them (no secrets).
     access: Option<nuvira_agent::access::View>,
+    /// Sessions end after this many minutes without activity (settings, 0 never).
+    idle_minutes: u32,
+    /// The server's rules end them after this many (0: no rule).
+    idle_required: u32,
     /// Sessions towards other computers are recorded from the start (settings).
     record_sessions: bool,
     /// Folder of the recordings.
@@ -239,6 +243,9 @@ struct Settings {
     /// This PC is locked when a session ends.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     lock_on_end: bool,
+    /// Sessions end after this many minutes without activity (0: never).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    idle_minutes: u32,
     /// Sessions towards other computers are recorded from the start.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     record_sessions: bool,
@@ -408,6 +415,10 @@ fn apply_file_config(settings: &mut Settings) {
     if let Err(e) = save_settings(settings) {
         tracing::warn!("settings not saved: {e:#}");
     }
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 fn settings_path() -> PathBuf {
@@ -750,9 +761,10 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
             }
         }
         AgentEvent::Access { view } => state.update(app, |ui| ui.access = Some(view)),
-        AgentEvent::Rules { recording_required, lock_required } => state.update(app, |ui| {
+        AgentEvent::Rules { recording_required, lock_required, idle_minutes } => state.update(app, |ui| {
             ui.recording_required = recording_required;
             ui.lock_required = lock_required;
+            ui.idle_required = idle_minutes;
         }),
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
             ui.session = None;
@@ -1049,6 +1061,17 @@ fn set_lock_on_end(app: AppHandle, state: State<NuviraApp>, on: bool) -> Result<
     Ok(())
 }
 
+/// Sessions towards this PC end after `minutes` without activity (0: never).
+#[tauri::command]
+fn set_idle_minutes(app: AppHandle, state: State<NuviraApp>, minutes: u32) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.idle_minutes = minutes;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.send(AgentCommand::IdleMinutes { minutes });
+    state.update(&app, |ui| ui.idle_minutes = minutes);
+    Ok(())
+}
+
 /// Folder where the session window saves the recordings.
 fn record_dir(settings: &Settings) -> PathBuf {
     settings.record_dir.as_ref().map(PathBuf::from).unwrap_or_else(nuvira_viewer::default_recording_dir)
@@ -1099,6 +1122,7 @@ fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
     let _ = commands.send(AgentCommand::AllowPrint { allow: !settings.no_print });
     let _ = commands.send(AgentCommand::AllowRecording { allow: !settings.no_recording });
     let _ = commands.send(AgentCommand::LockOnEnd { on: settings.lock_on_end });
+    let _ = commands.send(AgentCommand::IdleMinutes { minutes: settings.idle_minutes });
     // The rules of unattended access as they are now (the agent's first report may
     // be older than the last change).
     let _ = commands.send(AgentCommand::GetAccess);
@@ -1438,6 +1462,7 @@ fn main() {
             print_allowed: !settings.no_print,
             recording_allowed: !settings.no_recording,
             lock_on_end: settings.lock_on_end,
+            idle_minutes: settings.idle_minutes,
             record_sessions: settings.record_sessions,
             record_dir: recordings,
             server_managed: policy_server().is_some(),
@@ -1464,6 +1489,7 @@ fn main() {
             set_privacy_allowed,
             set_recording_allowed,
             set_lock_on_end,
+            set_idle_minutes,
             access_ui::access_totp_new,
             access_ui::access_totp_check,
             access_ui::access_save,

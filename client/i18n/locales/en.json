@@ -694,5 +694,14 @@
   "access.save": "Save the rules",
   "access.saving": "Saving…",
   "access.saved": "Rules saved.",
-  "access.signin_old": "The sign-in screen keeps the previous rules until an administrator's password is given."
+  "access.signin_old": "The sign-in screen keeps the previous rules until an administrator's password is given.",
+  "viewer.idle_warning": "No activity: the session ends in {seconds} s. Move the mouse over this window to stay connected.",
+  "viewer.idle_over": "Still connected",
+  "agent.idle_ended": "session ended after a time without activity",
+  "settings.idle": "End sessions without activity",
+  "settings.idle_never": "Never",
+  "settings.idle_minutes": "After {minutes} minutes",
+  "settings.idle_hint": "When whoever controls this computer uses neither keyboard nor mouse nor files for that long, the session ends (a warning comes one minute before).",
+  "settings.idle_required": "Your organisation's rules end sessions after {minutes} minutes without activity.",
+  "admin.policy_idle": "End sessions without activity after (minutes, 0 never)"
 }

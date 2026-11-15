@@ -66,8 +66,22 @@ message ControlMessage {
     SetLockOnEnd set_lock_on_end = 40;
     LockOnEndState lock_on_end_state = 41;
     CodeRequired code_required = 42;
+    IdleWarning idle_warning = 43;
+    Activity activity = 44;
   }
 }
+
+// From the agent (sessions with an idle limit: the computer's setting or the
+// server's rule Policy.idle_minutes): nothing has come from the viewer for a
+// while, and the session ends in `seconds` unless something does. Keyboard and
+// mouse, files and Activity count. 0: the warning is over (something came).
+message IdleWarning {
+  uint32 seconds = 1;
+}
+
+// From the viewer after an IdleWarning: the person at it is there (moved the
+// mouse over the window, a key, a click on the bar), also without control.
+message Activity {}
 
 // From the agent, instead of AuthResult, to viewers with Hello.two_factor: the
 // password is right and the computer also wants the 6-digit code of its
@@ -558,6 +572,9 @@ message Hello {
   // CodeRequired. To older viewers a computer with the check refuses its
   // permanent passwords ("@server.old_version", which they translate).
   bool two_factor = 27;
+  // From the agent: the session ends after a time without activity
+  // (IdleWarning first); the viewer answers with Activity.
+  bool idle_limit = 28;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

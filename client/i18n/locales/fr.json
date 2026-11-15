@@ -694,5 +694,14 @@
   "access.save": "Enregistrer les règles",
   "access.saving": "Enregistrement…",
   "access.saved": "Règles enregistrées.",
-  "access.signin_old": "L'écran de connexion garde les règles précédentes jusqu'à ce que le mot de passe d'un administrateur soit saisi."
+  "access.signin_old": "L'écran de connexion garde les règles précédentes jusqu'à ce que le mot de passe d'un administrateur soit saisi.",
+  "viewer.idle_warning": "Aucune activité : la session se ferme dans {seconds} s. Bouge la souris sur cette fenêtre pour rester connecté.",
+  "viewer.idle_over": "Toujours connecté",
+  "agent.idle_ended": "session fermée après une période sans activité",
+  "settings.idle": "Fermer les sessions sans activité",
+  "settings.idle_never": "Jamais",
+  "settings.idle_minutes": "Après {minutes} minutes",
+  "settings.idle_hint": "Quand la personne qui contrôle cet ordinateur n'utilise ni clavier, ni souris, ni fichiers pendant ce temps, la session se ferme (un avertissement arrive une minute avant).",
+  "settings.idle_required": "Les règles de ton organisation ferment les sessions après {minutes} minutes sans activité.",
+  "admin.policy_idle": "Fermer les sessions sans activité après (minutes, 0 jamais)"
 }

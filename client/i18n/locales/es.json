@@ -694,5 +694,14 @@
   "access.save": "Guardar las reglas",
   "access.saving": "Guardando…",
   "access.saved": "Reglas guardadas.",
-  "access.signin_old": "La pantalla de inicio de sesión mantiene las reglas anteriores hasta que se introduzca la contraseña de un administrador."
+  "access.signin_old": "La pantalla de inicio de sesión mantiene las reglas anteriores hasta que se introduzca la contraseña de un administrador.",
+  "viewer.idle_warning": "Sin actividad: la sesión se cierra en {seconds} s. Mueve el ratón sobre esta ventana para seguir conectado.",
+  "viewer.idle_over": "Sigues conectado",
+  "agent.idle_ended": "sesión cerrada tras un tiempo sin actividad",
+  "settings.idle": "Cerrar las sesiones sin actividad",
+  "settings.idle_never": "Nunca",
+  "settings.idle_minutes": "Tras {minutes} minutos",
+  "settings.idle_hint": "Cuando quien controla este equipo no usa teclado, ratón ni archivos durante ese tiempo, la sesión se cierra (un minuto antes llega un aviso).",
+  "settings.idle_required": "Las reglas de tu organización cierran las sesiones tras {minutes} minutos sin actividad.",
+  "admin.policy_idle": "Cerrar las sesiones sin actividad tras (minutos, 0 nunca)"
 }

@@ -115,6 +115,17 @@ $("print-allowed").addEventListener("change", async (e) => {
   }
 });
 
+for (const option of $("idle-minutes").options) {
+  if (option.value !== "0") option.dataset.minutes = option.value;
+}
+$("idle-minutes").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_idle_minutes", { minutes: Number(e.target.value) });
+  } catch (err) {
+    console.error(err);
+  }
+});
+
 $("lock-on-end").addEventListener("change", async (e) => {
   try {
     await invoke("set_lock_on_end", { on: e.target.checked });
@@ -229,6 +240,12 @@ function render(state) {
   $("recording-allowed").checked = state.recording_allowed || state.recording_required;
   $("recording-allowed").disabled = state.recording_required;
   $("recording-required").classList.toggle("hidden", !state.recording_required);
+  for (const option of $("idle-minutes").options) {
+    if (option.dataset.minutes) option.textContent = t("settings.idle_minutes", { minutes: option.dataset.minutes });
+  }
+  $("idle-minutes").value = String(state.idle_minutes || 0);
+  $("idle-required").classList.toggle("hidden", !state.idle_required);
+  $("idle-required").textContent = state.idle_required ? t("settings.idle_required", { minutes: state.idle_required }) : "";
   $("lock-on-end").checked = state.lock_on_end || state.lock_required;
   $("lock-on-end").disabled = state.lock_required;
   $("lock-required").classList.toggle("hidden", !state.lock_required);

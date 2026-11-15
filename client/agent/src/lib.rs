@@ -221,6 +221,9 @@ pub enum AgentEvent {
         /// The computer is locked at the end of every session.
         #[serde(default)]
         lock_required: bool,
+        /// Sessions end after this many minutes without activity (0: no rule).
+        #[serde(default)]
+        idle_minutes: u32,
     },
     /// State of this device's support request (support queue, NuviraHub Pro):
     /// its place in the queue, who took it, or closed.
@@ -276,6 +279,11 @@ pub enum AgentCommand {
     },
     /// The app wants the rules of unattended access again (it saved new ones).
     GetAccess,
+    /// Sessions end after this many minutes without activity from the viewer, 0
+    /// never (kept like `AllowPrivacy`).
+    IdleMinutes {
+        minutes: u32,
+    },
     /// The person at the PC wants the computer locked when a session ends, or not
     /// (kept like `AllowPrivacy`).
     LockOnEnd {
@@ -306,6 +314,9 @@ struct Permissions {
     /// Lock the computer when a session ends.
     #[serde(default)]
     lock_on_end: bool,
+    /// Sessions end after this many minutes without activity (0: never).
+    #[serde(default)]
+    idle_minutes: u32,
 }
 
 fn yes() -> bool {
@@ -328,6 +339,7 @@ impl Permissions {
                 print: true,
                 recording: true,
                 lock_on_end: false,
+                idle_minutes: 0,
             })
     }
 
@@ -448,6 +460,7 @@ pub async fn serve_via_server(
         allow_recording: AtomicBool::new(permissions.recording),
         lock_on_end: AtomicBool::new(permissions.lock_on_end),
         lock_asked: AtomicBool::new(false),
+        idle_minutes: AtomicU32::new(permissions.idle_minutes),
         access_dir: opts
             .identity_path
             .parent()
@@ -591,6 +604,8 @@ struct SessionContext {
     lock_on_end: AtomicBool,
     /// The viewer of the session in progress asked for the lock at the end (`SetLockOnEnd`).
     lock_asked: AtomicBool,
+    /// Minutes without activity after which sessions end ([`AgentCommand::IdleMinutes`]).
+    idle_minutes: AtomicU32,
     /// Folder of the device key, where the rules of unattended access are ([`access`]).
     access_dir: PathBuf,
     /// Time step of the last two-factor code accepted: each code works once.
@@ -608,6 +623,7 @@ impl SessionContext {
             print: self.allow_print.load(Ordering::Relaxed),
             recording: self.allow_recording.load(Ordering::Relaxed),
             lock_on_end: self.lock_on_end.load(Ordering::Relaxed),
+            idle_minutes: self.idle_minutes.load(Ordering::Relaxed),
         }
         .save();
     }
@@ -631,6 +647,7 @@ fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy) {
     let _ = ctx.events.send(AgentEvent::Rules {
         recording_required: policy.record_always,
         lock_required: policy.lock_on_end,
+        idle_minutes: policy.idle_minutes,
     });
     *ctx.policy.lock().expect("policy") = policy;
 }
@@ -662,6 +679,16 @@ fn merge_limits(a: nuvira_proto::v1::Policy, b: &nuvira_proto::v1::Policy) -> nu
         no_resolution: a.no_resolution || b.no_resolution,
         no_audio: a.no_audio || b.no_audio,
         lock_on_end: a.lock_on_end || b.lock_on_end,
+        idle_minutes: shorter_idle(a.idle_minutes, b.idle_minutes),
+    }
+}
+
+/// The shorter of two idle limits in minutes (0: none).
+fn shorter_idle(a: u32, b: u32) -> u32 {
+    match (a, b) {
+        (0, b) => b,
+        (a, 0) => a,
+        (a, b) => a.min(b),
     }
 }
 
@@ -917,6 +944,13 @@ async fn signal_loop(
                 Some(AgentCommand::AllowRecording { allow }) => {
                     if ctx.allow_recording.swap(allow, Ordering::Relaxed) != allow {
                         info!(allow, "session recording allowed by the person at the PC");
+                        ctx.save_permissions();
+                    }
+                    None
+                }
+                Some(AgentCommand::IdleMinutes { minutes }) => {
+                    if ctx.idle_minutes.swap(minutes, Ordering::Relaxed) != minutes {
+                        info!(minutes, "sessions end after a time without activity, by the person at the PC");
                         ctx.save_permissions();
                     }
                     None
@@ -1439,6 +1473,15 @@ async fn session(
     let recording_required = policy.record_always && !terminal_only;
     let viewer_records = hello.recording;
     let viewer_two_factor = hello.two_factor;
+    // Minutes without activity after which the session ends: the computer's
+    // setting and the server's rules, the shorter (0: never). Not for guests nor
+    // terminal-only sessions.
+    let idle_limit = match gate {
+        Some(g) if !g.request.join && !terminal_only => {
+            shorter_idle(g.ctx.idle_minutes.load(Ordering::Relaxed), policy.idle_minutes)
+        }
+        _ => 0,
+    };
     if let Some(gate) = gate {
         gate.terminal_only.store(terminal_only, Ordering::Relaxed);
     }
@@ -1566,6 +1609,7 @@ async fn session(
             && config.synthetic.is_none()
             && reverse::viewer_available(),
         lock_on_end: gate.is_some() && lock::available(),
+        idle_limit: idle_limit > 0,
         // Files through the clipboard: with the clipboard and the files.
         clipboard_files: !terminal_only
             && !config.view_only
@@ -1699,6 +1743,13 @@ async fn session(
     // Area the viewer draws the image in (0 = full size until it says otherwise).
     let view = Arc::new(AtomicU64::new(0));
     let session_start = Instant::now();
+    // Last activity from the viewer (keyboard and mouse, files, its requests), in
+    // ms since the start of the session: for the idle limit.
+    let activity = Arc::new(AtomicU64::new(0));
+    let mark_activity = {
+        let activity = activity.clone();
+        move || activity.store(session_start.elapsed().as_millis() as u64, Ordering::Relaxed)
+    };
     // First frame sent after the last feedback (ms from the start, 0 = none): tells
     // whether feedback is missing. Measuring from the last frame instead would make a
     // still screen (one frame every few seconds) look like a stuck network.
@@ -1929,6 +1980,10 @@ async fn session(
 
     let control_loop = async {
         let mut tick = tokio::time::interval(Duration::from_millis(250));
+        // The idle limit: checked every 5 s, a warning one minute before.
+        let mut idle_tick = tokio::time::interval(Duration::from_secs(5));
+        let mut idle_warned = false;
+        let mut bytes_seen = 0u64;
         // Samples (time, bytes sent) of the last 2 s, for the rate actually used.
         let mut sent_samples = std::collections::VecDeque::<(Instant, u64)>::new();
         // Keyframes asked by the viewer: at most one a second. With the video as
@@ -1972,6 +2027,33 @@ async fn session(
                 }
                 Some(state) = switch_rx.recv() => {
                     ctrl_tx.send(&control(Msg::SwitchSides(state))).await?;
+                    continue;
+                }
+                _ = idle_tick.tick(), if idle_limit > 0 => {
+                    // Files moving count as activity.
+                    let bytes =
+                        stats::BYTES_IN.load(Ordering::Relaxed) + stats::BYTES_OUT.load(Ordering::Relaxed);
+                    if bytes != bytes_seen {
+                        bytes_seen = bytes;
+                        mark_activity();
+                    }
+                    let idle_ms = (session_start.elapsed().as_millis() as u64)
+                        .saturating_sub(activity.load(Ordering::Relaxed));
+                    let limit_ms = u64::from(idle_limit) * 60_000;
+                    if idle_ms >= limit_ms {
+                        info!(minutes = idle_limit, "session ended after a time without activity");
+                        bail!("@agent.idle_ended");
+                    }
+                    let warn_from = limit_ms.saturating_sub(60_000);
+                    if idle_ms >= warn_from && !idle_warned {
+                        idle_warned = true;
+                        let warning = nuvira_proto::v1::IdleWarning { seconds: ((limit_ms - idle_ms) / 1000) as u32 };
+                        ctrl_tx.send(&control(Msg::IdleWarning(warning))).await?;
+                    } else if idle_ms < warn_from && idle_warned {
+                        idle_warned = false;
+                        let over = nuvira_proto::v1::IdleWarning { seconds: 0 };
+                        ctrl_tx.send(&control(Msg::IdleWarning(over))).await?;
+                    }
                     continue;
                 }
                 _ = pointer_tick.tick(), if cursor_offered => {
@@ -2137,7 +2219,15 @@ async fn session(
                     continue;
                 }
             };
+            // What the viewer does counts as activity, not what it sends by itself.
+            if !matches!(
+                msg.msg,
+                Some(Msg::Ping(_) | Msg::Feedback(_) | Msg::ViewSize(_) | Msg::RequestKeyframe(_)) | None
+            ) {
+                mark_activity();
+            }
             match msg.msg {
+                Some(Msg::Activity(_)) => {}
                 Some(Msg::Ping(ping)) => {
                     let pong = Pong { ping_sent_us: ping.sent_us, agent_us: nuvira_proto::now_us() };
                     ctrl_tx.send(&control(Msg::Pong(pong))).await?;
@@ -2553,9 +2643,12 @@ async fn session(
         loop {
             tokio::select! {
                 event = rx.recv::<InputEvent>() => match event? {
-                    Some(event) => if let Some(injector) = &injector {
-                        injector.send(InputCmd::Event(event)).map_err(|_| closed())?;
-                    },
+                    Some(event) => {
+                        mark_activity();
+                        if let Some(injector) = &injector {
+                            injector.send(InputCmd::Event(event)).map_err(|_| closed())?;
+                        }
+                    }
                     None => break,
                 },
                 now = input_changes.changed(), if offered & switches::INPUT != 0 => {
@@ -3203,6 +3296,7 @@ fn local_hello() -> Hello {
         switch_sides: false,
         lock_on_end: false,
         two_factor: false,
+        idle_limit: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,

@@ -21,6 +21,8 @@ use winit::event_loop::EventLoopProxy;
 pub enum NetEvent {
     /// The person at the remote computer is being asked to accept.
     ConfirmationPending,
+    /// The session ends in this many seconds without activity (0: warning over).
+    IdleWarning(u32),
     /// The remote computer wants the two-factor code: the window asks for it and
     /// answers here (`None`: not given).
     CodeRequired(tokio::sync::oneshot::Sender<Option<String>>),
@@ -1116,6 +1118,9 @@ async fn session(
                             switched_off: p.switched_off,
                         });
                     }
+                    Some(ControlMessage { msg: Some(Msg::IdleWarning(w)) }) => {
+                        let _ = proxy.send_event(NetEvent::IdleWarning(w.seconds));
+                    }
                     Some(ControlMessage { msg: Some(Msg::LockOnEndState(l)) }) => {
                         let _ = proxy.send_event(NetEvent::LockOnEnd { on: l.on, forced: l.forced });
                     }
@@ -1250,6 +1255,11 @@ async fn session(
         r = streams => r.context("streams from the agent"),
         r = terminals => r,
         r = tunnels => r,
+    };
+    // The agent ended the session with a reason ("@key"): e.g. a time without activity.
+    let result = match agent_reason(&conn).await {
+        Some(reason) => Err(anyhow::anyhow!(reason)),
+        None => result,
     };
     close(&conn).await;
     // The decoder ends when its channel closes: it is waited for, so that on exit

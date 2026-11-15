@@ -188,6 +188,7 @@
           <label class="check"><input id="policy-resolution" type="checkbox"> <span data-i18n="admin.policy_resolution">No change of the screen resolution</span></label>
           <label class="check"><input id="policy-audio" type="checkbox"> <span data-i18n="admin.policy_audio">No sound of the computer</span></label>
           <label class="check"><input id="policy-lock" type="checkbox"> <span data-i18n="admin.policy_lock">Lock the computer when the session ends</span></label>
+          <label class="select-row"><span data-i18n="admin.policy_idle">End sessions without activity after (minutes, 0 never)</span> <input id="policy-idle" type="number" min="0" max="1440" step="1" value="0"></label>
           <label class="check"><input id="policy-no-record" type="checkbox"> <span data-i18n="admin.policy_no_record">No recordings by whoever connects</span></label>
           <label class="check hidden" id="policy-record-row"><input id="policy-record" type="checkbox"> <span data-i18n="admin.policy_record">Record every session (sent to the server)</span></label>
           <div class="actions"><span class="spacer"></span><button type="submit" class="primary" data-i18n="admin.policy_save">Apply to all</button></div>
@@ -348,6 +349,14 @@
         <label class="check"><input id="lock-on-end" type="checkbox"> <span data-i18n="settings.lock_on_end">Lock this computer when a session ends</span></label>
         <p id="lock-required" class="hint hidden" data-i18n="settings.lock_required">Required by your organisation's rules: this computer is locked at the end of every session.</p>
         <p class="hint" data-i18n="settings.lock_hint">When whoever controls this computer disconnects, it is locked: to use it again you sign in.</p>
+        <label class="select-row"><span data-i18n="settings.idle">End sessions without activity</span>
+          <select id="idle-minutes">
+            <option value="0" data-i18n="settings.idle_never">Never</option>
+            <option value="5"></option><option value="10"></option><option value="15"></option><option value="30"></option><option value="60"></option>
+          </select>
+        </label>
+        <p id="idle-required" class="hint hidden"></p>
+        <p class="hint" data-i18n="settings.idle_hint">When whoever controls this computer uses neither keyboard nor mouse nor files for that long, the session ends (a warning comes one minute before).</p>
         <label class="check"><input id="terminal-allowed" type="checkbox"> <span data-i18n="settings.terminal_allowed">Allow the remote terminal</span></label>
         <p class="hint" data-i18n="settings.terminal_hint">Whoever connects to this computer can open a command prompt with the rights of the user signed in, without seeing the desktop. The strip at the top says when a terminal is open.</p>
         <label class="check"><input id="tunnel-allowed" type="checkbox"> <span data-i18n="settings.tunnel_allowed">Allow tunnels to the local network</span></label>

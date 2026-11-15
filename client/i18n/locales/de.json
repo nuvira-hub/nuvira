@@ -694,5 +694,14 @@
   "access.save": "Regeln speichern",
   "access.saving": "Wird gespeichert …",
   "access.saved": "Regeln gespeichert.",
-  "access.signin_old": "Der Anmeldebildschirm behält die vorigen Regeln, bis das Passwort eines Administrators eingegeben wird."
+  "access.signin_old": "Der Anmeldebildschirm behält die vorigen Regeln, bis das Passwort eines Administrators eingegeben wird.",
+  "viewer.idle_warning": "Keine Aktivität: Die Sitzung endet in {seconds} s. Bewege die Maus über diesem Fenster, um verbunden zu bleiben.",
+  "viewer.idle_over": "Weiter verbunden",
+  "agent.idle_ended": "Sitzung nach einer Zeit ohne Aktivität beendet",
+  "settings.idle": "Sitzungen ohne Aktivität beenden",
+  "settings.idle_never": "Nie",
+  "settings.idle_minutes": "Nach {minutes} Minuten",
+  "settings.idle_hint": "Wenn die Person, die diesen Computer steuert, so lange weder Tastatur noch Maus noch Dateien benutzt, endet die Sitzung (eine Minute vorher kommt eine Warnung).",
+  "settings.idle_required": "Die Regeln deiner Organisation beenden Sitzungen nach {minutes} Minuten ohne Aktivität.",
+  "admin.policy_idle": "Sitzungen ohne Aktivität beenden nach (Minuten, 0 nie)"
 }
