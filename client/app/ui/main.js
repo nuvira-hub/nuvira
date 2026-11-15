@@ -196,7 +196,9 @@ $("language").addEventListener("change", async (e) => {
 });
 
 function formatId(id) {
-  return id ? `${id.slice(0, 3)} ${id.slice(3, 6)} ${id.slice(6)}` : "— — —";
+  if (!id) return "— — —";
+  // An alias (docs/46-aliases.md) is shown as it is.
+  return /^\d{9}$/.test(id) ? `${id.slice(0, 3)} ${id.slice(3, 6)} ${id.slice(6)}` : id;
 }
 
 function showSection(name) {
