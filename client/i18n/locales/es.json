@@ -93,7 +93,7 @@
   "connect.title": "Controlar un equipo",
   "connect.hint": "Escribe el ID del equipo que quieres controlar.",
   "connect.hint_address_book": "Escribe el ID, o un nombre, empresa o contacto: las sugerencias vienen de la libreta de direcciones.",
-  "connect.id_placeholder": "ID",
+  "connect.id_placeholder": "ID o nombre del equipo",
   "connect.id_placeholder_address_book": "ID o nombre de la libreta",
   "connect.id_label": "ID del equipo",
   "connect.password_placeholder": "Contraseña",

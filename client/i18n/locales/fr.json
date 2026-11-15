@@ -93,7 +93,7 @@
   "connect.title": "Contrôler un ordinateur",
   "connect.hint": "Saisis l'ID de l'ordinateur à contrôler.",
   "connect.hint_address_book": "Saisis l'ID, ou un nom, une société ou un contact : les suggestions viennent du carnet d'adresses.",
-  "connect.id_placeholder": "ID",
+  "connect.id_placeholder": "ID ou nom de l'ordinateur",
   "connect.id_placeholder_address_book": "ID ou nom du carnet d'adresses",
   "connect.id_label": "ID de l'ordinateur",
   "connect.password_placeholder": "Mot de passe",

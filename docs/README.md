@@ -42,3 +42,4 @@
 | 43 | [End sessions without activity](43-idle-limit.md) | Minutes without keyboard, mouse or files after which a session ends; setting at the computer, Pro rule, warning one minute before |
 | 44 | [Wallpaper hidden during the session](44-hidden-wallpaper.md) | A plain background while the technician works, put back at the end or at the next start of a killed agent |
 | 45 | [The technician's microphone](45-microphone.md) | The viewer's microphone out of the controlled computer's speakers (Opus over QUIC datagrams); muted by the person there; Pro rule |
+| 46 | [Aliases](46-aliases.md) | A readable name for a computer on its server, typed instead of the ID (app, viewer, address books, web client) |

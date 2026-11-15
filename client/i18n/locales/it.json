@@ -93,7 +93,7 @@
   "connect.title": "Controlla un computer",
   "connect.hint": "Scrivi l'ID del computer da controllare.",
   "connect.hint_address_book": "Scrivi l'ID oppure il nome, l'azienda o il referente: i suggerimenti arrivano dalla rubrica.",
-  "connect.id_placeholder": "ID",
+  "connect.id_placeholder": "ID o nome del computer",
   "connect.id_placeholder_address_book": "ID o nome dalla rubrica",
   "connect.id_label": "ID del computer",
   "connect.password_placeholder": "Password",

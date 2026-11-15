@@ -93,7 +93,7 @@
   "connect.title": "Control a computer",
   "connect.hint": "Type the ID of the computer to control.",
   "connect.hint_address_book": "Type the ID, or a name, company or contact: suggestions come from the address book.",
-  "connect.id_placeholder": "ID",
+  "connect.id_placeholder": "ID or computer name",
   "connect.id_placeholder_address_book": "ID or name from the address book",
   "connect.id_label": "ID of the computer",
   "connect.password_placeholder": "Password",
