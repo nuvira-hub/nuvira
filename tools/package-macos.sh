@@ -57,10 +57,24 @@ cat > "$app/Contents/Info.plist" <<EOF
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>© 2026 Alessandro Blason · AGPL-3.0</string>
+    <key>NSMicrophoneUsageDescription</key><string>NuviraHub sends your voice to the computer you control, while you turn on the microphone in the session.</string>
 </dict>
 </plist>
 EOF
 cp LICENSE "$app/Contents/Resources/"
+
+# The hardened runtime allows the microphone only with this entitlement (the
+# technician's microphone, docs/45-microphone.md); macOS asks the person once.
+entitlements="$(mktemp)"
+cat > "$entitlements" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.device.audio-input</key><true/>
+</dict>
+</plist>
+EOF
 
 # The virtual HID keyboard that types into the lock screen (docs/33-macos.md,
 # "Locked screen"): Karabiner-DriverKit-VirtualHIDDevice, public domain, signed and
@@ -74,7 +88,7 @@ echo "$KVHID_SHA256  $kvhid" | shasum -a 256 -c -
 if [ -n "$identity" ]; then
     # Nested code first: the app's signature seals it.
     codesign --force --options runtime --timestamp --sign "$identity" "$app/Contents/MacOS/nuvira-cups"
-    codesign --force --options runtime --timestamp --sign "$identity" "$app"
+    codesign --force --options runtime --timestamp --entitlements "$entitlements" --sign "$identity" "$app"
     codesign --verify --strict --verbose=2 "$app"
 fi
 
