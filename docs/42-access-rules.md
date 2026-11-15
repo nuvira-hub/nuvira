@@ -62,7 +62,9 @@ policies are to come.
   NuviraHub"), a key they translate.
 - The session window asks for the code in the box in the middle of the window
   (`notice.html`); `NUVIRA_CODE` gives it for tests. The web client closes the
-  attempt, asks for the code and opens the session again with password and code.
+  attempt, asks for the code in a box of the page and opens the session again
+  with password and code. (A `window.prompt()` was tried first: it blocks the
+  page, whose connection with the server then times out after ~10 s.)
 
 ## Tests of 2026-11-15
 
@@ -88,8 +90,18 @@ PC-LABORATORIO (Windows), and a viewer of 0.27.0.
   saved, the rest kept. The code turned on again from the app (QR code and key
   shown, code confirmed): the old secret's codes refused, the new one's accepted.
 
-Not tried yet: the copy for the sign-in screen on Linux and macOS (it needs the
-administrator's password), macOS, the web client.
+- Linux sign-in screen (Mint, LightDM): the app started inside the session,
+  "Save the rules" → polkit's password prompt (answered) → `/var/lib/nuvira`
+  got `access.json` (root's, 0600) next to the password's hash; switched to the
+  greeter (`dm-tool switch-to-greeter`), the greeter's agent asked PC-LABORATORIO's
+  viewer for the code and then let it in. Rules removed at the person's side: the
+  next system copy removed root's `access.json` too. (The system part of 0.27.0
+  does not know the file and leaves it there; its agent ignores it.)
+- Web client (Pro test server, Firefox on the Mint through `localhost`): the code
+  asked in the page's box, typed 30 s later: the session opened.
+
+Not tried yet: macOS (also the sign-in screen's copy there), GDM and SDDM
+sign-in screens (only LightDM tried), the web client in Chrome and Safari.
 
 ## Known limits
 
