@@ -20,6 +20,7 @@ nuvira-secret = { path = "../secret" }
 nuvira-service = { path = "../service" }
 nuvira-update = { path = "../update" }
 nuvira-viewer = { path = "../viewer" }
+nuvira-capture.workspace = true
 nuvira-codec.workspace = true
 nuvira-i18n.workspace = true
 nuvira-input.workspace = true

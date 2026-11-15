@@ -34,6 +34,8 @@ pipewire = "0.10"
 x11rb = { version = "0.13", features = ["damage", "randr", "shm", "xfixes"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
 core-foundation = "0.10"
 core-graphics = "0.25"
 foreign-types = "0.5"

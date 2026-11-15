@@ -10,8 +10,11 @@
 //!   `none` (the background colour shows).
 //! - KDE Plasma: a Plasma script through D-Bus switches every desktop to the
 //!   plain colour wallpaper (`org.kde.color`, black) and back to its own plugin.
-//! - macOS: not yet (`setDesktopImageURL` must be called from the main thread of
-//!   an AppKit app).
+//! - macOS: `NSWorkspace.setDesktopImageURL` with a black picture for every
+//!   screen, and the screens' own pictures back. It must be called from a main
+//!   thread, which the agent's is not: this same program is started again as a
+//!   helper for each step (`--nuvira-wallpaper get|hide|restore`, see
+//!   [`helper_if_asked`]), as the black screens of privacy mode.
 
 use std::path::Path;
 
@@ -50,6 +53,18 @@ pub fn restore(state: &Path) {
             let _ = std::fs::remove_file(state);
         }
         Err(e) => tracing::warn!("wallpaper not put back: {e:#}"),
+    }
+}
+
+/// macOS: when this program was started as the wallpaper's helper, does the step
+/// and exits. Call it first thing in `main`. Other systems: nothing.
+pub fn helper_if_asked() {
+    #[cfg(target_os = "macos")]
+    {
+        let mut args = std::env::args();
+        if args.nth(1).as_deref() == Some(mac_helper::ARG) {
+            mac_helper::run(&args.next().unwrap_or_default());
+        }
     }
 }
 
@@ -233,7 +248,125 @@ mod imp {
     }
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+mod imp {
+    use std::io::Write;
+
+    use anyhow::{Context, Result, bail};
+
+    pub fn available() -> bool {
+        // The sign-in screen's agent (root) has no person's desktop.
+        // SAFETY: getuid has no preconditions.
+        unsafe { libc::getuid() != 0 }
+    }
+
+    /// Runs this program as the helper (`--nuvira-wallpaper <step>`), with `input`
+    /// on its standard input; what it printed.
+    fn helper(step: &str, input: &str) -> Result<String> {
+        let exe = std::env::current_exe().context("program path")?;
+        let mut child = std::process::Command::new(exe)
+            .args([super::mac_helper::ARG, step])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("wallpaper helper")?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(input.as_bytes());
+        }
+        let out = child.wait_with_output()?;
+        if !out.status.success() {
+            bail!("wallpaper helper ({step}): {}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    /// "macos" and a line "screen<TAB>URL" for each screen.
+    pub fn current() -> Result<String> {
+        Ok(format!("macos\n{}", helper("get", "")?))
+    }
+
+    pub fn hide() -> Result<()> {
+        helper("hide", "").map(drop)
+    }
+
+    pub fn restore(saved: &str) -> Result<()> {
+        let Some(screens) = saved.strip_prefix("macos\n") else { bail!("not a macOS wallpaper") };
+        helper("restore", screens).map(drop)
+    }
+}
+
+/// macOS: the helper process, on its own main thread.
+#[cfg(target_os = "macos")]
+mod mac_helper {
+    use std::io::Read;
+
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSScreen, NSWorkspace};
+    use objc2_foundation::{NSDictionary, NSString, NSURL};
+
+    pub const ARG: &str = "--nuvira-wallpaper";
+
+    /// A 1x1 black PNG, scaled over each screen.
+    const BLACK_PNG: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0, 144,
+        119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 218, 99, 96, 96, 96, 0, 0, 0, 4, 0, 1, 200, 234, 235, 249,
+        0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+
+    pub fn run(step: &str) -> ! {
+        let Some(mtm) = MainThreadMarker::new() else {
+            eprintln!("wallpaper helper: not on the main thread");
+            std::process::exit(2);
+        };
+        let workspace = NSWorkspace::sharedWorkspace();
+        let screens = NSScreen::screens(mtm);
+        let set = |index: usize, url: &NSURL| -> bool {
+            let Some(screen) = screens.iter().nth(index) else { return false };
+            let options = NSDictionary::new();
+            // SAFETY: an empty dictionary of options.
+            match unsafe { workspace.setDesktopImageURL_forScreen_options_error(url, &screen, &options) } {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("screen {index}: {}", e.localizedDescription());
+                    false
+                }
+            }
+        };
+        let ok = match step {
+            "get" => {
+                for (i, screen) in screens.iter().enumerate() {
+                    if let Some(text) = workspace.desktopImageURLForScreen(&screen).and_then(|u| u.absoluteString()) {
+                        println!("{i}\t{text}");
+                    }
+                }
+                true
+            }
+            "hide" => {
+                let path = std::env::temp_dir().join("nuvira-black.png");
+                let _ = std::fs::write(&path, BLACK_PNG);
+                let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+                (0..screens.count()).map(|i| set(i, &url)).fold(true, |a, b| a && b)
+            }
+            "restore" => {
+                let mut saved = String::new();
+                let _ = std::io::stdin().read_to_string(&mut saved);
+                saved
+                    .lines()
+                    .filter_map(|l| l.split_once('\t'))
+                    .filter_map(|(i, url)| {
+                        Some((i.parse::<usize>().ok()?, NSURL::URLWithString(&NSString::from_str(url))?))
+                    })
+                    .map(|(i, url)| set(i, &url))
+                    .fold(true, |a, b| a && b)
+            }
+            _ => false,
+        };
+        std::process::exit(if ok { 0 } else { 1 });
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod imp {
     use anyhow::{Result, bail};
 

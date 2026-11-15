@@ -1443,6 +1443,8 @@ fn main() {
     let _ = nuvira_viewer::REVERSE_HOST.set(reverse_host);
     // macOS: the black screens of privacy mode are this program started again.
     nuvira_input::privacy::overlay_if_asked();
+    // macOS: the wallpaper's helper (see nuvira_capture::wallpaper).
+    nuvira_capture::wallpaper::helper_if_asked();
     // Before anything can replace the file (an update).
     started_as();
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();

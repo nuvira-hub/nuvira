@@ -21,9 +21,11 @@ agent that was killed puts it back when it starts again (the state file
   - KDE Plasma: a Plasma script (`org.kde.PlasmaShell.evaluateScript`, through
     `busctl`) switches every desktop to the plain colour wallpaper
     (`org.kde.color`, black), then back to its own plugin.
-  - macOS: not yet. `NSWorkspace.setDesktopImageURL` must be called from the
-    main thread of an AppKit app: to do with a helper process, as the black
-    screens of privacy mode.
+  - macOS: `NSWorkspace.setDesktopImageURL` with a 1x1 black picture for every
+    screen, then each screen's own picture back. It must be called from a main
+    thread, which the agent's is not: the program is started again as a helper
+    for each step (`--nuvira-wallpaper get|hide|restore`), as the black screens
+    of privacy mode. Only the current Space of each screen changes.
 
 Only in sessions through a server, with a screen (not terminal-only, not guests).
 
@@ -38,3 +40,6 @@ Only in sessions through a server, with a screen (not terminal-only, not guests)
 | Ubuntu 26.04, GNOME Wayland | `org.gnome.desktop.background picture-options` | 'zoom' → 'none' → 'zoom' |
 | Kubuntu 26.04, KDE Plasma Wayland | the desktops' `wallpaperPlugin` | org.kde.image → org.kde.color → org.kde.image |
 | The app's setting (PC-LABORATORIO, UI Automation) | `app.json` | `hide_wallpaper: true` |
+
+Not tried yet: macOS (written, compiled for macOS with `cargo check` on the
+Ubuntu VM only: to try at the next Mac rental, also with several Spaces).
