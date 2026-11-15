@@ -35,6 +35,13 @@ Through the NAS's server; the picture checked with screenshots, the input with t
 | Ubuntu GNOME Wayland | PC-LABORATORIO | the portal's permission restored from its token (no dialog), picture |
 | Kubuntu KDE Wayland | PC-LABORATORIO | the same, 26 fps; the viewer's own device key was locked in KWallet, so a key file was used (`--identity`) |
 
-The technician's window minimized during the switch and back afterwards (screenshots of PC-FEDERICO). Four runs in a row from PC-FEDERICO all switched and streamed. Seen once, not since (nine runs): in the very first run the technician's capture produced no frame for 40 s (the window at the controlled computer stayed black); no cause found.
+The technician's window minimized during the switch and back afterwards (screenshots of PC-FEDERICO).
 
-Not tried: macOS (no Mac this time; its window starts as on Linux, and the technician's capture needs the app's Screen Recording permission, which the same program already has), the pointer moved by the window on Wayland as the technician, a session through the relay.
+More tests the same day:
+- **The pointer on Wayland as the technician**: the positions the compositor reports for the technician's pointer (the capture's metadata, logged at trace by the window) went to ¼ and ¾ of the width as the window moved it: GNOME 320/959,400, KDE 319/959,399.
+- **Through the relay** (`--transport websocket`): 15 runs from PC-FEDERICO in a row, 10 more as the first stalled ones (switching after 8 s, 40 s long), the Linux technician on Mint 3 runs with a moving picture (screenshots 2 s apart show the clock's second hand moving in the window at PC-LABORATORIO). On the way: a run that looked stuck was a still screen (X11 sends nothing new; the clock tried first showed only its unchanging date), found with the inner connection's numbers (RTT 5–9 ms, window 333 kB, no loss, no flow-control block, logged at debug every 5 s) and a stack dump of the technician's process under gdb (capture waiting for changes).
+- **In a row**: 15 runs on the LAN, all streaming.
+- **With a guest**: PC-FEDERICO switched while Mint was a guest; the guest kept its picture (10 to 59 fps) all along. After a handover the new first viewer switched sides (see 39-shared-sessions.md).
+- Seen twice in about 60 runs, not since: the window at the controlled computer stayed black, the technician's video channel open but no frame (once on the LAN, once through the relay, both before the diagnosis logs were added). The pipeline now logs its first captured image, its first encoded frame and an encoder that takes nothing for 3 s (debug), and the inner connection's numbers, to tell where it stops if it comes back.
+
+Not tried: macOS (no Mac this time; its window starts as on Linux, and the technician's capture needs the app's Screen Recording permission, which the same program already has).

@@ -129,6 +129,9 @@ impl Clipboard {
         if cfg!(windows) && !copied_again {
             return None;
         }
+        if copied_again {
+            debug!(seq, "clipboard changed");
+        }
         // Linux: still the other side's files offered here; reading them would
         // fetch them as if pasted and send them back.
         #[cfg(target_os = "linux")]
@@ -151,7 +154,11 @@ impl Clipboard {
                 self.last_image = None;
                 return Some(Content::Files(files));
             }
-            _ => self.last_files = None,
+            Ok(_) => self.last_files = None,
+            Err(e) => {
+                debug!("clipboard files not read: {e}");
+                self.last_files = None;
+            }
         }
         if let Ok(text) = self.inner.get_text() {
             if self.last_text.as_ref() == Some(&text) {

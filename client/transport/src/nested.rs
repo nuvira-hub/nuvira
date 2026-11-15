@@ -29,6 +29,57 @@ use tracing::debug;
 /// The address the other end of the stream appears to have.
 pub const PEER: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 2)), 1);
 
+/// Datagrams and bytes each way, logged every 5 s (debug) while the relay lives.
+#[derive(Default)]
+struct Counters {
+    out_n: std::sync::atomic::AtomicU64,
+    out_b: std::sync::atomic::AtomicU64,
+    out_max: std::sync::atomic::AtomicU64,
+    in_n: std::sync::atomic::AtomicU64,
+    in_b: std::sync::atomic::AtomicU64,
+    in_max: std::sync::atomic::AtomicU64,
+}
+
+impl Counters {
+    fn start(label: &'static str) -> Arc<Self> {
+        let counters = Arc::new(Self::default());
+        let weak = Arc::downgrade(&counters);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let Some(c) = weak.upgrade() else { return };
+                use std::sync::atomic::Ordering::Relaxed;
+                debug!(
+                    label,
+                    out = c.out_n.load(Relaxed),
+                    out_bytes = c.out_b.load(Relaxed),
+                    out_max = c.out_max.load(Relaxed),
+                    r#in = c.in_n.load(Relaxed),
+                    in_bytes = c.in_b.load(Relaxed),
+                    in_max = c.in_max.load(Relaxed),
+                    "nested connection datagrams"
+                );
+            }
+        });
+        counters
+    }
+
+    fn count(n: &std::sync::atomic::AtomicU64, b: &std::sync::atomic::AtomicU64, max: &std::sync::atomic::AtomicU64, len: usize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        n.fetch_add(1, Relaxed);
+        b.fetch_add(len as u64, Relaxed);
+        max.fetch_max(len as u64, Relaxed);
+    }
+
+    fn sent(&self, len: usize) {
+        Self::count(&self.out_n, &self.out_b, &self.out_max, len);
+    }
+
+    fn received(&self, len: usize) {
+        Self::count(&self.in_n, &self.in_b, &self.in_max, len);
+    }
+}
+
 /// Writes one datagram as a frame.
 pub async fn write_frame(send: &mut SendStream, data: &[u8]) -> Result<()> {
     let len = u16::try_from(data.len()).context("datagram too large")?;
@@ -68,8 +119,11 @@ impl StreamSocket {
     pub fn new(mut send: SendStream, mut recv: RecvStream) -> Arc<Self> {
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let (in_tx, in_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let counters = Counters::start("stream socket");
+        let c_out = counters.clone();
         tokio::spawn(async move {
             while let Some(data) = out_rx.recv().await {
+                c_out.sent(data.len());
                 if let Err(e) = write_frame(&mut send, &data).await {
                     debug!("nested connection: stream closed for writing: {e:#}");
                     return;
@@ -81,6 +135,7 @@ impl StreamSocket {
             loop {
                 match read_frame(&mut recv).await {
                     Ok(Some(data)) => {
+                        counters.received(data.len());
                         if in_tx.send(data).is_err() {
                             return;
                         }
@@ -163,8 +218,9 @@ pub async fn bridge_to_udp(
 ) -> Result<()> {
     let udp = Arc::new(udp);
     let peer: Arc<Mutex<Option<SocketAddr>>> = Arc::default();
+    let counters = Counters::start("udp bridge");
     let to_stream = {
-        let (udp, peer) = (udp.clone(), peer.clone());
+        let (udp, peer, counters) = (udp.clone(), peer.clone(), counters.clone());
         async move {
             let mut buf = vec![0u8; 65535];
             loop {
@@ -175,6 +231,7 @@ pub async fn bridge_to_udp(
                 // Only the first one: another local program cannot join in.
                 let first = *peer.lock().expect("peer").get_or_insert(from);
                 if first == from {
+                    counters.sent(n);
                     write_frame(&mut send, &buf[..n]).await?;
                 }
             }
@@ -182,6 +239,7 @@ pub async fn bridge_to_udp(
     };
     let from_stream = async move {
         while let Some(data) = read_frame(&mut recv).await? {
+            counters.received(data.len());
             let to = *peer.lock().expect("peer");
             if let Some(to) = to {
                 let _ = udp.send_to(&data, to).await;

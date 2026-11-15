@@ -1143,10 +1143,32 @@ pub async fn serve_reverse(endpoint: quinn::Endpoint, config: AgentConfig, rever
         .context("closed before the other computer connected")?;
     let conn = incoming.await.context("connection from the other computer")?;
     info!("switch sides: the other computer sees this screen");
+    // Diagnosis (debug): the inner connection's state every 5 s.
+    let watched = conn.clone();
+    let stats = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let s = watched.stats();
+            tracing::debug!(
+                rtt_ms = s.path.rtt.as_millis() as u64,
+                cwnd = s.path.cwnd,
+                lost = s.path.lost_packets,
+                sent = s.path.sent_packets,
+                udp_tx = s.udp_tx.bytes,
+                udp_rx = s.udp_rx.bytes,
+                tx_blocked = s.frame_tx.stream_data_blocked,
+                tx_data_blocked = s.frame_tx.data_blocked,
+                rx_max_stream_data = s.frame_rx.max_stream_data,
+                rx_max_data = s.frame_rx.max_data,
+                "switch sides: inner connection"
+            );
+        }
+    });
     let result = match conn.accept_bi().await.context("control channel") {
         Ok(streams) => session(conn.clone(), streams, &config, None, Some(&reverse)).await,
         Err(e) => Err(e),
     };
+    stats.abort();
     conn.close(0u32.into(), &close_reason(&result));
     endpoint.close(0u32.into(), b"");
     info!("switch sides: ended");
@@ -2075,8 +2097,11 @@ async fn session(
                             .await,
                         };
                         let sent = nuvira_clipboard::Sharing::answer(&conn, &request, opened);
-                        if let Some(Err(e)) = switches::until_off(off, switches::FILES, sent).await {
-                            warn!("pasted file not sent: {e:#}");
+                        let sent = switches::until_off(off.clone(), switches::CLIPBOARD, sent);
+                        match switches::until_off(off, switches::FILES, sent).await.flatten() {
+                            Some(Err(e)) => warn!("pasted file not sent: {e:#}"),
+                            Some(Ok(())) => {}
+                            None => info!("pasted file cut: switched off at the PC"),
                         }
                     });
                 }
@@ -2323,9 +2348,15 @@ async fn session(
                             Ok(Some(first)) => first,
                             _ => return,
                         };
-                        // The answer to a paste here (asked only while allowed).
+                        // The answer to a paste here (asked only while allowed): cut as
+                        // soon as files or the clipboard are switched off (the paste
+                        // then fails instead of finishing).
                         if first.clipboard_file {
-                            sharing.receive(first, rx).await;
+                            let receiving = sharing.receive(first, rx);
+                            let receiving = switches::until_off(off.clone(), switches::CLIPBOARD, receiving);
+                            if switches::until_off(off, switches::FILES, receiving).await.flatten().is_none() {
+                                info!("pasted file cut: switched off at the PC");
+                            }
                             return;
                         }
                         // Rules of the server: no files (images of the clipboard are refused

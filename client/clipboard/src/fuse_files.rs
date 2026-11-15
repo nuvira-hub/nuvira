@@ -304,7 +304,16 @@ impl Fs {
                 let rx = reader.rx.as_mut().expect("stream open");
                 match recv_timeout(rx, IDLE) {
                     Ok(Some(Ok(data))) => reader.buf.extend_from_slice(&data),
-                    Ok(None) => reader.done = true,
+                    // The end of the stream before the file's size: interrupted (the
+                    // session ended, files switched off), not a shorter file.
+                    Ok(None) => {
+                        let size = files.files.get(reader.index).map_or(0, |f| f.size);
+                        if reader.pos + (reader.buf.len() as u64) < size {
+                            warn!(pos = reader.pos, size, "pasted file interrupted");
+                            return Err(Errno::EIO);
+                        }
+                        reader.done = true;
+                    }
                     Ok(Some(Err(e))) => {
                         warn!("pasted file not readable: {e}");
                         return Err(Errno::EIO);
@@ -437,6 +446,34 @@ mod tests {
 
     fn file(path: &str, size: u64, dir: bool) -> ClipboardFile {
         ClipboardFile { path: path.into(), size, dir, modified: 1_700_000_000 }
+    }
+
+    /// A file whose data stops before its size is an error (the session ended),
+    /// not a shorter file; a whole one reads to its end.
+    #[test]
+    fn interrupted_file_is_an_error() {
+        let files = vec![file("short.bin", 10, false), file("whole.bin", 6, false)];
+        let remote = RemoteFiles::new(files, |index, _| {
+            let (tx, rx) = mpsc::channel(4);
+            let data = if index == 0 { vec![1u8; 4] } else { vec![2u8; 6] };
+            tx.try_send(Ok(data)).unwrap();
+            rx
+        });
+        let fs = Fs {
+            state: Mutex::new(State { trees: BTreeMap::new(), open: HashMap::new(), next_fh: 1 }),
+            uid: 0,
+            gid: 0,
+        };
+        {
+            let mut state = fs.state.lock().unwrap();
+            state.trees.insert(1, Tree::new(remote));
+            for (fh, index) in [(1, 0), (2, 1)] {
+                state.open.insert(fh, Reader { copy: 1, index, pos: 0, rx: None, buf: Vec::new(), done: false });
+            }
+        }
+        assert_eq!(fs.read_at(1, 0, 10).unwrap_err(), Errno::EIO);
+        assert_eq!(fs.read_at(2, 0, 10).unwrap(), vec![2u8; 6]);
+        assert!(fs.read_at(2, 6, 10).unwrap().is_empty());
     }
 
     #[test]

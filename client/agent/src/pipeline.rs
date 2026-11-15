@@ -147,6 +147,7 @@ impl Drop for Pipeline {
 
 fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
     let mut failing = false;
+    let mut first = true;
     while !shared.stop.load(Ordering::Relaxed) {
         let frame = match capturer.next_frame(Duration::from_millis(100)) {
             Ok(Some(frame)) => frame,
@@ -164,6 +165,9 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
         };
         if std::mem::take(&mut failing) {
             info!("capture resumed");
+        }
+        if std::mem::take(&mut first) {
+            tracing::debug!(width = frame.width, height = frame.height, "first image captured");
         }
         let mut data = shared.spare.lock().expect("spare").pop().unwrap_or_default();
         data.clear();
@@ -287,6 +291,10 @@ fn encode_loop(
     #[cfg(target_os = "linux")]
     let (mut dmabuf_ram, mut dmabuf_warned) = (Vec::new(), false);
     let mut last_encoded = Instant::now() - Duration::from_secs(1);
+    // Diagnosis: the first frame encoded, an encoder that takes nothing for long.
+    let mut first_encoded = false;
+    let mut not_ready_since: Option<Instant> = None;
+    let mut not_ready_told = false;
     // Last encoded image: used to make a keyframe again on a still screen.
     let mut last: Option<Captured> = None;
     let mut seq = 0u64;
@@ -307,8 +315,14 @@ fn encode_loop(
         // The image is taken only when the encoder can accept it: that way it is the freshest.
         let t_ready = Instant::now();
         match encoder.wait_ready(Duration::from_millis(100)) {
-            Ok(true) => {}
-            Ok(false) => continue,
+            Ok(true) => not_ready_since = None,
+            Ok(false) => {
+                let since = *not_ready_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= Duration::from_secs(3) && !std::mem::replace(&mut not_ready_told, true) {
+                    warn!(first_encoded, "the encoder has asked for no picture for 3 s");
+                }
+                continue;
+            }
             Err(e) => {
                 warn!("encoder not available: {e:#}");
                 break;
@@ -478,6 +492,9 @@ fn encode_loop(
         };
         // The pace is measured from the start of encoding, not from its end.
         last_encoded = t;
+        if !std::mem::replace(&mut first_encoded, true) {
+            tracing::debug!(keyframe = encoded.keyframe, bytes = encoded.data.len(), "first frame encoded");
+        }
         if encoded.keyframe {
             keyframe.store(false, Ordering::Relaxed);
             tracing::debug!("keyframe {} kB (requested: {force_key})", encoded.data.len() / 1024);

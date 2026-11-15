@@ -405,6 +405,27 @@ struct Stream {
     state: Mutex<State>,
 }
 
+/// What Explorer shows when a pasted file stops coming (it shows the system's
+/// text for the error): the connection gone ("The specified network name is no
+/// longer available") rather than "Unspecified error".
+fn lost() -> HRESULT {
+    windows::Win32::Foundation::ERROR_NETNAME_DELETED.to_hresult()
+}
+
+/// An error from the other side: refused there ("Access denied": files switched
+/// off, or not readable as that user) or the connection gone.
+fn read_error(message: &str) -> HRESULT {
+    // The other side's message is in its own language: its system error code says
+    // "access denied" (5 on Windows, 13 = EACCES elsewhere).
+    if message.contains("switched_off") || message.contains("os error 5)") || message.contains("os error 13)") {
+        windows::Win32::Foundation::E_ACCESSDENIED
+    } else if message.contains("connection lost") || message.contains("interrupted") || message.contains("timed out") {
+        lost()
+    } else {
+        E_FAIL
+    }
+}
+
 impl ISequentialStream_Impl for Stream_Impl {
     fn Read(&self, pv: *mut core::ffi::c_void, cb: u32, read: *mut u32) -> HRESULT {
         let mut state = self.state.lock().expect("stream");
@@ -432,17 +453,17 @@ impl ISequentialStream_Impl for Stream_Impl {
                 Ok(Some(Err(e))) => {
                     warn!(name = self.name, "pasted file not read: {e}");
                     state.rx = None;
-                    return E_FAIL;
+                    return read_error(&e);
                 }
                 Ok(None) => {
                     warn!(name = self.name, pos = state.pos, size = self.size, "pasted file interrupted");
                     state.rx = None;
-                    return E_FAIL;
+                    return lost();
                 }
                 Err(e) => {
                     warn!(name = self.name, "pasted file: {e:#}");
                     state.rx = None;
-                    return E_FAIL;
+                    return lost();
                 }
             }
         }

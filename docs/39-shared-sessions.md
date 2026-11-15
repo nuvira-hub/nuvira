@@ -31,6 +31,8 @@ Tests of 2026-11-15:
 - PC-LABORATORIO's test agent (permanent password) through the NAS's server; the first viewer on PC-FEDERICO, the guest on PC-LABORATORIO: handed over after 12 s, the guest connected again in 2.5 s with the token ("access with the token of a session handed over") and had the full session (clipboard, files, terminal, tunnels); the first viewer closed with the notice.
 - Linux Mint's test agent with `--ipc`, its temporary password and confirmation, and a stand-in for the app on its socket accepting the requests: the first viewer on PC-LABORATORIO (Windows) and the Linux viewer on Mint each asked once at the computer; after the handover nobody was asked again (no third `incoming`), the app's events were `session_ended` then `session_started` with the Linux viewer, which had the full permissions.
 - In a unit test (`shared::tests::handover_goes_to_a_guest_that_can_take_it`): a guest that cannot take it over (the web client) is never handed it; the token goes to the right guest, once.
+- Through the relay (`--transport websocket` on both viewers): handed over, the guest connected again through the relay in 2.6 s with the token, full session.
+- Handed over, then switch sides by the new first viewer: PC-FEDERICO first, the Linux viewer on Mint as the guest; Mint took the session over and switched sides towards PC-LABORATORIO (8 fps, the window closed when it took control back).
 - Not tried: macOS (no Mac this time; nothing in it is specific to a system), a token presented by another device or after the minute (checked by the `Gate`, not exercised live).
 
 ## At the computer
