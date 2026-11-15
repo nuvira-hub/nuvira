@@ -37,7 +37,9 @@ const BUNDLE_ID: &str = "io.github.nuvira-hub.nuvira";
 pub(crate) const SYSTEM_DIR: &str = "/Library/Application Support/NuviraHub";
 const LOG: &str = "/Library/Logs/NuviraHub/signin.log";
 /// Files of the person's data folder the agent of the sign-in screen needs.
-const COPIED: [&str; 3] = ["device.key", "servers.txt", "service.env"];
+/// `access.json`: the rules of unattended access (who may connect, two-factor
+/// code, profiles), which must hold at the sign-in screen too.
+const COPIED: [&str; 4] = ["device.key", "servers.txt", "service.env", "access.json"];
 
 pub fn plist_path() -> PathBuf {
     PathBuf::from("/Library/LaunchAgents").join(format!("{LABEL}.plist"))
@@ -118,6 +120,10 @@ pub fn install(exe: &Path, user_data: &Path, server: &str, server_key: Option<&s
             }
             // Without a remembered fingerprint the first connection's is taken.
             Err(e) if name == "servers.txt" && e.kind() == std::io::ErrorKind::NotFound => {}
+            // No rules of the person's: none left from an earlier copy either.
+            Err(e) if name == "access.json" && e.kind() == std::io::ErrorKind::NotFound => {
+                let _ = std::fs::remove_file(&to);
+            }
             Err(e) => return Err(e).with_context(|| from.display().to_string()),
         }
     }

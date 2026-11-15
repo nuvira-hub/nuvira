@@ -21,6 +21,9 @@ use winit::event_loop::EventLoopProxy;
 pub enum NetEvent {
     /// The person at the remote computer is being asked to accept.
     ConfirmationPending,
+    /// The remote computer wants the two-factor code: the window asks for it and
+    /// answers here (`None`: not given).
+    CodeRequired(tokio::sync::oneshot::Sender<Option<String>>),
     /// The remote pointer's image (RGBA, not premultiplied), when it changes.
     CursorShape { serial: u32, width: u32, height: u32, hot_x: u32, hot_y: u32, rgba: std::sync::Arc<Vec<u8>> },
     /// Where the remote pointer is, in pixels of the remote screen; not visible:
@@ -550,6 +553,8 @@ async fn handshake(
             handover: !terminal_only,
             // Switch sides: this program can show its own screen (the app's).
             switch_sides: !terminal_only && crate::REVERSE_HOST.get().is_some(),
+            // The two-factor code is asked for (CodeRequired).
+            two_factor: true,
             ..Default::default()
         })))
         .await?;
@@ -565,8 +570,25 @@ async fn handshake(
         } else {
             nuvira_proto::v1::Auth { password, ..Default::default() }
         };
-        ctrl_tx.send(&control(Msg::Auth(auth))).await?;
+        ctrl_tx.send(&control(Msg::Auth(auth.clone()))).await?;
         let mut answer = ctrl_rx.recv().await?;
+        // The password was right and the computer also wants a two-factor code.
+        if let Some(ControlMessage { msg: Some(Msg::CodeRequired(_)) }) = answer {
+            info!("the remote computer asks for the two-factor code");
+            let code = match std::env::var("NUVIRA_CODE").ok().filter(|c| !c.is_empty()) {
+                Some(code) => Some(code),
+                None => {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    let _ = proxy.send_event(NetEvent::CodeRequired(tx));
+                    rx.await.ok().flatten()
+                }
+            };
+            let Some(code) = code else {
+                return Err(Denied("@viewer.code_cancelled".into()).into());
+            };
+            ctrl_tx.send(&control(Msg::Auth(nuvira_proto::v1::Auth { code, ..auth }))).await?;
+            answer = ctrl_rx.recv().await?;
+        }
         if let Some(ControlMessage { msg: Some(Msg::ConfirmationPending(_)) }) = answer {
             info!("waiting for the person at the remote computer to accept");
             let _ = proxy.send_event(NetEvent::ConfirmationPending);

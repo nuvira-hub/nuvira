@@ -10,6 +10,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod access_ui;
 mod address_book;
 mod book_csv;
 mod branding;
@@ -140,6 +141,8 @@ struct UiState {
     lock_on_end: bool,
     /// The server's rules lock it at the end of every session: the setting is locked.
     lock_required: bool,
+    /// The rules of unattended access, as the agent tells them (no secrets).
+    access: Option<nuvira_agent::access::View>,
     /// Sessions towards other computers are recorded from the start (settings).
     record_sessions: bool,
     /// Folder of the recordings.
@@ -337,6 +340,11 @@ fn password_managed() -> bool {
     return nuvira_service::policy::read().password_hash.is_some();
     #[cfg(not(any(windows, unix)))]
     false
+}
+
+/// The service of unattended access is installed (running or not).
+fn service_installed() -> bool {
+    nuvira_service::service_state().is_ok_and(|s| s != nuvira_service::ServiceState::NotInstalled)
 }
 
 fn service_managed() -> bool {
@@ -741,6 +749,7 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                 bring_to_front(app);
             }
         }
+        AgentEvent::Access { view } => state.update(app, |ui| ui.access = Some(view)),
         AgentEvent::Rules { recording_required, lock_required } => state.update(app, |ui| {
             ui.recording_required = recording_required;
             ui.lock_required = lock_required;
@@ -1090,6 +1099,9 @@ fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
     let _ = commands.send(AgentCommand::AllowPrint { allow: !settings.no_print });
     let _ = commands.send(AgentCommand::AllowRecording { allow: !settings.no_recording });
     let _ = commands.send(AgentCommand::LockOnEnd { on: settings.lock_on_end });
+    // The rules of unattended access as they are now (the agent's first report may
+    // be older than the last change).
+    let _ = commands.send(AgentCommand::GetAccess);
 }
 
 #[tauri::command]
@@ -1353,7 +1365,7 @@ fn init_logging() {
 
 /// The other programs contained in the app, started as `nuvira.exe <name> ...`:
 /// one file to download, copy and sign instead of four.
-const SUBCOMMANDS: [&str; 3] = ["agent", "viewer", "service"];
+const SUBCOMMANDS: [&str; 4] = ["agent", "viewer", "service", "access"];
 
 /// Switch sides, at the technician's: this computer's screen served by the agent's
 /// code on the endpoint the viewer opened inside the session (screen, keyboard
@@ -1452,6 +1464,9 @@ fn main() {
             set_privacy_allowed,
             set_recording_allowed,
             set_lock_on_end,
+            access_ui::access_totp_new,
+            access_ui::access_totp_check,
+            access_ui::access_save,
             set_record_sessions,
             choose_record_dir,
             open_record_dir,
@@ -1962,6 +1977,7 @@ fn run_subcommand(sub: &str, rest: &[std::ffi::OsString]) -> i32 {
     let result = match sub {
         "agent" => nuvira_agent::cli::run(args),
         "viewer" => nuvira_viewer::run(args),
+        "access" => access_ui::run(rest),
         _ => nuvira_service::run(args),
     };
     match result {

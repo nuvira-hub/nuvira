@@ -344,3 +344,12 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .limits-panel { margin-top: 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .limits-panel h3 { margin: 0 0 4px; font-size: 15px; }
 .members button.limited { border-color: var(--accent); color: var(--accent); }
+
+/* Rules of unattended access (access.js). */
+#access-rules h4 { margin: 18px 0 4px; }
+#access-rules .list { margin: 6px 0; max-width: 560px; }
+#access-rules .inline-form { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; max-width: 560px; }
+#access-rules .inline-form input { flex: 1 1 160px; min-width: 0; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.qr { width: 180px; height: 180px; margin: 8px 0; }
+.qr svg { width: 100%; height: 100%; display: block; }

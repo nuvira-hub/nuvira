@@ -38,3 +38,4 @@
 | 39 | [Shared sessions](39-shared-sessions.md) | More technicians on the computer of a session in progress: the same picture and input, the rest stays with the first one, who can hand the session over |
 | 40 | [Switch sides](40-switch-sides.md) | The technician shows their own screen to the person at the controlled computer, inside the same session (a QUIC connection within a stream) |
 | 41 | [Lock the computer when the session ends](41-lock-on-end.md) | Setting at the computer, Pro rule or the technician's choice for one session; how Windows, Linux and macOS lock |
+| 42 | [Rules of unattended access](42-access-rules.md) | Computers allowed, two-factor code (TOTP) and access profiles; where they are kept and how the app saves them |

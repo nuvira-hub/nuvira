@@ -7,6 +7,7 @@
     --bar: #1f252b;
     --hover: #323a42;
     --text: #e6eaee;
+    --muted: #9aa5af;
     --accent: #3aa7cc;
   }
   * { box-sizing: border-box; }
@@ -16,9 +17,9 @@
     font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
     cursor: default; user-select: none; -webkit-user-select: none;
   }
-  body {
-    display: flex; align-items: center; gap: 16px; padding: 0 22px;
-    border: 1px solid var(--hover);
+  body { border: 1px solid var(--hover); }
+  #message {
+    display: flex; align-items: center; gap: 16px; padding: 0 22px; height: 100%;
   }
   .spinner {
     flex: none; width: 26px; height: 26px; border-radius: 50%;
@@ -27,16 +28,77 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   #text { margin: 0; }
+  /* The two-factor code of the remote computer. */
+  #code-box { display: none; padding: 16px 22px; }
+  body.code #message { display: none; }
+  body.code #code-box { display: block; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  #code-hint { margin: 0 0 12px; color: var(--muted); }
+  form { display: flex; gap: 8px; }
+  input {
+    flex: 1; min-width: 0; height: 34px; padding: 0 10px;
+    border: 1px solid var(--hover); border-radius: 6px;
+    background: #161a1f; color: var(--text); user-select: text; -webkit-user-select: text;
+    font: 600 18px/1 ui-monospace, "Cascadia Mono", monospace; letter-spacing: 4px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    height: 34px; padding: 0 14px; border: 0; border-radius: 6px;
+    background: var(--hover); color: var(--text); font: inherit; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #0b1a20; font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: default; }
 </style>
 </head>
 <body>
-  <div class="spinner"></div>
-  <p id="text"></p>
+  <div id="message">
+    <div class="spinner"></div>
+    <p id="text"></p>
+  </div>
+  <div id="code-box">
+    <h1 id="code-title"></h1>
+    <p id="code-hint"></p>
+    <form id="code-form">
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" spellcheck="false">
+      <button class="primary" id="code-ok" type="submit" disabled></button>
+      <button id="code-cancel" type="button"></button>
+    </form>
+  </div>
 <script>
   // Message shown while there is no image yet; the viewer changes it with
-  // `nuvira.set("...")`.
+  // `nuvira.set("...")`. `nuvira.askCode()` turns it into the box asking for the
+  // remote computer's two-factor code: the viewer reads "code:<digits>" or
+  // "codecancel".
+  const STRINGS = window.I18N || {};
+  const t = (key) => STRINGS[key] || key;
+  const $ = (id) => document.getElementById(id);
+  const digits = () => $("code").value.replace(/\D/g, "");
+  $("code-title").textContent = t("viewer.code_title");
+  $("code-hint").textContent = t("viewer.code_hint");
+  $("code-ok").textContent = t("viewer.code_ok");
+  $("code-cancel").textContent = t("viewer.code_cancel");
+  $("code").addEventListener("input", () => { $("code-ok").disabled = digits().length !== 6; });
+  $("code-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (digits().length !== 6) return;
+    $("code-ok").disabled = true;
+    window.ipc.postMessage("code:" + digits());
+  });
+  $("code-cancel").addEventListener("click", () => window.ipc.postMessage("codecancel"));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.body.classList.contains("code")) window.ipc.postMessage("codecancel");
+  });
   window.nuvira = {
-    set(text) { document.getElementById("text").textContent = text; },
+    set(text) {
+      document.body.classList.remove("code");
+      $("text").textContent = text;
+    },
+    askCode() {
+      $("code").value = "";
+      $("code-ok").disabled = true;
+      document.body.classList.add("code");
+      $("code").focus();
+    },
   };
   nuvira.set(/*TEXT*/"");
 </script>

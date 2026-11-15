@@ -281,6 +281,52 @@
             </div>
           </form>
         </div>
+        <div id="access-rules" class="hidden">
+          <h3 data-i18n="access.title">Who can connect, and how</h3>
+          <p id="access-error" class="hint warn hidden"></p>
+          <h4 data-i18n="access.allow_title">Computers allowed</h4>
+          <p class="hint" data-i18n="access.allow_hint">Only these computers can connect with the permanent passwords. With none listed, every computer can.</p>
+          <div id="access-allow" class="list hidden"></div>
+          <p id="access-allow-empty" class="hint" data-i18n="access.allow_empty">No list: every computer can connect.</p>
+          <form id="access-allow-form" class="inline-form">
+            <input id="access-allow-id" inputmode="numeric" autocomplete="off" data-i18n-placeholder="access.allow_id" placeholder="NuviraHub ID of the computer">
+            <input id="access-allow-name" autocomplete="off" data-i18n-placeholder="access.allow_name" placeholder="Name (optional)">
+            <button type="submit" data-i18n="access.add">Add</button>
+          </form>
+          <label class="check"><input id="access-allow-attended" type="checkbox"> <span data-i18n="access.allow_attended">Also with the temporary password</span></label>
+          <h4 data-i18n="access.totp_title">Two-factor code</h4>
+          <p class="hint" data-i18n="access.totp_hint">Besides the permanent password, whoever connects types the 6-digit code of an authenticator app (Google Authenticator, Microsoft Authenticator, Aegis…) on your phone.</p>
+          <p id="access-totp-state" class="hint"></p>
+          <div id="access-totp-setup" class="hidden">
+            <div id="access-totp-qr" class="qr"></div>
+            <p class="hint"><span data-i18n="access.totp_scan">Scan the code with the app, or type this key:</span> <code id="access-totp-secret"></code></p>
+            <form id="access-totp-form" class="inline-form">
+              <input id="access-totp-code" inputmode="numeric" autocomplete="one-time-code" data-i18n-placeholder="access.totp_code" placeholder="Code shown by the app">
+              <button type="submit" class="primary" data-i18n="access.totp_confirm">Confirm</button>
+              <button type="button" id="access-totp-cancel" data-i18n="access.cancel">Cancel</button>
+            </form>
+          </div>
+          <div class="actions">
+            <button type="button" id="access-totp-on" data-i18n="access.totp_turn_on">Turn on</button>
+            <button type="button" id="access-totp-off" class="hidden" data-i18n="access.totp_turn_off">Turn off</button>
+          </div>
+          <h4 data-i18n="access.profiles_title">Access profiles</h4>
+          <p class="hint" data-i18n="access.profiles_hint">More permanent passwords, each allowing less: for example one that only shows the screen.</p>
+          <div id="access-profiles" class="list hidden"></div>
+          <form id="access-profile-form" class="stack">
+            <input id="access-profile-name" autocomplete="off" required data-i18n-placeholder="access.profile_name" placeholder="Profile name">
+            <input id="access-profile-pw" type="password" autocomplete="new-password" required data-i18n-placeholder="settings.pw_new" placeholder="New password (at least 8 characters)">
+            <input id="access-profile-pw2" type="password" autocomplete="new-password" required data-i18n-placeholder="settings.pw_confirm" placeholder="Repeat the new password">
+            <p class="hint" data-i18n="access.profile_off">Not allowed with this password:</p>
+            <div id="access-profile-off" class="checks"></div>
+            <div class="actions"><button type="submit" data-i18n="access.profile_add">Add the profile</button></div>
+          </form>
+          <div class="actions">
+            <span class="spacer"></span>
+            <button type="button" id="access-save" class="primary" disabled data-i18n="access.save">Save the rules</button>
+          </div>
+          <p id="access-message" class="message hidden"></p>
+        </div>
         <div id="uninstall-row" class="actions hidden">
           <span class="spacer"></span>
           <button type="button" id="uninstall-button" data-i18n="settings.uninstall">Remove unattended access</button>
@@ -461,5 +507,6 @@
   <script src="address-book.js"></script>
   <script src="support.js"></script>
   <script src="rmm.js"></script>
+  <script src="access.js"></script>
 </body>
 </html>

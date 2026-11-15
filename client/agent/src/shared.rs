@@ -327,10 +327,15 @@ pub async fn guest_session(
     let verdict = match refused {
         Some(reason) => Err(reason.to_string()),
         None => {
-            let pending = (hello.protocol_version
-                >= nuvira_proto::v1::ProtocolVersion::ConfirmationPending as u32)
-                .then_some(&mut ctrl_tx);
-            gate.authorize(&given, pending).await
+            crate::authorize_with_code(
+                gate,
+                given,
+                hello.two_factor,
+                hello.protocol_version,
+                &mut ctrl_tx,
+                &mut ctrl_rx,
+            )
+            .await?
         }
     };
     // The session may have ended while the person at the PC was asked.

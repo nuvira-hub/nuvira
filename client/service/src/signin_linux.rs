@@ -42,7 +42,9 @@ pub(crate) const SYSTEM_DIR: &str = "/var/lib/nuvira";
 /// Root's copy of the program, when the person's one is not root's.
 const PROGRAM_COPY: &str = "/usr/local/lib/nuvira/nuvira";
 /// Files of the person's data folder the greeter's agent needs.
-const COPIED: [&str; 3] = ["device.key", "servers.txt", "service.env"];
+/// `access.json`: the rules of unattended access (who may connect, two-factor
+/// code, profiles), which must hold at the sign-in screen too.
+const COPIED: [&str; 4] = ["device.key", "servers.txt", "service.env", "access.json"];
 /// SDDM on Wayland: the program the greeter's agent runs as, a link to root's
 /// program under a path of its own. KWin offers its screen cast and fake input
 /// protocols only to the executable named in [`KWIN_DESKTOP`]; a path of its own
@@ -173,6 +175,10 @@ pub fn install(exe: &Path, user_data: &Path, server: &str, server_key: Option<&s
                 std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o600))?;
             }
             Err(e) if name == "servers.txt" && e.kind() == std::io::ErrorKind::NotFound => {}
+            // No rules of the person's: none left from an earlier copy either.
+            Err(e) if name == "access.json" && e.kind() == std::io::ErrorKind::NotFound => {
+                let _ = std::fs::remove_file(&to);
+            }
             Err(e) => return Err(e).with_context(|| from.display().to_string()),
         }
     }

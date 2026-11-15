@@ -117,7 +117,9 @@ mod imp {
             return;
         }
         match std::process::Command::new("cinnamon-screensaver-command").arg("--lock").status() {
-            Ok(s) if s.success() => tracing::info!("Cinnamon's screensaver was not running: started and locked"),
+            Ok(s) if s.success() => {
+                tracing::info!("Cinnamon's screensaver was not running: started and locked")
+            }
             Ok(s) => tracing::warn!("cinnamon-screensaver-command --lock: {s}"),
             Err(e) => tracing::warn!("cinnamon-screensaver-command: {e}"),
         }

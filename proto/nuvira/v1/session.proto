@@ -65,8 +65,17 @@ message ControlMessage {
     SwitchSides switch_sides = 39;
     SetLockOnEnd set_lock_on_end = 40;
     LockOnEndState lock_on_end_state = 41;
+    CodeRequired code_required = 42;
   }
 }
+
+// From the agent, instead of AuthResult, to viewers with Hello.two_factor: the
+// password is right and the computer also wants the 6-digit code of its
+// authenticator app (two-factor check of unattended access). The viewer asks for
+// it and sends Auth again with `code` (the password is checked again); the agent
+// waits for it 3 minutes. A wrong code is an AuthResult with an error, as a wrong
+// password.
+message CodeRequired {}
 
 // From the viewer (agents with Hello.lock_on_end): lock the computer when this
 // session ends (true), or not (false). It cannot undo what the computer's setting
@@ -465,6 +474,9 @@ message Auth {
   // Instead of a password: the token of HandedOver, for the guest a session was
   // handed over to (not asked again at the PC).
   string handover = 3;
+  // With a permanent password, when the computer asks for it (CodeRequired) or
+  // already known: the code of the two-factor check.
+  string code = 4;
 }
 
 message AuthResult {
@@ -542,6 +554,10 @@ message Hello {
   // From the agent: it can lock the computer when the session ends
   // (SetLockOnEnd, LockOnEndState).
   bool lock_on_end = 26;
+  // From the viewer: it asks for the two-factor code when the agent sends
+  // CodeRequired. To older viewers a computer with the check refuses its
+  // permanent passwords ("@server.old_version", which they translate).
+  bool two_factor = 27;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

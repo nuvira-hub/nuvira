@@ -558,6 +558,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         chat: None,
         menu: None,
         notice: None,
+        code_reply: None,
         quality: nuvira_proto::v1::Quality::Balanced,
         agent: args.agent.clone(),
         stats: Stats::new(),
@@ -759,6 +760,8 @@ struct App {
     menu: Option<toolbar::Menu>,
     /// Message in the middle of the window until the first image.
     notice: Option<toolbar::Notice>,
+    /// Where the two-factor code goes, while the message in the middle asks for it.
+    code_reply: Option<tokio::sync::oneshot::Sender<Option<String>>>,
     quality: nuvira_proto::v1::Quality,
     agent: String,
     stats: Stats,
@@ -1006,10 +1009,8 @@ impl App {
         });
     }
 
-    fn wait_for_restart(&mut self, reason: &str, pause: Duration) {
-        info!("waiting for the remote computer to restart ({reason}); trying again in {} s", pause.as_secs());
-        self.drop_session();
-        let text = tf("viewer.waiting_restart", &[("agent", &self.agent)]);
+    /// The message in the middle of the window (until the first picture).
+    fn show_notice(&mut self, text: String) {
         match (&self.notice, &self.window) {
             (Some(notice), _) => notice.set_text(&text),
             (None, Some(window)) => match toolbar::Notice::new(window.clone(), self.proxy.clone(), &text) {
@@ -1018,6 +1019,12 @@ impl App {
             },
             _ => {}
         }
+    }
+
+    fn wait_for_restart(&mut self, reason: &str, pause: Duration) {
+        info!("waiting for the remote computer to restart ({reason}); trying again in {} s", pause.as_secs());
+        self.drop_session();
+        self.show_notice(tf("viewer.waiting_restart", &[("agent", &self.agent)]));
         if let Some(window) = &self.window {
             window.set_title(&tf("viewer.title_restarting", &[("agent", &self.agent)]));
         }
@@ -1150,6 +1157,19 @@ impl App {
                 self.send_control(Msg::SetRecording(nuvira_proto::v1::SetRecording { on: !self.recording.on }));
             }
             Action::Screenshot => self.screenshot(),
+            Action::Code(code) => {
+                if let Some(reply) = self.code_reply.take() {
+                    info!("two-factor code typed");
+                    let _ = reply.send(Some(code));
+                    self.show_notice(t("viewer.connecting_code"));
+                }
+            }
+            Action::CodeCancel => {
+                if let Some(reply) = self.code_reply.take() {
+                    info!("two-factor code not given");
+                    let _ = reply.send(None);
+                }
+            }
             Action::LockOnEnd if self.lock.available && !self.lock.forced => {
                 self.lock.wanted = !self.lock.on;
                 info!(on = self.lock.wanted, "lock of the remote computer at the end asked");
@@ -1573,6 +1593,19 @@ impl ApplicationHandler<NetEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: NetEvent) {
         match event {
+            NetEvent::CodeRequired(reply) => {
+                self.show_notice(t("viewer.code_title"));
+                match &self.notice {
+                    Some(notice) => {
+                        notice.ask_code();
+                        self.code_reply = Some(reply);
+                    }
+                    None => {
+                        warn!("two-factor code asked, but there is no window to ask it in (NUVIRA_CODE)");
+                        let _ = reply.send(None);
+                    }
+                }
+            }
             NetEvent::ConfirmationPending => {
                 // For the NuviraHub app, which shows it too.
                 println!("@pending");

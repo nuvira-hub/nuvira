@@ -32,6 +32,8 @@ const CHAT_MARGIN: f64 = 12.0;
 const TAB: (f64, f64) = (56.0, 14.0);
 /// Message in the middle of the window, before the first image.
 const NOTICE: (f64, f64) = (520.0, 76.0);
+/// The message turned into the box asking for the two-factor code.
+const CODE: (f64, f64) = (440.0, 150.0);
 /// Drop-down menu: width, height of an item and of the padding.
 const MENU_WIDTH: f64 = 300.0;
 const MENU_ITEM: f64 = 40.0;
@@ -51,6 +53,10 @@ pub enum Action {
     Screenshot,
     /// Lock the remote computer when the session ends, or not.
     LockOnEnd,
+    /// The two-factor code typed in its box (6 digits).
+    Code(String),
+    /// The two-factor code's box closed without a code.
+    CodeCancel,
     /// Opens a remote terminal window.
     Terminal,
     /// Opens the TCP tunnels window.
@@ -104,6 +110,9 @@ impl Action {
         if let Some(id) = s.strip_prefix("handover:") {
             return id.parse().ok().map(Self::HandOver);
         }
+        if let Some(code) = s.strip_prefix("code:") {
+            return Some(Self::Code(code.to_string()));
+        }
         if let Some(text) = s.strip_prefix("chat:") {
             return Some(Self::ChatSend(text.to_string()));
         }
@@ -123,6 +132,7 @@ impl Action {
             "record" => Self::Record,
             "screenshot" => Self::Screenshot,
             "lock" => Self::LockOnEnd,
+            "codecancel" => Self::CodeCancel,
             "terminal" => Self::Terminal,
             "tunnels" => Self::Tunnels,
             "restart" => Self::Restart,
@@ -331,6 +341,8 @@ fn menu_bounds(window: &Window, x: f64, items: usize) -> Rect {
 pub struct Notice {
     webview: WebView,
     window: Arc<Window>,
+    /// Asking for the two-factor code (taller).
+    code: std::cell::Cell<bool>,
     _context: WebContext,
 }
 
@@ -338,24 +350,38 @@ impl Notice {
     pub fn new(window: Arc<Window>, proxy: EventLoopProxy<NetEvent>, text: &str) -> Result<Self> {
         let html = NOTICE_HTML.replace("/*TEXT*/\"\"", &js_string(text));
         let (webview, context) =
-            child_webview(&window, proxy, &html, notice_bounds(&window), true).context("notice WebView")?;
-        Ok(Self { webview, window, _context: context })
+            child_webview(&window, proxy, &html, notice_bounds(&window, NOTICE), true)
+                .context("notice WebView")?;
+        Ok(Self { webview, window, code: std::cell::Cell::new(false), _context: context })
     }
 
     pub fn set_text(&self, text: &str) {
         let _ = self.webview.evaluate_script(&format!("window.nuvira && nuvira.set({})", js_string(text)));
+        if self.code.replace(false) {
+            self.layout();
+        }
+    }
+
+    /// Asks for the two-factor code of the remote computer: the page sends
+    /// `code:<digits>` or `codecancel`.
+    pub fn ask_code(&self) {
+        self.code.set(true);
+        self.layout();
+        let _ = self.webview.evaluate_script("window.nuvira && nuvira.askCode()");
+        let _ = self.webview.focus();
     }
 
     pub fn layout(&self) {
-        let _ = self.webview.set_bounds(notice_bounds(&self.window));
+        let size = if self.code.get() { CODE } else { NOTICE };
+        let _ = self.webview.set_bounds(notice_bounds(&self.window, size));
     }
 }
 
 /// In the middle of the window.
-fn notice_bounds(window: &Window) -> Rect {
+fn notice_bounds(window: &Window, size: (f64, f64)) -> Rect {
     let inner = window.inner_size().to_logical::<f64>(window.scale_factor());
-    let w = NOTICE.0.min(inner.width - 2.0 * CHAT_MARGIN).max(0.0);
-    let h = NOTICE.1.min(inner.height).max(0.0);
+    let w = size.0.min(inner.width - 2.0 * CHAT_MARGIN).max(0.0);
+    let h = size.1.min(inner.height).max(0.0);
     Rect {
         position: LogicalPosition::new(((inner.width - w) / 2.0).round(), ((inner.height - h) / 2.0).round())
             .into(),
@@ -512,6 +538,8 @@ mod tests {
         assert_eq!(Action::parse("resolution"), Some(Action::AdaptResolution));
         assert_eq!(Action::parse("record"), Some(Action::Record));
         assert_eq!(Action::parse("screenshot"), Some(Action::Screenshot));
+        assert_eq!(Action::parse("code:123456"), Some(Action::Code("123456".into())));
+        assert_eq!(Action::parse("codecancel"), Some(Action::CodeCancel));
         assert_eq!(Action::parse("terminal"), Some(Action::Terminal));
         assert_eq!(Action::parse("altro"), None);
         assert_eq!(Action::parse("display:1"), Some(Action::Display(1)));

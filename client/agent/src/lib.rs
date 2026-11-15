@@ -6,6 +6,7 @@
 //! receives. With the server it talks to its user through [`AgentEvent`] and [`AgentCommand`].
 
 mod abr;
+pub mod access;
 pub mod cli;
 #[cfg(windows)]
 pub mod clip_user;
@@ -28,7 +29,7 @@ mod tunnel;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -57,6 +58,14 @@ const FEC_MAX: f64 = 0.5;
 /// Rejection reasons sent to the viewer are translation keys (`@key`, see
 /// nuvira-i18n): the viewer shows them in its own language.
 const WRONG_PASSWORD: &str = "@agent.wrong_password";
+/// The permanent password is right, the two-factor code is missing.
+const CODE_REQUIRED: &str = "@agent.code_required";
+/// The viewer's computer is not among those allowed to connect.
+const NOT_ALLOWED: &str = "@agent.not_allowed";
+/// Two-factor codes: after this many wrong ones in [`CODE_WINDOW`], the permanent
+/// passwords are refused until the window has passed.
+const CODE_MAX_WRONG: usize = 5;
+const CODE_WINDOW: Duration = Duration::from_secs(600);
 
 /// Time given to the person at the PC to accept a connection request.
 pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
@@ -201,6 +210,11 @@ pub enum AgentEvent {
         offered: Vec<String>,
         off: Vec<String>,
     },
+    /// The rules of unattended access of this computer, as the app shows them (no
+    /// hashes, no secret): at the start and when the app asks ([`AgentCommand::GetAccess`]).
+    Access {
+        view: access::View,
+    },
     /// Rules of the server that the app shows (at the registration and when they change).
     Rules {
         recording_required: bool,
@@ -260,6 +274,8 @@ pub enum AgentCommand {
     AllowRecording {
         allow: bool,
     },
+    /// The app wants the rules of unattended access again (it saved new ones).
+    GetAccess,
     /// The person at the PC wants the computer locked when a session ends, or not
     /// (kept like `AllowPrivacy`).
     LockOnEnd {
@@ -432,6 +448,13 @@ pub async fn serve_via_server(
         allow_recording: AtomicBool::new(permissions.recording),
         lock_on_end: AtomicBool::new(permissions.lock_on_end),
         lock_asked: AtomicBool::new(false),
+        access_dir: opts
+            .identity_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(nuvira_transport::identity::data_dir),
+        last_code_step: AtomicU64::new(0),
+        wrong_codes: Mutex::new(Vec::new()),
         features: Mutex::new(Vec::new()),
         unattended: opts.unattended,
         restarting: Mutex::new(None),
@@ -439,6 +462,7 @@ pub async fn serve_via_server(
     });
     let current = ctx.password.lock().expect("password").clone();
     let _ = ctx.events.send(AgentEvent::Password { password: current });
+    let _ = ctx.events.send(AgentEvent::Access { view: access::View::of(&ctx.access_dir) });
 
     loop {
         let _ = ctx.events.send(AgentEvent::Connecting);
@@ -567,6 +591,12 @@ struct SessionContext {
     lock_on_end: AtomicBool,
     /// The viewer of the session in progress asked for the lock at the end (`SetLockOnEnd`).
     lock_asked: AtomicBool,
+    /// Folder of the device key, where the rules of unattended access are ([`access`]).
+    access_dir: PathBuf,
+    /// Time step of the last two-factor code accepted: each code works once.
+    last_code_step: AtomicU64,
+    /// When the last wrong two-factor codes came.
+    wrong_codes: Mutex<Vec<Instant>>,
 }
 
 impl SessionContext {
@@ -891,6 +921,10 @@ async fn signal_loop(
                     }
                     None
                 }
+                Some(AgentCommand::GetAccess) => {
+                    let _ = ctx.events.send(AgentEvent::Access { view: access::View::of(&ctx.access_dir) });
+                    None
+                }
                 Some(AgentCommand::LockOnEnd { on }) => {
                     if ctx.lock_on_end.swap(on, Ordering::Relaxed) != on {
                         info!(on, "lock at the end of sessions, by the person at the PC");
@@ -986,7 +1020,15 @@ async fn relayed_session(
             (false, _) => "through the relay",
         }
     );
-    let gate = Gate { ctx, session_id, request, direct, access: &outcome.access, terminal_only: AtomicBool::new(false) };
+    let gate = Gate {
+        ctx,
+        session_id,
+        request,
+        direct,
+        access: &outcome.access,
+        terminal_only: AtomicBool::new(false),
+        profile_off: AtomicU8::new(0),
+    };
     let result = tokio::select! {
         r = async {
             match request.join {
@@ -1040,6 +1082,40 @@ fn lock_after(ctx: &SessionContext, request: &Request, connected: bool) {
     }
 }
 
+/// Checks the viewer's `Auth`. When the computer also wants a two-factor code and
+/// the viewer did not send one, a viewer that can answer is asked for it
+/// (`CodeRequired`) and everything is checked again with it; an older viewer is
+/// told to update. `Err` only when the connection broke.
+async fn authorize_with_code(
+    gate: &Gate<'_>,
+    mut given: Auth,
+    viewer_two_factor: bool,
+    viewer_protocol: u32,
+    ctrl_tx: &mut FramedSend,
+    ctrl_rx: &mut FramedRecv,
+) -> Result<Result<(), String>> {
+    // Viewers that know it are told when the person at the PC is being asked.
+    let tells_pending = viewer_protocol >= nuvira_proto::v1::ProtocolVersion::ConfirmationPending as u32;
+    let verdict = gate.authorize(&given, tells_pending.then_some(&mut *ctrl_tx)).await;
+    if !matches!(&verdict, Err(e) if e == CODE_REQUIRED) {
+        return Ok(verdict);
+    }
+    if !viewer_two_factor {
+        info!("two-factor code needed: the viewer cannot ask for it");
+        // A key older viewers know: "protocol version not supported: update NuviraHub".
+        return Ok(Err("@server.old_version".into()));
+    }
+    info!("password right: asking the viewer for the two-factor code");
+    ctrl_tx.send(&control(Msg::CodeRequired(nuvira_proto::v1::CodeRequired {}))).await?;
+    let code = match tokio::time::timeout(Duration::from_secs(180), ctrl_rx.recv::<ControlMessage>()).await {
+        Ok(Ok(Some(ControlMessage { msg: Some(Msg::Auth(auth)) }))) => auth.code,
+        Ok(Err(e)) => return Err(e),
+        _ => return Ok(Err("@agent.no_code".into())),
+    };
+    given.code = code;
+    Ok(gate.authorize(&given, tells_pending.then_some(ctrl_tx)).await)
+}
+
 /// See [`SessionContext::restarting`].
 const RESTART_GIVEN_UP: Duration = Duration::from_secs(180);
 
@@ -1055,6 +1131,8 @@ struct Gate<'a> {
     access: &'a std::sync::Mutex<&'static str>,
     /// The viewer asked for a terminal only (set from its Hello).
     terminal_only: AtomicBool,
+    /// Switches off because of the profile whose password was given ([`access`]).
+    profile_off: AtomicU8,
 }
 
 impl Gate<'_> {
@@ -1067,6 +1145,18 @@ impl Gate<'_> {
         let given = auth.password.as_str();
         let confirm_always = self.policy().confirm_always;
         let set = |access: &'static str| *self.access.lock().expect("access") = access;
+        let rules = access::AccessRules::load(&ctx.access_dir);
+        if let Err(e) = &rules {
+            warn!("rules of unattended access not read: {e}");
+        }
+        let viewer = self.request.viewer_id.as_str();
+        // Who may connect, also with the temporary password when the rules say so.
+        let attended_allowed = rules.as_ref().map_or(true, |r| r.allows(viewer, true));
+        if (!auth.handover.is_empty() || !auth.support_ticket.is_empty()) && !attended_allowed {
+            info!(viewer, "this computer is not among those allowed to connect");
+            set("not_allowed");
+            return Err(NOT_ALLOWED.into());
+        }
         // The guest a session was handed over to, with its token: the person at the
         // PC accepted it already (not asked again).
         if !auth.handover.is_empty() {
@@ -1103,9 +1193,33 @@ impl Gate<'_> {
         } else if !auth.support_ticket.is_empty() {
             set("wrong_password");
             return Err("@agent.support_ticket_invalid".into());
-        } else if ctx.permanent.as_deref().is_some_and(|hash| nuvira_secret::verify(given, hash)) {
-            info!("access with the permanent password");
-            set("permanent");
+        } else if let Some(profile) = self.permanent(given, rules.as_ref().ok()) {
+            // A permanent password: the rules hold, and an unreadable file refuses it.
+            let Ok(rules) = &rules else {
+                set("not_allowed");
+                return Err("@agent.access_rules_invalid".into());
+            };
+            if !rules.allows(viewer, false) {
+                info!(viewer, "this computer is not among those allowed to connect");
+                set("not_allowed");
+                return Err(NOT_ALLOWED.into());
+            }
+            if let Some(secret) = &rules.totp {
+                self.check_code(secret, &auth.code)?;
+            }
+            match profile {
+                Some(profile) => {
+                    let off = profile.off.iter().filter_map(|n| switches::bit(n)).fold(0, |a, b| a | b);
+                    let (name, off_names) = (&profile.name, &profile.off);
+                    info!(profile = name, off = ?off_names, "access with the permanent password of a profile");
+                    self.profile_off.store(off, Ordering::Relaxed);
+                    set("profile");
+                }
+                None => {
+                    info!("access with the permanent password");
+                    set("permanent");
+                }
+            }
             if !confirm_always {
                 return self.started();
             }
@@ -1115,6 +1229,11 @@ impl Gate<'_> {
             if !same_secret(given, &temporary) {
                 set("wrong_password");
                 return Err(WRONG_PASSWORD.into());
+            }
+            if !attended_allowed {
+                info!(viewer, "this computer is not among those allowed to connect");
+                set("not_allowed");
+                return Err(NOT_ALLOWED.into());
             }
             set("temporary");
             if !ctx.confirm && !confirm_always {
@@ -1152,6 +1271,47 @@ impl Gate<'_> {
                 info!("no answer to the connection request: rejected");
                 set("no_answer");
                 Err("@agent.no_answer".into())
+            }
+        }
+    }
+
+    /// `given` is a permanent password: `Some(None)` the main one, `Some(Some(_))`
+    /// a profile's (only where there is a main one: unattended access).
+    fn permanent(&self, given: &str, rules: Option<&access::AccessRules>) -> Option<Option<access::Profile>> {
+        let main = self.ctx.permanent.as_deref()?;
+        if given.is_empty() {
+            return None;
+        }
+        if nuvira_secret::verify(given, main) {
+            return Some(None);
+        }
+        rules?.profile(given).cloned().map(Some)
+    }
+
+    /// The two-factor code: each works once, a few wrong ones lock it for a while.
+    fn check_code(&self, secret: &str, code: &str) -> Result<(), String> {
+        let ctx = self.ctx;
+        let mut wrong = ctx.wrong_codes.lock().expect("codes");
+        wrong.retain(|t| t.elapsed() < CODE_WINDOW);
+        if wrong.len() >= CODE_MAX_WRONG {
+            warn!("too many wrong two-factor codes: permanent passwords refused for a while");
+            *self.access.lock().expect("access") = "code_locked";
+            return Err("@agent.code_locked".into());
+        }
+        if code.trim().is_empty() {
+            return Err(CODE_REQUIRED.into());
+        }
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        match nuvira_secret::totp_verify(secret, code, now) {
+            Some(step) if ctx.last_code_step.fetch_max(step, Ordering::Relaxed) < step => Ok(()),
+            found => {
+                if found.is_some() {
+                    info!("two-factor code already used");
+                }
+                wrong.push(Instant::now());
+                *self.access.lock().expect("access") = "wrong_code";
+                Err("@agent.code_wrong".into())
             }
         }
     }
@@ -1278,6 +1438,7 @@ async fn session(
     // The server's rules want every session recorded: by the viewer, which must be able to.
     let recording_required = policy.record_always && !terminal_only;
     let viewer_records = hello.recording;
+    let viewer_two_factor = hello.two_factor;
     if let Some(gate) = gate {
         gate.terminal_only.store(terminal_only, Ordering::Relaxed);
     }
@@ -1447,10 +1608,8 @@ async fn session(
             tokio::time::sleep(Duration::from_millis(500)).await;
             bail!("{message}");
         }
-        // Viewers that know it are told when the person at the PC is being asked.
-        let pending = (viewer_protocol >= nuvira_proto::v1::ProtocolVersion::ConfirmationPending as u32)
-            .then_some(&mut ctrl_tx);
-        let verdict = gate.authorize(&given, pending).await;
+        let (tx, rx) = (&mut ctrl_tx, &mut ctrl_rx);
+        let verdict = authorize_with_code(gate, given, viewer_two_factor, viewer_protocol, tx, rx).await?;
         let (ok, message) = match &verdict {
             Ok(()) => (true, String::new()),
             Err(reason) => (false, reason.clone()),
@@ -1465,6 +1624,18 @@ async fn session(
         }
         *gate.ctx.switches.lock().expect("switches") = Some(switches.clone());
         gate.ctx.lock_asked.store(false, Ordering::Relaxed);
+        // The profile of the password given: what it does not allow is off for the
+        // whole session, and the person at the PC cannot switch it back on.
+        let profile_off = gate.profile_off.load(Ordering::Relaxed) & offered;
+        if profile_off != 0 {
+            for (bit, _) in switches::ALL {
+                if profile_off & bit != 0 {
+                    switches.set(bit, false);
+                }
+            }
+            offered &= !profile_off;
+            switches.set_offered(offered);
+        }
     } else if let Some(reverse) = reverse {
         let given = match ctrl_rx.recv::<ControlMessage>().await? {
             Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
@@ -2235,7 +2406,7 @@ async fn session(
                 Some(Msg::SetPrivacy(set)) => {
                     let mut error = String::new();
                     if set.on && privacy.is_none() {
-                        if policy.no_privacy {
+                        if policy.no_privacy || !off.is_on(switches::INPUT) {
                             error = "@agent.privacy_disabled".into();
                         } else if !privacy_allowed() {
                             error = "@agent.privacy_not_allowed".into();
@@ -2293,7 +2464,8 @@ async fn session(
                 }
                 Some(Msg::Restart(_)) => {
                     let mut state = nuvira_proto::v1::RestartState::default();
-                    if !restart_available {
+                    // Without keyboard and mouse (view only) no restart either.
+                    if !restart_available || !off.is_on(switches::INPUT) {
                         state.error = "@agent.restart_unavailable".into();
                     } else {
                         info!("restart of the computer asked by the viewer");
@@ -3030,6 +3202,7 @@ fn local_hello() -> Hello {
         handover: false,
         switch_sides: false,
         lock_on_end: false,
+        two_factor: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,
