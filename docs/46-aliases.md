@@ -30,7 +30,8 @@ whoever connects types instead of the 9-digit ID.
   (kept as typed) and its CSV import (`id` column), the web client (NuviraHub
   Pro), the Pro address book (the console, the app, the REST API: the alias
   becomes the computer's ID, so that the book shows it online;
-  `@err.alias_unknown` when no computer has it).
+  `@err.alias_unknown` when no computer has it). The console's list of devices
+  and the REST API's `devices` show it (`alias`) and find it (search, `q`).
 
 ## Tests of 2026-11-15
 
@@ -57,16 +58,32 @@ of that version), then this one on the same database.
 | Web client (Firefox on Mint) → `Ufficio-Prova` | session with agent A |
 | Pro console API: entry with device `Ufficio-Prova` | saved with agent A's ID; `nessuno-cosi` → `@err.alias_unknown` |
 
+Then on Windows with the service (PC-LABORATORIO's service as SYSTEM replaced
+by this build for the tests, then put back: 0.27.0, signature valid, same hash):
+
+| Test | Result |
+|---|---|
+| Windows app: a taken name, `Lab-Windows`, `caffè` | the messages under the field; `lab-windows` kept by the service in `C:\ProgramData
+uviralias.txt`, shown under the ID |
+| Windows app's form: `Ufficio-Prova` | session with agent A |
+| Mint's viewer → `" Lab-Windows"` | session with the Windows service |
+| Windows app: CSV import (`Ufficio-Prova`, `Lab-Windows`, `ab`) through the file dialog | 1 added, 1 updated, line 4 skipped ("The ID has 9 digits; or type the computer's name") |
+| Windows app: "Connect" on the imported entry `ufficio-prova` | session with agent A |
+| The service moved to the Pro test server | took `lab-windows` there too, from `alias.txt` |
+| Windows app signed in to the Pro book: new entry `Ufficio-Prova` | saved with agent A's ID (970 385 146); `nessuno-cosi` → "No computer has this name on the server" |
+| Pro REST API (token of the admin): `GET devices?q=ufficio`, `GET devices/{id}`, `POST books/1/entries` with `Ufficio-Prova` | `alias` in the answers; the entry saved with the ID; `nessuno-cosi` → `err.alias_unknown` |
+| Pro console (Firefox on Mint): list of devices, search `ufficio-p` | the alias under the ID; found |
+
+Found and fixed by these tests: the app's address book split an alias in groups
+of 3 like an ID (`uff ici o-prova`); the entry's field and the web client's
+asked for digits on phones (`inputmode="numeric"`).
+
 Unit tests: `store.TestAliases` (old schema, taken, the invalid ones, resolving,
-freed, reopened), `accounts.TestEntryByAlias`, `signal::tests::targets`.
+freed, reopened), `accounts.TestEntryByAlias`, `signal::tests::targets`,
+`book_csv::tests::reads_aliases`.
 
 Not tried yet: the app and agent on macOS (same code: next rental); Chrome and
-Safari for the web client; the Pro address book from the app's form and from the
-REST API (the same `PutEntry` as the console, tried through it); the CSV import
-with an alias (unit test of the parser only, `valid_target`); setting the alias
-from the Windows app (its code is the Linux one: Windows was tried as agent with
-`alias.txt` and as viewer).
+Safari for the web client and the console.
 
 Not done yet: `name@server` to name the server with the alias; aliases set and
-locked by the admins in the Pro console; the alias in the console's list of
-devices.
+locked by the admins in the Pro console.
