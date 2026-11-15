@@ -106,6 +106,7 @@ Found and fixed by these tests:
 - the code wrapped on the page;
 - "now uses NuviraHub" instead of "the public NuviraHub server";
 - the downloaded program started while the app runs lost its code.
+- the invitation card had no way to withdraw the request (now "Cancel the request"; tried on PC-LABORATORIO: the server withdrew it).
 
 Unit tests: `invite` (codes, use and expiry, defaults and limits, lists and
 delete by owner/admin, licence, public URL, the page in it/de/fr, invalid page,

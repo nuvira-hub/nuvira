@@ -54,6 +54,9 @@ function renderInvite(state) {
   $("invite-text").textContent = text;
   $("invite-text").classList.toggle("hidden", !text);
   $("invite-accept").classList.toggle("hidden", !(inv.other_server && !inv.server_locked));
+  // The request it made, while waiting: withdrawn here (the support card is hidden).
+  $("invite-cancel").classList.toggle("hidden", !(state.support && !state.support.taken_by));
+  $("invite-dismiss").classList.toggle("hidden", Boolean(state.support && !state.support.taken_by));
   $("invite-error").classList.toggle("hidden", !state.support_error);
   $("invite-error").textContent = state.support_error ? msg(state.support_error) : "";
 }
@@ -69,6 +72,10 @@ $("invite-accept").addEventListener("click", async () => {
   $("invite-accept").disabled = false;
 });
 $("invite-dismiss").addEventListener("click", () => invoke("dismiss_invite"));
+$("invite-cancel").addEventListener("click", async () => {
+  await invoke("cancel_support");
+  await invoke("dismiss_invite");
+});
 
 // The card stays collapsed to its title unless opened (remembered on this computer).
 function setSupportCollapsed(collapsed) {
