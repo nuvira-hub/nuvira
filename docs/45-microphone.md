@@ -49,5 +49,5 @@ Not tried yet: a Mac as viewer (microphone permission, entitlement) or as
 controlled computer; real speakers (playback was always written to a WAV file
 except in the remote sound's earlier tests of the same player); a Linux viewer
 with a real microphone (only a monitor source); the web client (it has no
-microphone yet); the app's rules editor field and the console's checkbox (the
-rule was set through the console's API).
+microphone yet); the app's rules editor field (the console's checkbox and the
+limit of sessions without an account were tried in the console, through Firefox).
