@@ -706,5 +706,8 @@
   "admin.policy_idle": "Cerrar las sesiones sin actividad tras (minutos, 0 nunca)",
   "settings.sessions": "Mis sesiones",
   "settings.hide_wallpaper": "Ocultar el fondo de pantalla de los equipos que controlo",
-  "settings.hide_wallpaper_hint": "Un fondo liso en lugar de la imagen durante la sesión: menos datos en conexiones lentas. La imagen vuelve al final."
+  "settings.hide_wallpaper_hint": "Un fondo liso en lugar de la imagen durante la sesión: menos datos en conexiones lentas. La imagen vuelve al final.",
+  "viewer.restart_normal": "Reiniciar",
+  "viewer.restart_safe_mode": "Modo seguro con funciones de red",
+  "viewer.cancel": "Cancelar"
 }

@@ -246,7 +246,11 @@ message RecordingState {
 // From the viewer (only when Hello.restart): restart the controlled computer. The
 // agent answers RestartState; when it worked the session ends, and the viewer can
 // wait for the computer to come back and connect again by itself.
-message Restart {}
+message Restart {
+  // Windows (agents with Hello.restart_safe_mode): into safe mode with networking,
+  // once; the next restart is a normal one again.
+  bool safe_mode = 1;
+}
 
 message RestartState {
   bool ok = 1;
@@ -585,6 +589,9 @@ message Hello {
   bool idle_limit = 28;
   // From the agent: it can hide its desktop wallpaper (SetWallpaper).
   bool wallpaper = 29;
+  // From the agent (Windows service): it can restart into safe mode with
+  // networking (Restart.safe_mode).
+  bool restart_safe_mode = 30;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

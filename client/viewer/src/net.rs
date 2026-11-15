@@ -71,6 +71,8 @@ pub enum NetEvent {
         lock_on_end: bool,
         /// It can hide its wallpaper (SetWallpaper).
         wallpaper: bool,
+        /// It can restart into safe mode with networking (Windows).
+        restart_safe_mode: bool,
     },
     /// Whether the remote computer will be locked when the session ends, and
     /// whether its setting or the server's rules want it (no turning it off).
@@ -631,6 +633,7 @@ async fn handshake(
             switch_sides: false,
             lock_on_end: false,
             wallpaper: false,
+            restart_safe_mode: false,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None, false, false));
     }
@@ -667,6 +670,7 @@ async fn handshake(
         switch_sides: agent.switch_sides && crate::REVERSE_HOST.get().is_some(),
         lock_on_end: agent.lock_on_end,
         wallpaper: agent.wallpaper,
+        restart_safe_mode: agent.restart && agent.restart_safe_mode,
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);

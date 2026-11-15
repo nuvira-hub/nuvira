@@ -167,6 +167,10 @@ struct Args {
     #[arg(long, hide = true)]
     restart: bool,
 
+    /// Tests, with --restart: into safe mode with networking (Windows agents).
+    #[arg(long, hide = true)]
+    safe_mode: bool,
+
     /// Tests: as soon as connected, asks who else is signed in and shows the restart
     /// confirmation as the toolbar button does (nothing is restarted unless confirmed).
     #[arg(long, hide = true)]
@@ -471,6 +475,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         lock: LockOnEnd { wanted: args.lock_on_end, ..LockOnEnd::default() },
         idle_warned: false,
         hide_wallpaper: args.hide_wallpaper,
+        restart_safe_mode: false,
         slot: Arc::new(FrameSlot::default()),
         started,
         report: Report::default(),
@@ -510,6 +515,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             required: false,
         },
         restart_at_start: args.restart,
+        restart_safe_mode_at_start: args.safe_mode,
         restart_check_at_start: args.restart_check,
         restart_users: false,
         restart_check_pending: false,
@@ -671,6 +677,8 @@ struct App {
     lock: LockOnEnd,
     /// `--hide-wallpaper`: asked again at every connection.
     hide_wallpaper: bool,
+    /// The agent can restart into safe mode with networking.
+    restart_safe_mode: bool,
     /// The agent warned that the session ends without activity: the next local
     /// mouse or key event answers (`Activity`).
     idle_warned: bool,
@@ -727,6 +735,8 @@ struct App {
     adapt: Adapt,
     recording: Recording,
     /// `--restart`: to ask as soon as connected.
+    /// `--safe-mode` with `--restart`.
+    restart_safe_mode_at_start: bool,
     restart_at_start: bool,
     restart_check_at_start: bool,
     /// The agent tells who else is signed in (Hello.restart_users).
@@ -942,15 +952,33 @@ impl App {
         }
         // The dialog blocks its own thread, not the session.
         let proxy = self.proxy.clone();
+        let safe_mode = self.restart_safe_mode;
         std::thread::spawn(move || {
-            let answer = rfd::MessageDialog::new()
+            let (normal, safe) = (t("viewer.restart_normal"), t("viewer.restart_safe_mode"));
+            let cancel = t("viewer.cancel");
+            let mut dialog = rfd::MessageDialog::new()
                 .set_level(rfd::MessageLevel::Warning)
                 .set_title(t("viewer.restart_title"))
-                .set_description(text)
-                .set_buttons(rfd::MessageButtons::YesNo)
-                .show();
-            if answer == rfd::MessageDialogResult::Yes {
-                let _ = proxy.send_event(NetEvent::Toolbar(toolbar::Action::RestartConfirmed));
+                .set_description(text);
+            dialog = match safe_mode {
+                true => dialog.set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                    normal.clone(),
+                    safe.clone(),
+                    cancel,
+                )),
+                false => dialog.set_buttons(rfd::MessageButtons::YesNo),
+            };
+            let action = match dialog.show() {
+                rfd::MessageDialogResult::Yes => Some(toolbar::Action::RestartConfirmed),
+                rfd::MessageDialogResult::Custom(c) if c == normal => Some(toolbar::Action::RestartConfirmed),
+                rfd::MessageDialogResult::No if safe_mode => Some(toolbar::Action::RestartSafeModeConfirmed),
+                rfd::MessageDialogResult::Custom(c) if c == safe => {
+                    Some(toolbar::Action::RestartSafeModeConfirmed)
+                }
+                _ => None,
+            };
+            if let Some(action) = action {
+                let _ = proxy.send_event(NetEvent::Toolbar(action));
             }
         });
     }
@@ -1144,7 +1172,11 @@ impl App {
             Action::Restart => self.ask_restart(),
             Action::RestartConfirmed => {
                 info!("restart of the remote computer requested");
-                self.send_control(Msg::Restart(nuvira_proto::v1::Restart {}));
+                self.send_control(Msg::Restart(nuvira_proto::v1::Restart { safe_mode: false }));
+            }
+            Action::RestartSafeModeConfirmed => {
+                info!("restart of the remote computer into safe mode requested");
+                self.send_control(Msg::Restart(nuvira_proto::v1::Restart { safe_mode: true }));
             }
             Action::HandOver(id) => self.confirm_handover(id),
             Action::SwitchSides if self.switch_offered => {
@@ -1660,7 +1692,9 @@ impl ApplicationHandler<NetEvent> for App {
                 switch_sides,
                 lock_on_end,
                 wallpaper,
+                restart_safe_mode,
             } => {
+                self.restart_safe_mode = restart_safe_mode;
                 if wallpaper && self.hide_wallpaper {
                     let set = nuvira_proto::v1::SetWallpaper { hidden: true };
                     self.send_control(nuvira_proto::v1::control_message::Msg::SetWallpaper(set));
@@ -1770,7 +1804,7 @@ impl ApplicationHandler<NetEvent> for App {
                 if std::mem::take(&mut self.restart_at_start) {
                     match restart {
                         true => self.send_control(nuvira_proto::v1::control_message::Msg::Restart(
-                            nuvira_proto::v1::Restart {},
+                            nuvira_proto::v1::Restart { safe_mode: self.restart_safe_mode_at_start },
                         )),
                         false => warn!("restart not available on this agent"),
                     }

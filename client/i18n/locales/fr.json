@@ -706,5 +706,8 @@
   "admin.policy_idle": "Fermer les sessions sans activité après (minutes, 0 jamais)",
   "settings.sessions": "Mes sessions",
   "settings.hide_wallpaper": "Masquer le fond d'écran des ordinateurs que je contrôle",
-  "settings.hide_wallpaper_hint": "Un fond uni à la place de l'image pendant la session : moins de données sur les connexions lentes. L'image revient à la fin."
+  "settings.hide_wallpaper_hint": "Un fond uni à la place de l'image pendant la session : moins de données sur les connexions lentes. L'image revient à la fin.",
+  "viewer.restart_normal": "Redémarrer",
+  "viewer.restart_safe_mode": "Mode sans échec avec réseau",
+  "viewer.cancel": "Annuler"
 }

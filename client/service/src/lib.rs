@@ -273,11 +273,41 @@ fn run_service() -> anyhow::Result<()> {
         std::env::set_var("NUVIRA_PASSWORD_HASH", &service_config.password_hash);
         std::env::set_var("NUVIRA_DATA_DIR", &data_dir);
     }
+    safe_boot_once();
     let result = scm::dispatch();
     if let Err(e) = &result {
         tracing::error!("{e:#}");
     }
     result
+}
+
+/// A restart into safe mode asked from a session (`Restart.safe_mode`) is for one
+/// boot: started in safe mode, the service takes the setting off, so the next
+/// restart is a normal one; started normally, it takes off its registration for
+/// safe mode.
+/// The service's registration for safe mode with networking.
+#[cfg(windows)]
+const SAFE_BOOT_KEY: &str = r"HKLM\SYSTEM\CurrentControlSet\Control\SafeBoot\Network\nuvira";
+
+#[cfg(windows)]
+fn safe_boot_once() {
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CLEANBOOT};
+    let system =
+        std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| r"C:\Windows".into());
+    let run = |exe: &str, args: &[&str]| {
+        std::process::Command::new(system.join("System32").join(exe))
+            .args(args)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    // SAFETY: no arguments besides the metric.
+    if unsafe { GetSystemMetrics(SM_CLEANBOOT) } != 0 {
+        let done = run("bcdedit.exe", &["/deletevalue", "{current}", "safeboot"]);
+        tracing::info!(done, "started in safe mode: the next restart is a normal one");
+    } else if run("reg.exe", &["query", SAFE_BOOT_KEY]) {
+        let done = run("reg.exe", &["delete", SAFE_BOOT_KEY, "/f"]);
+        tracing::info!(done, "back from safe mode: registration for it taken off");
+    }
 }
 
 /// Linux and macOS: `nuvira service install`, `start` (on Linux run at login by

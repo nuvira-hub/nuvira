@@ -706,5 +706,8 @@
   "admin.policy_idle": "Sitzungen ohne Aktivität beenden nach (Minuten, 0 nie)",
   "settings.sessions": "Meine Sitzungen",
   "settings.hide_wallpaper": "Hintergrundbild der Computer ausblenden, die ich steuere",
-  "settings.hide_wallpaper_hint": "Ein einfarbiger Hintergrund statt des Bildes während der Sitzung: weniger Daten bei langsamen Verbindungen. Das Bild kommt am Ende zurück."
+  "settings.hide_wallpaper_hint": "Ein einfarbiger Hintergrund statt des Bildes während der Sitzung: weniger Daten bei langsamen Verbindungen. Das Bild kommt am Ende zurück.",
+  "viewer.restart_normal": "Neu starten",
+  "viewer.restart_safe_mode": "Abgesicherter Modus mit Netzwerk",
+  "viewer.cancel": "Abbrechen"
 }

@@ -65,6 +65,8 @@ pub enum Action {
     Restart,
     /// Restart confirmed in the dialog.
     RestartConfirmed,
+    /// Restart into safe mode with networking confirmed in the dialog (Windows).
+    RestartSafeModeConfirmed,
     /// Real size (1:1) or fitted to the window.
     ActualSize,
     /// The remote screen takes the window's size (as close as its modes allow), or

@@ -13,6 +13,47 @@
 
 use anyhow::Result;
 
+/// Windows, the service's agent (SYSTEM): it can restart into safe mode with
+/// networking. The service is registered for safe mode first, so that it starts
+/// there and the technician gets the computer back; when it starts in safe mode it
+/// takes the setting off again, so that the next restart is a normal one.
+pub fn safe_mode_available(unattended: bool) -> bool {
+    cfg!(windows) && unattended
+}
+
+/// Registers the service for safe mode with networking and asks for it at the next
+/// boot (`bcdedit /set {current} safeboot network`).
+/// The service's registration for safe mode with networking.
+#[cfg(windows)]
+const SAFE_BOOT_KEY: &str = r"HKLM\SYSTEM\CurrentControlSet\Control\SafeBoot\Network\nuvira";
+
+#[cfg(windows)]
+pub fn prepare_safe_mode() -> Result<()> {
+    use anyhow::{Context, bail};
+    let system =
+        std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| r"C:\Windows".into());
+    let run = |exe: &str, args: &[&str]| -> Result<()> {
+        let out = std::process::Command::new(system.join("System32").join(exe))
+            .args(args)
+            .output()
+            .with_context(|| exe.to_string())?;
+        if !out.status.success() {
+            bail!("{exe} {}: {}", args.join(" "), String::from_utf8_lossy(&out.stdout).trim());
+        }
+        Ok(())
+    };
+    run(
+        "reg.exe",
+        &["add", SAFE_BOOT_KEY, "/ve", "/d", "Service", "/f"],
+    )?;
+    run("bcdedit.exe", &["/set", "{current}", "safeboot", "network"])
+}
+
+#[cfg(not(windows))]
+pub fn prepare_safe_mode() -> Result<()> {
+    anyhow::bail!("safe mode is only on Windows")
+}
+
 /// The system can be restarted from here.
 pub fn available() -> bool {
     cfg!(any(windows, target_os = "linux", target_os = "macos"))

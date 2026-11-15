@@ -28,6 +28,26 @@ Only with unattended access, which brings the agent back by itself after the boo
 
 See `proto/nuvira/v1/session.proto`, `client/agent/src/restart.rs` and `App::wait_for_restart` in `client/viewer/src/lib.rs`.
 
+## Safe mode with networking (Windows)
+
+With the service, the restart dialog has a third choice, "Safe mode with
+networking" (`Restart.safe_mode`, offered when `Hello.restart_safe_mode`): the
+agent (SYSTEM) registers the service for safe mode (`HKLM\SYSTEM\CurrentControlSet\Control\SafeBoot\Network\nuvira`), sets
+`bcdedit /set {current} safeboot network` and restarts as usual. In safe mode the
+service starts, so the technician gets the computer back (the sign-in screen
+first: Windows Hello's PIN does not work there, the account's password does).
+It is for one boot: the service, started in safe mode, takes `safeboot` off at
+once, so the next restart (from the session or the computer) is a normal one;
+started normally, it takes its safe-mode registration off again.
+
+`--restart --safe-mode` asks for it at once (tests).
+
+Tried on PC-LABORATORIO on 2026-11-15 (installed service, viewer on the Mint
+through alexbn.ddns.net): restart into safe mode, the viewer back after 36 s on
+the sign-in screen at 1024x768 ("Fail-safe with network boot", `safeboot`
+already taken off by the service); then a normal restart from the session:
+back after 37 s, "Normal boot", the safe-mode registration taken off.
+
 ## Tests
 
 2026-11-06, viewer on the NUC with `--restart` through the NAS server (`alexbn.ddns.net`), permanent password, agents started by the service:

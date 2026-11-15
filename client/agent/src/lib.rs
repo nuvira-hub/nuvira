@@ -1531,6 +1531,10 @@ async fn session(
         && !config.view_only
         && config.synthetic.is_none()
         && restart::available();
+    // Safe mode with networking: Windows, the service's agent (it comes back).
+    let safe_mode_offered = restart_available
+        && !terminal_only
+        && gate.is_some_and(|g| restart::safe_mode_available(g.ctx.unattended));
     // Remote printing, to a viewer that prints: allowed by the person at the PC (always
     // without the app: LAN tests) and by the server's rules, during the session only.
     let print_off = off.clone();
@@ -1617,6 +1621,7 @@ async fn session(
         lock_on_end: gate.is_some() && lock::available(),
         idle_limit: idle_limit > 0,
         wallpaper: wallpaper_state.is_some(),
+        restart_safe_mode: safe_mode_offered,
         // Files through the clipboard: with the clipboard and the files.
         clipboard_files: !terminal_only
             && !config.view_only
@@ -2576,19 +2581,28 @@ async fn session(
                     let users = nuvira_proto::v1::RestartUsers { others };
                     ctrl_tx.send(&control(Msg::RestartUsers(users))).await?;
                 }
-                Some(Msg::Restart(_)) => {
+                Some(Msg::Restart(asked)) => {
                     let mut state = nuvira_proto::v1::RestartState::default();
                     // Without keyboard and mouse (view only) no restart either.
-                    if !restart_available || !off.is_on(switches::INPUT) {
+                    let refused = !restart_available || (asked.safe_mode && !safe_mode_offered);
+                    if refused || !off.is_on(switches::INPUT) {
                         state.error = "@agent.restart_unavailable".into();
                     } else {
-                        info!("restart of the computer asked by the viewer");
-                        match tokio::task::spawn_blocking(restart::restart).await? {
+                        info!(safe_mode = asked.safe_mode, "restart of the computer asked by the viewer");
+                        let restart = move || {
+                            if asked.safe_mode {
+                                restart::prepare_safe_mode()?;
+                            }
+                            restart::restart()
+                        };
+                        match tokio::task::spawn_blocking(restart).await? {
                             Ok(()) => {
                                 state.ok = true;
                                 // Back without anyone at the computer: the permanent
                                 // password, with no confirmation asked.
-                                state.reconnect = gate.is_some_and(|g| *g.access.lock().expect("access") == "permanent");
+                                state.reconnect = gate.is_some_and(|g| {
+                                    matches!(*g.access.lock().expect("access"), "permanent" | "profile")
+                                });
                                 if let Some(g) = gate {
                                     *g.ctx.restarting.lock().expect("restarting") = Some(Instant::now());
                                 }
@@ -3337,6 +3351,7 @@ fn local_hello() -> Hello {
         two_factor: false,
         idle_limit: false,
         wallpaper: false,
+        restart_safe_mode: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,

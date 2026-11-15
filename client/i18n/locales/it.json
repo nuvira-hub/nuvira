@@ -706,5 +706,8 @@
   "admin.policy_idle": "Chiudi le sessioni senza attività dopo (minuti, 0 mai)",
   "settings.sessions": "Le mie sessioni",
   "settings.hide_wallpaper": "Nascondi lo sfondo dei computer che controllo",
-  "settings.hide_wallpaper_hint": "Uno sfondo a tinta unita al posto dell'immagine durante la sessione: meno dati sulle connessioni lente. L'immagine torna alla fine."
+  "settings.hide_wallpaper_hint": "Uno sfondo a tinta unita al posto dell'immagine durante la sessione: meno dati sulle connessioni lente. L'immagine torna alla fine.",
+  "viewer.restart_normal": "Riavvia",
+  "viewer.restart_safe_mode": "Modalità provvisoria con rete",
+  "viewer.cancel": "Annulla"
 }
