@@ -85,6 +85,10 @@ struct UiState {
     /// "windows", "linux", "macos": some texts and buttons depend on it.
     platform: String,
     device_id: Option<String>,
+    /// This computer's alias on the server (typed instead of the ID), and why the
+    /// one asked for is not it.
+    alias: String,
+    alias_error: String,
     websocket: bool,
     /// ID and password are the service's (unattended access).
     service: bool,
@@ -687,6 +691,10 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
     let state = app.state::<NuviraApp>();
     match event {
         AgentEvent::Connecting => state.update(app, |ui| ui.status = "connecting".into()),
+        AgentEvent::Alias { alias, error } => state.update(app, |ui| {
+            ui.alias = alias;
+            ui.alias_error = error;
+        }),
         AgentEvent::Online { device_id, websocket } => state.update(app, |ui| {
             ui.status = "online".into();
             ui.device_id = Some(device_id);
@@ -1107,6 +1115,13 @@ fn mute_microphone(app: AppHandle, state: State<NuviraApp>, muted: bool) {
     });
 }
 
+/// A readable name for this computer on its server, instead of the ID ("" none);
+/// the server's answer comes back as `AgentEvent::Alias`.
+#[tauri::command]
+fn set_alias(state: State<NuviraApp>, alias: String) {
+    state.send(AgentCommand::SetAlias { alias });
+}
+
 /// Folder where the session window saves the recordings.
 fn record_dir(settings: &Settings) -> PathBuf {
     settings.record_dir.as_ref().map(PathBuf::from).unwrap_or_else(nuvira_viewer::default_recording_dir)
@@ -1253,8 +1268,9 @@ pub(crate) fn launch_viewer(
     password: String,
     terminal: bool,
 ) -> Result<(), String> {
-    let device_id: String = device_id.chars().filter(|c| c.is_ascii_digit()).collect();
-    if device_id.len() != 9 {
+    // An ID, or a computer's alias on the server (docs/46-aliases.md).
+    let device_id = nuvira_transport::signal::target(&device_id);
+    if !nuvira_transport::signal::valid_target(&device_id) {
         return Err(t("err.id_digits"));
     }
     let server =
@@ -1542,6 +1558,7 @@ fn main() {
             set_lock_on_end,
             set_idle_minutes,
             mute_microphone,
+            set_alias,
             access_ui::access_totp_new,
             access_ui::access_totp_check,
             access_ui::access_save,

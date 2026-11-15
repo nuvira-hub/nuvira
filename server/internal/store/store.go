@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -20,6 +21,8 @@ type Device struct {
 	OS        string
 	CreatedAt time.Time
 	LastSeen  time.Time
+	// Alias is the readable name it chose (SetAlias); "" none.
+	Alias string
 }
 
 type Store struct {
@@ -52,7 +55,113 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
+	if err := migrateAlias(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("schema: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrateAlias adds the devices' alias to databases of earlier versions.
+func migrateAlias(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('devices') WHERE name = 'alias'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := db.Exec(`ALTER TABLE devices ADD COLUMN alias TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS devices_alias ON devices(alias) WHERE alias <> ''`)
+	return err
+}
+
+// ErrAliasTaken: another device has the alias.
+var ErrAliasTaken = errors.New("alias taken")
+
+// ErrAliasInvalid: not a valid alias (see ValidAlias).
+var ErrAliasInvalid = errors.New("alias not valid")
+
+// NormalizeAlias is the alias as it is kept: trimmed, lower case.
+func NormalizeAlias(alias string) string {
+	return strings.ToLower(strings.TrimSpace(alias))
+}
+
+// ValidAlias: 3 to 32 of a-z, 0-9 and "-", at least one letter (so that it is never
+// taken for an ID), no "-" at the ends. Empty is valid: no alias.
+func ValidAlias(alias string) bool {
+	if alias == "" {
+		return true
+	}
+	if len(alias) < 3 || len(alias) > 32 || alias[0] == '-' || alias[len(alias)-1] == '-' {
+		return false
+	}
+	letter := false
+	for _, r := range alias {
+		switch {
+		case r >= 'a' && r <= 'z':
+			letter = true
+		case r >= '0' && r <= '9', r == '-':
+		default:
+			return false
+		}
+	}
+	return letter
+}
+
+// SetAlias gives device id the alias (normalized; "" removes it). The device
+// keeps its earlier alias when the new one is taken or not valid.
+func (s *Store) SetAlias(id, alias string) (string, error) {
+	alias = NormalizeAlias(alias)
+	if !ValidAlias(alias) {
+		return s.aliasOf(id), ErrAliasInvalid
+	}
+	if alias != "" {
+		var other string
+		err := s.db.QueryRow(`SELECT id FROM devices WHERE alias = ?`, alias).Scan(&other)
+		if err == nil && other != id {
+			return s.aliasOf(id), ErrAliasTaken
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return s.aliasOf(id), err
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE devices SET alias = ? WHERE id = ?`, alias, id); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return s.aliasOf(id), ErrAliasTaken
+		}
+		return s.aliasOf(id), err
+	}
+	return alias, nil
+}
+
+func (s *Store) aliasOf(id string) string {
+	var alias string
+	_ = s.db.QueryRow(`SELECT alias FROM devices WHERE id = ?`, id).Scan(&alias)
+	return alias
+}
+
+// ResolveTarget turns what a viewer typed into a device ID: digits (spaces and
+// dashes ignored) are an ID; anything else an alias, "" when no device has it.
+func (s *Store) ResolveTarget(target string) string {
+	digits := strings.Map(func(r rune) rune {
+		switch {
+		case r >= '0' && r <= '9':
+			return r
+		case r == ' ' || r == '-' || r == '.':
+			return -1
+		}
+		return 'x'
+	}, strings.TrimSpace(target))
+	if digits != "" && !strings.ContainsRune(digits, 'x') {
+		return digits
+	}
+	var id string
+	if err := s.db.QueryRow(`SELECT id FROM devices WHERE alias = ?`, NormalizeAlias(target)).Scan(&id); err != nil {
+		return ""
+	}
+	return id
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -100,8 +209,8 @@ func (s *Store) Register(publicKey []byte, name, os string) (*Device, error) {
 func (s *Store) ByID(id string) (*Device, error) {
 	d := &Device{ID: id}
 	var created, seen int64
-	err := s.db.QueryRow(`SELECT public_key, name, os, created_at, last_seen FROM devices WHERE id = ?`, id).
-		Scan(&d.PublicKey, &d.Name, &d.OS, &created, &seen)
+	err := s.db.QueryRow(`SELECT public_key, name, os, created_at, last_seen, alias FROM devices WHERE id = ?`, id).
+		Scan(&d.PublicKey, &d.Name, &d.OS, &created, &seen, &d.Alias)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

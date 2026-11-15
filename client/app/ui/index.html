@@ -64,6 +64,7 @@
                 <svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>
               </button>
             </span>
+            <span id="device-alias" class="alias mono hidden"></span>
           </div>
           <div class="pc-field">
             <span class="label" id="password-label">Password</span>
@@ -339,6 +340,12 @@
 
         <div id="this-pc-settings" class="hidden">
         <h2 data-i18n="settings.this_pc">This computer</h2>
+        <form id="alias-form" class="inline-form">
+          <input id="alias-input" autocomplete="off" spellcheck="false" maxlength="32" data-i18n-placeholder="settings.alias" placeholder="Name instead of the ID (e.g. office-mario)">
+          <button type="submit" data-i18n="settings.alias_save">Save the name</button>
+        </form>
+        <p class="hint" data-i18n="settings.alias_hint">Whoever connects can type this name instead of the ID: 3 to 32 letters, digits or dashes, unique on the server. Empty: none.</p>
+        <p id="alias-message" class="message hidden"></p>
         <div id="privacy-settings" class="hidden">
         <label class="check"><input id="privacy-allowed" type="checkbox"> <span data-i18n="settings.privacy_allowed">Allow privacy mode</span></label>
         <p class="hint" data-i18n="settings.privacy_hint">Whoever controls this computer can turn its screen black and block its mouse and keyboard while working. Ctrl+Alt+Del always locks the computer.</p>

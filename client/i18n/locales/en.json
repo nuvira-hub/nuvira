@@ -258,7 +258,7 @@
   "err.invalid_address": "Invalid address: {e}",
   "err.entry_not_found": "Entry not found",
   "err.already_in_book": "This ID is already in the address book",
-  "err.id_digits": "The ID has 9 digits",
+  "err.id_digits": "The ID has 9 digits; or type the computer's name",
   "err.set_server_first": "Set the server first",
   "err.session_error": "The session ended with an error",
   "err.login_required": "Sign in to the address book first",
@@ -717,5 +717,12 @@
   "session.mic_mute": "The technician is talking: mute",
   "session.mic_unmute": "Technician muted: listen again",
   "session.mic_hint": "The technician's microphone comes out of this computer's speakers",
-  "admin.policy_microphone": "No technician's microphone"
+  "admin.policy_microphone": "No technician's microphone",
+  "settings.alias": "Name instead of the ID (e.g. office-mario)",
+  "settings.alias_save": "Save the name",
+  "settings.alias_hint": "Whoever connects can type this name instead of the ID: 3 to 32 letters, digits or dashes, unique on the server. Empty: none.",
+  "server.alias_taken": "This name is already used by another computer on the server",
+  "server.alias_invalid": "Not a valid name: 3 to 32 letters (a-z), digits or dashes, at least one letter, no dash at the ends",
+  "server.alias_failed": "The name could not be saved on the server",
+  "err.alias_unknown": "No computer has this name on the server"
 }

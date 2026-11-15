@@ -258,7 +258,7 @@
   "err.invalid_address": "Ungültige Adresse: {e}",
   "err.entry_not_found": "Eintrag nicht gefunden",
   "err.already_in_book": "Diese ID ist bereits im Adressbuch",
-  "err.id_digits": "Die ID hat 9 Ziffern",
+  "err.id_digits": "Die ID hat 9 Ziffern; oder gib den Namen des Computers ein",
   "err.set_server_first": "Leg zuerst den Server fest",
   "err.session_error": "Die Sitzung wurde mit einem Fehler beendet",
   "err.login_required": "Melde dich zuerst beim Adressbuch an",
@@ -717,5 +717,12 @@
   "session.mic_mute": "Der Techniker spricht: stummschalten",
   "session.mic_unmute": "Techniker stummgeschaltet: wieder zuhören",
   "session.mic_hint": "Das Mikrofon des Technikers kommt aus den Lautsprechern dieses Computers",
-  "admin.policy_microphone": "Kein Mikrofon des Technikers"
+  "admin.policy_microphone": "Kein Mikrofon des Technikers",
+  "settings.alias": "Name statt der ID (z. B. buero-mario)",
+  "settings.alias_save": "Namen speichern",
+  "settings.alias_hint": "Wer sich verbindet, kann diesen Namen statt der ID eingeben: 3 bis 32 Buchstaben, Ziffern oder Bindestriche, eindeutig auf dem Server. Leer: keiner.",
+  "server.alias_taken": "Dieser Name wird auf dem Server schon von einem anderen Computer benutzt",
+  "server.alias_invalid": "Kein gültiger Name: 3 bis 32 Buchstaben (a-z), Ziffern oder Bindestriche, mindestens ein Buchstabe, kein Bindestrich am Anfang oder Ende",
+  "server.alias_failed": "Der Name konnte auf dem Server nicht gespeichert werden",
+  "err.alias_unknown": "Kein Computer hat diesen Namen auf dem Server"
 }

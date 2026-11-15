@@ -177,6 +177,14 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 			s.report(c, m.SessionReport)
 		case *pb.ClientMessage_SupportRequest:
 			s.supportRequest(c, m.SupportRequest)
+		case *pb.ClientMessage_SetAlias:
+			if !c.apiOnly {
+				alias, err := s.store.SetAlias(c.device.ID, m.SetAlias.Alias)
+				s.log.Info("alias", "device", c.device.ID, "alias", alias, "error", err)
+				_ = c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_AliasState{
+					AliasState: &pb.AliasState{Alias: alias, Error: aliasError(err)},
+				}})
+			}
 		case *pb.ClientMessage_Inventory:
 			for _, mod := range s.modules {
 				if d, ok := mod.(ext.InventoryDesk); ok {
@@ -246,6 +254,13 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 		return nil, fmt.Errorf("blocked device %s", device.ID)
 	}
 	registered := &pb.Registered{DeviceId: device.ID}
+	// The alias the agent keeps (older agents send none: the server's stays).
+	if reg.Alias != nil && !reg.ApiOnly {
+		alias, err := s.store.SetAlias(device.ID, *reg.Alias)
+		registered.Alias, registered.AliasError = alias, aliasError(err)
+	} else if d, err := s.store.ByID(device.ID); err == nil && d != nil {
+		registered.Alias = d.Alias
+	}
 	for _, m := range s.modules {
 		registered.Features = append(registered.Features, m.Features()...)
 		if registered.Policy == nil {
@@ -256,6 +271,20 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	}
 	err = c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Registered{Registered: registered}})
 	return c, err
+}
+
+// aliasError is the key the app shows for a refused alias.
+func aliasError(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, store.ErrAliasTaken):
+		return "@server.alias_taken"
+	case errors.Is(err, store.ErrAliasInvalid):
+		return "@server.alias_invalid"
+	default:
+		return "@server.alias_failed"
+	}
 }
 
 func limit(s string, n int) string {
@@ -356,7 +385,13 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func (s *Server) connect(viewer *client, target, accountToken string) {
+func (s *Server) connect(viewer *client, typed, accountToken string) {
+	// An ID, or a device's alias.
+	target := s.store.ResolveTarget(typed)
+	if target == "" {
+		_ = viewer.send(errorMsg("@server.unreachable", ""))
+		return
+	}
 	if ip, ok := relay.HostOf(viewer.conn.RemoteAddr()); ok && !s.connectLimit.allow(ip, time.Now()) {
 		s.log.Info("connection request refused: too many", "from", viewer.device.ID, "to", target, "address", ip)
 		_ = viewer.send(errorMsg("@server.rate_limited", ""))

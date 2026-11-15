@@ -41,6 +41,9 @@ pub struct Signal {
     pub policy: nuvira_proto::v1::Policy,
     /// Optional modules of the server (NuviraHub Pro), e.g. "pro.address_book".
     pub features: Vec<String>,
+    /// The device's alias on the server, and why the one it asked for is not it.
+    pub alias: String,
+    pub alias_error: String,
     /// Server address: it is also the relay address.
     pub server: SocketAddr,
     /// Fingerprint of the server certificate seen in this connection.
@@ -131,11 +134,38 @@ fn is_unreachable(e: &anyhow::Error) -> bool {
     })
 }
 
+/// What to ask the server to connect to: the ID's digits (spaces and dashes
+/// typed with it ignored), or an alias as typed, trimmed and in lower case.
+pub fn target(typed: &str) -> String {
+    let typed = typed.trim();
+    if typed.chars().all(|c| c.is_ascii_digit() || matches!(c, ' ' | '-' | '.')) {
+        typed.chars().filter(char::is_ascii_digit).collect()
+    } else {
+        typed.to_lowercase()
+    }
+}
+
+/// A `target` the server can resolve: 9 digits, or an alias (3 to 32 of a-z,
+/// 0-9 and "-", at least one letter, no "-" at the ends; docs/46-aliases.md).
+pub fn valid_target(target: &str) -> bool {
+    let b = target.as_bytes();
+    if b.iter().all(u8::is_ascii_digit) {
+        return b.len() == 9;
+    }
+    (3..=32).contains(&b.len())
+        && b[0] != b'-'
+        && b[b.len() - 1] != b'-'
+        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+        && b.iter().any(u8::is_ascii_lowercase)
+}
+
 /// How the device introduces itself to the server.
 pub struct DeviceInfo<'a> {
     pub name: &'a str,
     /// Not reachable: it receives no connection requests (viewer, app using the address book).
     pub reachable: bool,
+    /// The alias it keeps (agents; `None`: the server's stays).
+    pub alias: Option<String>,
 }
 
 /// Connects to nuvira-server and registers the device. With `expected` the server
@@ -177,6 +207,7 @@ pub async fn connect(
         app_version: env!("CARGO_PKG_VERSION").into(),
         protocol_version: PROTOCOL_VERSION,
         api_only: !device.reachable,
+        alias: device.alias.clone(),
     }))
     .await?;
 
@@ -187,8 +218,10 @@ pub async fn connect(
     };
     let signature = identity.sign(&[REGISTER_CONTEXT, &nonce].concat())?;
     tx.send(client_message::Msg::Proof(Proof { signature })).await?;
-    let (device_id, policy, features) = match rx.recv().await? {
-        Some(server_message::Msg::Registered(r)) => (r.device_id, r.policy.unwrap_or_default(), r.features),
+    let (device_id, policy, features, alias, alias_error) = match rx.recv().await? {
+        Some(server_message::Msg::Registered(r)) => {
+            (r.device_id, r.policy.unwrap_or_default(), r.features, r.alias, r.alias_error)
+        }
         Some(server_message::Msg::Error(e)) => bail!("the server refuses the registration: {}", e.message),
         other => bail!("unexpected answer to the registration: {other:?}"),
     };
@@ -196,6 +229,8 @@ pub async fn connect(
         device_id,
         policy,
         features,
+        alias,
+        alias_error,
         server,
         server_fingerprint,
         transport: transport.clone(),
@@ -241,6 +276,21 @@ pub mod known_server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn targets() {
+        assert_eq!(target(" 123 456 789 "), "123456789");
+        assert_eq!(target("123-456-789"), "123456789");
+        assert_eq!(target(" Ufficio-Mario "), "ufficio-mario");
+        assert_eq!(target("pc1"), "pc1");
+        assert!(valid_target("123456789"));
+        assert!(valid_target("ufficio-mario"));
+        assert!(!valid_target("12345678"));
+        assert!(!valid_target("-abc"));
+        assert!(!valid_target("ab"));
+        assert!(!valid_target("123-456"));
+        assert!(!valid_target("caffè"));
+    }
 
     #[test]
     fn public_server() {

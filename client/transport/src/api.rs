@@ -47,7 +47,7 @@ impl ApiClient {
         fingerprint: Option<crate::Fingerprint>,
     ) -> Result<Self> {
         let expected = fingerprint.or_else(|| signal::known_server::get(server_name));
-        let device = DeviceInfo { name: device_name, reachable: false };
+        let device = DeviceInfo { name: device_name, reachable: false, alias: None };
         let mut sig = signal::connect_auto(server, ws_url, mode, expected, identity, &device).await?;
         if expected.is_none() {
             signal::known_server::remember(server_name, &sig.server_fingerprint)?;

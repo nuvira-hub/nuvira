@@ -26,6 +26,8 @@ message ClientMessage {
     SupportRequest support_request = 8;
     // Light RMM (NuviraHub Pro, feature "pro.inventory"): what this computer is.
     Inventory inventory = 9;
+    // The device's alias changed (agents only).
+    SetAlias set_alias = 10;
   }
 }
 
@@ -43,7 +45,23 @@ message ServerMessage {
     SupportStatus support_status = 8;
     // Light RMM: send a Wake-on-LAN packet to these MAC addresses on the local network.
     Wake wake = 9;
+    // Answer to SetAlias.
+    AliasState alias_state = 10;
   }
+}
+
+// A readable name for this device on its server, typed instead of its ID
+// (docs/46-aliases.md): 3 to 32 of a-z, 0-9 and "-", at least one letter, not at
+// the ends a "-"; unique on the server whatever the case. Empty: none.
+message SetAlias {
+  string alias = 1;
+}
+
+// The alias the device has now on the server, and why the one asked for is not
+// it ("@key"), e.g. taken by another device.
+message AliasState {
+  string alias = 1;
+  string error = 2;
 }
 
 // How a session went, seen by the agent (for the session log of NuviraHub Pro;
@@ -78,6 +96,9 @@ message Register {
   // app using the address book). Several connections with the same key can
   // coexist, for example two session windows open at the same time.
   bool api_only = 6;
+  // The alias the device wants (see SetAlias); absent (older agents): the one
+  // the server has stays.
+  optional string alias = 7;
 }
 
 // The device proves it holds the private key by signing "nuvira-register-v1"
@@ -98,6 +119,9 @@ message Registered {
   // Optional modules of this server (NuviraHub Pro), e.g. "pro.address_book",
   // "pro.policy": the app shows their functions only when they are listed.
   repeated string features = 3;
+  // The device's alias on this server, and why the one in Register is not it.
+  string alias = 4;
+  string alias_error = 5;
 }
 
 // Rules the server's administrator sets for all its devices, sent at registration
@@ -172,6 +196,7 @@ message UploadResult {
 
 // The viewer asks to connect to a device.
 message Connect {
+  // Its ID, or its alias (SetAlias).
   string device_id = 1;
   // Address book sign-in of the app that opened the viewer (NuviraHub Pro): the
   // session log records which account worked on the device. Never stored.

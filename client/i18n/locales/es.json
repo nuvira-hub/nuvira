@@ -258,7 +258,7 @@
   "err.invalid_address": "Dirección no válida: {e}",
   "err.entry_not_found": "Ficha no encontrada",
   "err.already_in_book": "Este ID ya está en la libreta de direcciones",
-  "err.id_digits": "El ID tiene 9 cifras",
+  "err.id_digits": "El ID tiene 9 cifras; o escribe el nombre del equipo",
   "err.set_server_first": "Indica primero el servidor",
   "err.session_error": "La sesión terminó con un error",
   "err.login_required": "Inicia sesión primero en la libreta de direcciones",
@@ -717,5 +717,12 @@
   "session.mic_mute": "El técnico está hablando: silenciar",
   "session.mic_unmute": "Técnico silenciado: volver a escuchar",
   "session.mic_hint": "El micrófono del técnico sale por los altavoces de este equipo",
-  "admin.policy_microphone": "Sin micrófono del técnico"
+  "admin.policy_microphone": "Sin micrófono del técnico",
+  "settings.alias": "Nombre en lugar del ID (p. ej. oficina-mario)",
+  "settings.alias_save": "Guardar el nombre",
+  "settings.alias_hint": "Quien se conecta puede escribir este nombre en lugar del ID: de 3 a 32 letras, cifras o guiones, único en el servidor. Vacío: ninguno.",
+  "server.alias_taken": "Este nombre ya lo usa otro equipo en el servidor",
+  "server.alias_invalid": "Nombre no válido: de 3 a 32 letras (a-z), cifras o guiones, al menos una letra, sin guion en los extremos",
+  "server.alias_failed": "No se pudo guardar el nombre en el servidor",
+  "err.alias_unknown": "Ningún equipo tiene este nombre en el servidor"
 }

@@ -1,7 +1,7 @@
 //! Address book to and from CSV files: a backup, a spreadsheet, or the list of
 //! another tool once the computers have their NuviraHub IDs.
 //!
-//! Columns: `id` (the NuviraHub ID, 9 digits), `name`, `company`, `contact`,
+//! Columns: `id` (the NuviraHub ID, 9 digits, or the computer's alias), `name`, `company`, `contact`,
 //! `email`, `phone`, `group`, `tags` (separated by `;` or `|`), `notes`,
 //! `password`. The header names them, in any order, in English or in one of the
 //! app's languages; other columns are ignored. Commas or semicolons separate the
@@ -87,7 +87,7 @@ pub fn parse(text: &str) -> Result<(Vec<(usize, EntryUi)>, Vec<Skipped>), &'stat
         for (value, column) in row.iter().zip(&columns) {
             let v = value.trim().to_string();
             match column {
-                Some(Field::Id) => e.device_id = v.chars().filter(|c| c.is_ascii_digit()).collect(),
+                Some(Field::Id) => e.device_id = nuvira_transport::signal::target(&v),
                 Some(Field::Name) => e.name = v,
                 Some(Field::Company) => e.company = v,
                 Some(Field::Contact) => e.contact = v,
@@ -102,7 +102,7 @@ pub fn parse(text: &str) -> Result<(Vec<(usize, EntryUi)>, Vec<Skipped>), &'stat
                 None => {}
             }
         }
-        if e.device_id.len() != 9 {
+        if !nuvira_transport::signal::valid_target(&e.device_id) {
             skipped.push(Skipped { line, reason: "err.id_digits" });
             continue;
         }

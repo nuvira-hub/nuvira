@@ -451,7 +451,7 @@ async fn open_connection(
             let expected = server_key.or_else(|| signal::known_server::get(&server_name));
             let name = nuvira_transport::device_name();
             // The viewer receives no connections: several session windows can coexist.
-            let device = signal::DeviceInfo { name: &name, reachable: false };
+            let device = signal::DeviceInfo { name: &name, reachable: false, alias: None };
             let ws_url = server_ws.unwrap_or_else(|| nuvira_transport::ws::default_url(&server_name, server));
             let mut sig =
                 signal::connect_auto(server, &ws_url, transport, expected, &identity, &device).await?;

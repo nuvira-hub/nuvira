@@ -98,8 +98,9 @@ pub fn book() -> BookUi {
 
 /// Adds (id 0) or changes an entry.
 pub fn put(entry: EntryUi) -> Result<(), String> {
-    let device_id: String = entry.device_id.chars().filter(|c| c.is_ascii_digit()).collect();
-    if device_id.len() != 9 {
+    // An ID, or the computer's alias.
+    let device_id = nuvira_transport::signal::target(&entry.device_id);
+    if !nuvira_transport::signal::valid_target(&device_id) {
         return Err(t("err.id_digits"));
     }
     let mut book = load();

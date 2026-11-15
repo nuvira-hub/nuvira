@@ -152,6 +152,16 @@ $("recording-allowed").addEventListener("change", async (e) => {
   }
 });
 
+$("alias-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await invoke("set_alias", { alias: $("alias-input").value.trim().toLowerCase() });
+    $("alias-input").blur();
+  } catch (err) {
+    console.error(err);
+  }
+});
+
 $("hide-wallpaper").addEventListener("change", async (e) => {
   try {
     await invoke("set_hide_wallpaper", { on: e.target.checked });
@@ -313,6 +323,11 @@ function render(state) {
   if (typeof renderAccess === "function") renderAccess(state);
   $("password-label").textContent = t(state.service ? "connect.temp_password" : "connect.password");
   $("device-id").textContent = formatId(state.device_id);
+  $("device-alias").textContent = state.alias || "";
+  $("device-alias").classList.toggle("hidden", !state.alias);
+  if (document.activeElement !== $("alias-input")) $("alias-input").value = state.alias || "";
+  $("alias-message").classList.toggle("hidden", !state.alias_error);
+  $("alias-message").textContent = state.alias_error ? msg(state.alias_error) : "";
   $("password").textContent = state.password || "—";
   if (document.activeElement !== $("server")) $("server").value = state.server;
   // Set by the organisation's policies (Group Policy, Intune).

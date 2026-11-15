@@ -258,7 +258,7 @@
   "err.invalid_address": "Adresse non valide : {e}",
   "err.entry_not_found": "Fiche introuvable",
   "err.already_in_book": "Cet ID est déjà dans le carnet d'adresses",
-  "err.id_digits": "L'ID comporte 9 chiffres",
+  "err.id_digits": "L'ID compte 9 chiffres ; ou saisis le nom de l'ordinateur",
   "err.set_server_first": "Indique d'abord le serveur",
   "err.session_error": "La session s'est terminée par une erreur",
   "err.login_required": "Connecte-toi d'abord au carnet d'adresses",
@@ -717,5 +717,12 @@
   "session.mic_mute": "Le technicien parle : couper",
   "session.mic_unmute": "Technicien coupé : écouter de nouveau",
   "session.mic_hint": "Le micro du technicien sort des haut-parleurs de cet ordinateur",
-  "admin.policy_microphone": "Pas de micro du technicien"
+  "admin.policy_microphone": "Pas de micro du technicien",
+  "settings.alias": "Nom à la place de l'ID (ex. bureau-mario)",
+  "settings.alias_save": "Enregistrer le nom",
+  "settings.alias_hint": "La personne qui se connecte peut saisir ce nom à la place de l'ID : de 3 à 32 lettres, chiffres ou tirets, unique sur le serveur. Vide : aucun.",
+  "server.alias_taken": "Ce nom est déjà utilisé par un autre ordinateur sur le serveur",
+  "server.alias_invalid": "Nom non valide : de 3 à 32 lettres (a-z), chiffres ou tirets, au moins une lettre, pas de tiret aux extrémités",
+  "server.alias_failed": "Le nom n'a pas pu être enregistré sur le serveur",
+  "err.alias_unknown": "Aucun ordinateur n'a ce nom sur le serveur"
 }

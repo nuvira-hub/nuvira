@@ -98,7 +98,7 @@ const RESTART_WAIT: Duration = Duration::from_secs(10 * 60);
 #[derive(Parser, Debug)]
 #[command(version, about = "NuviraHub viewer: controls a PC running NuviraHub", after_help = COPYRIGHT)]
 struct Args {
-    /// Agent ID (with --server) or LAN address, e.g. 192.168.1.20[:21500].
+    /// Agent ID or alias (with --server), or LAN address, e.g. 192.168.1.20[:21500].
     agent: String,
 
     /// nuvira-server used to connect by ID (host[:port]).
@@ -446,7 +446,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             server_key: args.server_key.as_deref().map(nuvira_transport::parse_fingerprint).transpose()?,
             transport: args.transport.into(),
             server_ws: args.server_ws.clone(),
-            device_id: args.agent.chars().filter(|c| c.is_ascii_digit()).collect(),
+            device_id: nuvira_transport::signal::target(&args.agent),
             identity: args
                 .identity
                 .clone()

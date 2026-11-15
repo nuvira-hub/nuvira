@@ -210,6 +210,11 @@ pub enum AgentEvent {
         offered: Vec<String>,
         off: Vec<String>,
     },
+    /// This device's alias on the server, and why the one asked for is not it.
+    Alias {
+        alias: String,
+        error: String,
+    },
     /// The technician's microphone is played here (`on`), or not any more.
     Microphone {
         on: bool,
@@ -283,6 +288,10 @@ pub enum AgentCommand {
     },
     /// The app wants the rules of unattended access again (it saved new ones).
     GetAccess,
+    /// A readable name instead of the ID on the server ("" none).
+    SetAlias {
+        alias: String,
+    },
     /// The person at the PC mutes the technician's microphone, or not.
     MuteMicrophone {
         muted: bool,
@@ -725,7 +734,11 @@ async fn signal_loop(
         opts.transport,
         expected,
         identity,
-        &nuvira_transport::signal::DeviceInfo { name: &device_name, reachable: true },
+        &nuvira_transport::signal::DeviceInfo {
+            name: &device_name,
+            reachable: true,
+            alias: std::fs::read_to_string(ctx.access_dir.join(ALIAS_FILE)).ok().map(|a| a.trim().to_string()),
+        },
     )
     .await?;
     let websocket = matches!(signal.transport, nuvira_transport::ServerTransport::WebSocket(_));
@@ -754,6 +767,11 @@ async fn signal_loop(
         std::fs::write(path, format!("{id} {password}"))?;
     }
     let _ = ctx.events.send(AgentEvent::Online { device_id: id, websocket });
+    if !signal.alias_error.is_empty() {
+        warn!(error = signal.alias_error, "alias refused by the server");
+    }
+    keep_alias(&ctx.access_dir, &signal.alias, &signal.alias_error);
+    let _ = ctx.events.send(AgentEvent::Alias { alias: signal.alias.clone(), error: signal.alias_error.clone() });
 
     let mut accepted: HashMap<String, Request> = HashMap::new();
     let (report_tx, mut reports) = mpsc::unbounded_channel::<nuvira_proto::v1::SessionReport>();
@@ -881,6 +899,12 @@ async fn signal_loop(
                     tokio::task::spawn_blocking(move || inventory::wake(&wake.macs));
                     None
                 }
+                Some(server_message::Msg::AliasState(state)) => {
+                    info!(alias = state.alias, error = state.error, "alias on the server");
+                    keep_alias(&ctx.access_dir, &state.alias, &state.error);
+                    let _ = ctx.events.send(AgentEvent::Alias { alias: state.alias, error: state.error });
+                    None
+                }
                 Some(server_message::Msg::SupportStatus(status)) => {
                     if status.closed {
                         *ctx.support_ticket.lock().expect("support") = None;
@@ -972,6 +996,11 @@ async fn signal_loop(
                     info!(muted, "technician's microphone muted by the person at the PC");
                     ctx.mic_muted.send_replace(muted);
                     None
+                }
+                Some(AgentCommand::SetAlias { alias }) => {
+                    // Kept once the server takes it (AliasState).
+                    let alias = alias.trim().to_lowercase();
+                    Some(client_message::Msg::SetAlias(nuvira_proto::v1::SetAlias { alias }))
                 }
                 Some(AgentCommand::GetAccess) => {
                     let _ = ctx.events.send(AgentEvent::Access { view: access::View::of(&ctx.access_dir) });
@@ -3413,6 +3442,28 @@ impl Drop for RestoreScreens {
 fn recover_screens(dir: &std::path::Path) {
     nuvira_capture::resolution::recover(&dir.join("resolution.txt"));
     nuvira_capture::wallpaper::recover(&dir.join(WALLPAPER_STATE));
+}
+
+/// The alias the device keeps (next to the device key), sent at every registration.
+const ALIAS_FILE: &str = "alias.txt";
+
+/// Keeps the alias the server confirmed: a server that lost it gets it back at the
+/// next registration. One that is not valid gives way to the server's (it never
+/// will be); one taken stays, asked for again at every start.
+fn keep_alias(dir: &std::path::Path, alias: &str, error: &str) {
+    if !error.is_empty() && error != "@server.alias_invalid" {
+        return;
+    }
+    let path = dir.join(ALIAS_FILE);
+    if std::fs::read_to_string(&path).map(|a| a.trim().to_string()).unwrap_or_default() == alias {
+        return;
+    }
+    let result = if alias.is_empty() { std::fs::remove_file(&path) } else { std::fs::write(&path, alias) };
+    if let Err(e) = result {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            warn!("alias not saved: {e}");
+        }
+    }
 }
 
 /// What the wallpaper was, while a session keeps it hidden (`SetWallpaper`).

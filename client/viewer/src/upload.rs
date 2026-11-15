@@ -161,7 +161,7 @@ async fn send(args: &Args) -> Result<()> {
     let ws_url =
         args.server_ws.clone().unwrap_or_else(|| nuvira_transport::ws::default_url(&args.server, server));
     let device_name = nuvira_transport::device_name();
-    let device = signal::DeviceInfo { name: &device_name, reachable: false };
+    let device = signal::DeviceInfo { name: &device_name, reachable: false, alias: None };
     let sig = signal::connect_auto(server, &ws_url, transport, expected, &identity, &device).await?;
     if !sig.features.iter().any(|f| f == "pro.recording") {
         return Err(Refused("@server.pro_required".into()).into());

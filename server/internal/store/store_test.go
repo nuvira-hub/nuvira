@@ -2,7 +2,10 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,4 +70,59 @@ func TestBlocks(t *testing.T) {
 	if found, _ := s.RemoveBlock("123456789"); found {
 		t.Fatal("removed twice")
 	}
+}
+
+func TestAliases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nuvira.db")
+	// A database of an earlier version, without the column.
+	old, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`CREATE TABLE devices (id TEXT PRIMARY KEY, public_key BLOB NOT NULL UNIQUE,
+		name TEXT NOT NULL DEFAULT '', os TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := s.Register(bytes.Repeat([]byte{1}, 32), "a", "linux")
+	b, _ := s.Register(bytes.Repeat([]byte{2}, 32), "b", "linux")
+
+	if got, err := s.SetAlias(a.ID, "  Ufficio-Mario "); err != nil || got != "ufficio-mario" {
+		t.Fatalf("set: %q %v", got, err)
+	}
+	if got, err := s.SetAlias(b.ID, "UFFICIO-MARIO"); !errors.Is(err, ErrAliasTaken) || got != "" {
+		t.Fatalf("taken: %q %v", got, err)
+	}
+	for _, bad := range []string{"ab", "123456", "-abc", "abc-", "a b c", "àbc", strings.Repeat("a", 33)} {
+		if _, err := s.SetAlias(b.ID, bad); !errors.Is(err, ErrAliasInvalid) {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+	if s.ResolveTarget("Ufficio-Mario") != a.ID || s.ResolveTarget(" "+a.ID[:3]+" "+a.ID[3:]) != a.ID {
+		t.Fatal("resolve")
+	}
+	if s.ResolveTarget("nobody-here") != "" {
+		t.Fatal("unknown alias resolved")
+	}
+	if d, _ := s.ByID(a.ID); d.Alias != "ufficio-mario" {
+		t.Fatalf("ByID alias %q", d.Alias)
+	}
+	// Removed: free for another device.
+	if _, err := s.SetAlias(a.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.SetAlias(b.ID, "ufficio-mario"); err != nil || got != "ufficio-mario" {
+		t.Fatalf("free again: %q %v", got, err)
+	}
+	// Reopened: the column is there already.
+	s.Close()
+	again, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again.Close()
 }

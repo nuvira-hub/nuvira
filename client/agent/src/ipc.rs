@@ -120,6 +120,7 @@ struct Snapshot {
     guests: Option<AgentEvent>,
     rules: Option<AgentEvent>,
     access: Option<AgentEvent>,
+    alias: Option<AgentEvent>,
     microphone: Option<AgentEvent>,
 }
 
@@ -158,6 +159,7 @@ impl Snapshot {
             AgentEvent::Guests { .. } => &mut self.guests,
             AgentEvent::Rules { .. } => &mut self.rules,
             AgentEvent::Access { .. } => &mut self.access,
+            AgentEvent::Alias { .. } => &mut self.alias,
         };
         *slot = Some(event.clone());
     }
@@ -167,6 +169,7 @@ impl Snapshot {
             &self.status,
             &self.rules,
             &self.access,
+            &self.alias,
             &self.password,
             &self.session,
             &self.recording,

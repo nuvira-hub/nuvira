@@ -258,7 +258,7 @@
   "err.invalid_address": "Indirizzo non valido: {e}",
   "err.entry_not_found": "Scheda non trovata",
   "err.already_in_book": "Questo ID è già in rubrica",
-  "err.id_digits": "L'ID è di 9 cifre",
+  "err.id_digits": "L'ID è di 9 cifre; oppure scrivi il nome del computer",
   "err.set_server_first": "Imposta prima il server",
   "err.session_error": "La sessione si è chiusa con un errore",
   "err.login_required": "Entra prima nella rubrica",
@@ -717,5 +717,12 @@
   "session.mic_mute": "Il tecnico sta parlando: silenzia",
   "session.mic_unmute": "Tecnico silenziato: ascolta di nuovo",
   "session.mic_hint": "Il microfono del tecnico esce dagli altoparlanti di questo computer",
-  "admin.policy_microphone": "Niente microfono del tecnico"
+  "admin.policy_microphone": "Niente microfono del tecnico",
+  "settings.alias": "Nome al posto dell'ID (es. ufficio-mario)",
+  "settings.alias_save": "Salva il nome",
+  "settings.alias_hint": "Chi si collega può scrivere questo nome al posto dell'ID: da 3 a 32 lettere, cifre o trattini, unico sul server. Vuoto: nessuno.",
+  "server.alias_taken": "Questo nome è già usato da un altro computer sul server",
+  "server.alias_invalid": "Nome non valido: da 3 a 32 lettere (a-z), cifre o trattini, almeno una lettera, senza trattino agli estremi",
+  "server.alias_failed": "Il nome non è stato salvato sul server",
+  "err.alias_unknown": "Nessun computer ha questo nome sul server"
 }
