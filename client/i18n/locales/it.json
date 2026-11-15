@@ -709,5 +709,13 @@
   "settings.hide_wallpaper_hint": "Uno sfondo a tinta unita al posto dell'immagine durante la sessione: meno dati sulle connessioni lente. L'immagine torna alla fine.",
   "viewer.restart_normal": "Riavvia",
   "viewer.restart_safe_mode": "Modalità provvisoria con rete",
-  "viewer.cancel": "Annulla"
+  "viewer.cancel": "Annulla",
+  "tb.mic_off": "Parla: il tuo microfono sugli altoparlanti del computer remoto",
+  "tb.mic_on": "Microfono acceso: clic per spegnerlo",
+  "agent.microphone_unavailable": "il computer remoto non può riprodurre il tuo microfono",
+  "agent.microphone_muted": "la persona al computer remoto ha silenziato il tuo microfono",
+  "session.mic_mute": "Il tecnico sta parlando: silenzia",
+  "session.mic_unmute": "Tecnico silenziato: ascolta di nuovo",
+  "session.mic_hint": "Il microfono del tecnico esce dagli altoparlanti di questo computer",
+  "admin.policy_microphone": "Niente microfono del tecnico"
 }

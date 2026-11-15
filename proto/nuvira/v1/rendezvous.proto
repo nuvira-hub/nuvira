@@ -136,6 +136,8 @@ message Policy {
   // Sessions end after this many minutes without activity from the viewer
   // (keyboard, mouse, files); 0: never. Merged with others, the shortest wins.
   uint32 idle_minutes = 15;
+  // The technician's microphone is never played on the computer.
+  bool no_microphone = 16;
 }
 
 // ---------------------------------------------------------------------------

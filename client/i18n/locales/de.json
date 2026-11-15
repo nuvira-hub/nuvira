@@ -709,5 +709,13 @@
   "settings.hide_wallpaper_hint": "Ein einfarbiger Hintergrund statt des Bildes während der Sitzung: weniger Daten bei langsamen Verbindungen. Das Bild kommt am Ende zurück.",
   "viewer.restart_normal": "Neu starten",
   "viewer.restart_safe_mode": "Abgesicherter Modus mit Netzwerk",
-  "viewer.cancel": "Abbrechen"
+  "viewer.cancel": "Abbrechen",
+  "tb.mic_off": "Sprechen: dein Mikrofon über die Lautsprecher des entfernten Computers",
+  "tb.mic_on": "Mikrofon an: zum Ausschalten klicken",
+  "agent.microphone_unavailable": "der entfernte Computer kann dein Mikrofon nicht wiedergeben",
+  "agent.microphone_muted": "die Person am entfernten Computer hat dein Mikrofon stummgeschaltet",
+  "session.mic_mute": "Der Techniker spricht: stummschalten",
+  "session.mic_unmute": "Techniker stummgeschaltet: wieder zuhören",
+  "session.mic_hint": "Das Mikrofon des Technikers kommt aus den Lautsprechern dieses Computers",
+  "admin.policy_microphone": "Kein Mikrofon des Technikers"
 }

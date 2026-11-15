@@ -28,6 +28,12 @@ use crate::opus::Decoder;
 use crate::resample::{Resampler, from_stereo};
 use crate::{CHANNELS, RATE};
 
+/// Whether this computer has a sound output to play on.
+pub fn available() -> bool {
+    use cpal::traits::HostTrait;
+    cpal::default_host().default_output_device().is_some()
+}
+
 /// Audio kept ahead of the speakers, at first and at best.
 pub const TARGET: Duration = Duration::from_millis(60);
 /// More than the target plus this behind: the oldest is dropped.

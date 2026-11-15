@@ -709,5 +709,13 @@
   "settings.hide_wallpaper_hint": "Un fond uni à la place de l'image pendant la session : moins de données sur les connexions lentes. L'image revient à la fin.",
   "viewer.restart_normal": "Redémarrer",
   "viewer.restart_safe_mode": "Mode sans échec avec réseau",
-  "viewer.cancel": "Annuler"
+  "viewer.cancel": "Annuler",
+  "tb.mic_off": "Parler : ton micro sur les haut-parleurs de l'ordinateur distant",
+  "tb.mic_on": "Micro activé : cliquer pour le couper",
+  "agent.microphone_unavailable": "l'ordinateur distant ne peut pas lire ton micro",
+  "agent.microphone_muted": "la personne devant l'ordinateur distant a coupé ton micro",
+  "session.mic_mute": "Le technicien parle : couper",
+  "session.mic_unmute": "Technicien coupé : écouter de nouveau",
+  "session.mic_hint": "Le micro du technicien sort des haut-parleurs de cet ordinateur",
+  "admin.policy_microphone": "Pas de micro du technicien"
 }

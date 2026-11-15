@@ -11,6 +11,7 @@
 //!   buffer against jitter and Opus's own concealment of lost packets.
 
 pub mod capture;
+pub mod microphone;
 pub mod opus;
 pub mod packet;
 pub mod player;

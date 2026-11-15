@@ -126,6 +126,14 @@ $("idle-minutes").addEventListener("change", async (e) => {
   }
 });
 
+$("session-mic").addEventListener("click", async () => {
+  try {
+    await invoke("mute_microphone", { muted: !current?.session?.microphone_muted });
+  } catch (err) {
+    console.error(err);
+  }
+});
+
 $("lock-on-end").addEventListener("change", async (e) => {
   try {
     await invoke("set_lock_on_end", { on: e.target.checked });
@@ -327,6 +335,9 @@ function render(state) {
     $("session-text").textContent = t(key, { who, path, others: guests.join(", ") });
   }
   $("session-rec").classList.toggle("hidden", !session?.recording);
+  // The technician speaks through this computer's speakers: muted with one click.
+  $("session-mic").classList.toggle("hidden", !session?.microphone);
+  $("session-mic").textContent = t(session?.microphone_muted ? "session.mic_unmute" : "session.mic_mute");
   renderSwitches(session);
 
   const message = state.viewer_message;

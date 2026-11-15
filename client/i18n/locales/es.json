@@ -709,5 +709,13 @@
   "settings.hide_wallpaper_hint": "Un fondo liso en lugar de la imagen durante la sesión: menos datos en conexiones lentas. La imagen vuelve al final.",
   "viewer.restart_normal": "Reiniciar",
   "viewer.restart_safe_mode": "Modo seguro con funciones de red",
-  "viewer.cancel": "Cancelar"
+  "viewer.cancel": "Cancelar",
+  "tb.mic_off": "Hablar: tu micrófono por los altavoces del equipo remoto",
+  "tb.mic_on": "Micrófono activado: clic para apagarlo",
+  "agent.microphone_unavailable": "el equipo remoto no puede reproducir tu micrófono",
+  "agent.microphone_muted": "la persona del equipo remoto ha silenciado tu micrófono",
+  "session.mic_mute": "El técnico está hablando: silenciar",
+  "session.mic_unmute": "Técnico silenciado: volver a escuchar",
+  "session.mic_hint": "El micrófono del técnico sale por los altavoces de este equipo",
+  "admin.policy_microphone": "Sin micrófono del técnico"
 }

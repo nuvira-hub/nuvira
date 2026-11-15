@@ -73,6 +73,13 @@ pub enum NetEvent {
         wallpaper: bool,
         /// It can restart into safe mode with networking (Windows).
         restart_safe_mode: bool,
+        /// It plays this computer's microphone (SetMicrophone).
+        microphone: bool,
+    },
+    /// Whether the microphone is played there, or why not ("@key").
+    Microphone {
+        on: bool,
+        error: String,
     },
     /// Whether the remote computer will be locked when the session ends, and
     /// whether its setting or the server's rules want it (no turning it off).
@@ -561,6 +568,8 @@ async fn handshake(
             switch_sides: !terminal_only && crate::REVERSE_HOST.get().is_some(),
             // The two-factor code is asked for (CodeRequired).
             two_factor: true,
+            // The technician's microphone can be sent (SetMicrophone).
+            microphone: !terminal_only && nuvira_audio::microphone::available(),
             ..Default::default()
         })))
         .await?;
@@ -634,6 +643,7 @@ async fn handshake(
             lock_on_end: false,
             wallpaper: false,
             restart_safe_mode: false,
+            microphone: false,
         });
         return Ok((ctrl_tx, ctrl_rx, None, None, false, false));
     }
@@ -671,6 +681,7 @@ async fn handshake(
         lock_on_end: agent.lock_on_end,
         wallpaper: agent.wallpaper,
         restart_safe_mode: agent.restart && agent.restart_safe_mode,
+        microphone: agent.microphone && !terminal_only && nuvira_audio::microphone::available(),
     });
 
     let input_tx = FramedSend::new(conn.open_uni().await?);
@@ -959,6 +970,10 @@ async fn session(
         let mut clipboard_allowed = true;
         // Switch sides: this computer's screen served to the other one, while on.
         let mut reverse = ReverseHosting::default();
+        // The technician's microphone, while on: its packets go out as datagrams.
+        let mut microphone: Option<nuvira_audio::microphone::Microphone> = None;
+        let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let mut mic_seq = 0u32;
         let mut files_allowed = true;
         loop {
             tokio::select! {
@@ -992,6 +1007,25 @@ async fn session(
                         }
                         continue;
                     }
+                    // The microphone starts and stops here, with the message to the agent.
+                    if let Msg::SetMicrophone(m) = &msg {
+                        if m.on && microphone.is_none() {
+                            let tx = mic_tx.clone();
+                            match nuvira_audio::microphone::Microphone::start(move |p| {
+                                let _ = tx.send(p);
+                            }) {
+                                Ok(mic) => microphone = Some(mic),
+                                Err(e) => {
+                                    warn!("microphone not started: {e:#}");
+                                    let error = format!("{e:#}");
+                                    let _ = proxy.send_event(NetEvent::Microphone { on: false, error });
+                                    continue;
+                                }
+                            }
+                        } else if !m.on {
+                            microphone = None;
+                        }
+                    }
                     if let Msg::Feedback(f) = &mut msg
                         && datagrams
                     {
@@ -999,6 +1033,15 @@ async fn session(
                         last_feedback = Instant::now();
                     }
                     ctrl_tx.send(&control(msg)).await?;
+                }
+                Some(packet) = mic_rx.recv() => {
+                    if microphone.is_some() {
+                        let datagram = nuvira_audio::packet::encode(mic_seq, &packet);
+                        mic_seq = mic_seq.wrapping_add(1);
+                        if let Err(e) = conn.send_datagram(datagram.into()) {
+                            tracing::debug!("microphone datagram not sent: {e}");
+                        }
+                    }
                 }
                 Some(content) = clip_rx.recv(), if clipboard_allowed => match content {
                     nuvira_clipboard::Content::Text(text) => {
@@ -1125,6 +1168,9 @@ async fn session(
                             audio: p.audio,
                             switched_off: p.switched_off,
                         });
+                    }
+                    Some(ControlMessage { msg: Some(Msg::MicrophoneState(m)) }) => {
+                        let _ = proxy.send_event(NetEvent::Microphone { on: m.on, error: m.error });
                     }
                     Some(ControlMessage { msg: Some(Msg::IdleWarning(w)) }) => {
                         let _ = proxy.send_event(NetEvent::IdleWarning(w.seconds));

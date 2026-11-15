@@ -40,6 +40,7 @@
       <svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
       <span id="session-text"></span>
       <span id="session-rec" class="rec hidden" data-i18n="session.recording">Recorded</span>
+      <button id="session-mic" class="on-accent hidden" data-i18n-title="session.mic_hint"></button>
       <button id="strip-chat" class="on-accent" data-i18n="session.chat">Chat</button>
       <button id="end-session" class="on-accent strong" data-i18n="session.end">End</button>
       <div id="session-switches" class="switches hidden" role="group" data-i18n-title="session.switch_hint">
@@ -187,6 +188,7 @@
           <label class="check"><input id="policy-restart" type="checkbox"> <span data-i18n="admin.policy_restart">No restart of the computer</span></label>
           <label class="check"><input id="policy-resolution" type="checkbox"> <span data-i18n="admin.policy_resolution">No change of the screen resolution</span></label>
           <label class="check"><input id="policy-audio" type="checkbox"> <span data-i18n="admin.policy_audio">No sound of the computer</span></label>
+          <label class="check"><input id="policy-mic" type="checkbox"> <span data-i18n="admin.policy_microphone">No technician's microphone</span></label>
           <label class="check"><input id="policy-lock" type="checkbox"> <span data-i18n="admin.policy_lock">Lock the computer when the session ends</span></label>
           <label class="select-row"><span data-i18n="admin.policy_idle">End sessions without activity after (minutes, 0 never)</span> <input id="policy-idle" type="number" min="0" max="1440" step="1" value="0"></label>
           <label class="check"><input id="policy-no-record" type="checkbox"> <span data-i18n="admin.policy_no_record">No recordings by whoever connects</span></label>

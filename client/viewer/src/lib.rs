@@ -243,6 +243,10 @@ struct Args {
     #[arg(long)]
     lock_on_end: bool,
 
+    /// Tests: the microphone on as soon as connected (the toolbar's button).
+    #[arg(long, hide = true)]
+    microphone: bool,
+
     /// Hides the remote computer's wallpaper during the session (put back at the
     /// end): a plain background needs less bandwidth.
     #[arg(long)]
@@ -476,6 +480,8 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         idle_warned: false,
         hide_wallpaper: args.hide_wallpaper,
         restart_safe_mode: false,
+        microphone: (false, false),
+        microphone_at_start: args.microphone,
         slot: Arc::new(FrameSlot::default()),
         started,
         report: Report::default(),
@@ -679,6 +685,10 @@ struct App {
     hide_wallpaper: bool,
     /// The agent can restart into safe mode with networking.
     restart_safe_mode: bool,
+    /// The technician's microphone: (offered, played there now).
+    microphone: (bool, bool),
+    /// `--microphone`.
+    microphone_at_start: bool,
     /// The agent warned that the session ends without activity: the next local
     /// mouse or key event answers (`Activity`).
     idle_warned: bool,
@@ -1201,6 +1211,12 @@ impl App {
                 self.send_control(Msg::SetRecording(nuvira_proto::v1::SetRecording { on: !self.recording.on }));
             }
             Action::Screenshot => self.screenshot(),
+            Action::Microphone if self.microphone.0 => {
+                let on = !self.microphone.1;
+                info!(on, "microphone asked");
+                self.send_control(Msg::SetMicrophone(nuvira_proto::v1::SetMicrophone { on }));
+            }
+            Action::Microphone => {}
             Action::Code(code) => {
                 if let Some(reply) = self.code_reply.take() {
                     info!("two-factor code typed");
@@ -1693,8 +1709,19 @@ impl ApplicationHandler<NetEvent> for App {
                 lock_on_end,
                 wallpaper,
                 restart_safe_mode,
+                microphone,
             } => {
                 self.restart_safe_mode = restart_safe_mode;
+                // Off at every connection: the technician turns it on.
+                self.microphone = (microphone, false);
+                if microphone && self.microphone_at_start {
+                    self.send_control(nuvira_proto::v1::control_message::Msg::SetMicrophone(
+                        nuvira_proto::v1::SetMicrophone { on: true },
+                    ));
+                }
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&format!("{{micAvailable:{microphone},micOn:false}}"));
+                }
                 if wallpaper && self.hide_wallpaper {
                     let set = nuvira_proto::v1::SetWallpaper { hidden: true };
                     self.send_control(nuvira_proto::v1::control_message::Msg::SetWallpaper(set));
@@ -2104,6 +2131,16 @@ impl ApplicationHandler<NetEvent> for App {
                 self.recording.asked = false;
                 self.send_view_size();
                 self.update_toolbar_state();
+            }
+            NetEvent::Microphone { on, error } => {
+                info!(on, error, "microphone at the remote computer");
+                self.microphone.1 = on;
+                if let Some(toolbar) = &self.toolbar {
+                    toolbar.update(&format!("{{micOn:{on}}}"));
+                }
+                if !error.is_empty() {
+                    self.notice(&nuvira_i18n::message(&error), true);
+                }
             }
             NetEvent::IdleWarning(seconds) => {
                 self.idle_warned = seconds > 0;

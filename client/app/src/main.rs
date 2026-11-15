@@ -206,6 +206,12 @@ struct SessionUi {
     terminal: bool,
     /// Whoever controls this PC is recording the session: the strip says it.
     recording: bool,
+    /// The technician's microphone is played here: the strip says it.
+    #[serde(default)]
+    microphone: bool,
+    /// The person here muted it.
+    #[serde(default)]
+    microphone_muted: bool,
     /// What the session has ("input", "clipboard", "files", "terminal", "tunnel",
     /// "print") and what the person here switched off of it, from the strip.
     offered: Vec<String>,
@@ -719,6 +725,8 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
                 direct,
                 terminal,
                 recording: false,
+                microphone: false,
+                microphone_muted: false,
                 offered: Vec::new(),
                 off: Vec::new(),
                 guests: Vec::new(),
@@ -734,6 +742,17 @@ fn on_agent_event(app: &AppHandle, event: AgentEvent) {
         AgentEvent::Chat { text } => {
             state.update(app, |ui| ui.chat.push(ChatLine { mine: false, system: false, text }));
             bring_to_front(app);
+        }
+        AgentEvent::Microphone { on } => {
+            info!(on, "technician's microphone played here");
+            state.update(app, |ui| {
+                if let Some(session) = ui.session.as_mut() {
+                    session.microphone = on;
+                    if on {
+                        session.microphone_muted = false;
+                    }
+                }
+            });
         }
         AgentEvent::Recording { on } => {
             info!(on, "session recorded by the controlling side");
@@ -1075,6 +1094,17 @@ fn set_idle_minutes(app: AppHandle, state: State<NuviraApp>, minutes: u32) -> Re
     state.send(AgentCommand::IdleMinutes { minutes });
     state.update(&app, |ui| ui.idle_minutes = minutes);
     Ok(())
+}
+
+/// The person at this PC mutes the technician's microphone, or not (this session).
+#[tauri::command]
+fn mute_microphone(app: AppHandle, state: State<NuviraApp>, muted: bool) {
+    state.send(AgentCommand::MuteMicrophone { muted });
+    state.update(&app, |ui| {
+        if let Some(session) = ui.session.as_mut() {
+            session.microphone_muted = muted;
+        }
+    });
 }
 
 /// Folder where the session window saves the recordings.
@@ -1511,6 +1541,7 @@ fn main() {
             set_recording_allowed,
             set_lock_on_end,
             set_idle_minutes,
+            mute_microphone,
             access_ui::access_totp_new,
             access_ui::access_totp_check,
             access_ui::access_save,

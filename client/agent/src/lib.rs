@@ -210,6 +210,10 @@ pub enum AgentEvent {
         offered: Vec<String>,
         off: Vec<String>,
     },
+    /// The technician's microphone is played here (`on`), or not any more.
+    Microphone {
+        on: bool,
+    },
     /// The rules of unattended access of this computer, as the app shows them (no
     /// hashes, no secret): at the start and when the app asks ([`AgentCommand::GetAccess`]).
     Access {
@@ -279,6 +283,10 @@ pub enum AgentCommand {
     },
     /// The app wants the rules of unattended access again (it saved new ones).
     GetAccess,
+    /// The person at the PC mutes the technician's microphone, or not.
+    MuteMicrophone {
+        muted: bool,
+    },
     /// Sessions end after this many minutes without activity from the viewer, 0
     /// never (kept like `AllowPrivacy`).
     IdleMinutes {
@@ -461,6 +469,7 @@ pub async fn serve_via_server(
         lock_on_end: AtomicBool::new(permissions.lock_on_end),
         lock_asked: AtomicBool::new(false),
         idle_minutes: AtomicU32::new(permissions.idle_minutes),
+        mic_muted: tokio::sync::watch::channel(false).0,
         access_dir: opts
             .identity_path
             .parent()
@@ -606,6 +615,9 @@ struct SessionContext {
     lock_asked: AtomicBool,
     /// Minutes without activity after which sessions end ([`AgentCommand::IdleMinutes`]).
     idle_minutes: AtomicU32,
+    /// The person at the PC muted the technician's microphone (for the session in
+    /// progress; [`AgentCommand::MuteMicrophone`]).
+    mic_muted: tokio::sync::watch::Sender<bool>,
     /// Folder of the device key, where the rules of unattended access are ([`access`]).
     access_dir: PathBuf,
     /// Time step of the last two-factor code accepted: each code works once.
@@ -680,6 +692,7 @@ fn merge_limits(a: nuvira_proto::v1::Policy, b: &nuvira_proto::v1::Policy) -> nu
         no_audio: a.no_audio || b.no_audio,
         lock_on_end: a.lock_on_end || b.lock_on_end,
         idle_minutes: shorter_idle(a.idle_minutes, b.idle_minutes),
+        no_microphone: a.no_microphone || b.no_microphone,
     }
 }
 
@@ -953,6 +966,11 @@ async fn signal_loop(
                         info!(minutes, "sessions end after a time without activity, by the person at the PC");
                         ctx.save_permissions();
                     }
+                    None
+                }
+                Some(AgentCommand::MuteMicrophone { muted }) => {
+                    info!(muted, "technician's microphone muted by the person at the PC");
+                    ctx.mic_muted.send_replace(muted);
                     None
                 }
                 Some(AgentCommand::GetAccess) => {
@@ -1531,6 +1549,14 @@ async fn session(
         && !config.view_only
         && config.synthetic.is_none()
         && restart::available();
+    // The technician's microphone: played here through a server session, with a
+    // sound output, when the rules allow it.
+    let mic_offered = gate.is_some_and(|g| !g.request.join)
+        && !terminal_only
+        && hello.microphone
+        && !policy.no_microphone
+        && config.synthetic.is_none()
+        && nuvira_audio::player::available();
     // Safe mode with networking: Windows, the service's agent (it comes back).
     let safe_mode_offered = restart_available
         && !terminal_only
@@ -1622,6 +1648,7 @@ async fn session(
         idle_limit: idle_limit > 0,
         wallpaper: wallpaper_state.is_some(),
         restart_safe_mode: safe_mode_offered,
+        microphone: mic_offered,
         // Files through the clipboard: with the clipboard and the files.
         clipboard_files: !terminal_only
             && !config.view_only
@@ -1680,6 +1707,7 @@ async fn session(
         }
         *gate.ctx.switches.lock().expect("switches") = Some(switches.clone());
         gate.ctx.lock_asked.store(false, Ordering::Relaxed);
+        gate.ctx.mic_muted.send_replace(false);
         // The profile of the password given: what it does not allow is off for the
         // whole session, and the person at the PC cannot switch it back on.
         let profile_off = gate.profile_off.load(Ordering::Relaxed) & offered;
@@ -1908,6 +1936,74 @@ async fn session(
         }
     };
 
+    // The technician's microphone: datagrams from the viewer, played while it is on
+    // (SetMicrophone) and the person at the PC did not mute it.
+    let (mic_on_tx, mut mic_on_rx) = tokio::sync::watch::channel(false);
+    let microphone = {
+        let conn = conn.clone();
+        let mut muted_rx = gate.map(|g| g.ctx.mic_muted.subscribe());
+        let events = gate.map(|g| g.ctx.events.clone());
+        async move {
+            if !mic_offered {
+                return std::future::pending::<Result<()>>().await;
+            }
+            let mut player: Option<nuvira_audio::player::Player> = None;
+            let mut failed = false;
+            loop {
+                let datagram = tokio::select! {
+                    d = conn.read_datagram() => match d {
+                        Ok(d) => d,
+                        // The connection ended: the other channels say why.
+                        Err(_) => return std::future::pending::<Result<()>>().await,
+                    },
+                    Ok(()) = mic_on_rx.changed() => {
+                        if !*mic_on_rx.borrow_and_update() && player.take().is_some() {
+                            if let Some(events) = &events {
+                                let _ = events.send(AgentEvent::Microphone { on: false });
+                            }
+                        }
+                        continue;
+                    }
+                };
+                let muted = muted_rx.as_mut().is_some_and(|m| *m.borrow_and_update());
+                if !nuvira_audio::packet::is_audio(&datagram) || !*mic_on_rx.borrow() || muted || failed {
+                    continue;
+                }
+                if player.is_none() {
+                    // NUVIRA_MIC_DUMP (tests): written to that WAV file instead of played.
+                    let dump = std::env::var_os("NUVIRA_MIC_DUMP").map(PathBuf::from);
+                    match tokio::task::spawn_blocking(move || nuvira_audio::player::Player::start(dump)).await? {
+                        Ok(p) => {
+                            info!("technician's microphone played");
+                            player = Some(p);
+                            if let Some(events) = &events {
+                                let _ = events.send(AgentEvent::Microphone { on: true });
+                            }
+                        }
+                        Err(e) => {
+                            warn!("technician's microphone not played: {e:#}");
+                            failed = true;
+                            continue;
+                        }
+                    }
+                }
+                if let (Some(p), Ok((seq, packet))) = (&player, nuvira_audio::packet::decode(&datagram)) {
+                    p.push(seq, packet);
+                }
+            }
+        }
+    };
+    // Ends with the session: the app's notice goes.
+    struct MicNotice(Option<mpsc::UnboundedSender<AgentEvent>>);
+    impl Drop for MicNotice {
+        fn drop(&mut self) {
+            if let Some(events) = &self.0 {
+                let _ = events.send(AgentEvent::Microphone { on: false });
+            }
+        }
+    }
+    let _mic_notice = MicNotice(gate.filter(|_| mic_offered).map(|g| g.ctx.events.clone()));
+
     // The sound: captured while the viewer wants it (SetAudio), each packet a datagram.
     let (audio_on_tx, mut audio_on_rx) = tokio::sync::watch::channel(true);
     let audio = {
@@ -1994,6 +2090,12 @@ async fn session(
         let mut tick = tokio::time::interval(Duration::from_millis(250));
         // The idle limit: checked every 5 s, a warning one minute before.
         let mut idle_tick = tokio::time::interval(Duration::from_secs(5));
+        // The person at the PC mutes the microphone: the viewer is told.
+        let (_never_muted, unmuted) = tokio::sync::watch::channel(false);
+        let mut mic_muted_rx = match gate {
+            Some(g) if mic_offered => g.ctx.mic_muted.subscribe(),
+            _ => unmuted,
+        };
         let mut idle_warned = false;
         let mut bytes_seen = 0u64;
         // Samples (time, bytes sent) of the last 2 s, for the rate actually used.
@@ -2039,6 +2141,14 @@ async fn session(
                 }
                 Some(state) = switch_rx.recv() => {
                     ctrl_tx.send(&control(Msg::SwitchSides(state))).await?;
+                    continue;
+                }
+                Ok(()) = mic_muted_rx.changed() => {
+                    let muted = *mic_muted_rx.borrow_and_update();
+                    let wanted = *mic_on_tx.borrow();
+                    let error = if muted { "@agent.microphone_muted".to_string() } else { String::new() };
+                    let state = nuvira_proto::v1::MicrophoneState { on: wanted && !muted, error };
+                    ctrl_tx.send(&control(Msg::MicrophoneState(state))).await?;
                     continue;
                 }
                 _ = idle_tick.tick(), if idle_limit > 0 => {
@@ -2472,6 +2582,23 @@ async fn session(
                     info!(on = set.on, "sound of the session");
                     let _ = audio_on_tx.send(set.on);
                 }
+                Some(Msg::SetMicrophone(set)) => {
+                    let muted = gate.is_some_and(|g| *g.ctx.mic_muted.borrow());
+                    let state = match (mic_offered, muted) {
+                        (false, _) => nuvira_proto::v1::MicrophoneState {
+                            on: false,
+                            error: "@agent.microphone_unavailable".into(),
+                        },
+                        (true, true) if set.on => nuvira_proto::v1::MicrophoneState {
+                            on: false,
+                            error: "@agent.microphone_muted".into(),
+                        },
+                        _ => nuvira_proto::v1::MicrophoneState { on: set.on, error: String::new() },
+                    };
+                    info!(on = set.on, played = state.on, "technician's microphone asked");
+                    let _ = mic_on_tx.send(set.on && mic_offered);
+                    ctrl_tx.send(&control(Msg::MicrophoneState(state))).await?;
+                }
                 Some(Msg::SetWallpaper(set)) => {
                     if let Some(state) = wallpaper_state.clone() {
                         info!(hidden = set.hidden, "wallpaper asked by the viewer");
@@ -2846,6 +2973,7 @@ async fn session(
         r = accept_streams(&conn, (&terminal_refused, &tunnel_refused), &off, switch_offered.then_some(&switch_tx)) => r,
         r = printing => r,
         r = audio => r.context("sound"),
+        r = microphone => r.context("microphone"),
     };
     let last = pipeline.lock().expect("pipeline").take();
     let _ = tokio::task::spawn_blocking(move || drop(last)).await;
@@ -3352,6 +3480,7 @@ fn local_hello() -> Hello {
         idle_limit: false,
         wallpaper: false,
         restart_safe_mode: false,
+        microphone: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,

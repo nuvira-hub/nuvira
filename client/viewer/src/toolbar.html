@@ -54,6 +54,9 @@
   /* sound: the waves while on, a cross while muted */
   #sound .cross, #sound.muted .waves { display: none; }
   #sound.muted .cross { display: inline; }
+  /* microphone: crossed out while off */
+  #mic .cross { display: none; }
+  #mic.muted .cross { display: inline; }
   /* recording: a red dot while it runs */
   #record.on { background: transparent; color: #e53935; }
   #record.on svg circle.dot-rec { fill: #e53935; }
@@ -114,6 +117,9 @@
   <button id="privacy" data-i18n-title="tb.privacy" hidden>
     <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M4 5l16 10"/></svg>
   </button>
+  <button id="mic" data-i18n-title="tb.mic_off" hidden>
+    <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path class="cross" d="M4 4l16 16"/></svg>
+  </button>
   <button id="screenshot" data-i18n-title="tb.screenshot">
     <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
   </button>
@@ -154,7 +160,7 @@
   for (const node of document.querySelectorAll("[data-i18n-title]")) node.title = t(node.dataset.i18nTitle);
 
   const send = (action) => window.ipc.postMessage(action);
-  for (const id of ["switch", "sendfile", "files", "terminal", "tunnels", "chat", "sas", "viewonly", "sound", "privacy", "screenshot", "record", "lock", "restart", "resolution", "actual", "fullscreen", "collapse", "expand", "close"]) {
+  for (const id of ["switch", "sendfile", "files", "terminal", "tunnels", "chat", "sas", "viewonly", "sound", "privacy", "mic", "screenshot", "record", "lock", "restart", "resolution", "actual", "fullscreen", "collapse", "expand", "close"]) {
     document.getElementById(id).addEventListener("click", () => send(id));
   }
 
@@ -220,6 +226,13 @@
       }
       if ("privacy" in state) document.getElementById("privacy").classList.toggle("on", state.privacy);
       if ("restart" in state) document.getElementById("restart").hidden = !state.restart;
+      if ("micAvailable" in state) document.getElementById("mic").hidden = !state.micAvailable;
+      if ("micOn" in state) {
+        const b = document.getElementById("mic");
+        b.classList.toggle("on", state.micOn);
+        b.classList.toggle("muted", !state.micOn);
+        b.title = t(state.micOn ? "tb.mic_on" : "tb.mic_off");
+      }
       if ("lockAvailable" in state) document.getElementById("lock").hidden = !state.lockAvailable;
       if ("lockOn" in state) {
         const b = document.getElementById("lock");

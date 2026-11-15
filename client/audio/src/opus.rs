@@ -16,18 +16,28 @@ pub struct Encoder(*mut ffi::OpusEncoder);
 // The encoder is used by one thread at a time.
 unsafe impl Send for Encoder {}
 
+/// Bitrate of the technician's voice (the microphone): speech is clear at this.
+pub const VOICE_BITRATE: i32 = 32_000;
+
 impl Encoder {
     pub fn new() -> Result<Self> {
+        Self::with(ffi::OPUS_APPLICATION_AUDIO, BITRATE)
+    }
+
+    /// For speech (the technician's microphone).
+    pub fn voice() -> Result<Self> {
+        Self::with(ffi::OPUS_APPLICATION_VOIP, VOICE_BITRATE)
+    }
+
+    fn with(application: i32, bitrate: i32) -> Result<Self> {
         let mut err = 0;
         // SAFETY: plain constructor; the pointer is checked below.
-        let st = unsafe {
-            ffi::opus_encoder_create(RATE as i32, CHANNELS as i32, ffi::OPUS_APPLICATION_AUDIO, &mut err)
-        };
+        let st = unsafe { ffi::opus_encoder_create(RATE as i32, CHANNELS as i32, application, &mut err) };
         ensure!(!st.is_null() && err == ffi::OPUS_OK, "Opus encoder: error {err}");
         let enc = Encoder(st);
         // SAFETY: st is a valid encoder; each request takes one i32.
         unsafe {
-            ffi::opus_encoder_ctl!(st, ffi::OPUS_SET_BITRATE_REQUEST, BITRATE);
+            ffi::opus_encoder_ctl!(st, ffi::OPUS_SET_BITRATE_REQUEST, bitrate);
             // Redundancy for the previous packet: one lost datagram is rebuilt from the next.
             ffi::opus_encoder_ctl!(st, ffi::OPUS_SET_INBAND_FEC_REQUEST, 1);
             ffi::opus_encoder_ctl!(st, ffi::OPUS_SET_PACKET_LOSS_PERC_REQUEST, 5);

@@ -25,7 +25,7 @@ const CHAT_HTML: &str = include_str!("chat.html");
 const NOTICE_HTML: &str = include_str!("notice.html");
 const MENU_HTML: &str = include_str!("menu.html");
 /// Sizes in logical pixels: open toolbar and the tab to reopen it.
-const BAR: (f64, f64) = (1044.0, 38.0);
+const BAR: (f64, f64) = (1078.0, 38.0);
 /// Chat panel: width and maximum height, distance from the edges.
 const CHAT: (f64, f64) = (340.0, 440.0);
 const CHAT_MARGIN: f64 = 12.0;
@@ -51,6 +51,8 @@ pub enum Action {
     Record,
     /// Saves the picture on screen as PNG.
     Screenshot,
+    /// The technician's microphone on or off.
+    Microphone,
     /// Lock the remote computer when the session ends, or not.
     LockOnEnd,
     /// The two-factor code typed in its box (6 digits).
@@ -133,6 +135,7 @@ impl Action {
             "sound" => Self::Sound,
             "record" => Self::Record,
             "screenshot" => Self::Screenshot,
+            "mic" => Self::Microphone,
             "lock" => Self::LockOnEnd,
             "codecancel" => Self::CodeCancel,
             "terminal" => Self::Terminal,

@@ -709,5 +709,13 @@
   "settings.hide_wallpaper_hint": "A plain background instead of the picture during the session: less data on slow connections. The picture is put back at the end.",
   "viewer.restart_normal": "Restart",
   "viewer.restart_safe_mode": "Safe mode with networking",
-  "viewer.cancel": "Cancel"
+  "viewer.cancel": "Cancel",
+  "tb.mic_off": "Talk: your microphone to the remote computer's speakers",
+  "tb.mic_on": "Microphone on: click to turn it off",
+  "agent.microphone_unavailable": "the remote computer cannot play your microphone",
+  "agent.microphone_muted": "the person at the remote computer muted your microphone",
+  "session.mic_mute": "The technician is talking: mute",
+  "session.mic_unmute": "Technician muted: listen again",
+  "session.mic_hint": "The technician's microphone comes out of this computer's speakers",
+  "admin.policy_microphone": "No technician's microphone"
 }

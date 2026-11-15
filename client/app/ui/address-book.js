@@ -24,6 +24,7 @@ const LIMITS = [
   ["no_resolution", "admin.policy_resolution"],
   ["no_audio", "admin.policy_audio"],
   ["lock_on_end", "admin.policy_lock"],
+  ["no_microphone", "admin.policy_microphone"],
   ["no_record", "admin.policy_no_record"],
   ["record_always", "admin.policy_record"],
 ];
@@ -544,6 +545,7 @@ function showPolicy(policy) {
   $("policy-resolution").checked = policy.no_resolution;
   $("policy-audio").checked = policy.no_audio;
   $("policy-lock").checked = policy.lock_on_end;
+  $("policy-mic").checked = policy.no_microphone;
   $("policy-idle").value = String(policy.idle_minutes || 0);
   $("policy-no-record").checked = policy.no_record;
   $("policy-record").checked = policy.record_always;
@@ -564,6 +566,7 @@ $("policy-form").addEventListener("submit", async (e) => {
     no_resolution: $("policy-resolution").checked,
     no_audio: $("policy-audio").checked,
     lock_on_end: $("policy-lock").checked,
+    no_microphone: $("policy-mic").checked,
     idle_minutes: Math.max(0, Math.min(1440, Number($("policy-idle").value) || 0)),
     no_record: $("policy-no-record").checked,
     record_always: $("policy-record").checked,

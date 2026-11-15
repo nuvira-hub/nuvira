@@ -120,6 +120,7 @@ struct Snapshot {
     guests: Option<AgentEvent>,
     rules: Option<AgentEvent>,
     access: Option<AgentEvent>,
+    microphone: Option<AgentEvent>,
 }
 
 impl Snapshot {
@@ -139,6 +140,7 @@ impl Snapshot {
             AgentEvent::SessionEnded { .. } => {
                 self.session = None;
                 self.recording = None;
+                self.microphone = None;
                 self.permissions = None;
                 self.guests = None;
                 return;
@@ -151,6 +153,7 @@ impl Snapshot {
             AgentEvent::Chat { .. } | AgentEvent::FileReceived { .. } => return,
             // Repeated with the session (an app opened during it still shows the notice).
             AgentEvent::Recording { .. } => &mut self.recording,
+            AgentEvent::Microphone { .. } => &mut self.microphone,
             AgentEvent::Permissions { .. } => &mut self.permissions,
             AgentEvent::Guests { .. } => &mut self.guests,
             AgentEvent::Rules { .. } => &mut self.rules,
@@ -167,6 +170,7 @@ impl Snapshot {
             &self.password,
             &self.session,
             &self.recording,
+            &self.microphone,
             &self.permissions,
             &self.guests,
             &self.incoming,

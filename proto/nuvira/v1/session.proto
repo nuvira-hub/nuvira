@@ -69,7 +69,23 @@ message ControlMessage {
     IdleWarning idle_warning = 43;
     Activity activity = 44;
     SetWallpaper set_wallpaper = 45;
+    SetMicrophone set_microphone = 46;
+    MicrophoneState microphone_state = 47;
   }
+}
+
+// From the viewer (both sides with Hello.microphone): the technician's
+// microphone on or off. While on, the viewer sends it as QUIC datagrams in the
+// format of the remote sound (nuvira_audio::packet) and the agent plays them.
+message SetMicrophone {
+  bool on = 1;
+}
+
+// From the agent, after every SetMicrophone and when the person at the computer
+// mutes or unmutes it: whether it is played; `error` ("@key") when not.
+message MicrophoneState {
+  bool on = 1;
+  string error = 2;
 }
 
 // From the viewer (agents with Hello.wallpaper): the desktop wallpaper of the
@@ -592,6 +608,9 @@ message Hello {
   // From the agent (Windows service): it can restart into safe mode with
   // networking (Restart.safe_mode).
   bool restart_safe_mode = 30;
+  // From the viewer: it can send its microphone. From the agent: it can play it
+  // (a sound output, allowed by the server's rules).
+  bool microphone = 31;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

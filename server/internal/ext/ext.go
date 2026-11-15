@@ -191,6 +191,7 @@ func MergeLimits(a, b *pb.Policy) *pb.Policy {
 	a.NoAudio = a.NoAudio || b.NoAudio
 	a.LockOnEnd = a.LockOnEnd || b.LockOnEnd
 	a.IdleMinutes = ShorterIdle(a.IdleMinutes, b.IdleMinutes)
+	a.NoMicrophone = a.NoMicrophone || b.NoMicrophone
 	return a
 }
 
@@ -206,7 +207,7 @@ func ShorterIdle(a, b uint32) uint32 {
 func AnyLimit(p *pb.Policy) bool {
 	return p != nil && (p.ConfirmAlways || p.NoFiles || p.NoClipboard || p.NoPrivacy || p.NoTerminal ||
 		p.NoTunnel || p.NoPrint || p.RecordAlways || p.NoInput || p.NoRestart || p.NoRecord || p.NoResolution || p.NoAudio ||
-		p.LockOnEnd || p.IdleMinutes > 0)
+		p.LockOnEnd || p.IdleMinutes > 0 || p.NoMicrophone)
 }
 
 // UploadDesk is implemented by modules that take files from the devices (session
