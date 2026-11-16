@@ -17,6 +17,8 @@ mod branding;
 mod invite;
 #[cfg(target_os = "macos")]
 mod mac_links;
+#[cfg(target_os = "linux")]
+mod linux_links;
 mod local_book;
 
 use std::path::PathBuf;
@@ -1718,8 +1720,12 @@ fn main() {
 /// the invitation in the file name.
 fn start_links(app: &AppHandle, file_invite: Option<(String, String)>) {
     use tauri_plugin_deep_link::DeepLinkExt;
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(windows)]
     if let Err(e) = app.deep_link().register_all() {
+        tracing::warn!("nuvirahub:// links not registered: {e}");
+    }
+    #[cfg(target_os = "linux")]
+    if let Err(e) = linux_links::register() {
         tracing::warn!("nuvirahub:// links not registered: {e}");
     }
     if let Ok(Some(urls)) = app.deep_link().get_current() {
