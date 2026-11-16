@@ -2365,6 +2365,14 @@ impl ApplicationHandler<NetEvent> for App {
             }
             NetEvent::HandedOver(h) => {
                 info!(from = h.from, "the session was handed over to this viewer");
+                // Tests of the agent's checks (another device, after the minute): the
+                // token is written to the file and not used; the window closes.
+                if let Some(path) = std::env::var_os("NUVIRA_TEST_HANDOVER_TOKEN") {
+                    let _ = std::fs::write(&path, &h.token);
+                    info!("handover token kept for a test, not used");
+                    event_loop.exit();
+                    return;
+                }
                 if let Some((target, _)) = self.connect.take() {
                     self.connect = Some((target, Some(format!("{HANDOVER_TOKEN}{}", h.token))));
                 }

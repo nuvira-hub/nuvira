@@ -65,8 +65,11 @@ function renderInvite(state) {
   $("invite-text").classList.toggle("hidden", !text);
   $("invite-accept").classList.toggle("hidden", !(inv.other_server && !inv.server_locked));
   // The request it made, while waiting: withdrawn here (the support card is hidden).
-  $("invite-cancel").classList.toggle("hidden", !(state.support && !state.support.taken_by));
-  $("invite-dismiss").classList.toggle("hidden", Boolean(state.support && !state.support.taken_by));
+  // An invitation for another server made no request: a request still waiting is an
+  // earlier one, not this card's to cancel; "Close" drops the invitation.
+  const waiting = Boolean(!inv.other_server && state.support && !state.support.taken_by);
+  $("invite-cancel").classList.toggle("hidden", !waiting);
+  $("invite-dismiss").classList.toggle("hidden", waiting);
   $("invite-error").classList.toggle("hidden", !state.support_error);
   $("invite-error").textContent = state.support_error ? msg(state.support_error) : "";
 }
