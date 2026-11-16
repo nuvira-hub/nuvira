@@ -73,5 +73,26 @@ signed app) → Allow → "microphone started channels=2 rate=48000", LAB's serv
 "technician's microphone played".
 
 Not tried yet: real speakers on Linux and a Linux viewer with a real microphone (the VMs
-have none: a PC with a live Linux is needed); the web client (it has no
-microphone yet).
+have none: a PC with a live Linux is needed).
+
+## The web client (2026-11-16)
+
+The page offers the microphone when the browser can capture and encode it
+(`getUserMedia`, WebCodecs `AudioEncoder` with Opus, a secure context) and the agent
+can play it: `Hello.microphone` from the page, the button 🎙 in the bar ("Talk: your
+microphone…", on: "Microphone on: click to turn it off"). The capture goes through
+Web Audio (a ScriptProcessor: no worklet file under the page's CSP), mono duplicated
+to stereo, encoded at 48 kHz, 32 kbit/s, 20 ms frames, and each packet goes as a
+datagram in the format of the desktop viewer (`0xA0, seq, packet`). The agent's
+`MicrophoneState` comes back to the page: off with a reason (muted at the computer, a
+rule) turns the button off and shows the reason. Off at every connection.
+
+| Browser | Microphone | Towards | Result |
+|---|---|---|---|
+| Chrome 157 (PC-LABORATORIO) | LifeCam, Chrome's prompt "Consenti questa volta" | the Mac's agent | played, 1385 packets in 27.7 s, 0 lost |
+| Chrome 157, fake device playing a 440 Hz tone | `--use-file-for-fake-audio-capture` | a test agent on the Mac with `NUVIRA_MIC_DUMP` | the recording at the agent: 440 Hz five orders of magnitude above 220-1000 Hz |
+| Safari 27 (Mac mini) | BlackHole with `say`, Safari's "Allow localhost to use your microphone?" | PC-LABORATORIO's service | played, 1528 packets in 30.7 s, 0 lost |
+| Safari, Pro rule "No technician's microphone" | | PC-LABORATORIO's service | in a session started before the rule the microphone still played (rules hold from the next session, as every rule); a new session: no button |
+
+Not tried: Firefox (it has AudioEncoder; the Pro test server has no HTTPS name for
+it to trust, and plain HTTP is not a secure context there).

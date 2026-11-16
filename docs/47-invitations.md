@@ -97,7 +97,7 @@ this build for the tests) and on Mint (user service).
 | Restart: a start with `NUVIRA_WAIT_PID` | Linux waited 3.1 s, Windows 11.9 s for the old app, then the only one |
 | Delete from the list (LAB) | the page answers 404 |
 | Account "anna" (technician) on PC-LABORATORIO | the request shows "For admin", no Take button; REST `GET queue` with her token: `"for_account": "admin"` |
-| A server's restart | the queue is empty (it lives in memory) and the customer's app still shows "sent": a limit the queue already had; with an invitation the request has to be made again |
+| A server's restart | the queue was empty (it lived in memory) and the customer's app still showed "sent". Fixed on 2026-11-16: the queue is kept in the database and the agent asks again after reconnecting ([21](21-support-queue.md)) |
 
 Found and fixed by these tests:
 - the invitation card's text sat next to its title;
@@ -198,5 +198,12 @@ More tests of 2026-11-16:
     the tar.gz on Mint: `Exec=/home/alessandro/nuvira-tar/nuvira-0.27.0/nuvira %u`,
     generic mode and Cinnamon's environment → the app.
 
-Not done yet: the invitations in the web console (list, delete); a request kept
-in the queue across a server's restart.
+**The web console** (2026-11-16): a tab "Invitations" for the administrators
+lists every technician's links (code, technician, note, created, state: valid
+until… · used n of m, used up, expired), with "Copy the link" on the valid ones
+and Delete (a second click confirms). API `GET /console/api/invites`, `DELETE
+/console/api/invites/{code}`. Tried in Chrome through the HTTPS proxy: 11
+invitations of admin and anna; "Copy the link" put
+`https://51.159.121.104:21443/i/kubun-tudeb` on the clipboard; Delete → gone from
+the list, the page of the link 404, "console: invitation deleted" in the log.
+Unit test `TestInvites`.

@@ -10,6 +10,7 @@ A NuviraHub Pro server with the web client in its licence (feature `pro.web_clie
 - **Session.** The remote screen in the page, mouse (buttons, wheel) and keyboard by physical key, as the viewer sends them (`KeyboardEvent.code`); Ctrl+Alt+Del for Windows; choice of the screen (also all of them at once) and of the quality; full screen. The agent scales the picture to the size of the page.
 - **Clipboard (text).** Ctrl+V in the session, or the "Paste" button, sends the text of the local clipboard first; text copied on the remote computer lands in the local clipboard while the page has focus. Images are not shared.
 - **Chat** with the person at the remote computer.
+- **Microphone** of the technician to the remote computer's speakers (2026-11-16, [45](45-microphone.md)).
 - **Files.** A file manager of the remote computer: folders, download (the file is saved by the browser), upload into the open folder. Files dropped on the page go to the remote Downloads folder.
 - **Terminal.** The remote command prompt in the page (xterm.js, as in the viewer), from the toolbar or as a terminal-only session.
 
