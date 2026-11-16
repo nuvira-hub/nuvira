@@ -41,5 +41,9 @@ Only in sessions through a server, with a screen (not terminal-only, not guests)
 | Kubuntu 26.04, KDE Plasma Wayland | the desktops' `wallpaperPlugin` | org.kde.image → org.kde.color → org.kde.image |
 | The app's setting (PC-LABORATORIO, UI Automation) | `app.json` | `hide_wallpaper: true` |
 
-Not tried yet: macOS (written, compiled for macOS with `cargo check` on the
-Ubuntu VM only: to try at the next Mac rental, also with several Spaces).
+On the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the branch, signed with a fixed test identity): PC-LABORATORIO's viewer with `--hide-wallpaper` to the
+LaunchAgent's agent: "wallpaper hidden for the session" (the helper process), the
+desktop black on the Mac's screen, "wallpaper put back" at the end, the picture
+back.
+
+Not tried yet: several Spaces and several displays on the Mac (one display here).

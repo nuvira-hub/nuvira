@@ -69,7 +69,7 @@ Agent on the Mint VM (X11, 1280x800, pointer moved with `xdotool` to a known pla
 - Linux viewer (Mint): saved in the localised Pictures folder (`~/Immagini/NuviraHub`), pointer in place.
 - Web client (Firefox on the Mint, Pro test server): the bar's button downloaded `NuviraHub <date> <ID>.png` (the page names the computer by its ID when it was not opened from the address book).
 
-Not tried yet: the macOS viewer, the web client in Chrome and Safari.
+The macOS viewer on the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the branch, signed with a fixed test identity): the screenshot of a session with PC-LABORATORIO saved as `~/Pictures/NuviraHub/NuviraHub 2026-11-16 00.40.05 PC-LABORATORIO.png` (900x720, the picture of the session). Not tried yet: the web client in Chrome and Safari.
 
 ## Related
 

@@ -100,7 +100,19 @@ PC-LABORATORIO (Windows), and a viewer of 0.27.0.
 - Web client (Pro test server, Firefox on the Mint through `localhost`): the code
   asked in the page's box, typed 30 s later: the session opened.
 
-Not tried yet: macOS (also the sign-in screen's copy there), GDM and SDDM
+On the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the branch, signed with a fixed test identity) (unattended access installed from the app, the LaunchAgent; the
+app window made bigger to reach the rules):
+- computers allowed: "111 222 333" alone saved → PC-LABORATORIO refused ("This
+  computer does not accept connections from yours"); LAB added → allowed;
+- profile "Solo vista" without keyboard and mouse → its password gave a session
+  with `input: false`;
+- two-factor code: set up with the QR code's key, confirmed, saved; a wrong code
+  refused ("Wrong verification code"), the right one let in;
+- found and fixed: an entry added while an earlier save waited for the
+  administrator's prompt (the sign-in screen's copy) was lost when that save
+  ended.
+
+Not tried yet: the sign-in screen's copy on macOS, GDM and SDDM
 sign-in screens (only LightDM tried), the web client in Chrome and Safari.
 
 ## Known limits

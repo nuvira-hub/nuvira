@@ -46,8 +46,22 @@ While muted by the person at the computer the viewer keeps capturing and sending
 | PC-LABORATORIO, `--microphone` | Mint registered on the Pro test server with "No technician's microphone" | not offered: no capture, nothing played |
 | Mint (440 Hz tone) | PC-LABORATORIO's own speakers (Realtek), no WAV | 330 packets played, none lost, no underrun |
 
-Not tried yet: a Mac as viewer (microphone permission, entitlement) or as
-controlled computer; real speakers on Linux (the VMs played into WAV files); a Linux viewer
-with a real microphone (only a monitor source); the web client (it has no
-microphone yet); the app's rules editor field (the console's checkbox and the
-limit of sessions without an account were tried in the console, through Firefox).
+On the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the branch, signed with a fixed test identity):
+- the Mac as controlled computer: PC-LABORATORIO's viewer with `--microphone`
+  (its LifeCam): "technician's microphone played" by the Mac's agent, its app's
+  strip showed "The technician is talking: mute";
+- the Mac as viewer: this Mac mini has no input device at all. cpal still answered a
+  default input device (Core Audio's "unknown object"), so the button was offered
+  and turning it on failed with an unreadable "error unknown to the Core Audio
+  … 560947818" ('!obj') written over the session bar's buttons. Fixed: a device
+  that cannot give its input format counts as none (the microphone is not offered),
+  the error is a readable sentence, and a long notice is cut in the bar (whole on
+  hover).
+
+Not tried yet: a Mac viewer with a real microphone (the permission prompt, the
+audio-input entitlement in the signed app: present in the test app, see
+`codesign -d --entitlements`); real speakers on Linux (the VMs played into WAV
+files); a Linux viewer with a real microphone (only a monitor source); the web
+client (it has no microphone yet); the app's rules editor field (the console's
+checkbox and the limit of sessions without an account were tried in the console,
+through Firefox).

@@ -45,7 +45,7 @@ the connection carries on).
   nobody, so the agent then runs `cinnamon-screensaver-command --lock`, which
   starts it through D-Bus and locks.
 - **macOS**: `SACLockScreenImmediate` of the private login framework (what the
-  menu bar's "Lock Screen" does). Not tried yet.
+  menu bar's "Lock Screen" does). Tried on the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the branch, signed with a fixed test identity): PC-LABORATORIO's viewer with `--lock-on-end`, at the end "computer locked at the end of the session" and the Mac at its lock screen.
 
 ## Tests of 2026-11-15
 

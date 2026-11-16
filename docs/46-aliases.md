@@ -82,8 +82,16 @@ Unit tests: `store.TestAliases` (old schema, taken, the invalid ones, resolving,
 freed, reopened), `accounts.TestEntryByAlias`, `signal::tests::targets`,
 `book_csv::tests::reads_aliases`.
 
-Not tried yet: the app and agent on macOS (same code: next rental); Chrome and
-Safari for the web client and the console.
+On the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the branch, signed with a fixed test identity):
+
+| Test | Result |
+|---|---|
+| Mac app: "Mac-Mini" saved | `mac-mini` in `alias.txt`, under the ID, on the server |
+| PC-LABORATORIO's viewer → `Mac-Mini` | session (1920x1080, 7-8 fps through the Mac's server in Paris) |
+| Mac app's form → `Lab-Windows` | session with the Windows service |
+| Mac app's form → a name nobody has | "Session closed: the device is not reachable" |
+
+Not tried yet: Chrome and Safari for the web client and the console.
 
 Not done yet: `name@server` to name the server with the alias; aliases set and
 locked by the admins in the Pro console.

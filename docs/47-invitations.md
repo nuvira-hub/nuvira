@@ -113,9 +113,16 @@ delete by owner/admin, licence, public URL, the page in it/de/fr, invalid page,
 download redirect, file name), `supportqueue.TestInvitation`, `invite::tests`
 and `file_config` (app).
 
+On the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the branch, signed with a fixed test identity) (Pro test server running on the Mac): Safari opened the page
+(English, macOS download first), "Open NuviraHub" → Safari asked "Do you want to
+allow this website to open NuviraHub?" (the scheme registered by `CFBundleURLTypes`)
+→ the running app got the link and asked for support (use 1 of 1); PC-LABORATORIO
+took it, the Mac asked "the technician who took your support request" → Accept →
+session (VideoToolbox). Found and fixed: the invitation's card stayed out of sight
+when the app was on another section (now the connection section comes up).
+
 Not tried yet:
-- macOS: the scheme in the Info.plist, the link from Safari, the app already
-  open;
+- macOS: the app closed when the link is opened (started by the link);
 - Chrome;
 - the Linux packages' desktop file (only the registration at start was tried);
 - `NUVIRA_PUBLIC_URL` behind a reverse proxy (unit test only);
