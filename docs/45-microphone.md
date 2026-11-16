@@ -64,8 +64,14 @@ saved: the server's rule `no_microphone: true`; PC-LABORATORIO's viewer with
 `--microphone` towards the Mac: no microphone started, nothing asked at the Mac;
 the rule off again (control): "microphone at the remote computer on=true".
 
-Not tried yet: a Mac viewer with a real microphone (this Mac has no input device;
-a virtual one, BlackHole, needs `sudo installer` of its pkg, not allowed in these
-tests); real speakers on Linux and a Linux viewer with a real microphone (the VMs
+The Mac viewer with a microphone, 2026-11-16: BlackHole 2ch 0.7.1 installed on the
+Mac mini (checksum as Homebrew's, signed and notarized) as its input device, `say -a
+"BlackHole 2ch"` talking into it; the Mac's viewer towards PC-LABORATORIO's service
+with `--microphone`: macOS asked "Allow "NuviraHub" to access your microphone?"
+with our text (`NSMicrophoneUsageDescription`, the audio-input entitlement of the
+signed app) → Allow → "microphone started channels=2 rate=48000", LAB's service:
+"technician's microphone played".
+
+Not tried yet: real speakers on Linux and a Linux viewer with a real microphone (the VMs
 have none: a PC with a live Linux is needed); the web client (it has no
 microphone yet).

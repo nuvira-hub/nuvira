@@ -85,6 +85,18 @@ pub fn agent_with_links(work: impl FnOnce() -> i32 + Send + 'static) -> ! {
     let Some(mtm) = MainThreadMarker::new() else {
         std::process::exit(work());
     };
+    // NSApplication reads the bundle: one being replaced (an update renames the old
+    // one aside, then the new one in) made it crash on a null executable URL, with
+    // the system's "quit unexpectedly". Without a whole bundle the agent just runs
+    // (launchd starts it again after the update anyway).
+    let whole = std::env::current_exe().ok().is_some_and(|exe| {
+        exe.is_file()
+            && exe.ancestors().nth(2).is_some_and(|contents| contents.join("Info.plist").is_file())
+    });
+    if !whole {
+        tracing::warn!("app bundle incomplete: nuvirahub:// links not taken by this agent");
+        std::process::exit(work());
+    }
     std::thread::Builder::new()
         .name("agent".into())
         .spawn(move || std::process::exit(work()))

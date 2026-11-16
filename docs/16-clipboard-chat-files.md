@@ -87,4 +87,4 @@ Tests:
     - Mint's viewer → the Mac's agent: Nemo's Ctrl+C (10 entries offered) → Cmd+V in Finder: identical (SHA-256, sizes, times); Finder's Cmd+C (9 entries) → the viewer's FUSE files → Ctrl+V in Nemo: identical;
     - the Mac's viewer → a test agent on Mint: Finder → Nemo and Nemo → Finder, identical;
     - names stay NFC both ways (the same bytes on both sides).
-  - Not tried: the Mac agent as the managed (system) installation (installing the pkg needs `sudo installer`, see the open points).
+  - the managed installation (`sudo nuvira service deploy`, the agent started by `managed-run` with the key in `/var/run/nuvira-session-501`), 2026-11-16: Nemo → Finder and Finder → Nemo through Mint's viewer, identical. A first try lost the session after a minute ("connection lost: timed out" while the Mac's network hiccuped, its VNC dropped at the same moment): the placeholders went with the session, so Finder had nothing to paste; the second try was immediate and identical.

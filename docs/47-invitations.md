@@ -147,6 +147,10 @@ Not tried yet:
 - macOS: the same with the managed installation (its agent is the same program,
   so the same path), and a click on the Dock's icon by a person (`open -a` and
   the Dock both send "reopen");
+- found on 2026-11-16: while an update (here the test rebuild) replaced the bundle,
+  the agent started by launchd crashed in `NSApplication` (CFBundleCopyExecutableURL
+  on a missing bundle: "nuvira quit unexpectedly"). Fixed: without a whole bundle
+  the agent runs without taking links; launchd starts it again afterwards;
 - the Linux polkit/package paths on Fedora's .rpm for the scheme (the .rpm's
   desktop file is the same file as the .deb's).
 

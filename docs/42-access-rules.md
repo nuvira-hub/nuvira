@@ -132,9 +132,20 @@ Web client on 2026-11-16 (the Pro test server running on the Mac mini (Scaleway)
 a wrong code refused ("Wrong two-factor code"), the right one let in; the same in
 Chrome.
 
-Not tried yet: the sign-in screen's copy on macOS (the test app lacks the
-keyboard driver's package of the signed pkg; installing a pkg needs `sudo
-installer`, not allowed in these tests); the polkit prompt itself on GNOME and KDE.
+The sign-in screen's copy on macOS, 2026-11-16 (the test app with the keyboard
+driver's package inside, as the signed one): the app's settings, profile "Vista"
+without keyboard and mouse added, "Save the rules" → macOS 27's "Allow
+administrator access for a script started by NuviraHub?" → password → "Rules
+saved", root's copy in `/Library/Application Support/NuviraHub/access.json`; the
+first time macOS also asked to allow the Karabiner driver extension (System
+Settings, Login Items & Extensions; enabled). The person signed out
+(`launchctl bootout gui/501`): at the login window the sign-in agent (root) let
+PC-LABORATORIO in with the profile's password ("access with the permanent password
+of a profile profile=Vista off=[input]", `input: false`, the screenshot shows the
+login window) and refused a wrong one. macOS 27 asked once, at the login window,
+to let `nuvira` bypass the private window picker (Allow).
+
+Not tried yet: the polkit prompt itself on GNOME and KDE.
 
 ## Known limits
 
