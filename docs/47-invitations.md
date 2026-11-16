@@ -121,8 +121,32 @@ took it, the Mac asked "the technician who took your support request" → Accept
 session (VideoToolbox). Found and fixed: the invitation's card stayed out of sight
 when the app was on another section (now the connection section comes up).
 
+On the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16), the app closed (the unattended agent running, as on every Mac
+with unattended access): Safari → "Open NuviraHub" → Allow → **"The application
+NuviraHub is not open anymore"**, no app. The agent of unattended access is the
+same program in the same bundle, so Launch Services counted it as the running
+NuviraHub (`lsappinfo`: pid of `nuvira agent`, type Foreground) and sent it the
+link, which it did not handle. The same was true of NuviraHub opened from the
+Dock, Finder or `open -a`: it went to the agent and nothing opened. Fixed
+(`client/app/src/mac_links.rs`): a person's agent keeps its main thread in an
+`NSApplication` loop as an accessory app (no Dock icon), takes the link (GURL
+Apple event) and the "reopen" (its delegate's `applicationShouldHandleReopen`;
+NSApplication answers 'rapp' itself, so an Apple event handler for it is never
+called) and starts the app with `open -n` (with the link as an argument); the app
+takes a link from its arguments on macOS, and a second start hands it to the
+running app. Tried after the fix:
+
+| Test | Result |
+|---|---|
+| App closed: Safari → Open NuviraHub → Allow | the agent: "link opened while the app is closed: starting the app"; the app started with the invitation's card; request (use 1 of 2); PC-LABORATORIO took it ("Invited by you"), the Mac asked "the technician who took your support request" → Accept → session |
+| App open: the same link | to the app directly, request sent, no other use spent (same computer) |
+| App closed: `open -a NuviraHub` | the agent: "NuviraHub opened while only the agent runs: starting the app" → the app |
+| The agent's other work (sessions, capture, clipboard files, wallpaper) | unchanged (the tests of this day ran with it) |
+
 Not tried yet:
-- macOS: the app closed when the link is opened (started by the link);
+- macOS: the same with the managed installation (its agent is the same program,
+  so the same path), and a click on the Dock's icon by a person (`open -a` and
+  the Dock both send "reopen");
 - Chrome;
 - the Linux packages' desktop file (only the registration at start was tried);
 - `NUVIRA_PUBLIC_URL` behind a reverse proxy (unit test only);

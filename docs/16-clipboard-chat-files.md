@@ -83,4 +83,8 @@ Tests:
   - PC-LABORATORIO's viewer copies in Explorer → the Mac's agent (LaunchAgent) puts the placeholders on the pasteboard (`~/Library/Caches/com.nuvirahub.paste/<pid>`, attribute `com.nuvirahub.paste`) → Cmd+V in Finder: all filled, SHA-256 and times identical to the source;
   - Finder's Cmd+C on the Mac (9 entries offered) → the Mac viewer's session with PC-LABORATORIO's service → Ctrl+V pressed through the session on LAB's desktop: identical, the modification time of 2 January kept.
   - the Mac's viewer receiving: Explorer's copy at PC-LABORATORIO (its service) → the Mac viewer's placeholders → Cmd+V in Finder: identical.
-  - Not tried: Linux ↔ Mac, the Mac agent as the managed (system) installation.
+  - Linux ↔ Mac (2026-11-16, the Mint VM, Cinnamon X11, through the Mac's Pro test server; a Linux tree with a 50 MB file of 4 March and a Unicode name):
+    - Mint's viewer → the Mac's agent: Nemo's Ctrl+C (10 entries offered) → Cmd+V in Finder: identical (SHA-256, sizes, times); Finder's Cmd+C (9 entries) → the viewer's FUSE files → Ctrl+V in Nemo: identical;
+    - the Mac's viewer → a test agent on Mint: Finder → Nemo and Nemo → Finder, identical;
+    - names stay NFC both ways (the same bytes on both sides).
+  - Not tried: the Mac agent as the managed (system) installation (installing the pkg needs `sudo installer`, see the open points).
