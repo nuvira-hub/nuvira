@@ -82,4 +82,5 @@ Tests:
 - macOS, tried on the Mac mini M1 (Scaleway, macOS 27.2.1) on 2026-11-16 with the test tree (two files, a Unicode name, an empty file, a folder three levels deep, 50 MB):
   - PC-LABORATORIO's viewer copies in Explorer → the Mac's agent (LaunchAgent) puts the placeholders on the pasteboard (`~/Library/Caches/com.nuvirahub.paste/<pid>`, attribute `com.nuvirahub.paste`) → Cmd+V in Finder: all filled, SHA-256 and times identical to the source;
   - Finder's Cmd+C on the Mac (9 entries offered) → the Mac viewer's session with PC-LABORATORIO's service → Ctrl+V pressed through the session on LAB's desktop: identical, the modification time of 2 January kept.
-  - Not tried: the Mac as viewer receiving (Windows agent → Finder of the Mac viewer), Linux ↔ Mac, the agent as the managed (system) installation.
+  - the Mac's viewer receiving: Explorer's copy at PC-LABORATORIO (its service) → the Mac viewer's placeholders → Cmd+V in Finder: identical.
+  - Not tried: Linux ↔ Mac, the Mac agent as the managed (system) installation.
