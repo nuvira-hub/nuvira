@@ -15,6 +15,8 @@ mod address_book;
 mod book_csv;
 mod branding;
 mod invite;
+#[cfg(target_os = "macos")]
+mod mac_links;
 mod local_book;
 
 use std::path::PathBuf;
@@ -1540,6 +1542,13 @@ fn main() {
     #[cfg(target_os = "macos")]
     mac_keyboard_from_policy(args.get(1).and_then(|a| a.to_str()));
     if let Some(sub) = args.get(1).and_then(|a| a.to_str()).filter(|a| SUBCOMMANDS.contains(a)) {
+        // macOS: a person's agent takes the links Launch Services sends it (see
+        // mac_links); not root's (no window server to talk to at the sign-in screen).
+        #[cfg(target_os = "macos")]
+        if sub == "agent" && unsafe { libc::getuid() } != 0 {
+            let rest = args[2..].to_vec();
+            mac_links::agent_with_links(move || run_subcommand("agent", &rest));
+        }
         std::process::exit(run_subcommand(sub, &args[2..]));
     }
     // As the subcommands: the version, without opening the window (a script asking
@@ -1598,6 +1607,12 @@ fn main() {
             // The program of an invitation's page started while this one runs.
             if let Some((code, server)) = argv.first().and_then(|exe| file_invite(exe)) {
                 invite::receive(app, code, server);
+            }
+            // macOS: a link in the arguments (the agent starting the app with it);
+            // Windows and Linux get it through the deep-link plugin.
+            #[cfg(target_os = "macos")]
+            for url in argv.iter().skip(1).filter(|a| a.starts_with("nuvirahub:")) {
+                invite::open_url(app, url);
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
@@ -1711,6 +1726,10 @@ fn start_links(app: &AppHandle, file_invite: Option<(String, String)>) {
         for url in urls {
             invite::open_url(app, url.as_str());
         }
+    }
+    #[cfg(target_os = "macos")]
+    for url in std::env::args().skip(1).filter(|a| a.starts_with("nuvirahub:")) {
+        invite::open_url(app, &url);
     }
     let handle = app.clone();
     app.deep_link().on_open_url(move |event| {

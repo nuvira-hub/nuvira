@@ -1,0 +1,95 @@
+//! macOS: `nuvirahub://` links that reach the agent instead of the app.
+//!
+//! The agent of unattended access is this program, started from the same bundle
+//! by its LaunchAgent. Once it talks to the window server (capture, clipboard,
+//! input), Launch Services counts it as a running NuviraHub: a link opened while
+//! the app is closed is sent to the agent as an Apple event, and nobody answers it
+//! (Safari: "The application NuviraHub is not open anymore"). So the agent runs its
+//! work on another thread and keeps the main thread in an `NSApplication` loop,
+//! with no Dock icon, to take the link and start the app with it; the app takes a
+//! link from its arguments (and hands it to the running app, if any).
+
+use objc2::rc::Retained;
+use objc2::runtime::{AnyObject, NSObject};
+use objc2::{AnyThread, MainThreadMarker, define_class, msg_send, sel};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+use objc2_foundation::NSString;
+
+/// 'GURL': the class and the ID of the "open this URL" Apple event.
+const GET_URL: u32 = u32::from_be_bytes(*b"GURL");
+/// '----': the event's direct object, the URL.
+const DIRECT_OBJECT: u32 = u32::from_be_bytes(*b"----");
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[name = "NuviraAgentLinks"]
+    struct Links;
+
+    impl Links {
+        #[unsafe(method(getUrl:withReply:))]
+        fn get_url(&self, event: &AnyObject, _reply: &AnyObject) {
+            let param: Option<Retained<AnyObject>> =
+                unsafe { msg_send![event, paramDescriptorForKeyword: DIRECT_OBJECT] };
+            let url: Option<Retained<NSString>> = param.and_then(|p| unsafe { msg_send![&*p, stringValue] });
+            if let Some(url) = url {
+                open_in_app(&url.to_string());
+            }
+        }
+    }
+);
+
+/// Starts the app with the link: a new start, which hands it to the running app
+/// if there is one (one app at a time).
+fn open_in_app(url: &str) {
+    if !url.starts_with("nuvirahub:") {
+        return;
+    }
+    // .../NuviraHub.app/Contents/MacOS/nuvira
+    let Some(bundle) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.ancestors().nth(3).map(|p| p.to_path_buf()))
+        .filter(|p| p.extension().is_some_and(|e| e == "app"))
+    else {
+        tracing::warn!("nuvirahub:// link: not in an app bundle");
+        return;
+    };
+    tracing::info!("nuvirahub:// link opened while the app is closed: starting the app");
+    match std::process::Command::new("/usr/bin/open").arg("-n").arg(&bundle).arg("--args").arg(url).spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+        }
+        Err(e) => tracing::warn!("nuvirahub:// link: the app did not start: {e}"),
+    }
+}
+
+/// Runs the agent (`work`) on another thread and takes the links on this one, the
+/// main thread. Never returns: the process ends with the agent's exit code.
+pub fn agent_with_links(work: impl FnOnce() -> i32 + Send + 'static) -> ! {
+    let Some(mtm) = MainThreadMarker::new() else {
+        std::process::exit(work());
+    };
+    std::thread::Builder::new()
+        .name("agent".into())
+        .spawn(move || std::process::exit(work()))
+        .expect("agent thread");
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    let links: Retained<Links> = unsafe { msg_send![Links::alloc(), init] };
+    unsafe {
+        let manager: Retained<AnyObject> = msg_send![objc2::class!(NSAppleEventManager), sharedAppleEventManager];
+        let _: () = msg_send![
+            &*manager,
+            setEventHandler: &*links,
+            andSelector: sel!(getUrl:withReply:),
+            forEventClass: GET_URL,
+            andEventID: GET_URL
+        ];
+    }
+    // The handler lives as long as the process.
+    std::mem::forget(links);
+    app.run();
+    // `run` returns only if something stops the loop: the agent goes on.
+    loop {
+        std::thread::park();
+    }
+}
