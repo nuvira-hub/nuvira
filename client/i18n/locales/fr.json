@@ -758,5 +758,6 @@
   "server.support_reserved": "Cette demande est pour le technicien qui a envoyé l'invitation",
   "invite.public_server": "le serveur public NuviraHub",
   "viewer.mic_none": "Cet ordinateur n'a pas de microphone",
-  "viewer.mic_failed": "Le microphone n'a pas démarré : {e}"
+  "viewer.mic_failed": "Le microphone n'a pas démarré : {e}",
+  "viewer.keyring_locked_mac": "le trousseau de macOS est verrouillé ou inaccessible : ouvre une session sur le Mac (ou déverrouille le trousseau de session), puis reconnecte-toi"
 }

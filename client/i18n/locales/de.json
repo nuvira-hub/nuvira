@@ -758,5 +758,6 @@
   "server.support_reserved": "Diese Anfrage ist für den Techniker, der die Einladung geschickt hat",
   "invite.public_server": "den öffentlichen NuviraHub-Server",
   "viewer.mic_none": "Dieser Computer hat kein Mikrofon",
-  "viewer.mic_failed": "Das Mikrofon wurde nicht gestartet: {e}"
+  "viewer.mic_failed": "Das Mikrofon wurde nicht gestartet: {e}",
+  "viewer.keyring_locked_mac": "der macOS-Schlüsselbund ist gesperrt oder nicht erreichbar: melde dich am Mac an (oder entsperre den Anmelde-Schlüsselbund) und verbinde dich dann erneut"
 }

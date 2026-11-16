@@ -444,7 +444,9 @@ async fn open_connection(
                 .map_err(|e| match e.downcast_ref::<nuvira_transport::identity::KeyringLocked>() {
                     Some(locked) => {
                         tracing::warn!("{locked}");
-                        anyhow::anyhow!(nuvira_i18n::t("viewer.keyring_locked"))
+                        // The Keychain on macOS; KWallet or GNOME Keyring on Linux.
+                        let key = if cfg!(target_os = "macos") { "viewer.keyring_locked_mac" } else { "viewer.keyring_locked" };
+                        anyhow::anyhow!(nuvira_i18n::t(key))
                     }
                     None => e,
                 })?;

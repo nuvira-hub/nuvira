@@ -758,5 +758,6 @@
   "server.support_reserved": "Esta solicitud es para el técnico que envió la invitación",
   "invite.public_server": "el servidor público NuviraHub",
   "viewer.mic_none": "Este equipo no tiene micrófono",
-  "viewer.mic_failed": "El micrófono no se inició: {e}"
+  "viewer.mic_failed": "El micrófono no se inició: {e}",
+  "viewer.keyring_locked_mac": "el llavero de macOS está bloqueado o no es accesible: inicia sesión en el Mac (o desbloquea el llavero de inicio de sesión) y vuelve a conectarte"
 }
