@@ -305,8 +305,9 @@ func (s *Server) setOnline(c *client) {
 	}
 	s.online[c.device.ID] = c
 	s.mu.Unlock()
-	// A support request of an earlier connection carries a ticket the agent no
-	// longer knows (the app restarted): it leaves the queue.
+	// A support request of an earlier connection is put aside: the agent asks
+	// again with the same ticket if it still has it (the support queue gives it
+	// back its place), otherwise (the app restarted) it goes after a while.
 	for _, d := range s.supportDesks() {
 		d.DeviceOffline(c.device.ID)
 	}

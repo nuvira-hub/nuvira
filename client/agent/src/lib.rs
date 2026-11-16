@@ -479,6 +479,7 @@ pub async fn serve_via_server(
         handover: Mutex::new(None),
         policy: Default::default(),
         support_ticket: Mutex::new(None),
+        support_request: Mutex::new(None),
         allow_privacy: AtomicBool::new(permissions.privacy),
         allow_terminal: AtomicBool::new(permissions.terminal),
         allow_tunnel: AtomicBool::new(permissions.tunnel),
@@ -602,6 +603,9 @@ struct SessionContext {
     /// Ticket of the open support request: whoever presents it in a session is
     /// treated as the technician who took it, and still has to be accepted.
     support_ticket: Mutex<Option<String>>,
+    /// The support request sent with that ticket: sent again after reconnecting to
+    /// the server (a network cut, the server restarted), while the ticket is open.
+    support_request: Mutex<Option<nuvira_proto::v1::SupportRequest>>,
     /// The person at the PC allows privacy mode ([`AgentCommand::AllowPrivacy`]).
     allow_privacy: AtomicBool,
     /// The person at the PC allows the remote terminal ([`AgentCommand::AllowTerminal`]).
@@ -789,6 +793,21 @@ async fn signal_loop(
     *ctx.features.lock().expect("features") = signal.features.clone();
     let mut inventory_tick = tokio::time::interval(inventory::INTERVAL);
 
+    // A support request still open from the last connection (a network cut, the
+    // server restarted): the server dropped it when this device went away, so it is
+    // asked again with the same ticket; the server gives it back its place.
+    let open_ticket = ctx.support_ticket.lock().expect("support").clone();
+    let resend = ctx
+        .support_request
+        .lock()
+        .expect("support")
+        .clone()
+        .filter(|r| open_ticket.as_deref() == Some(r.ticket.as_str()));
+    if let Some(request) = resend {
+        info!("support request still open: asked again after reconnecting");
+        signal.tx.send(client_message::Msg::SupportRequest(request)).await?;
+    }
+
     loop {
         let reply = tokio::select! {
             Some(report) = reports.recv() => Some(client_message::Msg::SessionReport(report)),
@@ -964,13 +983,15 @@ async fn signal_loop(
                     let ticket = support_ticket();
                     *ctx.support_ticket.lock().expect("support") = Some(ticket.clone());
                     info!(invitation = !invite.is_empty(), "support requested");
-                    Some(client_message::Msg::SupportRequest(nuvira_proto::v1::SupportRequest {
+                    let request = nuvira_proto::v1::SupportRequest {
                         ticket,
                         name: device_name.clone(),
                         message,
                         cancel: false,
                         invite,
-                    }))
+                    };
+                    *ctx.support_request.lock().expect("support") = Some(request.clone());
+                    Some(client_message::Msg::SupportRequest(request))
                 }
                 Some(AgentCommand::AllowPrivacy { allow }) => {
                     if ctx.allow_privacy.swap(allow, Ordering::Relaxed) != allow {
