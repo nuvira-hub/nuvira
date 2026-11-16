@@ -9,6 +9,9 @@ const ACCESS_PERMS = ["input", "clipboard", "files", "terminal", "tunnel", "prin
 // The rules being edited: null until the agent tells them, then kept until saved.
 let accessDraft = null;
 let accessDirty = false;
+// Counts the edits: a save clears "dirty" only if none came while it ran (the
+// administrator's prompt on macOS and Linux can take a while).
+let accessEdits = 0;
 // A two-factor secret being set up: shown with its QR code until confirmed.
 let accessTotpSetup = null;
 
@@ -32,6 +35,7 @@ function renderAccess(state) {
 
 function accessChanged() {
   accessDirty = true;
+  accessEdits += 1;
   drawAccess();
 }
 
@@ -186,9 +190,11 @@ function accessMessage(text, ok) {
     };
     $("access-save").disabled = true;
     accessMessage(t("access.saving"), true);
+    const edits = accessEdits;
     try {
       accessMessage(await invoke("access_save", { edit }), true);
-      accessDirty = false;
+      // Changes made while saving stay to be saved.
+      if (accessEdits === edits) accessDirty = false;
       // The new state comes from the agent (AgentEvent::Access).
       for (const p of d.profiles) p.password = "";
       if (d.totp !== "keep") {

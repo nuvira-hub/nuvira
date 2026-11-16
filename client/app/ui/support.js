@@ -41,10 +41,20 @@ function renderSupport(state) {
 
 // An invitation received: on this server it goes by itself; on another one the
 // person agrees to move first.
+let shownInvite = null;
+
 function renderInvite(state) {
   const inv = state.invite;
   $("invite-card").classList.toggle("hidden", !inv);
-  if (!inv) return;
+  if (!inv) {
+    shownInvite = null;
+    return;
+  }
+  // A new invitation brings the connection section, where its card is.
+  if (shownInvite !== inv.code) {
+    shownInvite = inv.code;
+    if (section !== "connect") showSection("connect");
+  }
   let text;
   if (inv.other_server && inv.server_locked) text = t("invite.locked", { server: inv.server });
   else if (inv.other_server) text = t("invite.other_server", { server: inv.server, current: state.server || t("invite.public_server") });
