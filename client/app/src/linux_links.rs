@@ -28,7 +28,9 @@ pub fn register() -> std::io::Result<()> {
         if handler.exists() {
             std::fs::remove_file(&handler)?;
             refresh(&dir);
-            xdg_mime_default(Path::new(PACKAGED_DESKTOP).file_name().and_then(|n| n.to_str()).unwrap_or_default());
+            xdg_mime_default(
+                Path::new(PACKAGED_DESKTOP).file_name().and_then(|n| n.to_str()).unwrap_or_default(),
+            );
             tracing::info!("nuvirahub:// links: the package's handler again");
         }
         return Ok(());
@@ -80,7 +82,9 @@ fn refresh(dir: &Path) {
 fn xdg_mime_default(desktop: &str) {
     match Command::new("xdg-mime").args(["default", desktop, SCHEME]).output() {
         Ok(out) if out.status.success() => {}
-        Ok(out) => tracing::warn!("xdg-mime default {desktop}: {}", String::from_utf8_lossy(&out.stderr).trim()),
+        Ok(out) => {
+            tracing::warn!("xdg-mime default {desktop}: {}", String::from_utf8_lossy(&out.stderr).trim())
+        }
         Err(e) => tracing::warn!("xdg-mime: {e}"),
     }
 }

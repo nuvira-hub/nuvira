@@ -59,7 +59,8 @@ pub(crate) fn from_url(link: &str) -> Option<(String, String)> {
         return None;
     }
     let code = normalize(url.path().trim_start_matches('/'));
-    let server = url.query_pairs().find(|(k, _)| k == "server").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
+    let server =
+        url.query_pairs().find(|(k, _)| k == "server").map(|(_, v)| v.trim().to_string()).unwrap_or_default();
     (valid_code(&code) && valid_server(&server)).then_some((code, server))
 }
 
@@ -87,7 +88,8 @@ pub(crate) fn receive(app: &AppHandle, code: String, server: String) {
     let state = app.state::<NuviraApp>();
     let current = state.ui.lock().expect("state").server.clone();
     let other_server = !server.is_empty() && !same_server(&server, &current);
-    let server_locked = crate::branding::get().is_some_and(|b| b.lock_server) || crate::policy_server().is_some();
+    let server_locked =
+        crate::branding::get().is_some_and(|b| b.lock_server) || crate::policy_server().is_some();
     info!(other_server, "invitation received");
     state.update(app, |ui| {
         ui.invite = Some(InviteUi { code: format(&code), server, other_server, server_locked, sent: false });

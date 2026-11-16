@@ -401,8 +401,10 @@ mod mac_helper {
                         let Some(screen) = screens.iter().nth(i) else { return false };
                         let options = objc2_foundation::NSDictionary::new();
                         // SAFETY: an empty dictionary of options.
-                        unsafe { workspace.setDesktopImageURL_forScreen_options_error(&url, &screen, &options) }
-                            .is_ok()
+                        unsafe {
+                            workspace.setDesktopImageURL_forScreen_options_error(&url, &screen, &options)
+                        }
+                        .is_ok()
                     })
                     .fold(true, |a, b| a && b)
             }

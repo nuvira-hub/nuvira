@@ -90,8 +90,7 @@ pub fn agent_with_links(work: impl FnOnce() -> i32 + Send + 'static) -> ! {
     // the system's "quit unexpectedly". Without a whole bundle the agent just runs
     // (launchd starts it again after the update anyway).
     let whole = std::env::current_exe().ok().is_some_and(|exe| {
-        exe.is_file()
-            && exe.ancestors().nth(2).is_some_and(|contents| contents.join("Info.plist").is_file())
+        exe.is_file() && exe.ancestors().nth(2).is_some_and(|contents| contents.join("Info.plist").is_file())
     });
     if !whole {
         tracing::warn!("app bundle incomplete: nuvirahub:// links not taken by this agent");
@@ -106,7 +105,8 @@ pub fn agent_with_links(work: impl FnOnce() -> i32 + Send + 'static) -> ! {
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     let links: Retained<Links> = unsafe { msg_send![Links::alloc(), init] };
     unsafe {
-        let manager: Retained<AnyObject> = msg_send![objc2::class!(NSAppleEventManager), sharedAppleEventManager];
+        let manager: Retained<AnyObject> =
+            msg_send![objc2::class!(NSAppleEventManager), sharedAppleEventManager];
         let _: () = msg_send![
             &*manager,
             setEventHandler: &*links,
