@@ -49,4 +49,11 @@ screen is input, which counts.
   session ended after 120 s with the reason, then the computer was locked (the
   rule "lock at the end" was on too).
 
-Not tried yet: the app's setting, macOS, the web client.
+On the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16): the app's setting
+"After 5 minutes" saved for the LaunchAgent's agent (`permissions.json`,
+`idle_minutes: 5`; the app gives it again when it connects to the agent, so it
+wins over the file); Mint's viewer, view-only, nobody touching it: the warning at
+00:19:22 ("ends in 59 s"), the end at 00:20:22, 5 minutes after the start, with
+"session ended after a time without activity".
+
+Not tried yet: the web client.
