@@ -8,9 +8,12 @@
 //! work on another thread and keeps the main thread in an `NSApplication` loop,
 //! with no Dock icon, to take the link and start the app with it; the app takes a
 //! link from its arguments (and hands it to the running app, if any).
+//!
+//! For the same reason, opening NuviraHub (Dock, Finder, `open -a`) while the agent
+//! runs reaches the agent as a "reopen" event: it starts the app too.
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject};
+use objc2::runtime::{AnyObject, Bool, NSObject};
 use objc2::{AnyThread, MainThreadMarker, define_class, msg_send, sel};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::NSString;
@@ -32,33 +35,47 @@ define_class!(
                 unsafe { msg_send![event, paramDescriptorForKeyword: DIRECT_OBJECT] };
             let url: Option<Retained<NSString>> = param.and_then(|p| unsafe { msg_send![&*p, stringValue] });
             if let Some(url) = url {
-                open_in_app(&url.to_string());
+                let url = url.to_string();
+                if url.starts_with("nuvirahub:") {
+                    tracing::info!("nuvirahub:// link opened while the app is closed: starting the app");
+                    start_app(Some(&url));
+                }
             }
+        }
+
+        /// The app delegate's "reopen" (NSApplication answers 'rapp' itself and
+        /// asks its delegate).
+        #[unsafe(method(applicationShouldHandleReopen:hasVisibleWindows:))]
+        fn should_handle_reopen(&self, _app: &AnyObject, _visible: Bool) -> Bool {
+            tracing::info!("NuviraHub opened while only the agent runs: starting the app");
+            start_app(None);
+            Bool::NO
         }
     }
 );
 
-/// Starts the app with the link: a new start, which hands it to the running app
-/// if there is one (one app at a time).
-fn open_in_app(url: &str) {
-    if !url.starts_with("nuvirahub:") {
-        return;
-    }
+/// Starts the app, with the link if any: a new start, which hands over to the
+/// running app if there is one (one app at a time).
+fn start_app(url: Option<&str>) {
     // .../NuviraHub.app/Contents/MacOS/nuvira
     let Some(bundle) = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.ancestors().nth(3).map(|p| p.to_path_buf()))
         .filter(|p| p.extension().is_some_and(|e| e == "app"))
     else {
-        tracing::warn!("nuvirahub:// link: not in an app bundle");
+        tracing::warn!("not in an app bundle: the app is not started");
         return;
     };
-    tracing::info!("nuvirahub:// link opened while the app is closed: starting the app");
-    match std::process::Command::new("/usr/bin/open").arg("-n").arg(&bundle).arg("--args").arg(url).spawn() {
+    let mut open = std::process::Command::new("/usr/bin/open");
+    open.arg("-n").arg(&bundle);
+    if let Some(url) = url {
+        open.arg("--args").arg(url);
+    }
+    match open.spawn() {
         Ok(mut child) => {
             std::thread::spawn(move || child.wait());
         }
-        Err(e) => tracing::warn!("nuvirahub:// link: the app did not start: {e}"),
+        Err(e) => tracing::warn!("the app did not start: {e}"),
     }
 }
 
@@ -73,7 +90,8 @@ pub fn agent_with_links(work: impl FnOnce() -> i32 + Send + 'static) -> ! {
         .spawn(move || std::process::exit(work()))
         .expect("agent thread");
     let app = NSApplication::sharedApplication(mtm);
-    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    // Accessory, not Prohibited: a background-only app gets no "reopen".
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     let links: Retained<Links> = unsafe { msg_send![Links::alloc(), init] };
     unsafe {
         let manager: Retained<AnyObject> = msg_send![objc2::class!(NSAppleEventManager), sharedAppleEventManager];
@@ -84,8 +102,10 @@ pub fn agent_with_links(work: impl FnOnce() -> i32 + Send + 'static) -> ! {
             forEventClass: GET_URL,
             andEventID: GET_URL
         ];
+        // "Reopen" (Dock, Finder, `open -a`) comes to the delegate.
+        let _: () = msg_send![&*app, setDelegate: &*links];
     }
-    // The handler lives as long as the process.
+    // The handler and the delegate (held weakly) live as long as the process.
     std::mem::forget(links);
     app.run();
     // `run` returns only if something stops the loop: the agent goes on.

@@ -10,11 +10,12 @@
 //!   `none` (the background colour shows).
 //! - KDE Plasma: a Plasma script through D-Bus switches every desktop to the
 //!   plain colour wallpaper (`org.kde.color`, black) and back to its own plugin.
-//! - macOS: `NSWorkspace.setDesktopImageURL` with a black picture for every
-//!   screen, and the screens' own pictures back. It must be called from a main
-//!   thread, which the agent's is not: this same program is started again as a
-//!   helper for each step (`--nuvira-wallpaper get|hide|restore`, see
-//!   [`helper_if_asked`]), as the black screens of privacy mode.
+//! - macOS: black windows at the wallpaper's level, below the desktop's icons,
+//!   on every screen and every Space (`setDesktopImageURL` changes the picture
+//!   of the Space in front only). AppKit wants a main thread, which the agent's
+//!   is not: this same program is started again as a helper holding them
+//!   (`--nuvira-wallpaper cover`, see [`helper_if_asked`]), as the black screens
+//!   of privacy mode; it ends with the session, or with the agent.
 
 use std::path::Path;
 
@@ -250,9 +251,17 @@ mod imp {
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use std::io::Write;
+    use std::io::{BufRead, Write};
+    use std::process::{Child, Stdio};
+    use std::sync::Mutex;
 
     use anyhow::{Context, Result, bail};
+
+    /// What the state file keeps on macOS now: nothing to put back but the helper.
+    const COVER: &str = "macos-cover\n";
+
+    /// The helper holding the black windows (`--nuvira-wallpaper cover`).
+    static COVER_HELPER: Mutex<Option<Child>> = Mutex::new(None);
 
     pub fn available() -> bool {
         // The sign-in screen's agent (root) has no person's desktop.
@@ -266,9 +275,9 @@ mod imp {
         let exe = std::env::current_exe().context("program path")?;
         let mut child = std::process::Command::new(exe)
             .args([super::mac_helper::ARG, step])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .context("wallpaper helper")?;
         if let Some(mut stdin) = child.stdin.take() {
@@ -281,16 +290,58 @@ mod imp {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
-    /// "macos" and a line "screen<TAB>URL" for each screen.
     pub fn current() -> Result<String> {
-        Ok(format!("macos\n{}", helper("get", "")?))
+        Ok(COVER.into())
     }
 
+    /// Black windows over the wallpaper of every screen, on every Space, until
+    /// [`restore`]. Changing the picture (`setDesktopImageURL`) hid it only on the
+    /// Space in front: the others kept their photo.
     pub fn hide() -> Result<()> {
-        helper("hide", "").map(drop)
+        let mut helper = COVER_HELPER.lock().map_err(|_| anyhow::anyhow!("wallpaper helper lock"))?;
+        if helper.is_some() {
+            return Ok(());
+        }
+        let exe = std::env::current_exe().context("program path")?;
+        let mut child = std::process::Command::new(exe)
+            .args([super::mac_helper::ARG, "cover"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("wallpaper helper")?;
+        // "ready" once the windows are up (or nothing: it failed).
+        let mut line = String::new();
+        if let Some(out) = child.stdout.take() {
+            let _ = std::io::BufReader::new(out).read_line(&mut line);
+        }
+        if line.trim() != "ready" {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("wallpaper helper did not start");
+        }
+        *helper = Some(child);
+        Ok(())
     }
 
     pub fn restore(saved: &str) -> Result<()> {
+        if saved == COVER {
+            if let Some(mut child) = COVER_HELPER.lock().ok().and_then(|mut h| h.take()) {
+                // Its standard input closed: it ends.
+                drop(child.stdin.take());
+                for _ in 0..30 {
+                    if child.try_wait().ok().flatten().is_some() {
+                        return Ok(());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            // No helper (an agent that was killed): its windows went with it.
+            return Ok(());
+        }
+        // Left by a version that changed the picture: the screens' own pictures.
         let Some(screens) = saved.strip_prefix("macos\n") else { bail!("not a macOS wallpaper") };
         helper("restore", screens).map(drop)
     }
@@ -299,55 +350,44 @@ mod imp {
 /// macOS: the helper process, on its own main thread.
 #[cfg(target_os = "macos")]
 mod mac_helper {
+    use std::cell::RefCell;
     use std::io::Read;
 
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSScreen, NSWorkspace};
-    use objc2_foundation::{NSDictionary, NSString, NSURL};
+    use objc2::rc::Retained;
+    use objc2::{MainThreadMarker, MainThreadOnly};
+    use objc2_app_kit::{
+        NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSColor, NSScreen, NSWindow,
+        NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
+    };
+    use objc2_foundation::{NSRect, NSString, NSURL};
 
     pub const ARG: &str = "--nuvira-wallpaper";
 
-    /// A 1x1 black PNG, scaled over each screen.
-    const BLACK_PNG: &[u8] = &[
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0, 144,
-        119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 218, 99, 96, 96, 96, 0, 0, 0, 4, 0, 1, 200, 234, 235, 249,
-        0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
-    ];
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        /// `CGWindowLevelForKey`.
+        fn CGWindowLevelForKey(key: i32) -> i32;
+    }
+    /// `kCGDesktopWindowLevelKey`: the wallpaper's level, below the desktop's icons.
+    const DESKTOP_LEVEL_KEY: i32 = 2;
+
+    thread_local! {
+        /// The black windows and the screens they cover (main thread only).
+        static COVERS: RefCell<(Vec<NSRect>, Vec<Retained<NSWindow>>)> = const { RefCell::new((Vec::new(), Vec::new())) };
+    }
 
     pub fn run(step: &str) -> ! {
         let Some(mtm) = MainThreadMarker::new() else {
             eprintln!("wallpaper helper: not on the main thread");
             std::process::exit(2);
         };
+        if step == "cover" {
+            cover(mtm);
+        }
         let workspace = NSWorkspace::sharedWorkspace();
         let screens = NSScreen::screens(mtm);
-        let set = |index: usize, url: &NSURL| -> bool {
-            let Some(screen) = screens.iter().nth(index) else { return false };
-            let options = NSDictionary::new();
-            // SAFETY: an empty dictionary of options.
-            match unsafe { workspace.setDesktopImageURL_forScreen_options_error(url, &screen, &options) } {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("screen {index}: {}", e.localizedDescription());
-                    false
-                }
-            }
-        };
         let ok = match step {
-            "get" => {
-                for (i, screen) in screens.iter().enumerate() {
-                    if let Some(text) = workspace.desktopImageURLForScreen(&screen).and_then(|u| u.absoluteString()) {
-                        println!("{i}\t{text}");
-                    }
-                }
-                true
-            }
-            "hide" => {
-                let path = std::env::temp_dir().join("nuvira-black.png");
-                let _ = std::fs::write(&path, BLACK_PNG);
-                let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
-                (0..screens.count()).map(|i| set(i, &url)).fold(true, |a, b| a && b)
-            }
+            // Pictures kept by a version that changed them (see imp::restore).
             "restore" => {
                 let mut saved = String::new();
                 let _ = std::io::stdin().read_to_string(&mut saved);
@@ -357,12 +397,88 @@ mod mac_helper {
                     .filter_map(|(i, url)| {
                         Some((i.parse::<usize>().ok()?, NSURL::URLWithString(&NSString::from_str(url))?))
                     })
-                    .map(|(i, url)| set(i, &url))
+                    .map(|(i, url)| {
+                        let Some(screen) = screens.iter().nth(i) else { return false };
+                        let options = objc2_foundation::NSDictionary::new();
+                        // SAFETY: an empty dictionary of options.
+                        unsafe { workspace.setDesktopImageURL_forScreen_options_error(&url, &screen, &options) }
+                            .is_ok()
+                    })
                     .fold(true, |a, b| a && b)
             }
             _ => false,
         };
         std::process::exit(if ok { 0 } else { 1 });
+    }
+
+    /// Black windows at the wallpaper's level on every screen and every Space,
+    /// following the screens, until the agent closes the standard input.
+    fn cover(mtm: MainThreadMarker) -> ! {
+        let app = NSApplication::sharedApplication(mtm);
+        // No Dock icon; a "prohibited" app's windows would not be shown at all.
+        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        update(mtm);
+        println!("ready");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        std::thread::spawn(|| {
+            let mut sink = Vec::new();
+            // Until the end of the input: the agent's restore, or the agent gone.
+            let _ = std::io::stdin().read_to_end(&mut sink);
+            std::process::exit(0);
+        });
+        // A screen added, removed or changed: covered again.
+        std::thread::spawn(|| {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                dispatch2::DispatchQueue::main().exec_async(|| {
+                    // SAFETY: work given to the main queue runs on the main thread.
+                    update(unsafe { MainThreadMarker::new_unchecked() });
+                });
+            }
+        });
+        app.run();
+        std::process::exit(0);
+    }
+
+    fn update(mtm: MainThreadMarker) {
+        let frames: Vec<NSRect> = NSScreen::screens(mtm).iter().map(|s| s.frame()).collect();
+        COVERS.with_borrow_mut(|(covered, windows)| {
+            if *covered == frames && !windows.is_empty() {
+                return;
+            }
+            for window in windows.drain(..) {
+                window.close();
+            }
+            *windows = frames.iter().map(|frame| black_window(mtm, *frame)).collect();
+            *covered = frames;
+        });
+    }
+
+    fn black_window(mtm: MainThreadMarker, frame: NSRect) -> Retained<NSWindow> {
+        // SAFETY: plain window creation on the main thread; released by `Retained`.
+        let window = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                NSWindow::alloc(mtm),
+                frame,
+                NSWindowStyleMask::Borderless,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        unsafe { window.setReleasedWhenClosed(false) };
+        // Just above the picture, below the desktop's icons and every window.
+        window.setLevel(unsafe { CGWindowLevelForKey(DESKTOP_LEVEL_KEY) } as isize + 1);
+        window.setBackgroundColor(Some(&NSColor::blackColor()));
+        window.setOpaque(true);
+        window.setHasShadow(false);
+        window.setIgnoresMouseEvents(true);
+        window.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::Stationary
+                | NSWindowCollectionBehavior::IgnoresCycle,
+        );
+        window.orderFrontRegardless();
+        window
     }
 }
 
