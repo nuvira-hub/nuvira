@@ -91,7 +91,11 @@ On the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the
 | Mac app's form → `Lab-Windows` | session with the Windows service |
 | Mac app's form → a name nobody has | "Session closed: the device is not reachable" |
 
-Not tried yet: Chrome and Safari for the web client and the console.
+Web client and console on 2026-11-16 (the Pro test server running on the Mac mini (Scaleway); Safari 27 on that Mac (`http://localhost:21216/web/`), Chrome 157 on PC-LABORATORIO (a test profile with the test server treated as a secure origin, driven through its DevTools protocol); the console in Chrome through an
+HTTPS reverse proxy, since it refuses a sign-in in clear from the Internet):
+- web client, Safari and Chrome: `Mac-Mini` typed → session with the Mac's agent;
+- console, Safari and Chrome: the aliases under the IDs (`mac-mini`, `lab-windows`);
+  the search by alias (`lab-win`, `mac-mi`) finds them.
 
 Not done yet: `name@server` to name the server with the alias; aliases set and
 locked by the admins in the Pro console.

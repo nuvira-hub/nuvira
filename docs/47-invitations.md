@@ -147,12 +147,52 @@ Not tried yet:
 - macOS: the same with the managed installation (its agent is the same program,
   so the same path), and a click on the Dock's icon by a person (`open -a` and
   the Dock both send "reopen");
-- Chrome;
-- the Linux packages' desktop file (only the registration at start was tried);
-- `NUVIRA_PUBLIC_URL` behind a reverse proxy (unit test only);
-- a computer whose server is locked (the card's text);
-- the server's refusal `@server.support_reserved` from the app (only the button
-  is hidden; the refusal is unit-tested).
+- the Linux polkit/package paths on Fedora's .rpm for the scheme (the .rpm's
+  desktop file is the same file as the .deb's).
+
+More tests of 2026-11-16:
+
+- **Behind a reverse proxy.** A test HTTPS proxy (Go `httputil.ReverseProxy`:
+  TLS, `X-Forwarded-For/-Proto`, WebSocket) in front of the Pro test server on
+  the Mac, `NUVIRA_PUBLIC_URL=https://51.159.121.104:21443`: the app's "Create the
+  link" gave `https://51.159.121.104:21443/i/yk578-2sw7r`; the page through the
+  proxy in Chrome (Italian), its "Open NuviraHub" link carrying the agents' server
+  (`51.159.121.104:21216`), not the proxy's; the Windows download through the
+  proxy: 200, 38.9 MB, the file name with server, key and code.
+- **Chrome** (157, PC-LABORATORIO): "Apri NuviraHub" → Chrome's own question
+  "Aprire NuviraHub? … vuole aprire questa applicazione" → "Apri NuviraHub" (UI
+  Automation) → the running app got it, request "Invited by you", use 1 of 1.
+  The page's script cannot `fetch` (CSP `default-src 'none'`), as intended.
+- **Server locked** (PC-LABORATORIO, `HKLM\SOFTWARE\Policies\nuvira` `Server`
+  set, app restarted), a link for the NAS's server: "L'invito è per il server
+  192.168.178.12:21116, ma su questo computer il server non si può cambiare."
+  Found and fixed: with an earlier request still waiting, the card offered
+  "Cancel the request" (that earlier one) under the new invitation's text; now
+  "Close", which drops the invitation and leaves the earlier request (tried:
+  position 1 kept). Rule removed afterwards.
+- **The server's refusal from the app**: an invitation of anna's used by the Mac;
+  PC-LABORATORIO's app (admin) shows it "For anna" without Take; `support_take`
+  called in the app through WebView2's DevTools (what the button would do):
+  `@server.support_reserved` (5 languages: "This request is for the technician who
+  sent the invitation"), the request not taken.
+- **Linux packages.** The branch's .deb, .rpm and .tar.gz built with
+  `tools/package-linux.sh` in the jammy container with nfpm 2.47.0 (as the CI):
+  - Kubuntu (KDE Wayland), the .deb installed: before any start of the app
+    `xdg-mime` already answers `io.github.nuvira-hub.nuvira.desktop`
+    (`mimeinfo.cache`: `x-scheme-handler/nuvirahub`); a link with the app closed
+    (`xdg-open`) started it with the link ("invitation received
+    other_server=true"); a second one with the app open went to it (one app);
+  - found and fixed: the app then wrote its own hidden handler (the deep-link
+    plugin's `nuvira-handler.desktop`, `Exec="/usr/bin/nuvira" %u`) and made it the
+    default. `xdg-open` without a desktop environment (generic mode, as on a window
+    manager alone) does not understand the quotes and gave the link to Firefox
+    (same file without quotes: the app got it). Now the app writes the handler
+    itself, unquoted when the path needs no quotes, and nothing when the package's
+    desktop file is there for `/usr/bin/nuvira` (an earlier handler is removed and
+    the package's made the default again: "the package's handler again"). Tried:
+    Kubuntu with the new .deb, generic mode and Plasma's environment → the app;
+    the tar.gz on Mint: `Exec=/home/alessandro/nuvira-tar/nuvira-0.27.0/nuvira %u`,
+    generic mode and Cinnamon's environment → the app.
 
 Not done yet: the invitations in the web console (list, delete); a request kept
 in the queue across a server's restart.

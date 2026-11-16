@@ -56,4 +56,11 @@ wins over the file); Mint's viewer, view-only, nobody touching it: the warning a
 00:19:22 ("ends in 59 s"), the end at 00:20:22, 5 minutes after the start, with
 "session ended after a time without activity".
 
-Not tried yet: the web client.
+Web client on 2026-11-16 (the Pro test server running on the Mac mini (Scaleway); Safari 27 on that Mac (`http://localhost:21216/web/`), Chrome 157 on PC-LABORATORIO (a test profile with the test server treated as a secure origin, driven through its DevTools protocol)), the Pro rule set to 2 minutes:
+- Safari: after a minute without input the toast "No activity: the session ends
+  in 60 s. Move the mouse over this window to stay connected" with "Stay
+  connected"; pressed: the session went on past the limit, and the warning came
+  back a minute later; left alone: "Session closed: session ended after a time
+  without activity" (twice).
+- Chrome: the same (warning at "55 s", "Resta collegato" pressed through the page,
+  alive after the limit, then closed with the same reason).

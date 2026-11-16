@@ -34,7 +34,11 @@ Tests of 2026-11-15:
 - Through the relay (`--transport websocket` on both viewers): handed over, the guest connected again through the relay in 2.6 s with the token, full session.
 - Handed over, then switch sides by the new first viewer: PC-FEDERICO first, the Linux viewer on Mint as the guest; Mint took the session over and switched sides towards PC-LABORATORIO (8 fps, the window closed when it took control back).
 - Tried on the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16, the app built from the branch, personal unattended installation): the Mac as the controlled computer (PC-LABORATORIO's viewer handed the session over to Mint's viewer, which carried on with the single-use token), and the Mac's viewer as the one taking over (Mint's viewer handed a session with PC-LABORATORIO's service to the Mac's viewer).
-- Not tried: a token presented by another device or after the minute (checked by the `Gate`, not exercised live).
+- The token's checks, live on 2026-11-16 (PC-LABORATORIO's service on the Mac's Pro test server; the first viewer on Mint with `--handover-after 20`; the guest the Mac's viewer with `NUVIRA_TEST_HANDOVER_TOKEN=file`, a test aid that keeps the token instead of using it; the token then presented as the password `\x01handover:TOKEN`, as the viewer does):
+  - presented by another device (Mint) within the minute: "access denied: wrong password";
+  - then by the right device (the Mac) within the minute: session (so the other device's attempt did not spend it);
+  - the same token again within the minute: refused (once only);
+  - a new token presented by the right device after 68 s: refused; control: the same way after 18 s, accepted.
 
 ## At the computer
 
@@ -68,6 +72,14 @@ Tests of 2026-11-15:
 - 2026-11-13, the web client as the first viewer (bench, headless Edge) and a desktop viewer joining: the page showed "PC-STUDIO-NUC si è unito alla sessione…", then "…ha lasciato la sessione".
 - A slow guest, in a unit test (`shared::tests::slow_guest_waits_for_a_keyframe`): its queue of 8 frames full, the next is dropped, it waits for a keyframe and one is asked for, at most once in 2 s; the frames it had queued still come, nothing is shown until the keyframe.
 
-- 2026-11-13, branch `guests-audio`: PC-LABORATORIO's test agent through the NAS's server playing a tone in a loop, two desktop viewers on the NUC (each with `NUVIRA_AUDIO_DUMP`), the second joining 8 s after the first: the first received 2073 sound packets, the guest 1333, none lost, the same level in both recordings (RMS 3537 and 3487). Not tried live: a mute button pressed by one of them (the logic is in the unit test of `Shared`).
+- 2026-11-13, branch `guests-audio`: PC-LABORATORIO's test agent through the NAS's server playing a tone in a loop, two desktop viewers on the NUC (each with `NUVIRA_AUDIO_DUMP`), the second joining 8 s after the first: the first received 2073 sound packets, the guest 1333, none lost, the same level in both recordings (RMS 3537 and 3487). Tried live on 2026-11-16: the Mac's agent playing a sound in a loop, the first viewer on Mint and the guest on PC-LABORATORIO, both with `NUVIRA_AUDIO_DUMP`; the guest's "Sound" button pressed through UI Automation ("muted (click to hear it)"): in 15 s the guest's recording grew by 0 bytes, the first viewer's by 2.3 MB; pressed again: 2.2 MB and 2.1 MB.
 
-Not tested yet: a guest on a real slow network.
+A guest on a slow network, 2026-11-16: the Mint guest behind `tc netem` (150 ms more delay, 2 Mbit/s, 1% loss: RTT 177 ms), the first viewer on PC-LABORATORIO, the Mac's screen changing every 2 s (Mission Control):
+
+| | fps | latency p50 / p95 | freezes |
+|---|---|---|---|
+| guest (slow) | 25.3 | 107 / 122 ms | 0 |
+| first viewer, with the slow guest | 26.4 | 32 / 47 ms | 0 |
+| first viewer alone (baseline, right after) | 23.8 | 32 / 48 ms | 0 |
+
+The first viewer is not slowed down by a guest on a bad network. Not tried: a real slow network (mobile).

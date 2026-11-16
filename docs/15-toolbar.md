@@ -69,7 +69,7 @@ Agent on the Mint VM (X11, 1280x800, pointer moved with `xdotool` to a known pla
 - Linux viewer (Mint): saved in the localised Pictures folder (`~/Immagini/NuviraHub`), pointer in place.
 - Web client (Firefox on the Mint, Pro test server): the bar's button downloaded `NuviraHub <date> <ID>.png` (the page names the computer by its ID when it was not opened from the address book).
 
-The macOS viewer on the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the branch, signed with a fixed test identity): the screenshot of a session with PC-LABORATORIO saved as `~/Pictures/NuviraHub/NuviraHub 2026-11-16 00.40.05 PC-LABORATORIO.png` (900x720, the picture of the session). Not tried yet: the web client in Chrome and Safari.
+The macOS viewer on the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the branch, signed with a fixed test identity): the screenshot of a session with PC-LABORATORIO saved as `~/Pictures/NuviraHub/NuviraHub 2026-11-16 00.40.05 PC-LABORATORIO.png` (900x720, the picture of the session). Web client on 2026-11-16 (the Pro test server running on the Mac mini (Scaleway); Safari 27 on that Mac (`http://localhost:21216/web/`), Chrome 157 on PC-LABORATORIO (a test profile with the test server treated as a secure origin, driven through its DevTools protocol)): Safari downloaded `NuviraHub 2026-11-16 07.25.14 468 476 281.png` (1324x744) after asking once whether localhost may download, and the session stayed up through that question; Chrome downloaded `NuviraHub 2026-11-16 07.38.39 mac-mini.png` (named after the alias typed).
 
 ## Related
 

@@ -112,8 +112,29 @@ app window made bigger to reach the rules):
   administrator's prompt (the sign-in screen's copy) was lost when that save
   ended.
 
-Not tried yet: the sign-in screen's copy on macOS, GDM and SDDM
-sign-in screens (only LightDM tried), the web client in Chrome and Safari.
+GDM and SDDM sign-in screens, 2026-11-16 (the branch's packages installed: the
+.rpm on Fedora 44, managed installation, public server; the .deb on Kubuntu 26.04,
+managed installation, the NAS's server). The rules were written in root's folder
+(`/var/lib/nuvira`) with `nuvira access save --dir` as root, as the app's polkit
+copy does (its prompt cannot be answered from here on GNOME/KDE Wayland; the copy
+itself was tried on Mint): a profile "Vista" without keyboard and mouse and a
+two-factor code. Automatic login suspended for the test, the display manager
+restarted: the greeter's agent registered, and from PC-LABORATORIO:
+
+| | Wrong code | Right code |
+|---|---|---|
+| SDDM (Kubuntu, KDE Wayland) | "Wrong verification code" | session, `input: false`; screenshot: SDDM's sign-in screen |
+| GDM (Fedora, GNOME Wayland) | "Wrong verification code" | session, `input: false`; screenshot: GDM's user list |
+
+Rules removed and automatic login put back afterwards on both.
+
+Web client on 2026-11-16 (the Pro test server running on the Mac mini (Scaleway); Safari 27 on that Mac (`http://localhost:21216/web/`), Chrome 157 on PC-LABORATORIO (a test profile with the test server treated as a secure origin, driven through its DevTools protocol)): a test agent with the code: the page's box,
+a wrong code refused ("Wrong two-factor code"), the right one let in; the same in
+Chrome.
+
+Not tried yet: the sign-in screen's copy on macOS (the test app lacks the
+keyboard driver's package of the signed pkg; installing a pkg needs `sudo
+installer`, not allowed in these tests); the polkit prompt itself on GNOME and KDE.
 
 ## Known limits
 

@@ -58,10 +58,14 @@ On the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app built there from the
   the error is a readable sentence, and a long notice is cut in the bar (whole on
   hover).
 
-Not tried yet: a Mac viewer with a real microphone (the permission prompt, the
-audio-input entitlement in the signed app: present in the test app, see
-`codesign -d --entitlements`); real speakers on Linux (the VMs played into WAV
-files); a Linux viewer with a real microphone (only a monitor source); the web
-client (it has no microphone yet); the app's rules editor field (the console's
-checkbox and the limit of sessions without an account were tried in the console,
-through Firefox).
+The app's rules editor field, 2026-11-16: PC-LABORATORIO's app (administrator of
+the Pro test server), Administration, "No technician's microphone" ticked and
+saved: the server's rule `no_microphone: true`; PC-LABORATORIO's viewer with
+`--microphone` towards the Mac: no microphone started, nothing asked at the Mac;
+the rule off again (control): "microphone at the remote computer on=true".
+
+Not tried yet: a Mac viewer with a real microphone (this Mac has no input device;
+a virtual one, BlackHole, needs `sudo installer` of its pkg, not allowed in these
+tests); real speakers on Linux and a Linux viewer with a real microphone (the VMs
+have none: a PC with a live Linux is needed); the web client (it has no
+microphone yet).
