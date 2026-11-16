@@ -33,7 +33,8 @@ Tests of 2026-11-15:
 - In a unit test (`shared::tests::handover_goes_to_a_guest_that_can_take_it`): a guest that cannot take it over (the web client) is never handed it; the token goes to the right guest, once.
 - Through the relay (`--transport websocket` on both viewers): handed over, the guest connected again through the relay in 2.6 s with the token, full session.
 - Handed over, then switch sides by the new first viewer: PC-FEDERICO first, the Linux viewer on Mint as the guest; Mint took the session over and switched sides towards PC-LABORATORIO (8 fps, the window closed when it took control back).
-- Not tried: macOS (no Mac this time; nothing in it is specific to a system), a token presented by another device or after the minute (checked by the `Gate`, not exercised live).
+- Tried on the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16, the app built from the branch, personal unattended installation): the Mac as the controlled computer (PC-LABORATORIO's viewer handed the session over to Mint's viewer, which carried on with the single-use token), and the Mac's viewer as the one taking over (Mint's viewer handed a session with PC-LABORATORIO's service to the Mac's viewer).
+- Not tried: a token presented by another device or after the minute (checked by the `Gate`, not exercised live).
 
 ## At the computer
 
