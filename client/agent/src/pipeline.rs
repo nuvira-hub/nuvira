@@ -68,6 +68,8 @@ pub struct Controls {
     pub bitrate: Arc<AtomicU32>,
     /// Viewer's drawing area, see [`pack_view`].
     pub view: Arc<AtomicU64>,
+    /// Statistics log (`NUVIRA_STATS`), only when it is on.
+    pub stats: Option<Arc<crate::session_stats::AgentStats>>,
 }
 
 pub struct Pipeline {
@@ -103,6 +105,7 @@ impl Pipeline {
             info!("the source does not offer images on the GPU: the encoder gets them from RAM");
         }
         let screen = capturer.display().clone();
+        let stats = controls.stats.clone();
 
         // The encoder is created in the thread that will use it (Media Foundation initialises COM per thread).
         let (enc_ready_tx, enc_ready_rx) = std::sync::mpsc::channel();
@@ -124,12 +127,16 @@ impl Pipeline {
         })?);
 
         let s = shared.clone();
-        pipeline.threads.push(
-            std::thread::Builder::new().name("capture".into()).spawn(move || capture_loop(&s, capturer))?,
-        );
+        pipeline.threads.push(std::thread::Builder::new().name("capture".into()).spawn({
+            let stats = stats.clone();
+            move || capture_loop(&s, capturer, stats.as_deref())
+        })?);
 
         // On error `pipeline` is dropped and stops the other thread.
         let encoder = enc_ready_rx.recv().map_err(|_| anyhow!("encoding thread ended"))??;
+        if let Some(stats) = &stats {
+            stats.started(encoder, screen.width, screen.height);
+        }
         info!("streaming {} {}x{} with {encoder}", screen.name, screen.width, screen.height);
         Ok((screen, pipeline))
     }
@@ -145,7 +152,11 @@ impl Drop for Pipeline {
     }
 }
 
-fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
+fn capture_loop(
+    shared: &Shared,
+    mut capturer: Box<dyn Capturer>,
+    stats: Option<&crate::session_stats::AgentStats>,
+) {
     let mut failing = false;
     let mut first = true;
     while !shared.stop.load(Ordering::Relaxed) {
@@ -186,9 +197,16 @@ fn capture_loop(shared: &Shared, mut capturer: Box<dyn Capturer>) {
             pixel_buffer: frame.pixel_buffer.clone(),
         };
         shared.captured.fetch_add(1, Ordering::Relaxed);
+        if let Some(stats) = stats {
+            stats.frames_captured.fetch_add(1, Ordering::Relaxed);
+            stats.capture.record_us(nuvira_proto::now_us().saturating_sub(captured.captured_us));
+        }
         let old = shared.slot.lock().expect("slot").replace(captured);
         if let Some(old) = old {
             shared.skipped.fetch_add(1, Ordering::Relaxed);
+            if let Some(stats) = stats {
+                stats.frames_skipped.fetch_add(1, Ordering::Relaxed);
+            }
             shared.recycle(old.data);
         }
         shared.ready.notify_one();
@@ -280,7 +298,7 @@ fn encode_loop(
     frames: &mpsc::Sender<VideoFrame>,
     controls: &Controls,
 ) {
-    let Controls { max_fps, keyframe, bitrate, view } = controls;
+    let Controls { max_fps, keyframe, bitrate, view, stats: run_stats } = controls;
     let mut applied_bitrate = bitrate.load(Ordering::Relaxed);
     let mut applied_view = view.load(Ordering::Relaxed);
     let mut pending_view: Option<(u64, Instant)> = None;
@@ -501,6 +519,12 @@ fn encode_loop(
         }
         let encode_us = t.elapsed().as_micros() as u32;
         stats.add(encode_us, encoded.data.len());
+        if let Some(s) = run_stats {
+            s.encode.record_us(u64::from(encode_us));
+            if encoded.keyframe {
+                s.keyframes.fetch_add(1, Ordering::Relaxed);
+            }
+        }
         seq += 1;
         let msg = VideoFrame {
             seq,
@@ -514,6 +538,9 @@ fn encode_loop(
         // Single-frame queue: if the network is slow capture is skipped instead of building up delay.
         let t_send = Instant::now();
         let sent = frames.blocking_send(msg);
+        if let Some(s) = run_stats {
+            s.send_blocked_us.fetch_add(t_send.elapsed().as_micros() as u64, Ordering::Relaxed);
+        }
         tracing::trace!(?slept, ?waited_ready, ?waited_slot, encode = ?t.elapsed().saturating_sub(t_send.elapsed()), send = ?t_send.elapsed(), "loop");
         if sent.is_err() {
             break;
@@ -628,6 +655,7 @@ mod tests {
                 keyframe,
                 bitrate: Arc::new(AtomicU32::new(1_000_000)),
                 view: view.clone(),
+                stats: None,
             },
         )
         .context("start")

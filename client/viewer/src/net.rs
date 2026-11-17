@@ -19,6 +19,8 @@ use winit::event_loop::EventLoopProxy;
 
 /// Events from the network to the window.
 pub enum NetEvent {
+    /// The statistics log of the session that starts (`NUVIRA_STATS`), only when it is on.
+    Stats(Arc<crate::session_stats::ViewerStats>),
     /// The person at the remote computer is being asked to accept.
     ConfirmationPending,
     /// The session ends in this many seconds without activity (0: warning over).
@@ -427,16 +429,24 @@ fn control(msg: Msg) -> ControlMessage {
     ControlMessage { msg: Some(msg) }
 }
 
+/// How the connection goes and the server's session id, for the statistics log.
+struct PathInfo {
+    /// `direct`, `relay` or `websocket`.
+    path: &'static str,
+    session_id: Option<String>,
+}
+
 /// Connection to the agent: direct, or asking nuvira-server for the route.
 /// Also returns whether the path is direct (`false`: through the server's relay).
 async fn open_connection(
     target: Target,
-) -> Result<(nuvira_transport::Connection, bool, Option<crate::upload::Target>)> {
+) -> Result<(nuvira_transport::Connection, bool, Option<crate::upload::Target>, PathInfo)> {
     use nuvira_proto::v1::{Connect, Role, client_message, server_message};
     use nuvira_transport::{identity::Identity, p2p, signal};
     match target {
         Target::Direct { addr, fingerprint } => {
-            Ok((nuvira_transport::connect(addr, fingerprint).await?, true, None))
+            let info = PathInfo { path: "direct", session_id: None };
+            Ok((nuvira_transport::connect(addr, fingerprint).await?, true, None, info))
         }
         Target::Server { server, server_name, server_key, transport, server_ws, device_id, identity } => {
             let identity_path = identity.clone();
@@ -500,7 +510,15 @@ async fn open_connection(
             let remote = p2p::canonical(conn.remote_address());
             let family = if remote.is_ipv6() { "IPv6" } else { "IPv4" };
             info!(?path, %remote, family, "path");
-            Ok((conn, path == p2p::Path::Direct, upload))
+            let info = PathInfo {
+                path: match (path == p2p::Path::Direct, &route.transport) {
+                    (true, _) => "direct",
+                    (false, nuvira_transport::ServerTransport::WebSocket(_)) => "websocket",
+                    (false, nuvira_transport::ServerTransport::Udp) => "relay",
+                },
+                session_id: Some(session_id),
+            };
+            Ok((conn, path == p2p::Path::Direct, upload, info))
         }
     }
 }
@@ -697,18 +715,36 @@ async fn handshake(
     Ok((ctrl_tx, ctrl_rx, Some(input_tx), video_rx, agent.audio, agent.clipboard_files))
 }
 
+/// [`run_session`], ending its statistics log (if any) with the reason it ended.
 async fn session(
+    target: Target,
+    password: Option<String>,
+    proxy: EventLoopProxy<NetEvent>,
+    windows: (Arc<FrameSlot>, Arc<crate::recorder::Switch>),
+    channels: SessionChannels,
+    terminal_only: bool,
+) -> Result<()> {
+    let recorder = Mutex::new(None);
+    let result = run_session(target, password, proxy, windows, channels, terminal_only, &recorder).await;
+    if let Some(r) = recorder.into_inner().ok().flatten() {
+        r.finish(nuvira_transport::stats::exit_reason(&result));
+    }
+    result
+}
+
+async fn run_session(
     target: Target,
     password: Option<String>,
     proxy: EventLoopProxy<NetEvent>,
     (slot, recording): (Arc<FrameSlot>, Arc<crate::recorder::Switch>),
     (mut input_rx, mut control_rx, mut files_rx, downloads, (mut terminals_rx, mut tunnels_rx)): SessionChannels,
     terminal_only: bool,
+    recorder: &Mutex<Option<nuvira_transport::stats::Recorder>>,
 ) -> Result<()> {
     // Until the session starts the viewer may close (window closed while connecting
     // or waiting for the confirmation): then nothing more is done, and a connection
     // already open is closed, or the agent would stay "busy" until the timeout.
-    let (conn, direct, upload) = tokio::select! {
+    let (conn, direct, upload, path) = tokio::select! {
         r = open_connection(target) => r?,
         () = viewer_gone(&mut input_rx) => return Ok(()),
     };
@@ -747,13 +783,38 @@ async fn session(
     let datagrams = video_rx.is_none() && !terminal_only;
     let loss = Arc::new(VideoLoss::default());
     let (frame_tx, frame_rx) = std::sync::mpsc::sync_channel::<(VideoFrame, u64)>(4);
+    // The statistics log, when NUVIRA_STATS asks for it (read at every session).
+    let stats = match nuvira_transport::stats::Config::from_env() {
+        Some(config) if !terminal_only => {
+            let stats = Arc::new(crate::session_stats::ViewerStats::default());
+            let source = crate::session_stats::ViewerSource {
+                stats: stats.clone(),
+                conn: conn.clone(),
+                slot: slot.clone(),
+                datagrams,
+                last: Default::default(),
+            };
+            let session = path.session_id.unwrap_or_else(nuvira_transport::stats::local_session_id);
+            *recorder.lock().expect("stats recorder") = Some(nuvira_transport::stats::Recorder::start(
+                &config,
+                "viewer",
+                &session,
+                path.path,
+                Box::new(source),
+            ));
+            let _ = proxy.send_event(NetEvent::Stats(stats.clone()));
+            Some(stats)
+        }
+        _ => None,
+    };
+    let decoder_stats = stats.clone();
     let decoder_proxy = proxy.clone();
     // The sound also goes into recordings.
     let audio_tap = Arc::new(crate::recorder::AudioTap::default());
     let decoder_tap = player.is_some().then(|| audio_tap.clone());
-    let decoder = std::thread::Builder::new()
-        .name("decoding".into())
-        .spawn(move || decode_loop(frame_rx, decoder_proxy, slot, key_tx, &recording, decoder_tap))?;
+    let decoder = std::thread::Builder::new().name("decoding".into()).spawn(move || {
+        decode_loop(frame_rx, decoder_proxy, slot, key_tx, &recording, decoder_tap, decoder_stats)
+    })?;
     let sound = player.as_deref().map(|p| (p, &*audio_tap));
 
     let video = async {
@@ -761,11 +822,13 @@ async fn session(
             return std::future::pending().await;
         }
         let Some(mut video_rx) = video_rx else {
-            return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams, &loss, sound).await;
+            let stats = stats.as_deref();
+            return receive_datagram_video(&conn, &frame_tx, &key_tx_for_datagrams, &loss, sound, stats)
+                .await;
         };
         let stream = async {
             while let Some(frame) = video_rx.recv::<VideoFrame>().await? {
-                if frame_tx.send((frame, nuvira_proto::now_us())).is_err() {
+                if !to_decoder(&frame_tx, frame, stats.as_deref()) {
                     break;
                 }
             }
@@ -1657,6 +1720,23 @@ impl VideoLoss {
     }
 }
 
+/// Hands a frame received to decoding; `false` when decoding ended. With the statistics
+/// log on, also counts it and the time the full queue held the network task.
+fn to_decoder(
+    frames: &std::sync::mpsc::SyncSender<(VideoFrame, u64)>,
+    frame: VideoFrame,
+    stats: Option<&crate::session_stats::ViewerStats>,
+) -> bool {
+    let received_us = nuvira_proto::now_us();
+    let Some(s) = stats else { return frames.send((frame, received_us)).is_ok() };
+    s.frames_received.fetch_add(1, Ordering::Relaxed);
+    s.bytes_received.fetch_add(frame.data.len() as u64, Ordering::Relaxed);
+    let t = Instant::now();
+    let sent = frames.send((frame, received_us)).is_ok();
+    s.decode_queue_wait_us.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
+    sent
+}
+
 /// Video as QUIC datagrams with error correction (`nuvira_transport::fec`, prototype):
 /// frames go to decoding as they are rebuilt. After a lost frame the next ones cannot
 /// be decoded: they are dropped until a keyframe, asked for at most once a second.
@@ -1666,6 +1746,7 @@ async fn receive_datagram_video(
     request_keyframe: &mpsc::UnboundedSender<()>,
     loss: &VideoLoss,
     audio: Option<(&nuvira_audio::player::Player, &crate::recorder::AudioTap)>,
+    stats: Option<&crate::session_stats::ViewerStats>,
 ) -> Result<()> {
     use prost::Message;
     let mut rx = nuvira_transport::fec::Receiver::default();
@@ -1697,6 +1778,11 @@ async fn receive_datagram_video(
         let (shards, lost) = rx.take_loss();
         loss.shards.fetch_add(shards, Ordering::Relaxed);
         loss.shards_lost.fetch_add(lost, Ordering::Relaxed);
+        if let Some(s) = stats {
+            s.shards.fetch_add(shards, Ordering::Relaxed);
+            s.shards_lost.fetch_add(lost, Ordering::Relaxed);
+            s.frames_rebuilt.fetch_add(rx.take_rebuilt(), Ordering::Relaxed);
+        }
         let (seq, bytes) = match pushed {
             Ok(Some(done)) => done,
             Ok(None) => continue,
@@ -1709,6 +1795,9 @@ async fn receive_datagram_video(
         if seq != last + 1 {
             tracing::debug!(lost = seq - last - 1, "video frames lost");
             loss.frames_lost.fetch_add(seq - last - 1, Ordering::Relaxed);
+            if let Some(s) = stats {
+                s.frames_lost.fetch_add(seq - last - 1, Ordering::Relaxed);
+            }
             waiting_key = true;
         }
         last = seq;
@@ -1724,7 +1813,7 @@ async fn receive_datagram_video(
                 continue;
             }
         }
-        if frames.send((frame, nuvira_proto::now_us())).is_err() {
+        if !to_decoder(frames, frame, stats) {
             return Ok(());
         }
     }
@@ -1778,6 +1867,7 @@ fn decode_loop(
     request_keyframe: mpsc::UnboundedSender<()>,
     recording: &crate::recorder::Switch,
     audio: Option<Arc<crate::recorder::AudioTap>>,
+    stats: Option<Arc<crate::session_stats::ViewerStats>>,
 ) {
     let mut decoder = match nuvira_codec::best_decoder() {
         Ok(d) => d,
@@ -1790,6 +1880,9 @@ fn decode_loop(
         }
     };
     info!("decoder: {}", decoder.name());
+    if let Some(s) = &stats {
+        s.decoder(decoder.name());
+    }
     let mut waiting_key = false;
     // The recording being written, with its number (see recorder::Switch).
     let mut recorder: Option<(u64, crate::recorder::Recorder)> = None;
@@ -1864,6 +1957,11 @@ fn decode_loop(
                     decode_us: t.elapsed().as_micros() as u32,
                     bytes: frame.data.len(),
                 };
+                if let Some(s) = &stats {
+                    s.frames_decoded.fetch_add(1, Ordering::Relaxed);
+                    s.decode.record_us(u64::from(decoded.decode_us));
+                    s.size(yuv.width, yuv.height);
+                }
                 if slot.put(Box::new(decoded)) && proxy.send_event(NetEvent::FrameReady).is_err() {
                     break;
                 }

@@ -13,6 +13,7 @@ mod printing;
 mod recorder;
 mod render;
 mod report;
+mod session_stats;
 mod terminal;
 mod tunnels;
 mod toolbar;
@@ -483,6 +484,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         microphone: (false, false),
         microphone_at_start: args.microphone,
         slot: Arc::new(FrameSlot::default()),
+        session_stats: None,
         started,
         report: Report::default(),
         connect: Some((
@@ -693,6 +695,8 @@ struct App {
     /// mouse or key event answers (`Activity`).
     idle_warned: bool,
     slot: Arc<FrameSlot>,
+    /// Statistics log of the current session (`NUVIRA_STATS`), only when it is on.
+    session_stats: Option<Arc<session_stats::ViewerStats>>,
     started: Instant,
     report: Report,
     /// Agent to connect to as soon as the window is ready.
@@ -1901,6 +1905,10 @@ impl ApplicationHandler<NetEvent> for App {
                 let render_us = t.elapsed().as_micros() as u64;
                 self.shown = Some(std::mem::take(&mut frame.yuv));
                 tracing::trace!("frame shown in {render_us} µs");
+                if let Some(s) = &self.session_stats {
+                    s.frames_shown.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    s.render.record_us(render_us);
+                }
                 self.report.render_us += render_us;
                 if let Some(offset) = self.clock_offset_us {
                     // Capture time translated to our clock.
@@ -1912,11 +1920,19 @@ impl ApplicationHandler<NetEvent> for App {
                     // From the end of encoding to arrival: the network alone.
                     let transit = frame.received_us as i64 - (frame.encoded_us as i64 - offset);
                     self.feedback_window.2.push((transit.max(0) / 1000) as u32);
+                    if let Some(s) = &self.session_stats {
+                        s.latency.record_us(latency.max(0) as u64);
+                        s.transit.record_us(transit.max(0) as u64);
+                    }
                 }
                 self.send_feedback();
                 let r = &mut self.report;
                 r.first_frame_ms.get_or_insert(self.started.elapsed().as_millis() as u64);
                 if let Some(gap) = r.shown(Instant::now()) {
+                    if let Some(s) = &self.session_stats {
+                        s.freezes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        s.freeze_ms.fetch_add(gap.as_millis() as u64, std::sync::atomic::Ordering::Relaxed);
+                    }
                     tracing::debug!(
                         gap_ms = gap.as_millis() as u64,
                         at_ms = self.started.elapsed().as_millis() as u64,
@@ -1936,7 +1952,11 @@ impl ApplicationHandler<NetEvent> for App {
                     self.stats = Stats::new();
                 }
             }
+            NetEvent::Stats(s) => self.session_stats = Some(s),
             NetEvent::Clock { rtt_us, offset_us } => {
+                if let Some(s) = &self.session_stats {
+                    s.rtt(rtt_us);
+                }
                 self.send_feedback();
                 if let Some(test) = &self.switch_test
                     && let Some(since) = test.since

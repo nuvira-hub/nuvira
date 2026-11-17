@@ -21,6 +21,7 @@ mod printer;
 mod pty;
 mod restart;
 pub mod reverse;
+mod session_stats;
 mod shared;
 mod switches;
 mod terminal;
@@ -1142,6 +1143,11 @@ async fn relayed_session(
         session_id,
         request,
         direct,
+        path: match (direct, &route.transport) {
+            (true, _) => "direct",
+            (false, nuvira_transport::ServerTransport::WebSocket(_)) => "websocket",
+            (false, nuvira_transport::ServerTransport::Udp) => "relay",
+        },
         access: &outcome.access,
         terminal_only: AtomicBool::new(false),
         profile_off: AtomicU8::new(0),
@@ -1244,6 +1250,8 @@ struct Gate<'a> {
     session_id: &'a str,
     request: &'a Request,
     direct: bool,
+    /// `direct`, `relay` or `websocket`, for the statistics log.
+    path: &'static str,
     /// How access went, for the report to the server.
     access: &'a std::sync::Mutex<&'static str>,
     /// The viewer asked for a terminal only (set from its Hello).
@@ -1525,15 +1533,32 @@ pub async fn serve_reverse(endpoint: quinn::Endpoint, config: AgentConfig, rever
     }
 }
 
+/// [`run_session`], ending its statistics log (if any) with the reason it ended.
+async fn session(
+    conn: Connection,
+    streams: (quinn::SendStream, quinn::RecvStream),
+    config: &AgentConfig,
+    gate: Option<&Gate<'_>>,
+    reverse: Option<&Reverse>,
+) -> Result<()> {
+    let recorder = Mutex::new(None);
+    let result = run_session(conn, streams, config, gate, reverse, &recorder).await;
+    if let Some(r) = recorder.into_inner().ok().flatten() {
+        r.finish(nuvira_transport::stats::exit_reason(&result));
+    }
+    result
+}
+
 /// A session with a viewer already connected. With `gate` the viewer must
 /// authenticate (and possibly be confirmed) before receiving any image; with
 /// `reverse` (switch sides) it must give its password and gets the screen only.
-async fn session(
+async fn run_session(
     conn: Connection,
     (send, recv): (quinn::SendStream, quinn::RecvStream),
     config: &AgentConfig,
     gate: Option<&Gate<'_>>,
     reverse: Option<&Reverse>,
+    recorder: &Mutex<Option<nuvira_transport::stats::Recorder>>,
 ) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
@@ -1862,6 +1887,12 @@ async fn session(
     // Video bytes sent since the start: the adaptive bitrate needs the rate actually used.
     let sent_bytes = Arc::new(AtomicU64::new(0));
     let (frame_tx, mut frame_rx) = mpsc::channel::<VideoFrame>(1);
+    // The statistics log, when NUVIRA_STATS asks for it (read at every session).
+    let stats_config = nuvira_transport::stats::Config::from_env();
+    let stats = stats_config.as_ref().map(|_| Arc::new(session_stats::AgentStats::default()));
+    if let (Some(s), Some(abr)) = (&stats, abr.as_ref()) {
+        s.abr_target_bps.store(abr.bitrate(), Ordering::Relaxed);
+    }
     let source = VideoSource {
         config: config.clone(),
         frames: frame_tx,
@@ -1869,6 +1900,7 @@ async fn session(
         bitrate: bitrate.clone(),
         fps: fps.clone(),
         view: view.clone(),
+        stats: stats.clone(),
     };
     let (mut display, first) = source.start(config.display).await?;
     ctrl_tx.send(&video_format(&display)).await?;
@@ -1882,6 +1914,24 @@ async fn session(
     if let Some(g) = gate.filter(|g| !g.request.join && lock::available()) {
         let (on, forced) = lock_wanted(g.ctx, g.request);
         ctrl_tx.send(&control(Msg::LockOnEndState(nuvira_proto::v1::LockOnEndState { on, forced }))).await?;
+    }
+    // The statistics log starts once the viewer has what it waits for first.
+    if let (Some(cfg), Some(s)) = (&stats_config, &stats) {
+        let src = session_stats::AgentSource {
+            stats: s.clone(),
+            conn: conn.clone(),
+            plan: format!("{:?}", config.plan),
+            fps_max: fps.clone(),
+            sent_bytes: sent_bytes.clone(),
+            fec_permille: video_datagrams.then(|| fec_permille.clone()),
+            adaptive: abr.is_some(),
+            last: Default::default(),
+        };
+        let session =
+            gate.map_or_else(nuvira_transport::stats::local_session_id, |g| g.session_id.to_string());
+        let path = gate.map_or(if reverse.is_some() { "nested" } else { "direct" }, |g| g.path);
+        *recorder.lock().expect("stats recorder") =
+            Some(nuvira_transport::stats::Recorder::start(cfg, "agent", &session, path, Box::new(src)));
     }
     // Capture in progress: the control channel replaces it when the screen changes.
     let pipeline = std::sync::Mutex::new(Some(first));
@@ -1957,6 +2007,7 @@ async fn session(
     let video = {
         let unanswered_since_ms = unanswered_since_ms.clone();
         let sent_bytes = sent_bytes.clone();
+        let stats = stats.clone();
         let shared = shared.clone();
         let conn = conn.clone();
         let fec_permille = fec_permille.clone();
@@ -1991,6 +2042,9 @@ async fn session(
                     }
                 };
                 sent_bytes.fetch_add(sent as u64, Ordering::Relaxed);
+                if let Some(s) = &stats {
+                    s.frames_sent.fetch_add(1, Ordering::Relaxed);
+                }
                 if let Some(shared) = &shared {
                     shared.frame(&frame);
                 }
@@ -2404,6 +2458,9 @@ async fn session(
                         bitrate.store(encoder_bps(bps), Ordering::Relaxed);
                         info!("bitrate {} kbit/s (no feedback from the viewer)", bps / 1000);
                     }
+                    if let (Some(s), Some(abr)) = (&stats, abr.as_ref()) {
+                        s.abr_target_bps.store(abr.bitrate(), Ordering::Relaxed);
+                    }
                     continue;
                 }
             };
@@ -2421,6 +2478,9 @@ async fn session(
                     ctrl_tx.send(&control(Msg::Pong(pong))).await?;
                 }
                 Some(Msg::RequestKeyframe(_)) => {
+                    if let Some(s) = &stats {
+                        s.keyframe_requests.fetch_add(1, Ordering::Relaxed);
+                    }
                     if last_requested_key.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
                         last_requested_key = Some(Instant::now());
                         keyframe.store(true, Ordering::Relaxed);
@@ -2459,6 +2519,9 @@ async fn session(
                 }
                 Some(Msg::Feedback(fb)) => {
                     unanswered_since_ms.store(0, Ordering::Relaxed);
+                    if let Some(s) = &stats {
+                        s.feedback(&fb);
+                    }
                     // The network part when the viewer reports it: a slow encoder or
                     // graphics card is not congestion and lowering the bitrate would not help.
                     let (p50, min) = match (fb.transit_ms_p50, fb.transit_ms_min) {
@@ -3172,6 +3235,7 @@ struct VideoSource {
     bitrate: Arc<AtomicU32>,
     fps: Arc<AtomicU32>,
     view: Arc<AtomicU64>,
+    stats: Option<Arc<session_stats::AgentStats>>,
 }
 
 impl VideoSource {
@@ -3187,12 +3251,13 @@ impl VideoSource {
         let plan = self.config.plan;
         // A new stream must start with a keyframe.
         self.keyframe.store(true, Ordering::Relaxed);
-        let (frames, keyframe, bitrate, fps, view) = (
+        let (frames, keyframe, bitrate, fps, view, stats) = (
             self.frames.clone(),
             self.keyframe.clone(),
             self.bitrate.clone(),
             self.fps.clone(),
             self.view.clone(),
+            self.stats.clone(),
         );
         tokio::task::spawn_blocking(move || {
             Pipeline::start(
@@ -3200,7 +3265,7 @@ impl VideoSource {
                 move |gpu| nuvira_codec::create_encoder(plan, settings, gpu),
                 plan == EncoderPlan::HardwareGpu,
                 frames,
-                Controls { max_fps: fps, keyframe, bitrate, view },
+                Controls { max_fps: fps, keyframe, bitrate, view, stats },
             )
         })
         .await?

@@ -28,6 +28,7 @@ pub mod keystore;
 pub mod nested;
 pub mod p2p;
 pub mod signal;
+pub mod stats;
 pub mod ws;
 
 pub use quinn::{Connection, Endpoint};

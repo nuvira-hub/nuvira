@@ -89,6 +89,8 @@ struct Block {
     received: usize,
     /// The data shards, once rebuilt.
     done: Option<Vec<Vec<u8>>>,
+    /// Some of its data shards were rebuilt from parity.
+    repaired: bool,
 }
 
 struct Partial {
@@ -114,6 +116,8 @@ pub struct Receiver {
     newest: u64,
     shards: u64,
     shards_lost: u64,
+    /// Frames completed thanks to parity (a data shard of theirs was lost).
+    rebuilt: u64,
 }
 
 impl Receiver {
@@ -158,6 +162,7 @@ impl Receiver {
             shards: vec![None; data + parity],
             received: 0,
             done: None,
+            repaired: false,
         });
         ensure!(state.data == data && state.parity == parity, "inconsistent video block");
         if state.done.is_some() || state.shards[index].is_some() {
@@ -168,6 +173,7 @@ impl Receiver {
         if state.received < data {
             return Ok(None);
         }
+        state.repaired = state.shards[..data].iter().any(Option::is_none);
         ReedSolomon::new(data, parity)?
             .reconstruct_data(&mut state.shards)
             .context("rebuilding a video block")?;
@@ -178,6 +184,9 @@ impl Receiver {
             return Ok(None);
         }
         let partial = self.frames.remove(&seq).expect("present");
+        if partial.blocks.iter().flatten().any(|b| b.repaired) {
+            self.rebuilt += 1;
+        }
         let mut frame = Vec::with_capacity(partial.frame_len + partial.shard_len);
         for block in partial.blocks.into_iter().flatten() {
             for shard in block.done.into_iter().flatten() {
@@ -194,6 +203,11 @@ impl Receiver {
     /// more of them.
     pub fn take_loss(&mut self) -> (u64, u64) {
         (std::mem::take(&mut self.shards), std::mem::take(&mut self.shards_lost))
+    }
+
+    /// Frames completed thanks to parity since the previous call (statistics only).
+    pub fn take_rebuilt(&mut self) -> u64 {
+        std::mem::take(&mut self.rebuilt)
     }
 
     fn count(&mut self, seq: u64, block: usize, blocks: usize, total: usize) {
@@ -247,6 +261,7 @@ mod tests {
             }
             assert_eq!(got, Some((seq, f)));
         }
+        assert_eq!(rx.take_rebuilt(), 0);
     }
 
     #[test]
@@ -266,6 +281,13 @@ mod tests {
             }
         }
         assert_eq!(got, Some((7, f)));
+        assert_eq!(rx.take_rebuilt(), 1);
+        assert_eq!(rx.take_rebuilt(), 0);
+        // Only parity lost: nothing to rebuild.
+        for p in &encode(8, &frame(5000), 1200, 0.25).unwrap()[..5] {
+            rx.push(p).unwrap();
+        }
+        assert_eq!(rx.take_rebuilt(), 0);
     }
 
     #[test]
