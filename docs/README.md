@@ -44,3 +44,4 @@
 | 45 | [The technician's microphone](45-microphone.md) | The viewer's microphone out of the controlled computer's speakers (Opus over QUIC datagrams); muted by the person there; Pro rule |
 | 46 | [Aliases](46-aliases.md) | A readable name for a computer on its server, typed instead of the ID (app, viewer, address books, web client) |
 | 47 | [Invitation links](47-invitations.md) | NuviraHub Pro: a link that opens or downloads NuviraHub and asks one technician for support (nuvirahub:// links) |
+| 48 | [Statistics log](48-statistics-log.md) | Optional JSON Lines file of a session (`NUVIRA_STATS`): frames, latency, bitrate, losses, QUIC, CPU and memory per interval, agent and viewer; relay counters in the server log (`NUVIRA_RELAY_STATS`) |
