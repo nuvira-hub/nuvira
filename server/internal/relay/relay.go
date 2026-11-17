@@ -78,6 +78,9 @@ type Relay struct {
 	hourBytes    uint64
 	hourSessions int
 	hourStart    time.Time
+	// Totals forwarded since the start (Counters, NUVIRA_RELAY_STATS).
+	fwdPackets uint64
+	fwdBytes   uint64
 }
 
 type link struct {
@@ -244,6 +247,8 @@ func (r *Relay) Destination(from net.Addr, n int) net.Addr {
 	l.session.last = time.Now()
 	l.session.bytes += uint64(n)
 	r.hourBytes += uint64(n)
+	r.fwdPackets++
+	r.fwdBytes += uint64(n)
 	return l.to
 }
 

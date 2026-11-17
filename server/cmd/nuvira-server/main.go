@@ -14,6 +14,9 @@
 //	                   (simulates two devices behind the same router)
 //	NUVIRA_RELAY_IMPAIR  tests only: simulates a worse network on the relay, e.g.
 //	                   "delay=40ms,jitter=10ms,loss=1%,rate=3mbit,queue=150ms"
+//	NUVIRA_RELAY_STATS  interval (e.g. "10s") of a "relay stats" log line: datagrams
+//	                   and bytes forwarded, rate, datagrams dropped by a full queue,
+//	                   sessions (numbers only, no addresses); unset: off
 //
 // Builds with modules (NuviraHub Pro) register them with package ext and read
 // their own variables.
@@ -131,6 +134,14 @@ func run() error {
 	if impairment != nil {
 		conn.Impair(impairment)
 		log.Warn("network simulation active on the relay (tests only)", "conditions", impairment.String())
+	}
+	statsEvery, err := relay.ParseStatsInterval(os.Getenv("NUVIRA_RELAY_STATS"))
+	if err != nil {
+		return fmt.Errorf("NUVIRA_RELAY_STATS: %w", err)
+	}
+	if statsEvery > 0 {
+		log.Info("relay statistics in the log", "every", statsEvery)
+		go conn.LogStats(statsEvery, log)
 	}
 	tr := &quic.Transport{Conn: conn}
 

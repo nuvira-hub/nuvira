@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type Conn struct {
 	ws     *WebSockets
 
 	in       chan packet
+	drops    atomic.Uint64 // datagrams dropped by a full queue (Counters)
 	closed   chan struct{}
 	closeErr sync.Once
 	deadline time.Time
@@ -78,6 +80,7 @@ func (c *Conn) deliver(data []byte, from net.Addr) {
 	select {
 	case c.in <- packet{data: data, from: from}:
 	default: // queue full: dropped
+		c.drops.Add(1)
 	}
 }
 
