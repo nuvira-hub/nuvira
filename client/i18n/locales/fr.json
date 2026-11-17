@@ -759,5 +759,7 @@
   "invite.public_server": "le serveur public NuviraHub",
   "viewer.mic_none": "Cet ordinateur n'a pas de microphone",
   "viewer.mic_failed": "Le microphone n'a pas démarré : {e}",
-  "viewer.keyring_locked_mac": "le trousseau de macOS est verrouillé ou inaccessible : ouvre une session sur le Mac (ou déverrouille le trousseau de session), puis reconnecte-toi"
+  "viewer.keyring_locked_mac": "le trousseau de macOS est verrouillé ou inaccessible : ouvre une session sur le Mac (ou déverrouille le trousseau de session), puis reconnecte-toi",
+  "app.webview2_missing": "NuviraHub a besoin de Microsoft Edge WebView2 Runtime, qui manque sur cet ordinateur.\n\nTu l'installes maintenant ? C'est un composant gratuit de Microsoft : le téléchargement prend environ une minute, et NuviraHub s'ouvre ensuite.",
+  "app.webview2_failed": "Impossible d'installer WebView2 Runtime : {e}\n\nInstalle-le depuis {url} (« Evergreen Standalone Installer », lancé en tant qu'administrateur), puis relance NuviraHub."
 }

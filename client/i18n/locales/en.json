@@ -759,5 +759,7 @@
   "invite.public_server": "the public NuviraHub server",
   "viewer.mic_none": "This computer has no microphone",
   "viewer.mic_failed": "The microphone did not start: {e}",
-  "viewer.keyring_locked_mac": "the macOS Keychain is locked or not reachable: sign in to the Mac (or unlock the login keychain), then connect again"
+  "viewer.keyring_locked_mac": "the macOS Keychain is locked or not reachable: sign in to the Mac (or unlock the login keychain), then connect again",
+  "app.webview2_missing": "NuviraHub needs the Microsoft Edge WebView2 Runtime, which is missing on this computer.\n\nInstall it now? It is a free Microsoft component: the download takes about a minute, and NuviraHub opens when it is done.",
+  "app.webview2_failed": "The WebView2 Runtime could not be installed: {e}\n\nInstall it from {url} (\"Evergreen Standalone Installer\", run as administrator), then start NuviraHub again."
 }

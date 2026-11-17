@@ -83,6 +83,8 @@ pub fn installed_program() -> std::path::PathBuf {
 mod scm;
 #[cfg(windows)]
 mod update;
+#[cfg(windows)]
+pub mod webview2;
 
 const COPYRIGHT: &str =
     "NuviraHub © 2026 Alessandro Blason · AGPL-3.0 · https://github.com/nuvira-hub/nuvira";

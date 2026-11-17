@@ -64,6 +64,15 @@ Without a server (neither `/SERVER=` nor in the file name, field left empty) the
 
 For deployment tools (Intune, Group Policy, RMM) there is also an MSI package with the same settings as properties, and policies for the server and the permanent password: [30-msi-deployment.md](30-msi-deployment.md).
 
+## Microsoft Edge WebView2 Runtime (from 0.28.1)
+
+The app's window and the viewer's toolbar, file manager, chat and terminal are WebViews: on Windows they need the WebView2 Runtime. Windows 11 and recent Windows 10 have it; older Windows 10 builds, LTSC, Windows Server and PCs where it was removed do not, and the app used to stop with WebView2's own error ([issue #4](https://github.com/nuvira-hub/nuvira/issues/4)). `client/service/src/webview2.rs`:
+
+- **Setup and MSI** (`service install`, as administrator): after the service is started (an automatic update is never held up by it), if the runtime is missing, Microsoft's Evergreen Bootstrapper is downloaded with `curl.exe` from `https://go.microsoft.com/fwlink/p/?LinkId=2124703`, run only if its Authenticode signature is valid and from Microsoft Corporation, with `/silent /install`: for every user. A failure (no Internet, proxy) is written in the output and does not stop the installation: unattended access does not need WebView2.
+- **App**: at start, if the runtime is missing, it asks (5 languages) whether to install it; yes installs it the same way for this person only (no administrator needed) and opens the app; no closes the app; a failure shows the error and the download page.
+- Detection as Microsoft documents it: `pv` of `{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}` under `EdgeUpdate\Clients`, per machine (64-bit and 32-bit view) or per user, not empty and not `0.0.0.0`.
+- Tried on PC-LABORATORIO (Windows 10) on 2026-11-17, with the runtime hidden (its registry keys removed: Microsoft does not allow uninstalling it): `service install` installed 157.0.4341.60 for every user in 48 s, service already started, same ID; the app asked, "No" closed it, "Yes" installed it for the person in about 45 s and opened the window; without network (`HTTPS_PROXY` to a closed port) the error message with the page link. **Not tried**: the MSI package (same code, run as SYSTEM), Windows Server, Windows 10 LTSC, Windows on ARM64, a network with an authenticating proxy.
+
 ## Tests of 2026-10-27
 
 - PC-LABORATORIO, from an administrator prompt: install with password file and report, update over a running service (an earlier installation with separate programs is converted: service command changed, old programs removed), full uninstall and reinstall with the same ID; silent setup with the server from its file name and with `/SERVER=`, and without a server (exit code 2, fixed the same day: empty means the public server).
