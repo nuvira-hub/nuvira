@@ -1,0 +1,42 @@
+{
+  "schema": "nuvira-bench-thresholds/1",
+  "source": "REVISIONE_COMPLETA.md and bench-plan.md section 9.3; applied beyond the measured noise (noise.json)",
+  "gates": {
+    "micro": { "pct": 5.0 },
+    "macro_latency": { "pct": 3.0 },
+    "macro_cpu": { "pct": 3.0 },
+    "macro_throughput": { "pct": 3.0 },
+    "quality": {
+      "psnr_db": -0.10,
+      "ssim": -0.002,
+      "bd_rate_pct": 3.0,
+      "bytes_frame_pct": 3.0,
+      "fec_recovered_points": -1.0
+    },
+    "exact": { "any_difference": true },
+    "resource": {
+      "rss_slope_mb_per_h": 2.0,
+      "rss_slope_vs_baseline_pct": 50.0,
+      "threads_handles_back_to_start": true,
+      "churn_handles_per_session": 0,
+      "churn_rss_kib_per_session": 64,
+      "file_peak_rss_independent_mib": 32
+    },
+    "security_both_ways": { "pct": 5.0 },
+    "info": null
+  },
+  "gate_source": "each metric carries its gate in the result JSON (report.rs); this file only sets the size of each gate",
+  "info_only_metrics": {
+    "B-MICRO-03": ["psnr_vs_box_db (scaling vs the bench box filter: a different filter is not a regression)"],
+    "B-MICRO-07": ["gpu_ms_frame (timestamps of the immediate context; the video processor may run on another engine: ms_frame, until the GPU is done, and cpu_ms_frame gate)"]
+  },
+  "machines": {
+    "PC-STUDIO-NUC": { "gate": false, "reason": "laptop-class CPU with thermal/turbo swings and about 1.3 cores of background software: results are reported, never gate (2026-11-17)" }
+  },
+  "ci": { "multiplier": 2.0, "hard_gates": ["exact", "quality"] },
+  "decision": {
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 1,
+    "suspect_rerun_rounds_factor": 2
+  }
+}

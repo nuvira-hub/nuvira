@@ -1,0 +1,72 @@
+# NuviraHub benchmark suite (docs: nuvira-pro/docs/review/baseline/bench-plan.md).
+#
+# Its own workspace, not a member of the root one: the root Cargo.toml is not
+# touched, and the same bench/ folder builds against the tag baseline-pre-review
+# and against later versions (public APIs only). bench-compare copies each side's
+# root Cargo.lock over bench/Cargo.lock before building, so third-party versions
+# are exactly that side's; every dependency below is already in the root lock.
+[package]
+name = "nuvira-bench"
+description = "NuviraHub benchmarks: micro, macro, resources, fixtures, quality"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+build = "build.rs"
+
+[workspace]
+
+[[bin]]
+name = "nuvira-bench"
+path = "src/main.rs"
+
+[lib]
+name = "nuvira_bench"
+path = "src/lib.rs"
+
+[dependencies]
+nuvira-proto = { path = "../client/proto" }
+nuvira-codec = { path = "../client/codec" }
+nuvira-transport = { path = "../client/transport" }
+nuvira-capture = { path = "../client/capture" }
+nuvira-agent = { path = "../client/agent" }
+nuvira-audio = { path = "../client/audio" }
+nuvira-secret = { path = "../client/secret" }
+nuvira-input = { path = "../client/input" }
+
+anyhow = "1"
+bytes = "1"
+prost = "0.14"
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net", "fs", "process"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+    "Wdk_System_SystemInformation",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Media",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+    "Win32_UI_WindowsAndMessaging",
+]
+

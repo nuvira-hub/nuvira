@@ -1,0 +1,599 @@
+{
+  "schema": "nuvira-bench-fixtures/1",
+  "generator_version": 1,
+  "scenes": [
+    {
+      "scene": "S1",
+      "name": "static",
+      "width": 1280,
+      "height": 720,
+      "frames": 120,
+      "bytes": 442368000,
+      "sha256": "d18964003a044c421cecef6d5e2d5a4f274d6ee1861fde2d485fe704a43ceaac"
+    },
+    {
+      "scene": "S1",
+      "name": "static",
+      "width": 1280,
+      "height": 720,
+      "frames": 300,
+      "bytes": 1105920000,
+      "sha256": "5473614bd546501a4e00fbf84f75f4e7e1b4c10cee4a4498372341cb5fe307b5"
+    },
+    {
+      "scene": "S1",
+      "name": "static",
+      "width": 1920,
+      "height": 1080,
+      "frames": 120,
+      "bytes": 995328000,
+      "sha256": "c70b05baf9f551030c427f396941c9ab32d4cdcb75d8273cd46009ce9e214470"
+    },
+    {
+      "scene": "S1",
+      "name": "static",
+      "width": 1920,
+      "height": 1080,
+      "frames": 300,
+      "bytes": 2488320000,
+      "sha256": "bfd3c78636d0046893e29e4270cdf155656a103bec54f3965a1127a808581af2"
+    },
+    {
+      "scene": "S1",
+      "name": "static",
+      "width": 2560,
+      "height": 1440,
+      "frames": 120,
+      "bytes": 1769472000,
+      "sha256": "ae8f5eab91f5088b6e40a98c1c57bb884d0d0dfa8b0094d5730fe4077294c4ea"
+    },
+    {
+      "scene": "S1",
+      "name": "static",
+      "width": 2560,
+      "height": 1440,
+      "frames": 300,
+      "bytes": 4423680000,
+      "sha256": "4372ca30bbd5cc0902e1bd3b998d547381b00c49562220ace47c55aa3736d5e9"
+    },
+    {
+      "scene": "S1",
+      "name": "static",
+      "width": 3840,
+      "height": 2160,
+      "frames": 120,
+      "bytes": 3981312000,
+      "sha256": "ced5a6df6e7ad3d18f3d1438a4ef81b5e2f27ae3c4e613bad90a16f4b7df668c"
+    },
+    {
+      "scene": "S1",
+      "name": "static",
+      "width": 3840,
+      "height": 2160,
+      "frames": 300,
+      "bytes": 9953280000,
+      "sha256": "2cd598245ec19777e44513fae888036d3601d2b48718451f6c8214b1a2dfbc70"
+    },
+    {
+      "scene": "S2",
+      "name": "terminal",
+      "width": 1280,
+      "height": 720,
+      "frames": 120,
+      "bytes": 442368000,
+      "sha256": "9860f7486c67dad4d94fa2f7aed319eef9daa686bc220c87fa63a1e73658aefc"
+    },
+    {
+      "scene": "S2",
+      "name": "terminal",
+      "width": 1280,
+      "height": 720,
+      "frames": 300,
+      "bytes": 1105920000,
+      "sha256": "a9caa4be11bee939e0b3b0c754a4792b77e94a0581349db498b9d0aa79a63dfc"
+    },
+    {
+      "scene": "S2",
+      "name": "terminal",
+      "width": 1920,
+      "height": 1080,
+      "frames": 120,
+      "bytes": 995328000,
+      "sha256": "77490a929a086e04bb3cbd7278cecd311d01457b7282e0e492f5ec5493d491ad"
+    },
+    {
+      "scene": "S2",
+      "name": "terminal",
+      "width": 1920,
+      "height": 1080,
+      "frames": 300,
+      "bytes": 2488320000,
+      "sha256": "d415509c1ee9ef6b3cbf672a0f826132a45866c11c7bc5f7c4eef05b05573835"
+    },
+    {
+      "scene": "S2",
+      "name": "terminal",
+      "width": 2560,
+      "height": 1440,
+      "frames": 120,
+      "bytes": 1769472000,
+      "sha256": "ab70302f74359e104614317e4fe62514229f080e50f777a248e25550a61694f7"
+    },
+    {
+      "scene": "S2",
+      "name": "terminal",
+      "width": 2560,
+      "height": 1440,
+      "frames": 300,
+      "bytes": 4423680000,
+      "sha256": "26fd90de964283264dfea680a2231539ccbc95eb9533b23b88f11d4e5be0c17c"
+    },
+    {
+      "scene": "S2",
+      "name": "terminal",
+      "width": 3840,
+      "height": 2160,
+      "frames": 120,
+      "bytes": 3981312000,
+      "sha256": "5fe1eb44886a915deb5861b2d6118113adac8c054de34976bb89b85842721380"
+    },
+    {
+      "scene": "S2",
+      "name": "terminal",
+      "width": 3840,
+      "height": 2160,
+      "frames": 300,
+      "bytes": 9953280000,
+      "sha256": "80f3681e2d661ea47e2a417446370780a4b0e6ef92a3070f3402812b9e5746e6"
+    },
+    {
+      "scene": "S3",
+      "name": "scroll",
+      "width": 1280,
+      "height": 720,
+      "frames": 120,
+      "bytes": 442368000,
+      "sha256": "f2b575afd45b8e867f705d1c93291673266e7a1f3886e0ef85f92d82b9ffa004"
+    },
+    {
+      "scene": "S3",
+      "name": "scroll",
+      "width": 1280,
+      "height": 720,
+      "frames": 300,
+      "bytes": 1105920000,
+      "sha256": "e4e53216135c72420369bf6185cce0a88691f40d7bea2ceac5d1e5914a30adf6"
+    },
+    {
+      "scene": "S3",
+      "name": "scroll",
+      "width": 1920,
+      "height": 1080,
+      "frames": 120,
+      "bytes": 995328000,
+      "sha256": "c2a6beb13a24e879d27df59143dbd7a3af49a3b219fe67a02ccdf768af082868"
+    },
+    {
+      "scene": "S3",
+      "name": "scroll",
+      "width": 1920,
+      "height": 1080,
+      "frames": 300,
+      "bytes": 2488320000,
+      "sha256": "fda15e7223b93994b86d8c0b96adec0efe102ebd693f4a4360d65e60e68299b2"
+    },
+    {
+      "scene": "S3",
+      "name": "scroll",
+      "width": 2560,
+      "height": 1440,
+      "frames": 120,
+      "bytes": 1769472000,
+      "sha256": "13edb86609d89c1416f7ef9e4ebeb39d90854e10605389220fd350108b542f1f"
+    },
+    {
+      "scene": "S3",
+      "name": "scroll",
+      "width": 2560,
+      "height": 1440,
+      "frames": 300,
+      "bytes": 4423680000,
+      "sha256": "cec394903e3d9a7fceb3a96953518711ceba916ad7b1ceb20989d21ed91ba09d"
+    },
+    {
+      "scene": "S3",
+      "name": "scroll",
+      "width": 3840,
+      "height": 2160,
+      "frames": 120,
+      "bytes": 3981312000,
+      "sha256": "c35021198dcc5d41867f87de5634f7cb1101ceeaddb75a92a8b52359909ad649"
+    },
+    {
+      "scene": "S3",
+      "name": "scroll",
+      "width": 3840,
+      "height": 2160,
+      "frames": 300,
+      "bytes": 9953280000,
+      "sha256": "fda04c4cc1b0a5049da9ff198d74a4955e6cff41adc85ed4938a20f5cd892355"
+    },
+    {
+      "scene": "S4",
+      "name": "video",
+      "width": 1280,
+      "height": 720,
+      "frames": 120,
+      "bytes": 442368000,
+      "sha256": "eabec7692aefde65dce8c49c12e8080f79ebad2d70f9147eb32fdfde1b94973c"
+    },
+    {
+      "scene": "S4",
+      "name": "video",
+      "width": 1280,
+      "height": 720,
+      "frames": 300,
+      "bytes": 1105920000,
+      "sha256": "7b49e389e5e43a5d3ad201c7c6de721b4b6bfef1cf9dfab5c167e51c490622fd"
+    },
+    {
+      "scene": "S4",
+      "name": "video",
+      "width": 1920,
+      "height": 1080,
+      "frames": 120,
+      "bytes": 995328000,
+      "sha256": "8a24a8fc6a36b31e505708f04a10650e1f04e30d4438dc16bb987698687e8dee"
+    },
+    {
+      "scene": "S4",
+      "name": "video",
+      "width": 1920,
+      "height": 1080,
+      "frames": 300,
+      "bytes": 2488320000,
+      "sha256": "061f3bac65823b676136db5bde8f1fc6574577c649b15a43a5221f17168f0961"
+    },
+    {
+      "scene": "S4",
+      "name": "video",
+      "width": 2560,
+      "height": 1440,
+      "frames": 120,
+      "bytes": 1769472000,
+      "sha256": "4ba8ca411f284e04aec498fc45d0a444c8ee3a936c1dbe3c1e2c8458aeaab8ac"
+    },
+    {
+      "scene": "S4",
+      "name": "video",
+      "width": 2560,
+      "height": 1440,
+      "frames": 300,
+      "bytes": 4423680000,
+      "sha256": "d4a9d35574d461b75478030da6787378f0a28579893472bbf91dd5dc15074491"
+    },
+    {
+      "scene": "S4",
+      "name": "video",
+      "width": 3840,
+      "height": 2160,
+      "frames": 120,
+      "bytes": 3981312000,
+      "sha256": "ba4f503d19e88676ce9055cdf5a72e89e38862d245109b25581e1b5e88c31576"
+    },
+    {
+      "scene": "S4",
+      "name": "video",
+      "width": 3840,
+      "height": 2160,
+      "frames": 300,
+      "bytes": 9953280000,
+      "sha256": "af6a6254cff8ce70b4d6878794e339f47b3d5b4551fef3bdff4d0ff080438758"
+    },
+    {
+      "scene": "S5",
+      "name": "drag",
+      "width": 1280,
+      "height": 720,
+      "frames": 120,
+      "bytes": 442368000,
+      "sha256": "2cde102e0565ae28c278c3d8732b0dcaba5ad1ab23a35b92415b29c0e6551c99"
+    },
+    {
+      "scene": "S5",
+      "name": "drag",
+      "width": 1280,
+      "height": 720,
+      "frames": 300,
+      "bytes": 1105920000,
+      "sha256": "22a42babc7db318a8d93590677473ed6233c0262112e70c1a7c66d3c0da38906"
+    },
+    {
+      "scene": "S5",
+      "name": "drag",
+      "width": 1920,
+      "height": 1080,
+      "frames": 120,
+      "bytes": 995328000,
+      "sha256": "5ec396007404c255a8c6d79d3eade5d00ed973360432b43a7de8f4c5e9509cc9"
+    },
+    {
+      "scene": "S5",
+      "name": "drag",
+      "width": 1920,
+      "height": 1080,
+      "frames": 300,
+      "bytes": 2488320000,
+      "sha256": "4115f88a401992b66f29cb5cc09becd8b657d6e955a769e3fb693df4cdcc5695"
+    },
+    {
+      "scene": "S5",
+      "name": "drag",
+      "width": 2560,
+      "height": 1440,
+      "frames": 120,
+      "bytes": 1769472000,
+      "sha256": "e8d2434d093d0da38828a9074d1481f391f4b1383cef4dd167fdcb70b0a02040"
+    },
+    {
+      "scene": "S5",
+      "name": "drag",
+      "width": 2560,
+      "height": 1440,
+      "frames": 300,
+      "bytes": 4423680000,
+      "sha256": "f4cabf8eb44c4e878581cd6c4d2444c6aa3ef4595380cbe7e16dd5c34e22d32c"
+    },
+    {
+      "scene": "S5",
+      "name": "drag",
+      "width": 3840,
+      "height": 2160,
+      "frames": 120,
+      "bytes": 3981312000,
+      "sha256": "b85460d07860cca4c092dff1daa686a3829ccb66a124c8db7d2e13a1a14cbfb9"
+    },
+    {
+      "scene": "S5",
+      "name": "drag",
+      "width": 3840,
+      "height": 2160,
+      "frames": 300,
+      "bytes": 9953280000,
+      "sha256": "851007e8b6b9acf0c25a007e5726cddd491a7749aa52a70e1b06fcc81b4050b6"
+    },
+    {
+      "scene": "S6",
+      "name": "resize",
+      "width": 1280,
+      "height": 720,
+      "frames": 120,
+      "bytes": 466790400,
+      "sha256": "61cbecd9becd8ccdc44ec45a07d818837940620e2d86ad8bfb50374ff7353536"
+    },
+    {
+      "scene": "S6",
+      "name": "resize",
+      "width": 1280,
+      "height": 720,
+      "frames": 300,
+      "bytes": 1166976000,
+      "sha256": "d54b74faac230b7bb907675eab10f318e02cb7ac94194b470e74107c0dcf3368"
+    },
+    {
+      "scene": "S6",
+      "name": "resize",
+      "width": 1920,
+      "height": 1080,
+      "frames": 120,
+      "bytes": 1050624000,
+      "sha256": "c536719d53c40fa05ef7ee99374bf17c47281f30b65211a721255699ab2d2b4d"
+    },
+    {
+      "scene": "S6",
+      "name": "resize",
+      "width": 1920,
+      "height": 1080,
+      "frames": 300,
+      "bytes": 2626560000,
+      "sha256": "c0a621d05fe7e33ee1cf217f062de1945cc961466915a7f091290a3dcd5eb9b2"
+    },
+    {
+      "scene": "S6",
+      "name": "resize",
+      "width": 2560,
+      "height": 1440,
+      "frames": 120,
+      "bytes": 1867392000,
+      "sha256": "e2a745419a926d9739112635d4475ac83d0691593a762f3c10bf1befd92aac28"
+    },
+    {
+      "scene": "S6",
+      "name": "resize",
+      "width": 2560,
+      "height": 1440,
+      "frames": 300,
+      "bytes": 4668480000,
+      "sha256": "cdac7af6d5c57252f4d8ad2b2fe5ee0c4eff40a2ae1b483b08b22d2f159fed21"
+    },
+    {
+      "scene": "S6",
+      "name": "resize",
+      "width": 3840,
+      "height": 2160,
+      "frames": 120,
+      "bytes": 4202496000,
+      "sha256": "48288870a5a7b571688fecc950d94e179d0c766804385e2bd4b781135f3576b6"
+    },
+    {
+      "scene": "S6",
+      "name": "resize",
+      "width": 3840,
+      "height": 2160,
+      "frames": 300,
+      "bytes": 10506240000,
+      "sha256": "c8fae7e4a2fd1d159130f928ada04b378861228fbb8b9a2d2464261f0fbb11f9"
+    }
+  ],
+  "proto": [
+    {
+      "name": "video/2k/key",
+      "bytes": 2079,
+      "sha256": "2527eb2d74d5698227aa408552a18d93c5f1a31e2f315bcef5badea20d70a9af"
+    },
+    {
+      "name": "video/2k/delta",
+      "bytes": 2077,
+      "sha256": "14708b67b57150fe0ec59875433df612c99b523e756a04964bc87763261dc923"
+    },
+    {
+      "name": "video/50k/key",
+      "bytes": 51233,
+      "sha256": "f383b00fa1e5f73e5de6ad0345fbf7a9a4da19c65587075f377de769d16c7e5c"
+    },
+    {
+      "name": "video/50k/delta",
+      "bytes": 51231,
+      "sha256": "a3e65e3e45207567091b9256c4eb8fa71de89ea932a59c7dcb0c0d730075cd95"
+    },
+    {
+      "name": "video/500k/key",
+      "bytes": 512033,
+      "sha256": "bbf755a4dc358d4c5da46466b5a36b7acf873c878600363af61b70b852fca5ef"
+    },
+    {
+      "name": "video/500k/delta",
+      "bytes": 512031,
+      "sha256": "cc1bbb6c943aab265bd18b774df85d9fadd9ba514fdf78d4429621a575892e57"
+    },
+    {
+      "name": "video/2m/key",
+      "bytes": 2097187,
+      "sha256": "4debcbd9a62711e7db92819bd86b0d1fc528eb21e03e41cf117f8582f46f4f98"
+    },
+    {
+      "name": "video/2m/delta",
+      "bytes": 2097185,
+      "sha256": "8b02629d245aa660e2f4ce9e5a48d12c6e577bef47476de57c3e2a5a8b99558e"
+    },
+    {
+      "name": "input/mouse_move",
+      "bytes": 13,
+      "sha256": "39dffcf2baf370e5860d88021078766746ddf82310098c4456db368ff79085b5"
+    },
+    {
+      "name": "input/mouse_button",
+      "bytes": 7,
+      "sha256": "65d2d9630f9bac9fae666237c53d95aca0519e561a31db0b28f5dc56fee5c2a7"
+    },
+    {
+      "name": "input/mouse_wheel",
+      "bytes": 14,
+      "sha256": "b1681b03c7d219c58306bef3d963ea8cd3577a7c141a6f034515aa0fdf524d11"
+    },
+    {
+      "name": "input/key",
+      "bytes": 11,
+      "sha256": "927094af25e478107ee645e7e9ef837adaa4e82067bf2a94735bff013c6ff7c5"
+    },
+    {
+      "name": "input/text",
+      "bytes": 10,
+      "sha256": "94d69493c825bddb0dde71b3d9c45a8be0130aec615a8d63a83f3f23f848171b"
+    },
+    {
+      "name": "control/hello",
+      "bytes": 51,
+      "sha256": "cda07404a4eced1d8ca88ed10c1657fad45ae32a3d017da94cba2157ad6ccc0d"
+    },
+    {
+      "name": "control/feedback",
+      "bytes": 23,
+      "sha256": "2a5b65bd9ac4acc90032dc54a02f12bba7812a5f83780180581e0131b79908fc"
+    },
+    {
+      "name": "control/ping",
+      "bytes": 12,
+      "sha256": "7f6ab84062af7d70f26395992c1c6e82bfa4bb691e95d3b6bcc09ea3e7303a3c"
+    },
+    {
+      "name": "control/pong",
+      "bytes": 21,
+      "sha256": "0b92000c6ff958a961ca164290282f32208a69685d5dfa686aabaf3e5a1441ca"
+    },
+    {
+      "name": "control/cursor_position",
+      "bytes": 14,
+      "sha256": "f0c88995612b8b3cd265ed22f0cf5539db4de25eb2b12e1e82999ab2d63a9233"
+    },
+    {
+      "name": "control/cursor_shape",
+      "bytes": 16538,
+      "sha256": "75b5f96aef95c85b2ad84a1db1f78c78eecb77a5037164aa1f9b465512a749e1"
+    },
+    {
+      "name": "control/view_size",
+      "bytes": 10,
+      "sha256": "8a3af5ab25f85e030751c2a6b17a4df9e87b4e15918a061f0f8d6dbb38452ea1"
+    },
+    {
+      "name": "control/fs_request_list",
+      "bytes": 29,
+      "sha256": "1045a965b4f234239d8e1d7da2d1e2b3aea27ec9b849042870f3f4ea0c3cdbe5"
+    },
+    {
+      "name": "control/fs_request_download",
+      "bytes": 46,
+      "sha256": "2abb4a4d5f838e516f31ea4dfd24b8298d2545004a357f08d80228ed7f3e029e"
+    },
+    {
+      "name": "control/fs_request_upload_offset",
+      "bytes": 40,
+      "sha256": "29173d05a4283d5acc02741f766c78341d519e67fcad4504e15a778c4bd64a33"
+    },
+    {
+      "name": "control/fs_response_1000",
+      "bytes": 65574,
+      "sha256": "c58d773b07772d2d1db2654f034ac76e0ab19171f1d789c83677183cd6603c6b"
+    },
+    {
+      "name": "file/chunk_256k",
+      "bytes": 262193,
+      "sha256": "0f13c09e5f6a4e18bec455a027652c76b09cdc67060333e59c6e3aa7b63852e7"
+    }
+  ],
+  "audio": [
+    {
+      "name": "pcm_48k_stereo_f32le_10s",
+      "bytes": 3840000,
+      "sha256": "fb4b73b28738af7c10c1c49d7f7f9037b89ac15772cba65112105bd280906573"
+    }
+  ],
+  "files": [
+    {
+      "name": "bench-1024.bin",
+      "bytes": 1024,
+      "sha256": "146523aa8b0ab677aa52f4d2cf622d7faa7eb0d1d3873b97debdf729de3cefda"
+    },
+    {
+      "name": "bench-1048576.bin",
+      "bytes": 1048576,
+      "sha256": "86fbcb984a49c51b4c1694743110f75049bd586068b0d788c3ac1f89d39f0d89"
+    },
+    {
+      "name": "bench-104857600.bin",
+      "bytes": 104857600,
+      "sha256": "43567631be8b0ad8e2085f8c0de4118c25af567797b0d2803e1c10bfcbd5c5be"
+    },
+    {
+      "name": "bench-1073741824.bin",
+      "bytes": 1073741824,
+      "sha256": "281a2866bf7a2d816afd53b6fded95efe2cf14d2f90799b3925cca6d48f3b8af"
+    },
+    {
+      "name": "bench-1048576-sparse.bin",
+      "bytes": 1048576,
+      "sha256": "5126925a65ac5ce1be974a28a15514fe4144fadc833161fe27997ad557778667"
+    }
+  ]
+}
