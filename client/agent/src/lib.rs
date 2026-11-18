@@ -441,7 +441,7 @@ pub async fn serve_direct(
         };
         let peer = nuvira_transport::p2p::canonical(conn.remote_address());
         info!("viewer connected from {peer}");
-        let result = match conn.accept_bi().await.context("control channel") {
+        let result = match control_channel(&conn).await {
             Ok(streams) => session(conn.clone(), streams, &config, None, None).await,
             Err(e) => Err(e),
         };
@@ -1606,7 +1606,7 @@ pub async fn serve_reverse(endpoint: quinn::Endpoint, config: AgentConfig, rever
             );
         }
     });
-    let result = match conn.accept_bi().await.context("control channel") {
+    let result = match control_channel(&conn).await {
         Ok(streams) => session(conn.clone(), streams, &config, None, Some(&reverse)).await,
         Err(e) => Err(e),
     };
@@ -1648,6 +1648,16 @@ async fn read_auth(ctrl_rx: &mut FramedRecv) -> Result<Auth> {
         Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => Ok(auth),
         _ => bail!("the viewer did not send the password"),
     }
+}
+
+/// The control stream the viewer opens first, within [`HANDSHAKE_READ`]: LAN mode
+/// and switch sides serve one connection at a time, and one that never opens it
+/// would keep the next viewer out.
+async fn control_channel(conn: &Connection) -> Result<(quinn::SendStream, quinn::RecvStream)> {
+    tokio::time::timeout(HANDSHAKE_READ, conn.accept_bi())
+        .await
+        .map_err(|_| anyhow!("the viewer did not open the control channel within {} s", HANDSHAKE_READ.as_secs()))?
+        .context("control channel")
 }
 
 /// [`run_session`], ending its statistics log (if any) with the reason it ended.
