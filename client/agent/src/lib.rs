@@ -81,6 +81,13 @@ pub const HANDSHAKE_READ: Duration = Duration::from_secs(10);
 /// not make the computer busy (anyone who knows the ID can start one), but at
 /// most this many wait for their password at once; more are refused as busy.
 pub const MAX_PENDING_SESSIONS: u32 = 8;
+/// Largest message accepted on the control stream before the viewer has
+/// authenticated (a Hello is about 100 bytes) and on the input stream (events are
+/// a few bytes, a typed text a few characters); after authentication the control
+/// stream takes [`nuvira_proto::framing::MAX_MESSAGE_LEN`] (clipboard texts).
+pub const HANDSHAKE_MESSAGE_LIMIT: usize = 64 * 1024;
+/// Characters of the viewer's device name, system and version written to the log.
+const LOGGED_NAME_CHARS: usize = 64;
 
 /// How to capture and encode the screen.
 #[derive(Debug, Clone)]
@@ -1631,11 +1638,18 @@ async fn read_hello(ctrl_rx: &mut FramedRecv, what: &str) -> Result<Hello> {
     let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = first? else {
         bail!("the viewer did not introduce itself");
     };
-    info!(device = hello.device_name, os = hello.os, version = hello.app_version, "{what}");
+    let (device, os, version) = (logged(&hello.device_name), logged(&hello.os), logged(&hello.app_version));
+    info!(device, os, version, "{what}");
     if hello.protocol_version < nuvira_proto::MIN_PROTOCOL_VERSION {
         bail!("viewer protocol version not supported: {}", hello.protocol_version);
     }
     Ok(hello)
+}
+
+/// At most [`LOGGED_NAME_CHARS`] characters of a text the viewer chose, for the log
+/// (tracing already escapes control characters in such fields).
+fn logged(text: &str) -> &str {
+    text.char_indices().nth(LOGGED_NAME_CHARS).map_or(text, |(at, _)| &text[..at])
 }
 
 /// The viewer's first `Auth`, right after the agent's Hello (within
@@ -1654,9 +1668,10 @@ async fn read_auth(ctrl_rx: &mut FramedRecv) -> Result<Auth> {
 /// and switch sides serve one connection at a time, and one that never opens it
 /// would keep the next viewer out.
 async fn control_channel(conn: &Connection) -> Result<(quinn::SendStream, quinn::RecvStream)> {
+    let secs = HANDSHAKE_READ.as_secs();
     tokio::time::timeout(HANDSHAKE_READ, conn.accept_bi())
         .await
-        .map_err(|_| anyhow!("the viewer did not open the control channel within {} s", HANDSHAKE_READ.as_secs()))?
+        .map_err(|_| anyhow!("the viewer did not open the control channel within {secs} s"))?
         .context("control channel")
 }
 
@@ -1688,7 +1703,8 @@ async fn run_session(
     recorder: &Mutex<Option<nuvira_transport::stats::Recorder>>,
 ) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
-    let mut ctrl_rx = FramedRecv::new(recv);
+    // Small messages only until the viewer has authenticated.
+    let mut ctrl_rx = FramedRecv::with_limit(recv, HANDSHAKE_MESSAGE_LIMIT);
     // Rules of the server at the start of the session, with its limits (none without
     // a server; the screen only when the sides are switched).
     let policy = gate.map(Gate::policy).or(reverse.map(|_| reverse_policy())).unwrap_or_default();
@@ -1938,6 +1954,7 @@ async fn run_session(
             bail!("{WRONG_PASSWORD}");
         }
     }
+    ctrl_rx.set_limit(nuvira_proto::framing::MAX_MESSAGE_LEN);
     // Cleared at the end, however the session ends.
     let _clear = ClearSwitches(gate.map(|g| g.ctx));
     // The screens this session changed are put back however it ends.
@@ -3040,7 +3057,7 @@ async fn run_session(
                 },
             }
         };
-        let mut rx = FramedRecv::new(stream);
+        let mut rx = FramedRecv::with_limit(stream, HANDSHAKE_MESSAGE_LIMIT);
         // Switched off before the viewer's first event (the stream shows only then): none.
         if injector.is_none() && input_offered && off.is_on(switches::INPUT) {
             injector = Some(open_injector(*screen_rx.borrow_and_update())?);
@@ -3792,6 +3809,20 @@ mod tests {
         assert_eq!(parse_synthetic("1280x720@30").unwrap(), (1280, 720, 30));
         assert_eq!(parse_synthetic("640x480").unwrap(), (640, 480, 60));
         assert!(parse_synthetic("abc").is_err());
+    }
+}
+
+/// The handshake helpers (review lot 2).
+#[cfg(test)]
+mod handshake_tests {
+    #[test]
+    fn logged_names_are_cut_at_64_characters() {
+        assert_eq!(super::logged("PC-OFFICE"), "PC-OFFICE");
+        assert_eq!(super::logged(""), "");
+        let long = "é".repeat(100);
+        assert_eq!(super::logged(&long).chars().count(), 64);
+        assert_eq!(super::logged(&"x".repeat(64)), "x".repeat(64));
+        assert_eq!(super::logged(&"x".repeat(16 << 20)).len(), 64);
     }
 }
 

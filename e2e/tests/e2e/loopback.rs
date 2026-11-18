@@ -23,7 +23,7 @@ pub fn cases() -> Vec<Case> {
         Case::new("loopback/reverse/wrong-password", wrong_password),
         Case::new("loopback/reverse/wrong-certificate-refused", wrong_certificate),
         Case::new("loopback/reverse/malformed-first-message", malformed_first_message),
-        Case::new("loopback/reverse/max-size-message-before-auth", max_size_before_auth)
+        Case::new("loopback/reverse/oversized-message-before-auth-refused", max_size_before_auth)
             .env(&[("RUST_LOG", "warn,quinn=warn")]),
         Case::new("loopback/reverse/unauthenticated-connection-released-after-10s", unauthenticated_holds),
         Case::new("loopback/netem/degraded-N3-N5", degraded),
@@ -176,41 +176,60 @@ fn malformed_first_message(ctx: &mut Ctx) -> Result<()> {
     Ok(())
 }
 
-/// Before any password the agent reads and decodes a control message of the full
-/// 16 MiB limit (and logs the device name in it).
+/// Was K35 (Phase 2): before any password the agent read and decoded a control
+/// message of the full 16 MiB limit (and logged the whole device name in it).
+/// Fixed in Phase 6 lot 2 (AGT-3, NET-3): before authentication the control
+/// stream takes at most 64 KiB; a Hello of exactly that size is still answered
+/// (its name is cut in the log), one byte more is refused from its length.
 fn max_size_before_auth(ctx: &mut Ctx) -> Result<()> {
     use prost::Message;
-    let max = nuvira_proto::framing::MAX_MESSAGE_LEN;
-    let mut hello = rig::viewer_hello(true);
-    let base = rig::control(Msg::Hello(hello.clone())).encoded_len();
-    let mut n = max - base - 8;
-    let msg = loop {
-        hello.device_name = "x".repeat(n);
-        let m = rig::control(Msg::Hello(hello.clone()));
-        match m.encoded_len() {
-            l if l == max => break m,
-            l if l < max => n += max - l,
-            l => n -= l - max,
+    let limit = nuvira_agent::HANDSHAKE_MESSAGE_LIMIT;
+    let hello_of = |len: usize| {
+        let mut hello = rig::viewer_hello(true);
+        let base = rig::control(Msg::Hello(hello.clone())).encoded_len();
+        let mut n = len - base - 8;
+        loop {
+            hello.device_name = "x".repeat(n);
+            let m = rig::control(Msg::Hello(hello.clone()));
+            match m.encoded_len() {
+                l if l == len => break m,
+                l if l < len => n += len - l,
+                l => n -= l - len,
+            }
         }
     };
-    let (art, vrt) = rig::runtimes()?;
-    let agent = reverse(&art, ctx)?;
-    let (addr, fp) = (agent.addr, agent.fingerprint);
-    vrt.block_on(async {
-        let mut raw = Raw::open(loopback_connect(addr, Some(fp)).await?).await?;
-        let t = Instant::now();
-        raw.tx.send(&msg).await?;
-        match raw.next(Duration::from_secs(30)).await? {
-            Some(nuvira_proto::v1::ControlMessage { msg: Some(Msg::Hello(h)) }) => {
-                ctx.note(format!("16 MiB Hello answered in {} ms", t.elapsed().as_millis()));
-                ensure(h.password_required, || "no password asked".into())
+    let max = nuvira_proto::framing::MAX_MESSAGE_LEN;
+    for (len, answered) in [(limit, true), (limit + 1, false), (max, false)] {
+        let msg = hello_of(len);
+        let (art, vrt) = rig::runtimes()?;
+        let agent = reverse(&art, ctx)?;
+        let (addr, fp) = (agent.addr, agent.fingerprint);
+        vrt.block_on(async {
+            let mut raw = Raw::open(loopback_connect(addr, Some(fp)).await?).await?;
+            let t = Instant::now();
+            // The agent may close while a refused message is still being sent.
+            let _ = raw.tx.send(&msg).await;
+            match raw.next(Duration::from_secs(30)).await {
+                Ok(Some(nuvira_proto::v1::ControlMessage { msg: Some(Msg::Hello(h)) })) if answered => {
+                    ctx.note(format!("{len} B Hello answered in {} ms", t.elapsed().as_millis()));
+                    ensure(h.password_required, || "no password asked".into())?;
+                    raw.conn.close(0u32.into(), b"done");
+                }
+                other if !answered => {
+                    let (ended, after) = rig::wait_closed(&raw.conn, Duration::from_secs(10)).await?;
+                    ctx.note(format!("{len} B Hello: {other:?}, {ended} after {} ms", after.as_millis()));
+                    ensure(ended == "closed 0 end of session", || ended.clone())?;
+                    ensure(!matches!(other, Ok(Some(_))), || format!("{len} B: answered {other:?}"))?;
+                }
+                other => bail!("{len} B: expected the agent's Hello, got {other:?}"),
             }
-            other => bail!("expected the agent's Hello, got {other:?}"),
-        }?;
-        raw.conn.close(0u32.into(), b"done");
-        anyhow::Ok(())
-    })?;
-    let _ = agent.finish(&art, Duration::from_secs(5));
+            anyhow::Ok(())
+        })?;
+        let r = agent.finish(&art, Duration::from_secs(5));
+        if !answered {
+            ensure(format!("{r:?}").contains("message too large"), || format!("{len} B: agent {r:?}"))?;
+        }
+    }
     Ok(())
 }
 

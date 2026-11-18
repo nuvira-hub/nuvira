@@ -285,7 +285,8 @@ pub async fn guest_session(
     gate: &Gate<'_>,
 ) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
-    let mut ctrl_rx = FramedRecv::new(recv);
+    // Small messages only until the viewer has authenticated.
+    let mut ctrl_rx = FramedRecv::with_limit(recv, crate::HANDSHAKE_MESSAGE_LIMIT);
     let hello = crate::read_hello(&mut ctrl_rx, "viewer joining the session in progress").await?;
     let policy = gate.policy();
     let Some(shared) = gate.ctx.shared.lock().expect("shared").clone() else {
@@ -339,6 +340,7 @@ pub async fn guest_session(
         tokio::time::sleep(Duration::from_millis(pause)).await;
         bail!("{reason}");
     }
+    ctrl_rx.set_limit(nuvira_proto::framing::MAX_MESSAGE_LEN);
 
     let name = match gate.request.viewer_name.as_str() {
         "" => gate.request.viewer_id.clone(),
@@ -417,7 +419,7 @@ pub async fn guest_session(
         }
     };
     let input_loop = async {
-        let mut rx = FramedRecv::new(conn.accept_uni().await?);
+        let mut rx = FramedRecv::with_limit(conn.accept_uni().await?, crate::HANDSHAKE_MESSAGE_LIMIT);
         while let Some(event) = rx.recv::<InputEvent>().await? {
             if input {
                 let _ = shared.input.send(event);
