@@ -3184,7 +3184,8 @@ async fn accept_streams(
         let off = off.clone();
         let switch_sides = switch_sides.cloned();
         tokio::spawn(async move {
-            let open = match nuvira_transport::recv_one::<StreamOpen>(&mut recv).await {
+            let limit = nuvira_transport::STREAM_HEADER_LIMIT;
+            let open = match nuvira_transport::recv_one_with_limit::<StreamOpen>(&mut recv, limit).await {
                 Ok(Some(open)) => open,
                 Ok(None) => return,
                 Err(e) => return warn!("stream from the viewer: {e:#}"),

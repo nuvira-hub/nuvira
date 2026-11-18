@@ -1525,7 +1525,8 @@ async fn forward(conn: &nuvira_transport::Connection, socket: tokio::net::TcpStr
     let (mut send, mut recv) = conn.open_bi().await?;
     let open = StreamOpen { kind: Some(Kind::Tunnel(TunnelOpen { host: host.into(), port: port as u32 })) };
     send.write_all(&nuvira_proto::framing::encode(&open)).await?;
-    match nuvira_transport::recv_one::<TunnelResult>(&mut recv).await? {
+    let limit = nuvira_transport::STREAM_HEADER_LIMIT;
+    match nuvira_transport::recv_one_with_limit::<TunnelResult>(&mut recv, limit).await? {
         Some(TunnelResult { ok: true, .. }) => {}
         Some(TunnelResult { error, .. }) => bail!("{}", nuvira_i18n::message(&error)),
         None => bail!("the agent closed the tunnel"),

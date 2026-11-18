@@ -314,7 +314,21 @@ pub struct FramedRecv {
 
 impl FramedRecv {
     pub fn new(stream: RecvStream) -> Self {
-        Self { stream, decoder: Default::default(), buf: vec![0; 64 * 1024] }
+        Self::with_limit(stream, nuvira_proto::framing::MAX_MESSAGE_LEN)
+    }
+
+    /// Refuses messages longer than `limit` bytes instead of
+    /// [`MAX_MESSAGE_LEN`](nuvira_proto::framing::MAX_MESSAGE_LEN): for streams that
+    /// carry only small messages, or whose peer has not authenticated yet.
+    pub fn with_limit(stream: RecvStream, limit: usize) -> Self {
+        let decoder = nuvira_proto::framing::Decoder::with_limit(limit);
+        Self { stream, decoder, buf: vec![0; 64 * 1024] }
+    }
+
+    /// Changes the limit for the next messages (e.g. raised once the peer has
+    /// authenticated).
+    pub fn set_limit(&mut self, limit: usize) {
+        self.decoder.set_limit(limit);
     }
 
     /// Next message; `None` when the other side closes the stream.
@@ -331,9 +345,21 @@ impl FramedRecv {
     }
 }
 
+/// Limit for the one message that starts a stream ([`recv_one_with_limit`]):
+/// `StreamOpen`, `TunnelResult` are a few dozen bytes.
+pub const STREAM_HEADER_LIMIT: usize = 4 * 1024;
+
 /// Reads exactly one framed message and nothing after it: what follows on the stream
 /// is left to the caller (e.g. the raw bytes of a TCP tunnel). `None` at the end of the stream.
 pub async fn recv_one<M: Message + Default>(stream: &mut RecvStream) -> Result<Option<M>> {
+    recv_one_with_limit(stream, nuvira_proto::framing::MAX_MESSAGE_LEN).await
+}
+
+/// [`recv_one`] refusing a message longer than `limit` bytes.
+pub async fn recv_one_with_limit<M: Message + Default>(
+    stream: &mut RecvStream,
+    limit: usize,
+) -> Result<Option<M>> {
     let mut len = 0usize;
     for i in 0..10 {
         let mut byte = [0u8; 1];
@@ -347,7 +373,7 @@ pub async fn recv_one<M: Message + Default>(stream: &mut RecvStream) -> Result<O
             break;
         }
     }
-    anyhow::ensure!(len <= nuvira_proto::framing::MAX_MESSAGE_LEN, "message too large: {len}");
+    anyhow::ensure!(len <= limit, "message too large: {len}");
     let mut body = vec![0u8; len];
     stream.read_exact(&mut body).await?;
     Ok(Some(M::decode(body.as_slice())?))
