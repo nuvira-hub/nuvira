@@ -29,12 +29,15 @@ pub async fn handle(id: u32, op: Option<fs_request::Op>, conn: Connection) -> Fs
         Some(fs_request::Op::List(path)) => as_user(move || list(&path))
             .await
             .map(|(path, entries)| FsResponse { path, entries, ..Default::default() }),
-        Some(fs_request::Op::UploadOffset(FsUploadOffset { dir, name })) => {
-            let part = Path::new(&dir).join(format!("{}.part", safe_name(&name)));
-            as_user(move || Ok(std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0)))
-                .await
-                .map(|offset| FsResponse { offset, ..Default::default() })
-        }
+        Some(fs_request::Op::UploadOffset(FsUploadOffset { dir, name })) => match upload_dir(&dir) {
+            Ok(dir) => {
+                let part = dir.join(format!("{}.part", safe_name(&name)));
+                as_user(move || Ok(std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0)))
+                    .await
+                    .map(|offset| FsResponse { offset, ..Default::default() })
+            }
+            Err(e) => Err(e),
+        },
         Some(fs_request::Op::Download(download)) => {
             let path = PathBuf::from(&download.path);
             let opened = {
@@ -104,7 +107,7 @@ async fn send(
 /// `offset` if an earlier attempt left it), renamed once complete. Returns the final path.
 pub async fn receive(first: FileChunk, mut rx: FramedRecv) -> Result<PathBuf> {
     let name = safe_name(&first.name);
-    let dir = PathBuf::from(&first.dir);
+    let dir = upload_dir(&first.dir)?;
     let part = dir.join(format!("{name}.part"));
     let (offset, size) = (first.offset, first.size);
     if offset > size {
@@ -117,6 +120,11 @@ pub async fn receive(first: FileChunk, mut rx: FramedRecv) -> Result<PathBuf> {
     let file = {
         let part = part.clone();
         as_user(move || {
+            // A `.part` that is a link would send the bytes (or the truncation)
+            // to whatever it points to.
+            if std::fs::symlink_metadata(&part).is_ok_and(|m| m.file_type().is_symlink()) {
+                bail!("{} is a link", part.display());
+            }
             if offset == 0 {
                 return std::fs::File::create(&part).with_context(|| format!("creating {}", part.display()));
             }
@@ -157,6 +165,17 @@ pub async fn receive(first: FileChunk, mut rx: FramedRecv) -> Result<PathBuf> {
     info!("file received: {} ({size} bytes, from {offset})", target.display());
     crate::stats::file_in(size - offset);
     Ok(target)
+}
+
+/// The folder of an upload: an absolute path, as the viewers send (taken from a
+/// listing). Any folder the user may write is allowed, but a relative or empty one
+/// would be relative to the agent's working directory (System32 for the service).
+fn upload_dir(dir: &str) -> Result<PathBuf> {
+    let path = PathBuf::from(dir);
+    if !path.is_absolute() {
+        bail!("not a full folder path: \"{dir}\"");
+    }
+    Ok(path)
 }
 
 /// Contents of `path`, folders first; "" = drives and known folders.
@@ -366,12 +385,11 @@ mod characterisation {
     }
 
     #[tokio::test]
-    async fn characterises_upload_folder_is_any_path_the_viewer_gives() {
-        // KNOWN LEAD (features.md, UNVERIFIED, fsops.rs:27): the folder of an upload
-        // is the viewer's text as is: relative parts ("..") are followed, and a
-        // relative folder is relative to the agent's working directory. Only the
-        // file name is sanitised. (As SYSTEM the write is done as the signed-in
-        // user, see `as_user`: what the user may write.)
+    async fn upload_folder_is_any_absolute_path_the_viewer_gives() {
+        // K12 (Phase 2), decided in Phase 4 (AGT-8): the folder of an upload is any
+        // absolute path the viewer gives, ".." parts included (the file manager may
+        // write wherever the user may: as SYSTEM the write is done as the signed-in
+        // user, see `as_user`); only the file name is sanitised.
         let dir = temp("dotdot");
         std::fs::create_dir_all(dir.join("a")).unwrap();
         let via = dir.join("a").join("..").join("b");
@@ -383,6 +401,18 @@ mod characterisation {
         let err = upload(header(&dir.join("missing"), "f.bin", 1, 0, b"x"), &[]).await.unwrap_err();
         assert!(format!("{err:#}").starts_with("creating "), "{err:#}");
         assert!(!dir.join("missing").exists());
+        // Fixed (AGT-8): a relative or empty folder (relative to the agent's working
+        // directory) is refused, for the upload and for the resume question.
+        for relative in ["", "rel-dir", "."] {
+            let err = upload(header(Path::new(relative), "f.bin", 1, 0, b"x"), &[]).await.unwrap_err();
+            assert_eq!(format!("{err:#}"), format!("not a full folder path: \"{relative}\""));
+            let (client, _agent) = pair().await;
+            let op =
+                fs_request::Op::UploadOffset(FsUploadOffset { dir: relative.into(), name: "f.bin".into() });
+            let response = handle(5, Some(op), client).await;
+            assert_eq!(response.error, format!("not a full folder path: \"{relative}\""));
+        }
+        assert!(!Path::new("rel-dir").exists() && !Path::new("f.bin.part").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -627,16 +657,20 @@ mod characterisation {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn uploads_follow_a_symlinked_part() {
-        // A `.part` that is a symbolic link is followed when resuming (append) and
-        // replaced by the rename at the end: the link's target gets the bytes.
+    async fn uploads_refuse_a_symlinked_part() {
+        // Was K13 (Phase 2): a `.part` that is a symbolic link was followed (append
+        // on resume, truncation at offset 0). Fixed (AGT-8): refused, target untouched.
         let dir = temp("symlink-part");
         std::fs::write(dir.join("target.bin"), b"abc").unwrap();
-        std::os::unix::fs::symlink(dir.join("target.bin"), dir.join("u.bin.part")).unwrap();
-        let path = upload(header(&dir, "u.bin", 6, 3, b"def"), &[]).await.unwrap();
-        assert_eq!(std::fs::read(dir.join("target.bin")).unwrap(), b"abcdef");
-        // The rename moved the link itself to the final name.
-        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        let part = dir.join("u.bin.part");
+        std::os::unix::fs::symlink(dir.join("target.bin"), &part).unwrap();
+        for offset in [3, 0] {
+            let err = upload(header(&dir, "u.bin", 6, offset, b"def"), &[]).await.unwrap_err().to_string();
+            assert_eq!(err, format!("{} is a link", part.display()));
+            assert_eq!(std::fs::read(dir.join("target.bin")).unwrap(), b"abc");
+        }
+        assert!(std::fs::symlink_metadata(&part).unwrap().file_type().is_symlink());
+        assert!(!dir.join("u.bin").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
