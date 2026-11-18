@@ -351,12 +351,14 @@ fn wayland_dmabuf_frames_hold_the_pattern() {
     assert!(dmabufs > 0, "linear DMA-BUFs asked for but none came (RAM frames: {ram})");
 }
 
-/// KNOWN BEHAVIOUR (Phase 2 finding, PC-LABORATORIO 2026-11-18): while the
-/// monitor is off for power saving, DWM composes nothing and DXGI duplication
-/// gives no frame at all, not even the first one, while GDI still reads the
-/// windows. An agent started on such a PC sends no picture until something
-/// wakes the display (the first injected input does). Pinned here so that a
-/// change (for example waking the display, or a GDI fallback) is noticed.
+/// KNOWN BEHAVIOUR (Phase 2 finding, 2026-11-18), machine dependent: while the
+/// monitor is off for power saving, on PC-LABORATORIO (Windows 10, desktop
+/// monitor) DWM composes nothing and DXGI duplication gives no frame at all,
+/// not even the first one, while GDI still reads the windows: an agent started
+/// there sends no picture until something wakes the display (the first injected
+/// input does). On PC-LENOVO-ALE (Windows 11, laptop panel, hybrid GPU) DXGI
+/// keeps giving a frame for each change (4 of 4). The count is reported, not
+/// asserted; GDI with the display off and DXGI after waking are asserted.
 #[cfg(windows)]
 #[test]
 fn characterises_dxgi_gives_no_frame_while_the_display_is_off() {
@@ -397,7 +399,8 @@ fn characterises_dxgi_gives_no_frame_while_the_display_is_off() {
         "display off: DXGI frames {frames}, GDI {:?}, DXGI after waking {after:?}",
         gdi.as_ref().map(|g| &g.0)
     ));
-    assert_eq!(frames, 0, "DXGI gave frames with the display off (behaviour changed)");
+    // DXGI frames with the display off: 0 on PC-LABORATORIO, one per change (4)
+    // on PC-LENOVO-ALE (see above): reported, not asserted.
     assert!(gdi.expect("GDI").0.expect("GDI frame").ok(), "GDI reads the windows with the display off");
     assert!(after.expect("DXGI frame after waking").ok(), "DXGI frames come back once the display is on");
 }
