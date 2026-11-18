@@ -48,3 +48,5 @@ screencapturekit = "11.1"
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
+# Phase 2 screen tests: DPI awareness and privacy mode (tests/privacy.rs).
+nuvira-input.workspace = true
