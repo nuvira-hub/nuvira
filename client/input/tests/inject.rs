@@ -19,6 +19,9 @@
 //!   symbol is the character; a key released without being pressed sends nothing.
 //! - Wayland GNOME (Mutter's remote desktop through `nuvira_portal`, direct
 //!   mode): moves land on the screen, keys reach the focused window.
+//! - Wayland KDE: only through the portal (`NUVIRA_TEST_PORTAL=1`, a person or a
+//!   helper approves the dialog: MT-P2-05); text loses its Shift/AltGr level
+//!   there (known bug, pinned).
 
 #![cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code, unused_imports))]
 
@@ -630,9 +633,15 @@ mod linux {
             tracing_subscriber::fmt().with_env_filter("nuvira_input=debug,nuvira_portal=debug").try_init();
         let (session, screen) = if wayland() {
             // GNOME's own remote desktop API, as unattended access uses (no dialog).
-            nuvira_portal::set_direct(true);
+            // With NUVIRA_TEST_PORTAL=1 the portal and its dialog instead, as the
+            // screen tests do: the only way on KDE, where the direct API is not
+            // offered and a session without a dialog is refused.
+            let portal = std::env::var_os("NUVIRA_TEST_PORTAL").is_some();
+            if !portal {
+                nuvira_portal::set_direct(true);
+            }
             let token = std::env::temp_dir().join(format!("nuvira-input-token-{}", std::process::id()));
-            let session = nuvira_portal::session(token, false).expect("remote desktop session");
+            let session = nuvira_portal::session(token, portal).expect("remote desktop session");
             let s = session.screen();
             let rect =
                 nuvira_input::ScreenRect { left: s.left, top: s.top, width: s.width, height: s.height };
@@ -831,7 +840,23 @@ mod linux {
             got.iter().filter_map(|g| if let Got::Key(_, s, true) = g { Some(*s) } else { None }).collect();
         let want: Vec<u32> = typed.chars().map(nuvira_input::keys::keysym).collect();
         report(&format!("text keysyms {syms:x?}, expected {want:x?}"));
-        if wayland() {
+        let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.contains("KDE"));
+        if wayland() && kde {
+            // KNOWN BUG (Phase 2, MT-P2-05, VM-Kubuntu Plasma 6.6, 3 of 3 runs): through
+            // KWin's portal (NotifyKeyboardKeysym) a character is typed as the key that
+            // carries it, without the Shift or AltGr its level needs, and no modifier
+            // press reaches the window: "àè€ñZ" arrived as à è e n z on an Italian
+            // layout. Expected after fix: Z and € arrive as themselves (the modifiers
+            // held around the key, as Mutter does), ñ as itself or by Unicode entry.
+            let modifier = |s: u32| (0xffe1..=0xffee).contains(&s) || (0xfe01..=0xfe13).contains(&s);
+            assert!(
+                !syms.iter().any(|s| modifier(*s)),
+                "characterises_bug: no modifier through KWin: {syms:x?}"
+            );
+            assert_eq!(syms.len(), want.len(), "one key press per character through KWin: {syms:x?}");
+            assert_eq!(syms[4], 0x7a, "characterises_bug: Z typed through KWin arrives as z (no Shift)");
+            assert_ne!(syms[2], want[2], "characterises_bug: € typed through KWin loses its AltGr level");
+        } else if wayland() {
             // Mutter types the compositor's layout keys: a character of the
             // layout is its key, with Shift (0xffe1) or AltGr (ISO_Level3_Shift,
             // 0xfe03) held around it when its level needs one; the first column
