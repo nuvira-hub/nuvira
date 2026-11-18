@@ -214,10 +214,10 @@ fn max_size_before_auth(ctx: &mut Ctx) -> Result<()> {
     Ok(())
 }
 
-/// KNOWN BUG (Phase 2, new): an unauthenticated connection holds the agent with
-/// no time limit, as long as the viewer's keep-alives arrive: no control stream
-/// at all, or a Hello and never the password. Expected after fix: the agent
-/// gives up after a handshake timeout.
+/// KNOWN BUG (Phase 2, new; K34): an unauthenticated connection held the agent
+/// with no time limit, as long as the viewer's keep-alives arrived. A Hello and
+/// never the password: FIXED in Phase 6 lot 2 (AGT-1), the agent gives up after
+/// 10 s. No control stream at all: still held (AGT-2, next commit).
 fn unauthenticated_holds(ctx: &mut Ctx) -> Result<()> {
     let (art, vrt) = rig::runtimes()?;
     let silent = reverse(&art, ctx)?;
@@ -228,22 +228,25 @@ fn unauthenticated_holds(ctx: &mut Ctx) -> Result<()> {
         let c1 = loopback_connect(silent.addr, Some(silent.fingerprint)).await?;
         let mut raw = Raw::open(loopback_connect(no_auth.addr, Some(no_auth.fingerprint)).await?).await?;
         raw.hello(true).await?;
-        // Longer than the 10 s idle timeout: the keep-alives keep both open.
-        tokio::time::sleep(wait).await;
-        ensure(c1.close_reason().is_none() && raw.conn.close_reason().is_none(), || {
-            format!("closed: {:?} {:?}", c1.close_reason(), raw.conn.close_reason())
-        })?;
-        ensure(!silent.is_finished() && !no_auth.is_finished(), || "an agent gave up".into())?;
-        ctx.note(format!("both agents still waiting after {wait:?}"));
+        let t = Instant::now();
+        let (ended, _) = rig::wait_closed(&raw.conn, Duration::from_secs(20)).await?;
+        let after = t.elapsed();
+        ctx.note(format!("Hello without password: {ended} after {} ms", after.as_millis()));
+        ensure(ended == "closed 0 end of session", || ended.clone())?;
+        ensure(after >= Duration::from_secs(9) && after <= Duration::from_secs(15), || format!("{after:?}"))?;
+        tokio::time::sleep(wait.saturating_sub(t.elapsed())).await;
+        // Longer than the 10 s idle timeout: the keep-alives keep it open.
+        ensure(c1.close_reason().is_none(), || format!("closed: {:?}", c1.close_reason()))?;
+        ensure(!silent.is_finished(), || "the agent gave up on the silent connection".into())?;
+        ctx.note(format!("no control stream: still waiting after {wait:?}"));
         c1.close(0u32.into(), b"bye");
-        raw.conn.close(0u32.into(), b"bye");
         anyhow::Ok(())
     })?;
-    // Closed by the viewer: both end.
-    for a in [silent, no_auth] {
-        let r = a.finish(&art, Duration::from_secs(5));
-        ensure(!format!("{r:?}").contains("aborted"), || format!("agent still running: {r:?}"))?;
-    }
+    let r = no_auth.finish(&art, Duration::from_secs(5));
+    ensure(format!("{r:?}").contains("did not send the password within 10 s"), || format!("{r:?}"))?;
+    // Closed by the viewer: it ends.
+    let r = silent.finish(&art, Duration::from_secs(5));
+    ensure(!format!("{r:?}").contains("aborted"), || format!("agent still running: {r:?}"))?;
     Ok(())
 }
 

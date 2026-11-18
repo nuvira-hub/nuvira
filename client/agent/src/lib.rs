@@ -72,6 +72,15 @@ const CODE_WINDOW: Duration = Duration::from_secs(600);
 pub const CONFIRM_TIMEOUT: Duration = Duration::from_secs(30);
 /// With the rule "record every session", how long the viewer has to start recording.
 const RECORDING_START: Duration = Duration::from_secs(15);
+/// How long the agent waits for each message of the handshake before the viewer
+/// has authenticated: its Hello, then its password (a viewer sends each at once,
+/// one round trip after the previous one). The confirmation by the person at the
+/// PC ([`CONFIRM_TIMEOUT`]) and the two-factor code have their own, longer waits.
+pub const HANDSHAKE_READ: Duration = Duration::from_secs(10);
+/// Sessions through the server whose viewer has not authenticated yet: they do
+/// not make the computer busy (anyone who knows the ID can start one), but at
+/// most this many wait for their password at once; more are refused as busy.
+pub const MAX_PENDING_SESSIONS: u32 = 8;
 
 /// How to capture and encode the screen.
 #[derive(Debug, Clone)]
@@ -474,6 +483,8 @@ pub async fn serve_via_server(
         events,
         chat: Mutex::new(None),
         busy: AtomicU32::new(0),
+        attempts: AtomicU32::new(0),
+        claims: Mutex::new(()),
         waiting: Mutex::new(None),
         end_session: Notify::new(),
         shared: Mutex::new(None),
@@ -575,6 +586,9 @@ fn closed_normally(e: &anyhow::Error) -> bool {
 /// What the report to the server says about a session, filled while it runs.
 #[derive(Default)]
 struct Outcome {
+    /// The viewer authenticated and this was the session in progress ([`Gate::claim`]):
+    /// the computer stays busy until the end is handled.
+    claimed: bool,
     connected: Option<std::time::Instant>,
     direct: bool,
     access: std::sync::Mutex<&'static str>,
@@ -591,9 +605,16 @@ struct SessionContext {
     events: mpsc::UnboundedSender<AgentEvent>,
     /// Chat towards the viewer of the session in progress.
     chat: Mutex<Option<mpsc::UnboundedSender<String>>>,
-    /// Sessions started and not ended: one at most, except for a moment when a viewer
-    /// that gave up asks again (see `waiting`).
+    /// Sessions whose viewer authenticated and that have not ended: one at most
+    /// ([`Gate::claim`]); guests are not counted. Other viewers are refused (or
+    /// join, see `shared`) while it is not 0.
     busy: AtomicU32,
+    /// Sessions routed here (not guests) that have not ended, authenticated or not:
+    /// at most [`MAX_PENDING_SESSIONS`] are let in while none is `busy`.
+    attempts: AtomicU32,
+    /// Held while a session claims `busy` and while a session ends: the app never
+    /// hears of an attempt ending after another viewer's session started.
+    claims: Mutex<()>,
     /// Viewer the agent is waiting for (its connection not open yet) and how to stop
     /// waiting: a new request from the same viewer (window closed while connecting,
     /// then reopened) replaces the attempt instead of finding the PC busy.
@@ -853,13 +874,20 @@ async fn signal_loop(
                         request.join = true;
                         accepted.insert(inc.session_id.clone(), request);
                         Some(client_message::Msg::Accept(Accept { session_id: inc.session_id }))
-                    } else if ctx.busy.load(Ordering::Relaxed) > 0 {
+                    } else if ctx.busy.load(Ordering::Relaxed) > 0
+                        || ctx.attempts.load(Ordering::Relaxed) >= MAX_PENDING_SESSIONS
+                    {
+                        if ctx.busy.load(Ordering::Relaxed) == 0 {
+                            warn!("too many connections waiting for their password: refused as busy");
+                        }
                         Some(client_message::Msg::Reject(Reject {
                             session_id: inc.session_id,
                             reason: "@agent.busy".into(),
                         }))
                     } else {
-                        // Confirmation by the person at the PC, if needed, comes after the password.
+                        // Not busy until the viewer has authenticated (Gate::claim): one that
+                        // never does cannot keep the others out. Confirmation by the person
+                        // at the PC, if needed, comes after the password.
                         accepted.insert(inc.session_id.clone(), request);
                         Some(client_message::Msg::Accept(Accept { session_id: inc.session_id }))
                     }
@@ -885,30 +913,39 @@ async fn signal_loop(
                     };
                     let join = request.join;
                     if !join {
-                        ctx.busy.fetch_add(1, Ordering::Relaxed);
+                        ctx.attempts.fetch_add(1, Ordering::Relaxed);
                     }
                     let (ctx, identity) = (ctx.clone(), identity.clone());
                     let session_id = route.session_id.clone();
                     let report_tx = report_tx.clone();
                     tokio::spawn(async move {
                         let mut outcome = Outcome::default();
-                        // A guest's transfers are none: the counters stay the session's.
-                        if !join {
-                            stats::reset();
-                        }
                         let result = relayed_session(&ctx, &identity, &p2p_route, &request, &session_id, &mut outcome).await;
                         if let Err(e) = &result {
                             warn!("session ended: {e:#}");
                         }
+                        // The counters are reset when the session is claimed: a guest's
+                        // transfers are none (they stay the session's), and an attempt
+                        // that never authenticated had none.
+                        let counted = join || outcome.claimed;
+                        let (files_in, files_out, bytes_in, bytes_out) = match counted {
+                            true => (
+                                stats::FILES_IN.load(Ordering::Relaxed),
+                                stats::FILES_OUT.load(Ordering::Relaxed),
+                                stats::BYTES_IN.load(Ordering::Relaxed),
+                                stats::BYTES_OUT.load(Ordering::Relaxed),
+                            ),
+                            false => (0, 0, 0, 0),
+                        };
                         let _ = report_tx.send(nuvira_proto::v1::SessionReport {
                             session_id: session_id.clone(),
                             duration_s: outcome.connected.map_or(0, |t| t.elapsed().as_secs() as u32),
                             direct: outcome.direct,
                             access: outcome.access.lock().expect("access").to_string(),
-                            files_in: stats::FILES_IN.load(Ordering::Relaxed),
-                            files_out: stats::FILES_OUT.load(Ordering::Relaxed),
-                            bytes_in: stats::BYTES_IN.load(Ordering::Relaxed),
-                            bytes_out: stats::BYTES_OUT.load(Ordering::Relaxed),
+                            files_in,
+                            files_out,
+                            bytes_in,
+                            bytes_out,
                             error: result
                                 .as_ref()
                                 .err()
@@ -917,9 +954,22 @@ async fn signal_loop(
                                 .unwrap_or_default(),
                         });
                         if !join {
-                            lock_after(&ctx, &request, outcome.connected.is_some());
-                            ctx.busy.fetch_sub(1, Ordering::Relaxed);
-                            let _ = ctx.events.send(AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) });
+                            let ended = AgentEvent::SessionEnded { error: result.err().map(|e| format!("{e:#}")) };
+                            if outcome.claimed {
+                                lock_after(&ctx, &request, outcome.connected.is_some());
+                            }
+                            let _claims = ctx.claims.lock().unwrap_or_else(|e| e.into_inner());
+                            ctx.attempts.fetch_sub(1, Ordering::Relaxed);
+                            if outcome.claimed {
+                                ctx.busy.fetch_sub(1, Ordering::Relaxed);
+                                let _ = ctx.events.send(ended);
+                            } else if ctx.busy.load(Ordering::Relaxed) == 0 {
+                                // As before: nobody else is connected.
+                                lock_after(&ctx, &request, outcome.connected.is_some());
+                                let _ = ctx.events.send(ended);
+                            }
+                            // Otherwise an attempt that never authenticated ended while another
+                            // viewer's session goes on: the app is not told (it would close that one).
                         }
                     });
                     None
@@ -1151,6 +1201,7 @@ async fn relayed_session(
         access: &outcome.access,
         terminal_only: AtomicBool::new(false),
         profile_off: AtomicU8::new(0),
+        claimed: AtomicBool::new(false),
     };
     let result = tokio::select! {
         r = async {
@@ -1171,6 +1222,8 @@ async fn relayed_session(
     if result.is_ok() {
         info!("session ended");
     }
+    // The caller frees the computer, after locking it if wanted.
+    outcome.claimed = gate.claimed.swap(false, Ordering::Relaxed);
     result
 }
 
@@ -1258,9 +1311,41 @@ struct Gate<'a> {
     terminal_only: AtomicBool,
     /// Switches off because of the profile whose password was given ([`access`]).
     profile_off: AtomicU8,
+    /// This viewer's session is the one in progress ([`Gate::claim`]).
+    claimed: AtomicBool,
+}
+
+/// A gate dropped with its claim still on (its session over) frees the computer.
+impl Drop for Gate<'_> {
+    fn drop(&mut self) {
+        if self.claimed.swap(false, Ordering::Relaxed) {
+            let _claims = self.ctx.claims.lock().unwrap_or_else(|e| e.into_inner());
+            self.ctx.busy.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Gate<'_> {
+    /// From here this viewer's session is the one in progress (not for a guest):
+    /// the computer is busy until it ends. Taken once the viewer's credentials are
+    /// right, before the person at the PC is asked, so that they are asked about
+    /// one viewer at a time. `Err` when another viewer authenticated first while
+    /// both were connecting.
+    fn claim(&self) -> Result<(), String> {
+        if self.request.join || self.claimed.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let _claims = self.ctx.claims.lock().unwrap_or_else(|e| e.into_inner());
+        if self.ctx.busy.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed).is_err() {
+            info!("another viewer's session started first: refused as busy");
+            return Err("@agent.busy".into());
+        }
+        self.claimed.store(true, Ordering::Relaxed);
+        // The transfer counters of the report are this session's.
+        stats::reset();
+        Ok(())
+    }
+
     /// `Err` with the reason to show to the viewer.
     async fn authorize(&self, auth: &Auth, pending: Option<&mut FramedSend>) -> Result<(), String> {
         let ctx = self.ctx;
@@ -1365,6 +1450,8 @@ impl Gate<'_> {
                 return self.started();
             }
         }
+        // The credentials are right: the session is this viewer's from here.
+        self.claim()?;
         if let Some(ctrl_tx) = pending {
             let waiting =
                 nuvira_proto::v1::ConfirmationPending { timeout_s: CONFIRM_TIMEOUT.as_secs() as u32 };
@@ -1451,6 +1538,7 @@ impl Gate<'_> {
         if self.request.join {
             return Ok(());
         }
+        self.claim()?;
         let _ = self.ctx.events.send(AgentEvent::SessionStarted {
             viewer_id: self.request.viewer_id.clone(),
             viewer_name: self.request.viewer_name.clone(),
@@ -1537,7 +1625,10 @@ pub async fn serve_reverse(endpoint: quinn::Endpoint, config: AgentConfig, rever
 /// of a protocol version this agent still serves. Shared by [`run_session`] and
 /// [`shared::guest_session`].
 async fn read_hello(ctrl_rx: &mut FramedRecv, what: &str) -> Result<Hello> {
-    let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = ctrl_rx.recv().await? else {
+    let first = tokio::time::timeout(HANDSHAKE_READ, ctrl_rx.recv::<ControlMessage>())
+        .await
+        .map_err(|_| anyhow!("the viewer did not introduce itself within {} s", HANDSHAKE_READ.as_secs()))?;
+    let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = first? else {
         bail!("the viewer did not introduce itself");
     };
     info!(device = hello.device_name, os = hello.os, version = hello.app_version, "{what}");
@@ -1547,9 +1638,13 @@ async fn read_hello(ctrl_rx: &mut FramedRecv, what: &str) -> Result<Hello> {
     Ok(hello)
 }
 
-/// The viewer's first `Auth`, right after the agent's Hello.
+/// The viewer's first `Auth`, right after the agent's Hello (within
+/// [`HANDSHAKE_READ`]: a viewer that never sends it is let go).
 async fn read_auth(ctrl_rx: &mut FramedRecv) -> Result<Auth> {
-    match ctrl_rx.recv::<ControlMessage>().await? {
+    let auth = tokio::time::timeout(HANDSHAKE_READ, ctrl_rx.recv::<ControlMessage>())
+        .await
+        .map_err(|_| anyhow!("the viewer did not send the password within {} s", HANDSHAKE_READ.as_secs()))?;
+    match auth? {
         Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => Ok(auth),
         _ => bail!("the viewer did not send the password"),
     }
@@ -3749,6 +3844,8 @@ mod gate_characterisation {
             events,
             chat: Mutex::new(None),
             busy: AtomicU32::new(0),
+            attempts: AtomicU32::new(0),
+            claims: Mutex::new(()),
             waiting: Mutex::new(None),
             end_session: Notify::new(),
             shared: Mutex::new(None),
@@ -3791,18 +3888,28 @@ mod gate_characterisation {
         profile_off: u8,
     }
 
-    async fn authorize(ctx: &SessionContext, request: &Request, auth: &Auth) -> Verdict {
-        let access = std::sync::Mutex::new("");
-        let gate = Gate {
+    fn gate<'a>(
+        ctx: &'a SessionContext,
+        request: &'a Request,
+        access: &'a std::sync::Mutex<&'static str>,
+        session_id: &'a str,
+    ) -> Gate<'a> {
+        Gate {
             ctx,
-            session_id: "s1",
+            session_id,
             request,
             direct: true,
             path: "direct",
-            access: &access,
+            access,
             terminal_only: AtomicBool::new(false),
             profile_off: AtomicU8::new(0),
-        };
+            claimed: AtomicBool::new(false),
+        }
+    }
+
+    async fn authorize(ctx: &SessionContext, request: &Request, auth: &Auth) -> Verdict {
+        let access = std::sync::Mutex::new("");
+        let gate = gate(ctx, request, &access, "s1");
         let result = gate.authorize(auth, None).await;
         let profile_off = gate.profile_off.load(Ordering::Relaxed);
         drop(gate);
@@ -4128,6 +4235,62 @@ mod gate_characterisation {
         let given_up = Instant::now().checked_sub(RESTART_GIVEN_UP).unwrap();
         *f.ctx.restarting.lock().unwrap() = Some(given_up);
         assert_eq!(authorize(&f.ctx, &req, &password(TEMPORARY)).await.result, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn one_session_is_claimed_at_a_time_once_the_password_is_right() {
+        // Review AGT-1 (Phase 6 lot 2): a viewer is not counted as busy before its
+        // credentials are right; the first right one takes the computer, a second
+        // one is refused as busy until the first ends; a guest is not counted.
+        let mut f = fixture("claim", false, false, None);
+        let (req, other) = (request(VIEWER, false), request("444 555 666", false));
+        let (a1, a2, a3) = (Mutex::new(""), Mutex::new(""), Mutex::new(""));
+        let first = gate(&f.ctx, &req, &a1, "s1");
+        assert_eq!(first.authorize(&password("nope"), None).await, Err(WRONG_PASSWORD.into()));
+        assert_eq!(f.ctx.busy.load(Ordering::Relaxed), 0, "a wrong password claims nothing");
+        assert_eq!(first.authorize(&password(TEMPORARY), None).await, Ok(()));
+        assert_eq!(f.ctx.busy.load(Ordering::Relaxed), 1);
+        let second = gate(&f.ctx, &other, &a2, "s2");
+        assert_eq!(second.authorize(&password(TEMPORARY), None).await, Err("@agent.busy".into()));
+        let guest_req = request("444 555 666", true);
+        let guest = gate(&f.ctx, &guest_req, &a3, "s3");
+        assert_eq!(guest.authorize(&password(TEMPORARY), None).await, Ok(()));
+        drop(guest);
+        assert_eq!(f.ctx.busy.load(Ordering::Relaxed), 1);
+        // The first session ends: the next one is let in.
+        drop(first);
+        assert_eq!(f.ctx.busy.load(Ordering::Relaxed), 0);
+        assert_eq!(second.authorize(&password(TEMPORARY), None).await, Ok(()));
+        drop(second);
+        assert_eq!(f.ctx.busy.load(Ordering::Relaxed), 0);
+        assert_eq!(drain(&mut f), ["session_started", "session_started"]);
+    }
+
+    #[tokio::test]
+    async fn the_person_at_the_pc_is_asked_about_one_viewer_at_a_time() {
+        // Review AGT-1: the session is claimed before the confirmation, so a second
+        // viewer with the right password while the first waits is refused as busy
+        // without asking the person at the PC again.
+        let mut f = fixture("claim-confirm", false, true, None);
+        let (req, other) = (request(VIEWER, false), request("444 555 666", false));
+        let (a1, a2) = (Mutex::new(""), Mutex::new(""));
+        let first = gate(&f.ctx, &req, &a1, "s1");
+        let second = gate(&f.ctx, &other, &a2, "s2");
+        let (ctx, events) = (&f.ctx, &mut f.events);
+        let right = password(TEMPORARY);
+        let (r1, r2) = tokio::join!(first.authorize(&right, None), async {
+            let Some(AgentEvent::Incoming { session_id, .. }) = events.recv().await else {
+                panic!("the first viewer was not asked about");
+            };
+            assert_eq!(session_id, "s1");
+            let r2 = second.authorize(&right, None).await;
+            ctx.pending.lock().unwrap().remove("s1").unwrap().send(true).unwrap();
+            r2
+        });
+        assert_eq!((r1, r2), (Ok(()), Err("@agent.busy".into())));
+        drop((first, second));
+        assert_eq!(drain(&mut f), ["incoming_closed", "session_started"]);
+        assert_eq!(f.ctx.busy.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
