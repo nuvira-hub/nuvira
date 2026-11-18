@@ -196,3 +196,79 @@ impl Drop for RemoveOnDrop {
         }
     }
 }
+
+/// Characterisation tests (Phase 2 of the full review) of the names given to files
+/// received from the viewer.
+#[cfg(test)]
+mod characterisation {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn characterises_names_windows_reserves_are_kept() {
+        // KNOWN LIMIT (Phase 2): device names Windows reserves (CON, NUL, COM1...)
+        // pass through unchanged; on Windows "CON.part" / "CON" then fail or reach a
+        // device. Expected after fix (if decided): such names prefixed or replaced.
+        for name in ["CON", "nul", "COM1", "lpt1.txt", "aux.tar.gz"] {
+            assert_eq!(safe_name(name), name);
+        }
+    }
+
+    #[test]
+    fn name_edge_cases() {
+        assert_eq!(safe_name(""), "file");
+        assert_eq!(safe_name("   "), "file");
+        assert_eq!(safe_name("..."), "file");
+        assert_eq!(safe_name("a/"), "file", "the part after the last separator is empty");
+        assert_eq!(safe_name("dir\\"), "file");
+        assert_eq!(safe_name(".bashrc"), ".bashrc", "leading dots kept");
+        assert_eq!(safe_name("  a.txt  "), "a.txt");
+        assert_eq!(safe_name("a\u{0}b\u{1f}c\u{7f}"), "a_b_c_");
+        assert_eq!(safe_name("x:y*z?\"<>|"), "x_y_z_____");
+        // Format characters (not "control" for Rust) are kept: a right-to-left
+        // override can make "evil\u{202e}txt.exe" look like "evilexe.txt".
+        assert_eq!(safe_name("evil\u{202e}txt.exe"), "evil\u{202e}txt.exe");
+        // No length limit (file systems allow 255 bytes): a longer name fails later.
+        assert_eq!(safe_name(&"a".repeat(1000)).len(), 1000);
+        // Unicode stays.
+        assert_eq!(safe_name("città ✓.pdf"), "città ✓.pdf");
+    }
+
+    #[test]
+    fn unique_path_edge_cases() {
+        let dir = std::env::temp_dir().join(format!("nuvira-p2-unique-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for existing in [".hidden", "noext", "a.tar.gz"] {
+            std::fs::write(dir.join(existing), b"x").unwrap();
+        }
+        // A leading dot is not an extension; only the last extension is kept apart.
+        assert_eq!(unique_path(&dir, ".hidden"), dir.join(".hidden (1)"));
+        assert_eq!(unique_path(&dir, "noext"), dir.join("noext (1)"));
+        assert_eq!(unique_path(&dir, "a.tar.gz"), dir.join("a.tar (1).gz"));
+        // A folder with the name counts as taken.
+        std::fs::create_dir_all(dir.join("taken")).unwrap();
+        assert_eq!(unique_path(&dir, "taken"), dir.join("taken (1)"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 3000, ..ProptestConfig::default() })]
+
+        /// Whatever the viewer sends, the name is one plain component: no separator,
+        /// no character Windows refuses, not empty, not "." or "..", no trailing dot
+        /// or space, and joining it to a folder stays inside the folder.
+        #[test]
+        fn safe_names_are_one_component(name in r"\PC{0,40}|[./\\: ]{0,10}|.{0,5}(\.\.[/\\]){1,4}.{0,5}") {
+            let s = safe_name(&name);
+            prop_assert!(!s.is_empty());
+            prop_assert!(s != "." && s != "..");
+            prop_assert!(!s.chars().any(|c| c.is_control() || "<>:\"/\\|?*".contains(c)));
+            prop_assert!(!s.ends_with('.') && !s.ends_with(' '));
+            prop_assert!(!s.starts_with(char::is_whitespace));
+            let dir = Path::new("base");
+            let joined = dir.join(&s);
+            prop_assert_eq!(joined.parent(), Some(dir));
+            prop_assert_eq!(safe_name(&s), s.clone(), "idempotent");
+        }
+    }
+}

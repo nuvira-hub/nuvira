@@ -3678,3 +3678,452 @@ mod tests {
         assert!(parse_synthetic("abc").is_err());
     }
 }
+
+/// Characterisation tests (Phase 2 of the full review) of the access gate of a
+/// session (`Gate::authorize`, `Gate::check_code`): temporary and permanent
+/// passwords, profiles, access rules, two-factor codes, hand-over tokens, support
+/// tickets, confirmation by the person at the PC, restart. They pin the CURRENT
+/// behaviour; the connection around it (Hello, AuthResult, pauses) is the end-to-end
+/// tests' part.
+#[cfg(test)]
+mod gate_characterisation {
+    use super::*;
+    use nuvira_proto::v1::Policy;
+    use std::sync::OnceLock;
+
+    const TEMPORARY: &str = "abcd2345";
+    const PERMANENT: &str = "the permanent one";
+    const PROFILE: &str = "view only please";
+    const VIEWER: &str = "111 222 333";
+
+    /// The PBKDF2 hashes, made once (300 000 iterations each).
+    fn hashes() -> &'static (String, String) {
+        static H: OnceLock<(String, String)> = OnceLock::new();
+        H.get_or_init(|| (nuvira_secret::hash(PERMANENT), nuvira_secret::hash(PROFILE)))
+    }
+
+    struct Fixture {
+        ctx: SessionContext,
+        events: mpsc::UnboundedReceiver<AgentEvent>,
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.ctx.access_dir);
+        }
+    }
+
+    fn fixture(tag: &str, permanent: bool, confirm: bool, rules: Option<&str>) -> Fixture {
+        let dir = std::env::temp_dir().join(format!("nuvira-p2-gate-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        if let Some(rules) = rules {
+            std::fs::write(dir.join(access::FILE), rules).unwrap();
+        }
+        let (events, rx) = mpsc::unbounded_channel();
+        let ctx = SessionContext {
+            config: AgentConfig {
+                display: None,
+                synthetic: Some((64, 64, 30)),
+                bitrate_kbps: 1000,
+                fps: 30,
+                plan: EncoderPlan::Software,
+                fixed_bitrate: false,
+                view_only: false,
+            },
+            password: Arc::new(Mutex::new(TEMPORARY.to_string())),
+            permanent: permanent.then(|| hashes().0.clone()),
+            confirm,
+            pending: Mutex::new(HashMap::new()),
+            events,
+            chat: Mutex::new(None),
+            busy: AtomicU32::new(0),
+            waiting: Mutex::new(None),
+            end_session: Notify::new(),
+            shared: Mutex::new(None),
+            handover: Mutex::new(None),
+            policy: Default::default(),
+            support_ticket: Mutex::new(None),
+            support_request: Mutex::new(None),
+            allow_privacy: AtomicBool::new(true),
+            allow_terminal: AtomicBool::new(true),
+            allow_tunnel: AtomicBool::new(true),
+            allow_print: AtomicBool::new(true),
+            allow_recording: AtomicBool::new(true),
+            lock_on_end: AtomicBool::new(false),
+            lock_asked: AtomicBool::new(false),
+            idle_minutes: AtomicU32::new(0),
+            mic_muted: tokio::sync::watch::channel(false).0,
+            access_dir: dir,
+            last_code_step: AtomicU64::new(0),
+            wrong_codes: Mutex::new(Vec::new()),
+            features: Mutex::new(Vec::new()),
+            unattended: permanent,
+            restarting: Mutex::new(None),
+            switches: Mutex::new(None),
+        };
+        Fixture { ctx, events: rx }
+    }
+
+    fn request(viewer: &str, join: bool) -> Request {
+        Request { viewer_id: viewer.into(), viewer_name: "Tech".into(), limits: Policy::default(), join }
+    }
+
+    fn password(p: &str) -> Auth {
+        Auth { password: p.into(), ..Default::default() }
+    }
+
+    /// What `authorize` said, the access noted for the report, the profile's switches off.
+    struct Verdict {
+        result: Result<(), String>,
+        access: &'static str,
+        profile_off: u8,
+    }
+
+    async fn authorize(ctx: &SessionContext, request: &Request, auth: &Auth) -> Verdict {
+        let access = std::sync::Mutex::new("");
+        let gate = Gate {
+            ctx,
+            session_id: "s1",
+            request,
+            direct: true,
+            path: "direct",
+            access: &access,
+            terminal_only: AtomicBool::new(false),
+            profile_off: AtomicU8::new(0),
+        };
+        let result = gate.authorize(auth, None).await;
+        let profile_off = gate.profile_off.load(Ordering::Relaxed);
+        drop(gate);
+        Verdict { result, access: *access.lock().unwrap(), profile_off }
+    }
+
+    /// `authorize` while answering the confirmation request with `answer` (`None`:
+    /// no answer). Returns the verdict and the events seen.
+    async fn authorize_answering(
+        f: &mut Fixture,
+        request: &Request,
+        auth: &Auth,
+        answer: Option<bool>,
+    ) -> (Verdict, Vec<String>) {
+        let (ctx, events) = (&f.ctx, &mut f.events);
+        let seen = std::cell::RefCell::new(Vec::new());
+        let respond = async {
+            while let Some(event) = events.recv().await {
+                let name = serde_json::to_value(&event).unwrap()["event"].as_str().unwrap().to_string();
+                seen.borrow_mut().push(name);
+                match event {
+                    AgentEvent::Incoming { session_id, .. } => {
+                        if let Some(answer) = answer {
+                            let tx = ctx.pending.lock().unwrap().remove(&session_id).unwrap();
+                            let _ = tx.send(answer);
+                        }
+                    }
+                    AgentEvent::IncomingClosed { .. } => break,
+                    _ => {}
+                }
+            }
+        };
+        let (verdict, ()) = tokio::join!(authorize(ctx, request, auth), async {
+            // Stops once authorize is done and nothing more comes.
+            let _ = tokio::time::timeout(CONFIRM_TIMEOUT + Duration::from_secs(5), respond).await;
+        });
+        while let Ok(event) = f.events.try_recv() {
+            seen.borrow_mut().push(serde_json::to_value(&event).unwrap()["event"].as_str().unwrap().to_string());
+        }
+        (verdict, seen.into_inner())
+    }
+
+    fn drain(f: &mut Fixture) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(event) = f.events.try_recv() {
+            out.push(serde_json::to_value(&event).unwrap()["event"].as_str().unwrap().to_string());
+        }
+        out
+    }
+
+    fn code_now(secret: &str) -> String {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        nuvira_secret::totp_code(secret, now / nuvira_secret::TOTP_STEP).unwrap()
+    }
+
+    #[tokio::test]
+    async fn temporary_password() {
+        let mut f = fixture("temp", false, false, None);
+        let req = request(VIEWER, false);
+        let v = authorize(&f.ctx, &req, &password(TEMPORARY)).await;
+        assert_eq!((v.result, v.access), (Ok(()), "temporary"));
+        assert_eq!(drain(&mut f), ["session_started"]);
+        for wrong in ["", "ABCD2345", "abcd234", "abcd23456", " abcd2345"] {
+            let v = authorize(&f.ctx, &req, &password(wrong)).await;
+            assert_eq!((v.result, v.access), (Err(WRONG_PASSWORD.into()), "wrong_password"), "{wrong:?}");
+        }
+        assert!(drain(&mut f).is_empty());
+    }
+
+    #[tokio::test]
+    async fn characterises_wrong_passwords_are_never_locked_out() {
+        // KNOWN LIMIT (Phase 2): the gate counts wrong two-factor codes, not wrong
+        // passwords: after any number of wrong temporary or permanent passwords
+        // the right one still works. The only brake is the 2 s pause before
+        // `session()` closes a connection after a wrong password.
+        // Expected after a fix (if one is decided): a lockout or growing delay.
+        let f = fixture("nolock", true, false, None);
+        let req = request(VIEWER, false);
+        // 20 here: each wrong guess also costs a PBKDF2 check (300 000 iterations)
+        // against the permanent hash, slow in debug builds.
+        for i in 0..20 {
+            let v = authorize(&f.ctx, &req, &password(&format!("guess{i}"))).await;
+            assert_eq!(v.result, Err(WRONG_PASSWORD.into()));
+        }
+        assert_eq!(authorize(&f.ctx, &req, &password(TEMPORARY)).await.result, Ok(()));
+        assert_eq!(authorize(&f.ctx, &req, &password(PERMANENT)).await.result, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn permanent_password_and_profiles() {
+        let rules = serde_json::json!({
+            "profiles": [{ "name": "View", "password_hash": hashes().1, "off": ["input", "files"] }]
+        })
+        .to_string();
+        let mut f = fixture("perm", true, true, Some(&rules));
+        let req = request(VIEWER, false);
+        // The permanent password is never confirmed, also when ctx.confirm is set.
+        let v = authorize(&f.ctx, &req, &password(PERMANENT)).await;
+        assert_eq!((v.result, v.access, v.profile_off), (Ok(()), "permanent", 0));
+        let v = authorize(&f.ctx, &req, &password(PROFILE)).await;
+        let off = switches::bit("input").unwrap() | switches::bit("files").unwrap();
+        assert_eq!((v.result, v.access, v.profile_off), (Ok(()), "profile", off));
+        assert_eq!(drain(&mut f), ["session_started", "session_started"]);
+        // Without a main permanent password, a profile's password is not one: it is
+        // compared with the temporary password.
+        let f2 = fixture("perm-none", false, false, Some(&rules));
+        let v = authorize(&f2.ctx, &req, &password(PROFILE)).await;
+        assert_eq!((v.result, v.access), (Err(WRONG_PASSWORD.into()), "wrong_password"));
+        let v = authorize(&f2.ctx, &req, &password(PERMANENT)).await;
+        assert_eq!(v.result, Err(WRONG_PASSWORD.into()));
+    }
+
+    #[tokio::test]
+    async fn server_rule_confirm_always_asks_also_for_the_permanent_password() {
+        let mut f = fixture("always", true, false, None);
+        *f.ctx.policy.lock().unwrap() = Policy { confirm_always: true, ..Default::default() };
+        let req = request(VIEWER, false);
+        let (v, events) = authorize_answering(&mut f, &req, &password(PERMANENT), Some(true)).await;
+        assert_eq!((v.result, v.access), (Ok(()), "confirmed"));
+        assert_eq!(events, ["incoming", "incoming_closed", "session_started"]);
+        // The same rule from the session's limits (Incoming.limits).
+        let mut f = fixture("always-limits", true, false, None);
+        let req = Request { limits: Policy { confirm_always: true, ..Default::default() }, ..request(VIEWER, false) };
+        let (v, _) = authorize_answering(&mut f, &req, &password(TEMPORARY), Some(false)).await;
+        assert_eq!((v.result, v.access), (Err("@agent.not_accepted".into()), "not_accepted"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn confirmation_by_the_person_at_the_pc() {
+        let req = request(VIEWER, false);
+        let mut f = fixture("confirm", false, true, None);
+        let (v, events) = authorize_answering(&mut f, &req, &password(TEMPORARY), Some(true)).await;
+        assert_eq!((v.result, v.access), (Ok(()), "confirmed"));
+        assert_eq!(events, ["incoming", "incoming_closed", "session_started"]);
+        let (v, events) = authorize_answering(&mut f, &req, &password(TEMPORARY), Some(false)).await;
+        assert_eq!((v.result, v.access), (Err("@agent.not_accepted".into()), "not_accepted"));
+        assert_eq!(events, ["incoming", "incoming_closed"]);
+        // No answer within CONFIRM_TIMEOUT (the clock is paused: no real wait).
+        let start = tokio::time::Instant::now();
+        let (v, events) = authorize_answering(&mut f, &req, &password(TEMPORARY), None).await;
+        assert_eq!((v.result, v.access), (Err("@agent.no_answer".into()), "no_answer"));
+        assert_eq!(events, ["incoming", "incoming_closed"]);
+        assert!(start.elapsed() >= CONFIRM_TIMEOUT);
+        assert!(f.ctx.pending.lock().unwrap().is_empty());
+        // A wrong password is refused before anyone is asked.
+        let (v, events) = authorize_answering(&mut f, &req, &password("nope"), Some(true)).await;
+        assert_eq!(v.result, Err(WRONG_PASSWORD.into()));
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn allow_list() {
+        let only = r#"{"allow":[{"id":"999 888 777"}]}"#;
+        let attended_too = r#"{"allow":[{"id":"999888777"}],"allow_attended":true}"#;
+        let (other, listed) = (request(VIEWER, false), request("999-888-777", false));
+
+        let f = fixture("allow", true, false, Some(only));
+        let v = authorize(&f.ctx, &other, &password(PERMANENT)).await;
+        assert_eq!((v.result, v.access), (Err(NOT_ALLOWED.into()), "not_allowed"));
+        assert_eq!(authorize(&f.ctx, &listed, &password(PERMANENT)).await.result, Ok(()));
+        // Without allow_attended the temporary password works from any computer.
+        assert_eq!(authorize(&f.ctx, &other, &password(TEMPORARY)).await.result, Ok(()));
+
+        let f = fixture("allow-att", true, false, Some(attended_too));
+        let v = authorize(&f.ctx, &other, &password(TEMPORARY)).await;
+        assert_eq!((v.result, v.access), (Err(NOT_ALLOWED.into()), "not_allowed"));
+        // The password is checked first: a wrong one from such a computer is "wrong".
+        let v = authorize(&f.ctx, &other, &password("nope")).await;
+        assert_eq!(v.result, Err(WRONG_PASSWORD.into()));
+        assert_eq!(authorize(&f.ctx, &listed, &password(TEMPORARY)).await.result, Ok(()));
+        // An empty viewer ID is never on the list.
+        let v = authorize(&f.ctx, &request("", false), &password(PERMANENT)).await;
+        assert_eq!(v.result, Err(NOT_ALLOWED.into()));
+    }
+
+    #[tokio::test]
+    async fn characterises_unreadable_rules_refuse_only_permanent_passwords() {
+        // An access.json that does not parse refuses every permanent password
+        // (documented in access.rs). The temporary password is still accepted from
+        // any computer, even if the broken file meant to restrict it
+        // (`allow_attended`): `attended_allowed` falls back to true.
+        let f = fixture("broken", true, false, Some(r#"{"allow":[{"id":"999888777"}],"allow_attended":true,"#));
+        let req = request(VIEWER, false);
+        let v = authorize(&f.ctx, &req, &password(PERMANENT)).await;
+        assert_eq!((v.result, v.access), (Err("@agent.access_rules_invalid".into()), "not_allowed"));
+        let v = authorize(&f.ctx, &req, &password(TEMPORARY)).await;
+        assert_eq!((v.result, v.access), (Ok(()), "temporary"));
+        // A UTF-8 BOM at the start is accepted (Notepad).
+        let f = fixture("bom", true, false, Some("\u{feff}{\"allow\":[{\"id\":\"999888777\"}]}"));
+        assert_eq!(authorize(&f.ctx, &req, &password(PERMANENT)).await.result, Err(NOT_ALLOWED.into()));
+    }
+
+    #[tokio::test]
+    async fn two_factor_codes() {
+        let secret = nuvira_secret::totp_secret();
+        let rules = serde_json::json!({ "totp": secret }).to_string();
+        let f = fixture("totp", true, false, Some(&rules));
+        let req = request(VIEWER, false);
+        let with_code = |code: &str| Auth { password: PERMANENT.into(), code: code.into(), ..Default::default() };
+        // No code: asked for (not counted as wrong).
+        for _ in 0..10 {
+            assert_eq!(authorize(&f.ctx, &req, &with_code(" ")).await.result, Err(CODE_REQUIRED.into()));
+        }
+        assert!(f.ctx.wrong_codes.lock().unwrap().is_empty());
+        // The temporary password needs no code.
+        assert_eq!(authorize(&f.ctx, &req, &password(TEMPORARY)).await.result, Ok(()));
+        // A right code works once.
+        let code = code_now(&secret);
+        let v = authorize(&f.ctx, &req, &with_code(&code)).await;
+        assert_eq!((v.result, v.access), (Ok(()), "permanent"));
+        let v = authorize(&f.ctx, &req, &with_code(&code)).await;
+        assert_eq!((v.result, v.access), (Err("@agent.code_wrong".into()), "wrong_code"), "already used");
+        // A wrong password with a code: the password is wrong, the code not looked at.
+        let v = authorize(&f.ctx, &req, &Auth { password: "nope".into(), code: "000000".into(), ..Default::default() })
+            .await;
+        assert_eq!(v.result, Err(WRONG_PASSWORD.into()));
+        assert_eq!(f.ctx.wrong_codes.lock().unwrap().len(), 1, "only the reused code");
+    }
+
+    #[tokio::test]
+    async fn five_wrong_codes_lock_the_permanent_passwords() {
+        let secret = nuvira_secret::totp_secret();
+        let rules = serde_json::json!({ "totp": secret }).to_string();
+        let f = fixture("totp-lock", true, false, Some(&rules));
+        let req = request(VIEWER, false);
+        let with_code = |code: &str| Auth { password: PERMANENT.into(), code: code.into(), ..Default::default() };
+        let right = code_now(&secret);
+        let wrong = if right == "123456" { "654321" } else { "123456" };
+        for _ in 0..CODE_MAX_WRONG {
+            assert_eq!(authorize(&f.ctx, &req, &with_code(wrong)).await.result, Err("@agent.code_wrong".into()));
+        }
+        // Locked: even the right code, and even an empty one, is refused.
+        let v = authorize(&f.ctx, &req, &with_code(&right)).await;
+        assert_eq!((v.result, v.access), (Err("@agent.code_locked".into()), "code_locked"));
+        assert_eq!(authorize(&f.ctx, &req, &with_code("")).await.result, Err("@agent.code_locked".into()));
+        // The lock does not grow while locked.
+        assert_eq!(f.ctx.wrong_codes.lock().unwrap().len(), CODE_MAX_WRONG);
+        // The temporary password is not locked.
+        assert_eq!(authorize(&f.ctx, &req, &password(TEMPORARY)).await.result, Ok(()));
+        // After CODE_WINDOW the wrong codes are forgotten.
+        let long_ago = Instant::now().checked_sub(CODE_WINDOW + Duration::from_secs(1)).unwrap();
+        f.ctx.wrong_codes.lock().unwrap().iter_mut().for_each(|t| *t = long_ago);
+        assert_eq!(authorize(&f.ctx, &req, &with_code(&right)).await.result, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn hand_over_tokens() {
+        let mut f = fixture("handover", false, true, None);
+        let token = "token-0123456789";
+        let set = |f: &Fixture, viewer: &str, age: Duration| {
+            *f.ctx.handover.lock().unwrap() = Some(shared::Handover {
+                viewer_id: viewer.into(),
+                token: token.into(),
+                at: Instant::now().checked_sub(age).unwrap(),
+            });
+        };
+        let with = |t: &str| Auth { handover: t.into(), ..Default::default() };
+        let req = request(VIEWER, false);
+        // Right viewer, right token, in time: no confirmation (ctx.confirm is set),
+        // and only once.
+        set(&f, VIEWER, Duration::ZERO);
+        let v = authorize(&f.ctx, &req, &with(token)).await;
+        assert_eq!((v.result, v.access), (Ok(()), "handover"));
+        assert_eq!(drain(&mut f), ["session_started"]);
+        assert!(f.ctx.handover.lock().unwrap().is_none());
+        assert_eq!(authorize(&f.ctx, &req, &with(token)).await.result, Err(WRONG_PASSWORD.into()));
+        // Wrong token, another viewer (IDs compared as given), too late, or a join.
+        for (viewer, age, auth, join) in [
+            (VIEWER, Duration::ZERO, with("token-x"), false),
+            ("111222333", Duration::ZERO, with(token), false),
+            (VIEWER, shared::HANDOVER_VALID, with(token), false),
+            (VIEWER, Duration::ZERO, with(token), true),
+        ] {
+            set(&f, viewer, age);
+            let v = authorize(&f.ctx, &request(VIEWER, join), &auth).await;
+            assert_eq!((v.result, v.access), (Err(WRONG_PASSWORD.into()), "wrong_password"), "{viewer} {age:?}");
+            // A failed attempt leaves the token there.
+            assert!(f.ctx.handover.lock().unwrap().is_some());
+        }
+        // A token beats the password: a right temporary password with a wrong token is refused.
+        set(&f, VIEWER, Duration::ZERO);
+        let auth = Auth { password: TEMPORARY.into(), handover: "bad".into(), ..Default::default() };
+        assert_eq!(authorize(&f.ctx, &req, &auth).await.result, Err(WRONG_PASSWORD.into()));
+    }
+
+    #[tokio::test]
+    async fn hand_over_and_ticket_follow_allow_attended() {
+        let f = fixture("handover-allow", false, false, Some(r#"{"allow":[{"id":"999888777"}],"allow_attended":true}"#));
+        *f.ctx.handover.lock().unwrap() =
+            Some(shared::Handover { viewer_id: VIEWER.into(), token: "t".into(), at: Instant::now() });
+        let req = request(VIEWER, false);
+        let v = authorize(&f.ctx, &req, &Auth { handover: "t".into(), ..Default::default() }).await;
+        assert_eq!((v.result, v.access), (Err(NOT_ALLOWED.into()), "not_allowed"));
+        let v = authorize(&f.ctx, &req, &Auth { support_ticket: "x".into(), ..Default::default() }).await;
+        assert_eq!(v.result, Err(NOT_ALLOWED.into()));
+    }
+
+    #[tokio::test]
+    async fn support_tickets_still_ask_the_person_at_the_pc() {
+        let mut f = fixture("ticket", false, false, None);
+        *f.ctx.support_ticket.lock().unwrap() = Some("ticket-1".into());
+        let req = request(VIEWER, false);
+        let with = |t: &str| Auth { support_ticket: t.into(), ..Default::default() };
+        let v = authorize(&f.ctx, &req, &with("ticket-2")).await;
+        assert_eq!((v.result, v.access), (Err("@agent.support_ticket_invalid".into()), "wrong_password"));
+        // The right ticket: asked even though ctx.confirm is off; used up at once.
+        let (v, events) = authorize_answering(&mut f, &req, &with("ticket-1"), Some(true)).await;
+        assert_eq!((v.result, v.access), (Ok(()), "confirmed"));
+        assert_eq!(events, ["incoming", "incoming_closed", "session_started"]);
+        assert!(f.ctx.support_ticket.lock().unwrap().is_none());
+        let v = authorize(&f.ctx, &req, &with("ticket-1")).await;
+        assert_eq!(v.result, Err("@agent.support_ticket_invalid".into()));
+    }
+
+    #[tokio::test]
+    async fn a_restart_under_way_refuses_everyone_for_three_minutes() {
+        let f = fixture("restart", true, false, None);
+        let req = request(VIEWER, false);
+        *f.ctx.restarting.lock().unwrap() = Some(Instant::now());
+        for p in [TEMPORARY, PERMANENT, "wrong"] {
+            assert_eq!(authorize(&f.ctx, &req, &password(p)).await.result, Err("@agent.restarting".into()));
+        }
+        let given_up = Instant::now().checked_sub(RESTART_GIVEN_UP).unwrap();
+        *f.ctx.restarting.lock().unwrap() = Some(given_up);
+        assert_eq!(authorize(&f.ctx, &req, &password(TEMPORARY)).await.result, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn a_guest_joining_is_not_announced_as_a_session() {
+        let mut f = fixture("join", false, false, None);
+        let v = authorize(&f.ctx, &request(VIEWER, true), &password(TEMPORARY)).await;
+        assert_eq!((v.result, v.access), (Ok(()), "temporary"));
+        assert!(drain(&mut f).is_empty(), "no SessionStarted for a guest");
+    }
+}

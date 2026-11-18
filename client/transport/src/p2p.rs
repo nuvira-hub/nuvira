@@ -684,3 +684,257 @@ mod tests {
         assert_eq!(bind_message(&route, &many)[22], 4);
     }
 }
+
+/// Characterisation tests (Phase 2 of the full review): the relay's wire format as
+/// parsed here, and the bind handshake against a fake relay on the loopback.
+#[cfg(test)]
+mod characterisation {
+    use super::*;
+    use proptest::prelude::*;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    fn route(relay: SocketAddr) -> Route {
+        Route {
+            relay,
+            transport: crate::ServerTransport::Udp,
+            token: [9; 16],
+            peer_public_key: [0; 32],
+            role: Role::Viewer,
+            relay_alt: None,
+        }
+    }
+
+    fn bound(token: &[u8; 16], state: u8, tail: &[u8]) -> Vec<u8> {
+        let mut m = vec![0, b'N', b'X', b'R', RELAY_BOUND];
+        m.extend_from_slice(token);
+        m.push(state);
+        m.extend_from_slice(tail);
+        m
+    }
+
+    #[test]
+    fn parse_addr_lengths() {
+        assert_eq!(parse_addr(&[]), None);
+        // IPv4: family + 4 + 2 bytes, no less.
+        assert_eq!(parse_addr(&[4, 1, 2, 3, 4, 0]), None);
+        let (a, rest) = parse_addr(&[4, 1, 2, 3, 4, 0x12, 0x34, 0xee]).unwrap();
+        assert_eq!(a, SocketAddr::from(([1, 2, 3, 4], 0x1234)));
+        assert_eq!(rest, [0xee]);
+        // IPv6: family + 16 + 2.
+        let mut v6 = vec![6];
+        v6.extend_from_slice(&[0; 15]);
+        v6.push(1);
+        assert_eq!(parse_addr(&v6), None, "no port");
+        v6.extend_from_slice(&[0, 80]);
+        assert_eq!(parse_addr(&v6), Some(("[::1]:80".parse().unwrap(), &[][..])));
+        // Any other family byte.
+        for family in [0u8, 5, 46, 255] {
+            assert_eq!(parse_addr(&[family; 20]), None);
+        }
+    }
+
+    #[test]
+    fn parse_candidates_edge_cases() {
+        let a: SocketAddr = "192.0.2.1:1".parse().unwrap();
+        let b: SocketAddr = "192.0.2.2:2".parse().unwrap();
+        let mut wire = Vec::new();
+        push_addr(&mut wire, a);
+        // Reflexive only, no count byte.
+        assert_eq!(parse_candidates(&wire), Candidates { reflexive: Some(a), locals: vec![] });
+        // A count larger than the addresses there: the ones there are kept.
+        wire.push(200);
+        push_addr(&mut wire, b);
+        wire.extend_from_slice(&[4, 1]);
+        assert_eq!(parse_candidates(&wire), Candidates { reflexive: Some(a), locals: vec![b] });
+        // A reflexive address that does not parse: nothing at all.
+        assert_eq!(parse_candidates(&[9, 9, 9]), Candidates::default());
+        // IPv4-mapped IPv6 addresses are kept as given (no canonical()).
+        let mapped: SocketAddr = "[::ffff:192.0.2.1]:1".parse().unwrap();
+        let mut wire = Vec::new();
+        push_addr(&mut wire, mapped);
+        assert_eq!(parse_candidates(&wire).reflexive, Some(mapped));
+        // all(): the reflexive address equal to a local one appears once, locals first.
+        let c = Candidates { reflexive: Some(a), locals: vec![b, a, b] };
+        assert_eq!(c.all(), vec![b, a]);
+    }
+
+    #[test]
+    fn bound_state_cases() {
+        let token = [9u8; 16];
+        assert_eq!(bound_state(&bound(&token, 1, &[]), &token), Some(true));
+        assert_eq!(bound_state(&bound(&token, 0, &[]), &token), Some(false));
+        // Any value other than 1 means "not yet".
+        assert_eq!(bound_state(&bound(&token, 2, &[]), &token), Some(false));
+        // Candidates may follow.
+        assert_eq!(bound_state(&bound(&token, 1, &[4, 1, 2, 3, 4, 0, 1]), &token), Some(true));
+        // Another token, another message type, or too short: not an answer.
+        assert_eq!(bound_state(&bound(&[8; 16], 1, &[]), &token), None);
+        let mut bind = bound(&token, 1, &[]);
+        bind[4] = RELAY_BIND;
+        assert_eq!(bound_state(&bind, &token), None);
+        assert_eq!(bound_state(&bound(&token, 1, &[])[..21], &token), None);
+        assert_eq!(bound_state(&[], &token), None);
+    }
+
+    #[test]
+    fn bind_message_layout() {
+        let r = route("192.0.2.1:21116".parse().unwrap());
+        let locals: Vec<SocketAddr> = vec!["10.0.0.1:5".parse().unwrap(), "[2001:db8::1]:6".parse().unwrap()];
+        let m = bind_message(&r, &locals);
+        assert_eq!(m[..5], [0, b'N', b'X', b'R', RELAY_BIND]);
+        assert_eq!(m[5..21], [9; 16]);
+        assert_eq!(m[21], Role::Viewer as u8);
+        assert_eq!(m[22], 2);
+        let (first, rest) = parse_addr(&m[23..]).unwrap();
+        let (second, rest) = parse_addr(rest).unwrap();
+        assert_eq!((first, second, rest.len()), (locals[0], locals[1], 0));
+    }
+
+    /// A fake relay on the loopback: answers each bind with `answers` in turn (the
+    /// last one again and again), from its own address; stops after the answer
+    /// "both bound" or 3 s without binds.
+    fn fake_relay(answers: Vec<Vec<u8>>) -> (SocketAddr, std::thread::JoinHandle<Vec<Vec<u8>>>) {
+        let relay = UdpSocket::bind("127.0.0.1:0").unwrap();
+        relay.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let addr = relay.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut got = Vec::new();
+            let mut buf = [0u8; 2048];
+            let mut i = 0;
+            while let Ok((n, from)) = relay.recv_from(&mut buf) {
+                got.push(buf[..n].to_vec());
+                let answer = &answers[i.min(answers.len() - 1)];
+                i += 1;
+                relay.send_to(answer, from).unwrap();
+                if answer.get(21) == Some(&1) {
+                    break;
+                }
+            }
+            got
+        });
+        (addr, handle)
+    }
+
+    #[test]
+    fn bind_relay_waits_for_the_other_side_and_returns_its_candidates() {
+        let token = [9u8; 16];
+        let peer: SocketAddr = "198.51.100.7:4000".parse().unwrap();
+        let local: SocketAddr = "10.1.1.1:4001".parse().unwrap();
+        let mut tail = Vec::new();
+        push_addr(&mut tail, peer);
+        tail.push(1);
+        push_addr(&mut tail, local);
+        let (relay, handle) = fake_relay(vec![bound(&token, 0, &[]), bound(&token, 1, &tail)]);
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let candidates = bind_relay(&socket, &route(relay), &[]).unwrap();
+        assert_eq!(candidates, Candidates { reflexive: Some(peer), locals: vec![local] });
+        let binds = handle.join().unwrap();
+        // The first answer ("bound, alone") is noted; the next round's bind gets "both".
+        assert_eq!(binds.len(), 2);
+        assert!(binds.iter().all(|b| b[4] == RELAY_BIND && b[5..21] == token));
+        // The socket is back to blocking without a timeout.
+        assert_eq!(socket.read_timeout().unwrap(), None);
+    }
+
+    #[test]
+    fn bind_relay_ignores_answers_from_other_addresses() {
+        // KNOWN LEAD (features.md, UNVERIFIED, p2p.rs:180): the only check on the
+        // answer's origin is its source address (and the token it echoes). An answer
+        // from another loopback port is ignored; the one from the relay's address
+        // is taken.
+        let token = [9u8; 16];
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let me = socket.local_addr().unwrap();
+        let (relay, handle) = fake_relay(vec![bound(&token, 1, &[])]);
+        let impostor = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut fake = Vec::new();
+        push_addr(&mut fake, "203.0.113.66:1".parse().unwrap());
+        impostor.send_to(&bound(&token, 1, &fake), me).unwrap();
+        // The impostor's answer is queued first; the relay's comes after.
+        let candidates = bind_relay(&socket, &route(relay), &[]).unwrap();
+        assert_eq!(candidates, Candidates::default(), "the relay's empty answer, not the impostor's");
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn bind_relay_gives_up_after_about_15_seconds() {
+        // A relay that never answers.
+        let silent = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let start = std::time::Instant::now();
+        let err = bind_relay(&socket, &route(silent.local_addr().unwrap()), &[]).unwrap_err().to_string();
+        let took = start.elapsed();
+        assert_eq!(err, format!("the relay {} does not answer", silent.local_addr().unwrap()));
+        assert!(took >= Duration::from_secs(14) && took < Duration::from_secs(30), "{took:?}");
+        // 60 binds were sent.
+        silent.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+        let mut n = 0;
+        let mut buf = [0u8; 256];
+        while silent.recv_from(&mut buf).is_ok() {
+            n += 1;
+        }
+        assert_eq!(n, 60);
+    }
+
+    #[test]
+    fn bind_relay_acked_but_alone() {
+        let token = [9u8; 16];
+        let (relay, _handle) = fake_relay(vec![bound(&token, 0, &[])]);
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let err = bind_relay(&socket, &route(relay), &[]).unwrap_err().to_string();
+        assert_eq!(err, "the other device did not bind to the relay");
+    }
+
+    fn any_addr() -> impl Strategy<Value = SocketAddr> {
+        prop_oneof![
+            (any::<[u8; 4]>(), any::<u16>())
+                .prop_map(|(ip, p)| SocketAddr::new(IpAddr::V4(Ipv4Addr::from(ip)), p)),
+            (any::<[u8; 16]>(), any::<u16>())
+                .prop_map(|(ip, p)| SocketAddr::new(IpAddr::V6(Ipv6Addr::from(ip)), p)),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 2000, ..ProptestConfig::default() })]
+
+        #[test]
+        fn parsers_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..200), token in any::<[u8; 16]>()) {
+            let _ = parse_addr(&bytes);
+            let c = parse_candidates(&bytes);
+            prop_assert!(c.locals.len() <= 255);
+            let _ = c.all();
+            let _ = bound_state(&bytes, &token);
+        }
+
+        #[test]
+        fn push_and_parse_round_trip(
+            reflexive in any_addr(),
+            locals in prop::collection::vec(any_addr(), 0..10),
+            tail in prop::collection::vec(any::<u8>(), 0..8),
+        ) {
+            let mut wire = Vec::new();
+            push_addr(&mut wire, reflexive);
+            wire.push(locals.len() as u8);
+            for a in &locals {
+                push_addr(&mut wire, *a);
+            }
+            wire.extend(&tail);
+            let c = parse_candidates(&wire);
+            prop_assert_eq!(c.reflexive, Some(reflexive));
+            prop_assert_eq!(c.locals, locals);
+        }
+
+        #[test]
+        fn bind_messages_keep_at_most_four_locals(locals in prop::collection::vec(any_addr(), 0..10)) {
+            let m = bind_message(&route("192.0.2.1:1".parse().unwrap()), &locals);
+            prop_assert_eq!(m[22] as usize, locals.len().min(4));
+            let mut rest = &m[23..];
+            for a in locals.iter().take(4) {
+                let (got, tail) = parse_addr(rest).unwrap();
+                prop_assert_eq!(got, *a);
+                rest = tail;
+            }
+            prop_assert!(rest.is_empty());
+        }
+    }
+}
