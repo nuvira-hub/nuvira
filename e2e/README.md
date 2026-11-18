@@ -60,3 +60,13 @@ never reported as passed.
   viewers at once, shared session with three guests and the fourth refused, idle
   limit fed by input, churn.
 - `xvfb/...`: see above.
+- `real-desktop/...` (`NUVIRA_E2E_REAL_DESKTOP=1`, only on a test machine whose
+  screen, mouse, keyboard and clipboard may be used: `scripts/run-real-desktop.ps1`
+  in the signed-in session, e.g. through a scheduled task `/it`): the file cases of
+  the Xvfb group with the machine's real capture, and on Windows also the shared
+  clipboard both ways (the clipboard text found before is put back) and input
+  (`MouseMove` read back with `GetCursorPos`, ShiftLeft down/up seen by
+  `GetAsyncKeyState`; no clicks, wheel or characters). On Windows the cases first
+  wake the monitor and keep it on for the case: while it sleeps DXGI gives no
+  frame at all (pinned in `client/capture/tests/screen.rs`) and the session would
+  never get a picture.

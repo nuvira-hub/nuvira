@@ -4,7 +4,9 @@
 # Run it in the signed-in user's session of a test machine whose screen may be
 # used (not over a plain SSH session: there is no desktop to capture there).
 #
-#   powershell -ExecutionPolicy Bypass -File run-real-desktop.ps1 -Machine NAME [-Id MT-0xx]
+#   powershell -ExecutionPolicy Bypass -File run-real-desktop.ps1 -Machine NAME [-Id MT-0xx] [-Repeat n] [filter...]
+#
+# filter...: substring filters of case names after the options (default: every case).
 #
 # Next to this script: e2e.exe (the test binary, built with
 # `cargo test --release --no-run` in e2e/) and nuvira-server.exe (`go build` of
@@ -13,7 +15,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Machine,
     [string]$Id = "MT-E2E-WIN",
-    [int]$Repeat = 5
+    [int]$Repeat = 5,
+    [Parameter(ValueFromRemainingArguments = $true)][string[]]$Filter = @()
 )
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -30,7 +33,7 @@ $env:NUVIRA_E2E_REPEAT = "$Repeat"
 $env:NUVIRA_E2E_RESULT_JSON = "$base.json"
 $env:NUVIRA_E2E_RESULT_ID = $Id
 $env:NUVIRA_E2E_MACHINE = $Machine
-& (Join-Path $here "e2e.exe") *> "$base.log"
+& (Join-Path $here "e2e.exe") @Filter *> "$base.log"
 $code = $LASTEXITCODE
 Write-Host "exit $code; results in $base.json"
 exit $code

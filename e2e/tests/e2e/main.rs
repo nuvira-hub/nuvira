@@ -2,6 +2,8 @@
 //! `nuvira_e2e::runner`). `cargo test --release` runs the default group; each
 //! case is a child process of this binary.
 
+#[cfg(windows)]
+mod desktop;
 mod hosts;
 mod loopback;
 mod server;
@@ -14,6 +16,8 @@ fn cases() -> Vec<Case> {
     v.extend(loopback::cases());
     v.extend(server::cases());
     v.extend(xvfb::cases());
+    #[cfg(windows)]
+    v.extend(desktop::cases());
     v
 }
 

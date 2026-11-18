@@ -14,8 +14,9 @@
 //! - long: with `NUVIRA_E2E_LONG=1`;
 //! - xvfb: Linux with `NUVIRA_E2E_XVFB=1`, under the virtual X server that
 //!   `scripts/run-xvfb.sh` starts;
-//! - real-desktop: the file cases on the machine's real screen capture, with
-//!   `NUVIRA_E2E_REAL_DESKTOP=1` (Windows / macOS test machines: manual entry).
+//! - real-desktop: the file cases on the machine's real screen capture (and on
+//!   Windows clipboard and input), with `NUVIRA_E2E_REAL_DESKTOP=1` (Windows /
+//!   macOS test machines: manual entry).
 //!
 //! Needs:
 //! - `server`: the `nuvira-server` binary: `NUVIRA_BENCH_SERVER_EXE`, else built

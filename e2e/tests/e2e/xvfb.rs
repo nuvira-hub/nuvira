@@ -59,17 +59,24 @@ fn check_xvfb() -> Result<String> {
 }
 
 /// An agent with the real capture of the Xvfb display, and the way to sessions.
-struct Rig {
+pub(crate) struct Rig {
     _art: tokio::runtime::Runtime,
-    vrt: tokio::runtime::Runtime,
+    pub(crate) vrt: tokio::runtime::Runtime,
     agent: LoopbackAgent,
     next_id: u32,
 }
 
 impl Rig {
-    fn start(ctx: &Ctx) -> Result<Rig> {
+    pub(crate) fn start(ctx: &Ctx) -> Result<Rig> {
         if !ctx.name.starts_with("real-desktop/") {
             check_xvfb()?;
+        }
+        // Windows: DXGI gives no frame at all while the monitor sleeps (known,
+        // pinned in client/capture/tests/screen.rs): the display is woken and kept
+        // on for the case, otherwise the session never gets a picture.
+        #[cfg(windows)]
+        if ctx.name.starts_with("real-desktop/") {
+            crate::desktop::keep_display_on(ctx);
         }
         let (art, vrt) = rig::runtimes()?;
         let config = nuvira_bench::net::server_mode::real_capture_config(3000, 30);
@@ -77,13 +84,19 @@ impl Rig {
         Ok(Rig { _art: art, vrt, agent, next_id: 0 })
     }
 
-    async fn session(&self) -> Result<HeadlessSession> {
-        let s = HeadlessViewer::connect_direct(
-            self.agent.addr,
-            Some(self.agent.fingerprint),
-            ViewerOptions::default(),
+    pub(crate) async fn session(&self) -> Result<HeadlessSession> {
+        // The viewer's handshake waits for the video stream, which the agent opens
+        // with its first frame: without a picture it would wait for ever.
+        let s = tokio::time::timeout(
+            Duration::from_secs(60),
+            HeadlessViewer::connect_direct(
+                self.agent.addr,
+                Some(self.agent.fingerprint),
+                ViewerOptions::default(),
+            ),
         )
-        .await?;
+        .await
+        .context("no video stream from the agent in 60 s (no picture captured)")??;
         rig::frames(&s, 5, Duration::from_secs(20)).await.context("no video from the Xvfb capture")?;
         ensure(s.agent.file_manager && s.agent.paste, || format!("agent Hello {:?}", s.agent))?;
         Ok(s)
@@ -95,7 +108,7 @@ impl Rig {
     }
 }
 
-async fn wait_msg<T>(
+pub(crate) async fn wait_msg<T>(
     s: &mut HeadlessSession,
     timeout: Duration,
     mut pred: impl FnMut(&Msg) -> Option<T>,
