@@ -42,7 +42,7 @@ pub async fn receive(
         // Removed on every failure, also when the transfer is stopped half way (files
         // switched off at the PC).
         let mut leftover = RemoveOnDrop(Some(part.clone()));
-        let size = write(tokio::fs::File::from_std(file), first.data, &mut rx).await?;
+        let size = write(tokio::fs::File::from_std(file), first.data, first.size, &mut rx).await?;
         if size != first.size {
             bail!("incomplete file: received {size} bytes out of {}", first.size);
         }
@@ -64,10 +64,24 @@ pub async fn receive(
     result.map(|path| (name.clone(), path)).map_err(|e| (name, e))
 }
 
-async fn write(mut file: tokio::fs::File, first: Vec<u8>, rx: &mut FramedRecv) -> Result<u64> {
+/// Writes the stream into `file`; stops (error) as soon as more than `announced`
+/// bytes arrive, so nothing beyond the size of the file is ever written.
+async fn write(
+    mut file: tokio::fs::File,
+    first: Vec<u8>,
+    announced: u64,
+    rx: &mut FramedRecv,
+) -> Result<u64> {
+    let too_much = || anyhow::anyhow!("more data than announced ({announced} bytes)");
+    if first.len() as u64 > announced {
+        return Err(too_much());
+    }
     file.write_all(&first).await?;
     let mut size = first.len() as u64;
     while let Some(chunk) = rx.recv::<FileChunk>().await? {
+        if size + chunk.data.len() as u64 > announced {
+            return Err(too_much());
+        }
         file.write_all(&chunk.data).await?;
         size += chunk.data.len() as u64;
     }

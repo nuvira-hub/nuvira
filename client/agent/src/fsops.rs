@@ -43,6 +43,10 @@ pub async fn handle(id: u32, op: Option<fs_request::Op>, conn: Connection) -> Fs
                     let file =
                         std::fs::File::open(&path).with_context(|| format!("opening {}", path.display()))?;
                     let size = file.metadata()?.len();
+                    // Answered here, not only in `send`: the viewer gets the error.
+                    if download.offset > size {
+                        bail!("resume point beyond the end of the file");
+                    }
                     Ok((file, size))
                 })
                 .await
@@ -106,6 +110,10 @@ pub async fn receive(first: FileChunk, mut rx: FramedRecv) -> Result<PathBuf> {
     if offset > size {
         bail!("resume point beyond the end of the file");
     }
+    // Nothing beyond the announced size is ever written: the part stays resumable.
+    if offset + first.data.len() as u64 > size {
+        bail!("more data than announced");
+    }
     let file = {
         let part = part.clone();
         as_user(move || {
@@ -126,11 +134,13 @@ pub async fn receive(first: FileChunk, mut rx: FramedRecv) -> Result<PathBuf> {
     file.write_all(&first.data).await?;
     written += first.data.len() as u64;
     while let Some(chunk) = rx.recv::<FileChunk>().await? {
-        file.write_all(&chunk.data).await?;
-        written += chunk.data.len() as u64;
-        if written > size {
+        if written + chunk.data.len() as u64 > size {
+            // What was written stays (flushed), as for an interrupted transfer.
+            file.flush().await?;
             bail!("more data than announced");
         }
+        file.write_all(&chunk.data).await?;
+        written += chunk.data.len() as u64;
     }
     file.flush().await?;
     drop(file);
@@ -425,28 +435,25 @@ mod characterisation {
     }
 
     #[tokio::test]
-    async fn characterises_more_data_than_announced_leaves_an_oversized_part() {
-        // KNOWN BUG (Phase 2): an upload that sends more than its size is refused,
-        // but the `.part` stays with the extra bytes in it (the check is after the
-        // write): a resume then asks for an offset beyond the size and is refused.
-        // The data in the header itself is not checked against the size until the
-        // next chunk or the end. Expected after fix: the part removed (or cut to
-        // `size`) on this error.
+    async fn more_data_than_announced_is_refused_before_writing() {
+        // Was KNOWN BUG K11 (Phase 2): the extra bytes were written to the `.part`
+        // before the check. Fixed (AGT-10): a chunk that would go beyond the size is
+        // refused unwritten; what came before stays, flushed, so a resume still works.
         let dir = temp("oversized");
         let err = upload(header(&dir, "o.txt", 3, 0, b"ab"), &[b"cdef"]).await.unwrap_err().to_string();
         assert_eq!(err, "more data than announced");
-        // The error returns without flushing the tokio file: its last write may still
-        // be under way on the blocking pool (seen on Linux), so wait for it.
-        let part = dir.join("o.txt.part");
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while std::fs::read(&part).map(|d| d.len()).unwrap_or(0) < 6 && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert_eq!(std::fs::read(&part).unwrap(), b"abcdef");
-        // All in the header: noticed at the end, as "interrupted" with more than the size.
+        assert_eq!(std::fs::read(dir.join("o.txt.part")).unwrap(), b"ab");
+        let path = upload(header(&dir, "o.txt", 3, 2, b"c"), &[]).await.unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), b"abc");
+        // All in the header: refused before anything is created.
         let err = upload(header(&dir, "p.txt", 1, 0, b"abc"), &[]).await.unwrap_err().to_string();
-        assert_eq!(err, "interrupted at 3 bytes out of 1");
-        assert_eq!(std::fs::read(dir.join("p.txt.part")).unwrap(), b"abc");
+        assert_eq!(err, "more data than announced");
+        assert!(!dir.join("p.txt.part").exists());
+        // Also from a resume point.
+        std::fs::write(dir.join("q.txt.part"), b"ab").unwrap();
+        let err = upload(header(&dir, "q.txt", 3, 2, b"cd"), &[]).await.unwrap_err().to_string();
+        assert_eq!(err, "more data than announced");
+        assert_eq!(std::fs::read(dir.join("q.txt.part")).unwrap(), b"ab");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -511,16 +518,14 @@ mod characterisation {
     }
 
     #[tokio::test]
-    async fn characterises_download_offset_beyond_the_end_answers_ok_and_sends_nothing() {
-        // KNOWN BUG (Phase 2): the resume point is checked in the spawned `send`,
-        // after `handle` has already answered with no error: the viewer gets an OK
-        // response and then no stream at all (the error goes only to the agent's
-        // log). Expected after fix: the error in the response.
+    async fn download_offset_beyond_the_end_is_an_error_answer() {
+        // Was KNOWN BUG K10 (Phase 2): `handle` answered OK and the spawned `send`
+        // failed silently. Fixed (AGT-10): the error is in the response, no stream.
         let dir = temp("download-beyond");
         let file = dir.join("d.bin");
         std::fs::write(&file, b"12345").unwrap();
         let (response, got) = download(&file, 6).await;
-        assert_eq!(response.error, "");
+        assert_eq!(response.error, "resume point beyond the end of the file");
         assert!(got.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
