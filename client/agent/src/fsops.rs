@@ -234,28 +234,32 @@ fn known_folders() -> Vec<PathBuf> {
 /// Runs `f` on a blocking thread as the user signed in on the session (agent =
 /// SYSTEM), or as is (agent = that user).
 pub(crate) async fn as_user<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
-    tokio::task::spawn_blocking(move || {
-        #[cfg(windows)]
-        {
-            use windows::Win32::Foundation::CloseHandle;
-            use windows::Win32::Security::{ImpersonateLoggedOnUser, RevertToSelf};
+    tokio::task::spawn_blocking(move || run_as_user(f)).await?
+}
 
-            let Some(token) = crate::files::session_user_token()? else { return f() };
-            let impersonated = unsafe { ImpersonateLoggedOnUser(token) };
-            let result = match impersonated {
-                Ok(()) => f(),
-                Err(e) => Err(e).context("acting as the signed-in user"),
-            };
-            unsafe {
-                let _ = RevertToSelf();
-                let _ = CloseHandle(token);
-            }
-            result
+/// Runs `f` on the calling thread as the user signed in on the session (agent =
+/// SYSTEM), or as is (agent = that user); the thread is reverted to the agent's own
+/// identity afterwards. For short steps that cannot wait (e.g. in a `Drop`).
+pub(crate) fn run_as_user<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::Security::{ImpersonateLoggedOnUser, RevertToSelf};
+
+        let Some(token) = crate::files::session_user_token()? else { return f() };
+        let impersonated = unsafe { ImpersonateLoggedOnUser(token) };
+        let result = match impersonated {
+            Ok(()) => f(),
+            Err(e) => Err(e).context("acting as the signed-in user"),
+        };
+        unsafe {
+            let _ = RevertToSelf();
+            let _ = CloseHandle(token);
         }
-        #[cfg(not(windows))]
-        f()
-    })
-    .await?
+        result
+    }
+    #[cfg(not(windows))]
+    f()
 }
 
 /// Reads the whole rest of `file` (tests).
@@ -453,7 +457,8 @@ mod characterisation {
         assert_eq!((response.id, response.error.as_str()), (3, "empty request"));
         let dir = temp("missing-list");
         let missing = dir.join("nope");
-        let response = handle(4, Some(fs_request::Op::List(missing.to_string_lossy().into_owned())), client).await;
+        let response =
+            handle(4, Some(fs_request::Op::List(missing.to_string_lossy().into_owned())), client).await;
         assert!(response.error.starts_with("reading "), "{}", response.error);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -485,7 +490,10 @@ mod characterisation {
         let (response, got) = download(&file, 0).await;
         assert_eq!((response.id, response.error.as_str()), (9, ""));
         let (first, data) = got.unwrap();
-        assert_eq!((first.name.as_str(), first.size, first.offset, first.transfer_id), ("d.bin", 600_000, 0, 9));
+        assert_eq!(
+            (first.name.as_str(), first.size, first.offset, first.transfer_id),
+            ("d.bin", 600_000, 0, 9)
+        );
         assert_eq!(data, content);
         // From an offset: the total size in the header, the data from there.
         let (_, got) = download(&file, 599_990).await;

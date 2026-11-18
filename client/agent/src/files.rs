@@ -2,7 +2,8 @@
 //!
 //! Files end up in the Downloads folder of the user signed in on the PC, also
 //! when the agent is the service's (SYSTEM): the folder is derived from the token
-//! of the session's user. `name.part` is written first and renamed once the file
+//! of the session's user, and every step on that folder (create, write, rename,
+//! delete) runs as that user, never as SYSTEM (see `fsops::as_user`). `name.part` is written first and renamed once the file
 //! is complete; if the name exists " (1)", " (2)"… is added.
 
 use std::path::{Path, PathBuf};
@@ -13,6 +14,8 @@ use nuvira_transport::FramedRecv;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
+use crate::fsops::as_user;
+
 /// Receives a file from the stream; returns its name and final path.
 /// Saves the file of a stream whose first chunk (`first`, with name and size) was already read.
 pub async fn receive(
@@ -22,25 +25,37 @@ pub async fn receive(
     let name = safe_name(&first.name);
     let result = async {
         let dir = downloads_dir()?;
-        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
         let part = dir.join(format!("{name}.part"));
-        // Also when the transfer is stopped half way (files switched off at the PC).
-        let mut leftover = RemoveOnDrop(Some(part.clone()));
-        let written = write(&part, first.data, &mut rx).await;
-        let size = match written {
-            Ok(size) => size,
-            Err(e) => {
-                let _ = std::fs::remove_file(&part);
-                return Err(e);
-            }
+        // Every step on the folder runs as the signed-in user (`as_user`), as in the
+        // file manager: the folder comes from the user's profile, which that user
+        // controls (it can be a junction to a folder only SYSTEM may write), so the
+        // service's agent (SYSTEM) must never create, rename or delete there itself.
+        // The handle opened as the user is then written as is.
+        let file = {
+            let (dir, part) = (dir.clone(), part.clone());
+            as_user(move || {
+                std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+                std::fs::File::create(&part).with_context(|| format!("creating {}", part.display()))
+            })
+            .await?
         };
+        // Removed on every failure, also when the transfer is stopped half way (files
+        // switched off at the PC).
+        let mut leftover = RemoveOnDrop(Some(part.clone()));
+        let size = write(tokio::fs::File::from_std(file), first.data, &mut rx).await?;
         if size != first.size {
-            let _ = std::fs::remove_file(&part);
             bail!("incomplete file: received {size} bytes out of {}", first.size);
         }
-        let target = unique_path(&dir, &name);
         leftover.0 = None;
-        std::fs::rename(&part, &target).with_context(|| format!("saving {}", target.display()))?;
+        let target = {
+            let name = name.clone();
+            as_user(move || {
+                let target = unique_path(&dir, &name);
+                std::fs::rename(&part, &target).with_context(|| format!("saving {}", target.display()))?;
+                Ok(target)
+            })
+            .await?
+        };
         info!("file received: {} ({size} bytes)", target.display());
         crate::stats::file_in(size);
         Ok(target)
@@ -49,9 +64,7 @@ pub async fn receive(
     result.map(|path| (name.clone(), path)).map_err(|e| (name, e))
 }
 
-async fn write(path: &Path, first: Vec<u8>, rx: &mut FramedRecv) -> Result<u64> {
-    let mut file =
-        tokio::fs::File::create(path).await.with_context(|| format!("creating {}", path.display()))?;
+async fn write(mut file: tokio::fs::File, first: Vec<u8>, rx: &mut FramedRecv) -> Result<u64> {
     file.write_all(&first).await?;
     let mut size = first.len() as u64;
     while let Some(chunk) = rx.recv::<FileChunk>().await? {
@@ -192,7 +205,8 @@ struct RemoveOnDrop(Option<PathBuf>);
 impl Drop for RemoveOnDrop {
     fn drop(&mut self) {
         if let Some(path) = self.0.take() {
-            let _ = std::fs::remove_file(path);
+            // As the user, like every other step on the folder (see `receive`).
+            let _ = crate::fsops::run_as_user(|| Ok(std::fs::remove_file(&path)?));
         }
     }
 }
