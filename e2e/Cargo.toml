@@ -1,0 +1,47 @@
+# End-to-end characterisation tests of whole sessions (full review, Phase 2):
+# the real agent (synthetic source), the real nuvira-server (built from ../server)
+# and the bench's headless viewer, all on 127.0.0.1. See README.md.
+#
+# Its own workspace, like bench/: the root Cargo.toml is not touched and the same
+# folder builds against the tag baseline-pre-review plus bench/ (public APIs
+# only). Cargo.lock starts as a copy of the root lock, so third-party versions are
+# the tree's.
+[package]
+name = "nuvira-e2e"
+description = "NuviraHub end-to-end session tests (loopback)"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[workspace]
+
+[lib]
+name = "nuvira_e2e"
+path = "src/lib.rs"
+
+# One test binary with its own runner (no libtest): every case runs in a child
+# process of its own (process-wide environment such as NUVIRA_FORCE_RELAY and
+# NUVIRA_DATA_DIR, the agent's global counters, and processes that can be killed).
+[[test]]
+name = "e2e"
+path = "tests/e2e/main.rs"
+harness = false
+
+[dependencies]
+nuvira-bench = { path = "../bench" }
+nuvira-proto = { path = "../client/proto" }
+nuvira-transport = { path = "../client/transport" }
+nuvira-agent = { path = "../client/agent" }
+nuvira-secret = { path = "../client/secret" }
+
+anyhow = "1"
+prost = "0.14"
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net", "fs", "process"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
