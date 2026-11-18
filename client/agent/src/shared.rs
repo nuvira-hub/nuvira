@@ -286,18 +286,7 @@ pub async fn guest_session(
 ) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
     let mut ctrl_rx = FramedRecv::new(recv);
-    let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = ctrl_rx.recv().await? else {
-        bail!("the viewer did not introduce itself");
-    };
-    info!(
-        device = hello.device_name,
-        os = hello.os,
-        version = hello.app_version,
-        "viewer joining the session in progress"
-    );
-    if hello.protocol_version < nuvira_proto::MIN_PROTOCOL_VERSION {
-        bail!("viewer protocol version not supported: {}", hello.protocol_version);
-    }
+    let hello = crate::read_hello(&mut ctrl_rx, "viewer joining the session in progress").await?;
     let policy = gate.policy();
     let Some(shared) = gate.ctx.shared.lock().expect("shared").clone() else {
         bail!("@agent.busy");
@@ -311,10 +300,7 @@ pub async fn guest_session(
     let cursor_cache = cursor && hello.cursor_cache;
     let answer = Hello { password_required: true, text: input, audio, cursor, cursor_cache, ..local_hello() };
     ctrl_tx.send(&control(Msg::Hello(answer))).await?;
-    let given = match ctrl_rx.recv::<ControlMessage>().await? {
-        Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
-        _ => bail!("the viewer did not send the password"),
-    };
+    let given = crate::read_auth(&mut ctrl_rx).await?;
     // Only the first viewer has a terminal; a recording required by the rules cannot
     // be made by a guest.
     let refused = if hello.terminal_only {

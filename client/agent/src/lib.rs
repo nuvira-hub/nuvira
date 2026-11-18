@@ -1533,6 +1533,28 @@ pub async fn serve_reverse(endpoint: quinn::Endpoint, config: AgentConfig, rever
     }
 }
 
+/// The viewer's Hello, the first message on the control stream (logged as `what`),
+/// of a protocol version this agent still serves. Shared by [`run_session`] and
+/// [`shared::guest_session`].
+async fn read_hello(ctrl_rx: &mut FramedRecv, what: &str) -> Result<Hello> {
+    let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = ctrl_rx.recv().await? else {
+        bail!("the viewer did not introduce itself");
+    };
+    info!(device = hello.device_name, os = hello.os, version = hello.app_version, "{what}");
+    if hello.protocol_version < nuvira_proto::MIN_PROTOCOL_VERSION {
+        bail!("viewer protocol version not supported: {}", hello.protocol_version);
+    }
+    Ok(hello)
+}
+
+/// The viewer's first `Auth`, right after the agent's Hello.
+async fn read_auth(ctrl_rx: &mut FramedRecv) -> Result<Auth> {
+    match ctrl_rx.recv::<ControlMessage>().await? {
+        Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => Ok(auth),
+        _ => bail!("the viewer did not send the password"),
+    }
+}
+
 /// [`run_session`], ending its statistics log (if any) with the reason it ended.
 async fn session(
     conn: Connection,
@@ -1568,13 +1590,7 @@ async fn run_session(
     // What the person at the PC switches off during the session.
     let (switches, off) = switches::channel();
 
-    let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = ctrl_rx.recv().await? else {
-        bail!("the viewer did not introduce itself");
-    };
-    info!(device = hello.device_name, os = hello.os, version = hello.app_version, "viewer");
-    if hello.protocol_version < nuvira_proto::MIN_PROTOCOL_VERSION {
-        bail!("viewer protocol version not supported: {}", hello.protocol_version);
-    }
+    let hello = read_hello(&mut ctrl_rx, "viewer").await?;
     let viewer_protocol = hello.protocol_version;
     let terminal_only = hello.terminal_only;
     // The server's rules want every session recorded: by the viewer, which must be able to.
@@ -1770,10 +1786,7 @@ async fn run_session(
     let (switch_tx, mut switch_rx) = mpsc::unbounded_channel::<nuvira_proto::v1::SwitchSides>();
     ctrl_tx.send(&control(Msg::Hello(hello))).await?;
     if let Some(gate) = gate {
-        let given = match ctrl_rx.recv::<ControlMessage>().await? {
-            Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
-            _ => bail!("the viewer did not send the password"),
-        };
+        let given = read_auth(&mut ctrl_rx).await?;
         // A viewer that does not record cannot work here (older ones, the web client).
         if recording_required && !viewer_records {
             let message = "@agent.recording_required".to_string();
@@ -1811,10 +1824,7 @@ async fn run_session(
             switches.set_offered(offered);
         }
     } else if let Some(reverse) = reverse {
-        let given = match ctrl_rx.recv::<ControlMessage>().await? {
-            Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
-            _ => bail!("the viewer did not send the password"),
-        };
+        let given = read_auth(&mut ctrl_rx).await?;
         let ok = same_secret(&given.password, &reverse.password);
         let message = if ok { String::new() } else { WRONG_PASSWORD.to_string() };
         ctrl_tx.send(&control(Msg::AuthResult(AuthResult { ok, message }))).await?;
