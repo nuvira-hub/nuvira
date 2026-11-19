@@ -393,8 +393,10 @@ func (s *Server) setOffline(c *client) {
 	if gone {
 		delete(s.online, c.device.ID)
 	}
-	_ = s.store.Touch(c.device.ID)
 	s.mu.Unlock()
+	// Outside s.mu: the database write can wait behind other queries (one pool
+	// connection), and every connect, take and presence call needs s.mu.
+	_ = s.store.Touch(c.device.ID)
 	if gone {
 		for _, d := range s.supportDesks() {
 			d.DeviceOffline(c.device.ID)
