@@ -997,6 +997,62 @@ mod tests {
         assert_eq!((yuv.width, yuv.height), (w, h));
     }
 
+    /// GPU textures larger than the MFT takes (PC-LABORATORIO's HD 2500 refuses
+    /// 2560x1440 and 3840x2160): the first frame is refused and lowers the limit,
+    /// the next ones, asked at the size the pipeline then computes, are encoded on
+    /// the GPU. An MFT that takes the size just encodes it. Needs a hardware MFT.
+    #[test]
+    fn texture_beyond_the_limit_gets_a_smaller_size() {
+        let Ok(device) = crate::gpu::create_device() else {
+            eprintln!("no D3D11 device: skipped");
+            return;
+        };
+        for (w, h) in [(2560u32, 1440u32), (3840, 2160)] {
+            let opened = MfEncoder::with_device(EncoderSettings::default(), GpuDevice(device.clone()));
+            let mut enc = match opened {
+                Ok(enc) => enc,
+                Err(e) => {
+                    eprintln!("no hardware encoder ({e:#}): skipped");
+                    return;
+                }
+            };
+            let data = vec![0x80u8; (w * h * 4) as usize];
+            let texture = GpuTexture(crate::gpu::upload_bgra(&device, w, h, &data).unwrap());
+            let mut decoder = crate::OpenH264Decoder::new().unwrap();
+            let mut decoded = None;
+            let mut refusals = 0;
+            for _ in 0..60 {
+                let size = crate::encoded_size(w, h, (0, 0), enc.max_size());
+                match enc.encode_texture(&texture, (w, h), size, true) {
+                    Ok(Some(frame)) => {
+                        if let Some(yuv) = crate::VideoDecoder::decode(&mut decoder, &frame.data).unwrap() {
+                            decoded = Some((yuv.width, yuv.height));
+                            break;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        refusals += 1;
+                        eprintln!("{w}x{h} at {}x{}: {e:#}", size.0, size.1);
+                        assert!(refusals <= SIZE_STEPS.len(), "still refused: {e:#}");
+                    }
+                }
+            }
+            let decoded = decoded.expect("no picture");
+            eprintln!(
+                "{w}x{h} -> encoded {}x{} by {} after {refusals} refusals",
+                decoded.0,
+                decoded.1,
+                enc.name()
+            );
+            assert!(enc.fallback.is_none(), "went over to OpenH264");
+            assert!(enc.max_size().fits(decoded.0, decoded.1));
+            if refusals == 0 {
+                assert_eq!(decoded, (w, h));
+            }
+        }
+    }
+
     #[test]
     fn finds_sps() {
         assert!(has_sps(&[0, 0, 0, 1, 0x67, 1, 2]));
