@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"context"
 	"net/netip"
 	"strings"
 	"sync"
@@ -108,6 +109,59 @@ func (l *limiter) prune(now time.Time) {
 			delete(l.buckets, k)
 		}
 	}
+}
+
+// Devices registered and never seen again (a key used once, as in a flood of
+// Register from fresh keys) are removed after pruneAge: the row of a device
+// whose whole life was within pruneLife of its registration, with no alias and
+// not mentioned by a module's table (store.PruneUnused). Such a device coming
+// back gets a new ID.
+const (
+	pruneAge   = 30 * 24 * time.Hour
+	pruneLife  = 10 * time.Minute
+	pruneEvery = 6 * time.Hour
+	pruneBatch = 500
+)
+
+// Pause between two batches of pruneDevices (a variable: shorter in tests).
+var pruneYield = 100 * time.Millisecond
+
+// pruneLoop runs pruneDevices a minute after the start, then every pruneEvery.
+func (s *Server) pruneLoop(ctx context.Context) {
+	t := time.NewTimer(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			s.pruneDevices(ctx, now)
+			t.Reset(pruneEvery)
+		}
+	}
+}
+
+// pruneDevices removes the devices never seen again, in batches (the database
+// has one connection: others get their turn between batches).
+func (s *Server) pruneDevices(ctx context.Context, now time.Time) int {
+	total, after := 0, ""
+	for ctx.Err() == nil {
+		n, next, err := s.store.PruneUnused(now.Add(-pruneAge), pruneLife, s.Online, after, pruneBatch)
+		if err != nil {
+			s.log.Warn("devices never seen again not removed", "err", err)
+			break
+		}
+		total += n
+		if next == "" {
+			break
+		}
+		after = next
+		time.Sleep(pruneYield)
+	}
+	if total > 0 {
+		s.log.Info("devices registered and never seen again removed", "count", total, "older than", pruneAge)
+	}
+	return total
 }
 
 // blocklist is the in-memory copy of the blocks.

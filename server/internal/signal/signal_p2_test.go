@@ -622,3 +622,31 @@ func TestNewDevicesPerAddressBudget(t *testing.T) {
 		t.Fatal("/48 not shared")
 	}
 }
+
+// SRV-8 pruning: a device registered long ago whose only connection was short
+// is removed, unless it is connected now (its last access is written only at
+// the disconnection).
+func TestPruneDevicesKeepsOnlineDevices(t *testing.T) {
+	ts := startServer(t)
+	old := time.Now().Add(-pruneAge - time.Hour).Unix()
+	on := ts.device(t, "connected for a month")
+	ts.waitOnline(t, on.id, true)
+	off := ts.device(t, "used once")
+	_ = off.conn.CloseWithError(0, "")
+	ts.waitOnline(t, off.id, false)
+	time.Sleep(200 * time.Millisecond) // setOffline's Touch
+	for _, id := range []string{on.id, off.id} {
+		if _, err := ts.store.DB().Exec(`UPDATE devices SET created_at = ?, last_seen = ? WHERE id = ?`, old, old, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := ts.srv.pruneDevices(context.Background(), time.Now()); n != 1 {
+		t.Fatalf("removed %d", n)
+	}
+	if d, _ := ts.store.ByID(off.id); d != nil {
+		t.Fatal("device used once kept")
+	}
+	if d, _ := ts.store.ByID(on.id); d == nil {
+		t.Fatal("connected device removed")
+	}
+}

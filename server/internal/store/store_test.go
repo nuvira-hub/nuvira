@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRegisterKeepsID(t *testing.T) {
@@ -191,5 +192,90 @@ func TestRegisterWithNewDeviceBudget(t *testing.T) {
 	d, err := s.RegisterWith(bytes.Repeat([]byte{1}, 32), "a2", "linux", no)
 	if err != nil || d.ID != known.ID || asked != 1 {
 		t.Fatalf("known key: %v %v, asked %d", d, err, asked)
+	}
+}
+
+// PruneUnused removes only the devices registered and never seen again, not
+// those with an alias, a longer life, a recent registration, kept by the
+// caller or mentioned by another table; it goes through every candidate in
+// batches, and a pruned key registers again as a new device.
+func TestPruneUnused(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "nuvira.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.DB().Exec(`CREATE TABLE entries (book_id INTEGER, device_id TEXT);
+		CREATE TABLE session_log (agent_id TEXT, viewer_id TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	old := now.Add(-40 * 24 * time.Hour).Unix()
+	devs := map[string]string{}
+	add := func(name string, created, life int64) string {
+		d, err := s.Register(bytes.Repeat([]byte{byte(len(devs) + 1)}, 32), name, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DB().Exec(`UPDATE devices SET created_at = ?, last_seen = ? WHERE id = ?`, created, created+life, d.ID); err != nil {
+			t.Fatal(err)
+		}
+		devs[name] = d.ID
+		return d.ID
+	}
+	gone := []string{add("unused1", old, 0), add("unused2", old, 60), add("unused3", old, 599), add("unused4", old, 1)}
+	add("long", old, 7200)
+	add("recent", now.Add(-5*24*time.Hour).Unix(), 0)
+	alias := add("alias", old, 0)
+	if _, err := s.SetAlias(alias, "my-pc"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE devices SET last_seen = created_at WHERE id = ?`, alias); err != nil {
+		t.Fatal(err)
+	}
+	inBook := add("in-book", old, 0)
+	asAgent := add("as-agent", old, 0)
+	asViewer := add("as-viewer", old, 0)
+	online := add("online", old, 0)
+	_, _ = s.DB().Exec(`INSERT INTO entries VALUES (1, ?)`, inBook)
+	_, _ = s.DB().Exec(`INSERT INTO session_log VALUES (?, ''), ('', ?)`, asAgent, asViewer)
+
+	keep := func(id string) bool { return id == online }
+	removed, after, batches := 0, "", 0
+	for {
+		n, next, err := s.PruneUnused(now.Add(-30*24*time.Hour), 10*time.Minute, keep, after, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		removed += n
+		batches++
+		if next == "" {
+			break
+		}
+		after = next
+	}
+	if removed != len(gone) || batches < 4 {
+		t.Fatalf("removed %d in %d batches", removed, batches)
+	}
+	for name, id := range devs {
+		d, err := s.ByID(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		isGone := false
+		for _, g := range gone {
+			isGone = isGone || g == id
+		}
+		if (d == nil) != isGone {
+			t.Errorf("%s: present %v", name, d != nil)
+		}
+	}
+	// The key of a pruned device registers again, with a new row.
+	d, err := s.Register(bytes.Repeat([]byte{1}, 32), "unused1", "test")
+	if err != nil || d == nil {
+		t.Fatal(err)
+	}
+	if again, _ := s.ByID(d.ID); again == nil {
+		t.Fatal("no row for the device registered again")
 	}
 }

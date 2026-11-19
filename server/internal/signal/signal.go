@@ -193,6 +193,7 @@ func (s *Server) Serve(ctx context.Context, ln *quic.Listener) error {
 	s.reloadBlocks()
 	go s.expireLoop(ctx)
 	go s.blocksLoop(ctx)
+	go s.pruneLoop(ctx)
 	for {
 		conn, err := ln.Accept(ctx)
 		if err != nil {
