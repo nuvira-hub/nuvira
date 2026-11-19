@@ -343,12 +343,30 @@ impl SceneGen {
     }
 }
 
-/// S6 sizes: base, 4/3 of it, 2/3 of it, base (1080p: 1440p, 720p, 1080p).
+/// S6 sizes: base, 4/3 of it, 2/3 of it, base (1080p: 1440p, 720p, 1080p). The big
+/// one is capped as the agent caps what it encodes (VID-3): at a 4K base
+/// 4096x2304, not 5120x2880, which the agent never gives an encoder.
 pub fn resize_sizes(w: u32, h: u32) -> [(u32, u32); 4] {
     let (w, h) = (w as usize, h as usize);
-    let big = (even(w * 4 / 3) as u32, even(h * 4 / 3) as u32);
+    let big = agent_cap(even(w * 4 / 3) as u32, even(h * 4 / 3) as u32);
     let small = (even(w * 2 / 3) as u32, even(h * 2 / 3) as u32);
     [(w as u32, h as u32), big, small, (w as u32, h as u32)]
+}
+
+/// The agent's cap on the encoded size with the hardware encoders' default limit
+/// (`nuvira_codec::encoded_size` with `SizeLimit::DEFAULT`: 4096 on a side, H.264
+/// level 5.1's area), written out here because side A of a comparison (the
+/// baseline) builds this bench/ folder against code that does not export it.
+fn agent_cap(width: u32, height: u32) -> (u32, u32) {
+    const SIDE: f64 = 4096.0;
+    const AREA: f64 = 36_864.0 * 256.0;
+    let (w, h) = (f64::from(width), f64::from(height));
+    let scale = (SIDE / w.max(h)).min((AREA / (w * h)).sqrt());
+    if scale >= 1.0 {
+        return (width, height);
+    }
+    let fit = |n: u32| ((f64::from(n) * scale).round() as u32) & !1;
+    (fit(width), fit(height))
 }
 
 // --- S2 terminal ------------------------------------------------------------

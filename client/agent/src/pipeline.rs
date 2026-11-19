@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use nuvira_capture::{Capturer, Display};
-use nuvira_codec::{BgraImage, GpuDevice, VideoEncoder};
+use nuvira_codec::{BgraImage, GpuDevice, SizeLimit, VideoEncoder};
 use nuvira_proto::v1::VideoFrame;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -230,31 +230,13 @@ pub fn pack_view(width: u32, height: u32) -> u64 {
     ((width as u64) << 32) | height as u64
 }
 
-/// The largest picture the encoders take: H.264 level 5.1 (36 864 macroblocks,
-/// 4096x2304) and 4096 on a side, the hardware encoders' limit. All the screens
-/// side by side go beyond it (two 4K screens, or a Mac's screens at the Retina
-/// scale: 6400x2160 was refused by VideoToolbox, which then failed every frame).
-const MAX_SIDE: u32 = 4096;
-const MAX_AREA: u64 = 36_864 * 256;
-
 /// Size at which a `width`x`height` screen is encoded for a viewer area `view`
-/// (packed, 0 = full size): reduced to fit the area and what the encoders take
-/// ([`MAX_SIDE`], [`MAX_AREA`]), aspect kept, even sizes; never larger than the
-/// screen.
-pub fn encoded_size(width: u32, height: u32, view: u64) -> (u32, u32) {
-    let (vw, vh) = ((view >> 32) as u32, view as u32);
-    let limit = (f64::from(MAX_SIDE) / f64::from(width.max(1)))
-        .min(f64::from(MAX_SIDE) / f64::from(height.max(1)))
-        .min((MAX_AREA as f64 / (f64::from(width) * f64::from(height)).max(1.0)).sqrt());
-    if (vw == 0 || vh == 0 || (vw >= width && vh >= height)) && limit >= 1.0 {
-        return (width, height);
-    }
-    let mut scale = limit.min(1.0);
-    if vw > 0 && vh > 0 {
-        scale = scale.min(vw as f64 / width as f64).min(vh as f64 / height as f64);
-    }
-    let fit = |n: u32| (((n as f64 * scale).round() as u32) & !1).max(64).min(n);
-    (fit(width), fit(height))
+/// (packed, 0 = full size) by an encoder that takes up to `limit`
+/// ([`VideoEncoder::max_size`]: OpenH264 stops at 3840x2160, the hardware
+/// encoders at 4096): reduced to fit both, aspect kept, even sizes; never larger
+/// than the screen.
+pub fn encoded_size(width: u32, height: u32, view: u64, limit: SizeLimit) -> (u32, u32) {
+    nuvira_codec::encoded_size(width, height, ((view >> 32) as u32, view as u32), limit)
 }
 
 /// macOS gives an ordinary thread's timers a leeway of about half the time asked
@@ -319,13 +301,17 @@ fn encode_loop(
     let mut stats = Stats::default();
     // Frames left to refine a still screen (see REFINE_FRAMES).
     let mut refine_left = 0u32;
+    // Encoding errors in a row (see `Failures`).
+    let mut failures = Failures::default();
 
     while !shared.stop.load(Ordering::Relaxed) {
         // Frames-per-second limit: meanwhile the slot is updated with the most recent image.
         let t_loop = Instant::now();
         let min_interval = Duration::from_secs(1) / max_fps.load(Ordering::Relaxed).max(1);
         let wait = min_interval.saturating_sub(last_encoded.elapsed());
-        if !wait.is_zero() && !keyframe.load(Ordering::Relaxed) {
+        // A pending keyframe goes out at once, unless encoding is failing: then the
+        // pace is kept, or a failing encoder would be retried at full speed (VID-M1).
+        if !wait.is_zero() && (!keyframe.load(Ordering::Relaxed) || failures.failing()) {
             std::thread::sleep(wait);
         }
 
@@ -394,7 +380,7 @@ fn encode_loop(
             continue;
         }
         let Some(image) = &last else { continue };
-        let size = encoded_size(image.width, image.height, applied_view);
+        let size = encoded_size(image.width, image.height, applied_view, encoder.max_size());
         if size != encoded_at {
             info!("encoding {}x{} at {}x{}", image.width, image.height, size.0, size.1);
             encoded_at = size;
@@ -504,10 +490,13 @@ fn encode_loop(
             Ok(Some(e)) => e,
             Ok(None) => continue,
             Err(e) => {
-                warn!("encoding failed: {e:#}");
+                failures.failed(&e);
+                // Retried at the frame rate, not at once.
+                last_encoded = t;
                 continue;
             }
         };
+        failures.recovered();
         // The pace is measured from the start of encoding, not from its end.
         last_encoded = t;
         if !std::mem::replace(&mut first_encoded, true) {
@@ -546,6 +535,45 @@ fn encode_loop(
             break;
         }
         stats.report(shared);
+    }
+}
+
+/// Encoding errors in a row: the first is logged, then one summary every
+/// [`Failures::EVERY`] while they go on (a failing encoder used to log one per frame).
+#[derive(Default)]
+struct Failures {
+    count: u64,
+    unlogged: u64,
+    logged_at: Option<Instant>,
+}
+
+impl Failures {
+    const EVERY: Duration = Duration::from_secs(5);
+
+    fn failing(&self) -> bool {
+        self.count > 0
+    }
+
+    fn failed(&mut self, e: &anyhow::Error) {
+        self.count += 1;
+        match self.logged_at {
+            Some(at) if at.elapsed() < Self::EVERY => self.unlogged += 1,
+            Some(_) => {
+                warn!("encoding failed {} more times, last: {e:#}", self.unlogged + 1);
+                (self.unlogged, self.logged_at) = (0, Some(Instant::now()));
+            }
+            None => {
+                warn!("encoding failed: {e:#}");
+                self.logged_at = Some(Instant::now());
+            }
+        }
+    }
+
+    fn recovered(&mut self) {
+        if self.count > 0 {
+            info!("encoding works again after {} failed frames", self.count);
+            *self = Self::default();
+        }
     }
 }
 
@@ -621,23 +649,177 @@ mod tests {
 
     #[test]
     fn sizes() {
-        assert_eq!(encoded_size(1920, 1080, 0), (1920, 1080));
-        assert_eq!(encoded_size(1920, 1080, pack_view(2560, 1440)), (1920, 1080));
-        assert_eq!(encoded_size(1920, 1080, pack_view(1280, 720)), (1280, 720));
+        // The hardware encoders' limit (4096 on a side, level 5.1's area).
+        let hw = |w, h, view| encoded_size(w, h, view, SizeLimit::DEFAULT);
+        assert_eq!(hw(1920, 1080, 0), (1920, 1080));
+        assert_eq!(hw(1920, 1080, pack_view(2560, 1440)), (1920, 1080));
+        assert_eq!(hw(1920, 1080, pack_view(1280, 720)), (1280, 720));
         // Narrow window: the width decides, the aspect stays.
-        assert_eq!(encoded_size(1920, 1080, pack_view(960, 1000)), (960, 540));
-        assert_eq!(encoded_size(3840, 2160, pack_view(1500, 900)), (1500, 844));
+        assert_eq!(hw(1920, 1080, pack_view(960, 1000)), (960, 540));
+        assert_eq!(hw(3840, 2160, pack_view(1500, 900)), (1500, 844));
         // Odd sizes become even, and never below 64.
-        assert_eq!(encoded_size(1920, 1080, pack_view(1001, 2000)), (1000, 562));
-        assert_eq!(encoded_size(1920, 1080, pack_view(10, 10)), (64, 64));
+        assert_eq!(hw(1920, 1080, pack_view(1001, 2000)), (1000, 562));
+        assert_eq!(hw(1920, 1080, pack_view(10, 10)), (64, 64));
         // Beyond what the encoders take: all the screens of a Mac at the Retina
         // scale, two 4K screens side by side.
-        assert_eq!(encoded_size(6400, 2160, 0), (4096, 1382));
-        assert_eq!(encoded_size(7680, 2160, 0), (4096, 1152));
-        assert_eq!(encoded_size(6400, 2160, pack_view(1212, 682)), (1212, 408));
+        assert_eq!(hw(6400, 2160, 0), (4096, 1382));
+        assert_eq!(hw(7680, 2160, 0), (4096, 1152));
+        assert_eq!(hw(6400, 2160, pack_view(1212, 682)), (1212, 408));
         // Within them: unchanged.
-        assert_eq!(encoded_size(4096, 2304, 0), (4096, 2304));
-        assert_eq!(encoded_size(3840, 2160, 0), (3840, 2160));
+        assert_eq!(hw(4096, 2304, 0), (4096, 2304));
+        assert_eq!(hw(3840, 2160, 0), (3840, 2160));
+
+        // OpenH264 (VID-1): 3840 on the long side, 2160 on the short one. These
+        // sizes were encoded at 4096 wide before, which OpenH264 refuses at every
+        // frame (no picture at all).
+        let sw = |w, h, view| encoded_size(w, h, view, SizeLimit::OPENH264);
+        assert_eq!(sw(3840, 2160, 0), (3840, 2160));
+        assert_eq!(sw(2160, 3840, 0), (2160, 3840), "upright 4K");
+        assert_eq!(sw(4096, 2304, 0), (3840, 2160));
+        assert_eq!(sw(2304, 4096, 0), (2160, 3840));
+        assert_eq!(sw(4096, 2160, 0), (3840, 2024), "DCI 4K");
+        // Ultrawide, two QHD or two 4K screens side by side, a Mac's screens.
+        assert_eq!(sw(5120, 1440, 0), (3840, 1080));
+        assert_eq!(sw(7680, 2160, 0), (3840, 1080));
+        assert_eq!(sw(6400, 2160, 0), (3840, 1296));
+        assert_eq!(sw(6400, 2160, pack_view(1212, 682)), (1212, 408));
+        assert_eq!(sw(1920, 1080, pack_view(1280, 720)), (1280, 720));
+        for (w, h) in [(4096, 2304), (5120, 1440), (7680, 2160), (6400, 2160), (4096, 2160), (2304, 4096)] {
+            let (ew, eh) = sw(w, h, 0);
+            assert!(SizeLimit::OPENH264.fits(ew, eh), "{w}x{h} -> {ew}x{eh}");
+        }
+    }
+
+    /// An ultrawide (or two QHD screens in "all screens") with the Software plan:
+    /// OpenH264 refused the 4096x1152 picture of every frame (VID-1); now it gets
+    /// 3840x1080.
+    #[test]
+    fn software_wider_than_3840() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (display, pipeline) = Pipeline::start(
+            || Ok(Box::new(nuvira_capture::SyntheticCapturer::new(5120, 1440, 30)) as Box<dyn Capturer>),
+            |gpu| nuvira_codec::create_encoder(nuvira_codec::EncoderPlan::Software, Default::default(), gpu),
+            false,
+            tx,
+            Controls {
+                max_fps: Arc::new(AtomicU32::new(30)),
+                keyframe: Arc::new(AtomicBool::new(true)),
+                bitrate: Arc::new(AtomicU32::new(4_000_000)),
+                view: Arc::new(AtomicU64::new(0)),
+                stats: None,
+            },
+        )
+        .context("start")
+        .unwrap();
+        assert_eq!((display.width, display.height), (5120, 1440));
+        let (frames_tx, frames) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            while let Some(frame) = rx.blocking_recv() {
+                if frames_tx.send(frame).is_err() {
+                    break;
+                }
+            }
+        });
+        let first = frames.recv_timeout(Duration::from_secs(10)).expect("no frame from a 5120x1440 screen");
+        assert!(first.keyframe);
+        let mut decoder = nuvira_codec::OpenH264Decoder::new().unwrap();
+        let yuv = nuvira_codec::VideoDecoder::decode(&mut decoder, &first.data).unwrap().expect("picture");
+        assert_eq!((yuv.width, yuv.height), (3840, 1080));
+        assert!(frames.recv_timeout(Duration::from_secs(10)).is_ok(), "no second frame");
+        drop(pipeline);
+    }
+
+    /// OpenH264 behind a size check: it refuses pictures wider than `refuse_over`
+    /// and then reports a limit below them, as a hardware encoder that refused a
+    /// size does (Media Foundation, VID-2); `always_fail` refuses every frame.
+    struct Picky {
+        inner: nuvira_codec::OpenH264Encoder,
+        refuse_over: u32,
+        limit: SizeLimit,
+        always_fail: bool,
+        calls: Arc<AtomicU64>,
+    }
+
+    impl VideoEncoder for Picky {
+        fn name(&self) -> &'static str {
+            "picky"
+        }
+
+        fn max_size(&self) -> SizeLimit {
+            self.limit
+        }
+
+        fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<Option<nuvira_codec::EncodedFrame>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            if self.always_fail {
+                anyhow::bail!("broken encoder");
+            }
+            if image.width > self.refuse_over {
+                self.limit = SizeLimit::sides(self.refuse_over, self.refuse_over * 9 / 16);
+                anyhow::bail!("{}x{} refused", image.width, image.height);
+            }
+            self.inner.encode(image, force_keyframe)
+        }
+    }
+
+    fn start_picky(
+        refuse_over: u32,
+        always_fail: bool,
+        fps: u32,
+    ) -> (Pipeline, mpsc::Receiver<VideoFrame>, Arc<AtomicU64>) {
+        let (tx, rx) = mpsc::channel(1);
+        let calls = Arc::new(AtomicU64::new(0));
+        let c = calls.clone();
+        let (_, pipeline) = Pipeline::start(
+            || Ok(Box::new(nuvira_capture::SyntheticCapturer::new(1920, 1080, 60)) as Box<dyn Capturer>),
+            move |_| {
+                Ok(Box::new(Picky {
+                    inner: nuvira_codec::OpenH264Encoder::new(Default::default())?,
+                    refuse_over,
+                    limit: SizeLimit::DEFAULT,
+                    always_fail,
+                    calls: c,
+                }) as Box<dyn VideoEncoder>)
+            },
+            false,
+            tx,
+            Controls {
+                max_fps: Arc::new(AtomicU32::new(fps)),
+                keyframe: Arc::new(AtomicBool::new(true)),
+                bitrate: Arc::new(AtomicU32::new(2_000_000)),
+                view: Arc::new(AtomicU64::new(0)),
+                stats: None,
+            },
+        )
+        .context("start")
+        .unwrap();
+        (pipeline, rx, calls)
+    }
+
+    /// An encoder that refuses the screen's size and reports a smaller limit:
+    /// the next frames come at a size it takes (VID-2).
+    #[test]
+    fn encoder_refusing_a_size_gets_a_smaller_one() {
+        let (pipeline, mut rx, calls) = start_picky(1280, false, 60);
+        let frame = rx.blocking_recv().expect("no frame after the refusal");
+        assert!(frame.keyframe);
+        let mut decoder = nuvira_codec::OpenH264Decoder::new().unwrap();
+        let yuv = nuvira_codec::VideoDecoder::decode(&mut decoder, &frame.data).unwrap().expect("picture");
+        assert_eq!((yuv.width, yuv.height), (1280, 720));
+        drop(pipeline);
+        assert!(calls.load(Ordering::Relaxed) >= 2, "the refused frame was not tried");
+    }
+
+    /// An encoder that fails every frame is retried at the frame rate, not as
+    /// fast as the loop turns while a keyframe is pending (VID-M1).
+    #[test]
+    fn failing_encoder_keeps_the_pace() {
+        let (pipeline, _rx, calls) = start_picky(u32::MAX, true, 10);
+        std::thread::sleep(Duration::from_secs(2));
+        drop(pipeline);
+        let calls = calls.load(Ordering::Relaxed);
+        // 10 fps for 2 s: about 20 attempts (the capture alone gives 60 images a second).
+        assert!((10..=25).contains(&calls), "{calls} attempts in 2 s at 10 fps");
     }
 
     #[test]

@@ -216,6 +216,62 @@ pub fn create_device() -> Result<ID3D11Device> {
     device.ok_or_else(|| anyhow!("missing D3D11 device"))
 }
 
+/// Reads BGRA textures back into RAM (packed rows, `width * 4` bytes) through a
+/// staging texture kept between calls: for the software encoder when the hardware
+/// one failed during a session whose capture stays on the GPU.
+#[derive(Default)]
+pub struct TextureReader {
+    staging: Option<(ID3D11Texture2D, u32, u32)>,
+}
+
+impl TextureReader {
+    /// Copies `texture` into `out` and returns its size.
+    pub fn read(
+        &mut self,
+        device: &ID3D11Device,
+        texture: &ID3D11Texture2D,
+        out: &mut Vec<u8>,
+    ) -> Result<(u32, u32)> {
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe { texture.GetDesc(&mut desc) };
+        let (width, height) = (desc.Width, desc.Height);
+        if !matches!(&self.staging, Some((_, w, h)) if (*w, *h) == (width, height)) {
+            let staging_desc = D3D11_TEXTURE2D_DESC {
+                Width: width,
+                Height: height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: desc.Format,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                MiscFlags: 0,
+            };
+            let mut staging = None;
+            unsafe { device.CreateTexture2D(&staging_desc, None, Some(&mut staging)) }
+                .context("staging texture")?;
+            self.staging = Some((staging.ok_or_else(|| anyhow!("missing staging texture"))?, width, height));
+        }
+        let (staging, _, _) = self.staging.as_ref().expect("staging texture");
+        let context = unsafe { device.GetImmediateContext() }?;
+        let row = width as usize * 4;
+        out.clear();
+        out.reserve(row * height as usize);
+        unsafe {
+            context.CopyResource(staging, texture);
+            let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+            context.Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).context("Map")?;
+            for y in 0..height as usize {
+                let src = (mapped.pData as *const u8).add(y * mapped.RowPitch as usize);
+                out.extend_from_slice(std::slice::from_raw_parts(src, row));
+            }
+            context.Unmap(staging, 0);
+        }
+        Ok((width, height))
+    }
+}
+
 /// BGRA texture with the given content (packed rows, `width * 4` bytes).
 pub fn upload_bgra(device: &ID3D11Device, width: u32, height: u32, data: &[u8]) -> Result<ID3D11Texture2D> {
     let desc = D3D11_TEXTURE2D_DESC {
@@ -235,4 +291,32 @@ pub fn upload_bgra(device: &ID3D11Device, width: u32, height: u32, data: &[u8]) 
     let mut texture = None;
     unsafe { device.CreateTexture2D(&desc, Some(&init), Some(&mut texture)) }?;
     texture.ok_or_else(|| anyhow!("missing BGRA texture"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What goes up comes back the same (the software fallback of Media Foundation
+    /// reads the captured textures this way).
+    #[test]
+    fn texture_read_back() {
+        let Ok(device) = create_device() else {
+            eprintln!("no D3D11 device: skipped");
+            return;
+        };
+        let (w, h) = (322u32, 180u32);
+        let data: Vec<u8> = (0..w * h * 4).map(|i| (i % 251) as u8).collect();
+        let texture = upload_bgra(&device, w, h, &data).unwrap();
+        let mut reader = TextureReader::default();
+        let mut out = Vec::new();
+        assert_eq!(reader.read(&device, &texture, &mut out).unwrap(), (w, h));
+        assert_eq!(out, data);
+        // Again with the staging texture kept, then another size.
+        assert_eq!(reader.read(&device, &texture, &mut out).unwrap(), (w, h));
+        assert_eq!(out, data);
+        let small = upload_bgra(&device, 64, 64, &data[..64 * 64 * 4]).unwrap();
+        assert_eq!(reader.read(&device, &small, &mut out).unwrap(), (64, 64));
+        assert_eq!(out, &data[..64 * 64 * 4]);
+    }
 }

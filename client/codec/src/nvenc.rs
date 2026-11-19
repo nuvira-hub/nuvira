@@ -903,6 +903,11 @@ impl VideoEncoder for NvencEncoder {
         if self.fallback.is_some() { "openh264 (NVENC failed)" } else { "nvenc" }
     }
 
+    fn max_size(&self) -> crate::SizeLimit {
+        // After the switch to OpenH264, its own (smaller) limit.
+        self.fallback.as_ref().map_or(crate::SizeLimit::DEFAULT, |sw| sw.max_size())
+    }
+
     fn set_bitrate(&mut self, bps: u32) {
         if let Some(sw) = &mut self.fallback {
             sw.set_bitrate(bps);

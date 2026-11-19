@@ -75,6 +75,16 @@ fn main() {
         println!("cargo::rustc-cfg={p}");
     }
 
+    // Production API present on one side only (bench-compare builds this bench/
+    // folder against the baseline too): `bench_codec_max_size` when the codec has
+    // encoder size limits (`VideoEncoder::max_size`, lot 12).
+    let codec = Path::new("../client/codec/src/lib.rs");
+    println!("cargo::rerun-if-changed=../client/codec/src/lib.rs");
+    println!("cargo::rustc-check-cfg=cfg(bench_codec_max_size)");
+    if std::fs::read_to_string(codec).is_ok_and(|s| s.contains("fn max_size(&self) -> SizeLimit")) {
+        println!("cargo::rustc-cfg=bench_codec_max_size");
+    }
+
     // rustc version (the same compiler builds this crate and the production code).
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
     let version = run(Command::new(rustc).arg("-V")).unwrap_or_default();
