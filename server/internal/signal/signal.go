@@ -186,6 +186,11 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 				}})
 			}
 		case *pb.ClientMessage_Inventory:
+			// Only a device's own connection: an apiOnly one (a viewer or the
+			// app's address book with the device's key) is not the device.
+			if c.apiOnly {
+				break
+			}
 			for _, mod := range s.modules {
 				if d, ok := mod.(ext.InventoryDesk); ok {
 					d.Inventory(c.device.ID, conn.RemoteAddr().String(), m.Inventory)
