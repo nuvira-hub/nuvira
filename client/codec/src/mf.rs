@@ -34,14 +34,46 @@ use windows::Win32::System::Threading::{
     SetProcessInformation,
 };
 
-use crate::gpu::{GpuDevice, GpuTexture, Nv12Converter};
-use crate::{BgraImage, EncodedFrame, EncoderSettings, LTR_SLOTS, VideoEncoder, convert};
+use crate::gpu::{GpuDevice, GpuTexture, Nv12Converter, TextureReader};
+use crate::{
+    BgraImage, EncodedFrame, EncoderSettings, LTR_SLOTS, OpenH264Encoder, SizeLimit, VideoEncoder, convert,
+};
 
 /// Maximum wait for a frame's output before returning `None`
 /// (the frame will come out at the next call).
 const OUTPUT_TIMEOUT: Duration = Duration::from_millis(100);
 /// Maximum wait for the encoder to accept a new frame.
 const INPUT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Limits tried, in order, when the encoder refuses a size: each refusal lowers the
+/// limit to the first of these smaller than the refused picture (PC-LABORATORIO's
+/// HD 2500 refuses 2560x1440 and takes 1920x1080). Opening a session costs about a
+/// second on Quick Sync, so the steps are few.
+const SIZE_STEPS: [(u32, u32); 6] =
+    [(3840, 2160), (2560, 1600), (1920, 1200), (1920, 1080), (1600, 900), (1280, 720)];
+
+/// Sessions that fail to open in a row (other than a size refusal with a step
+/// left) before the encoder goes over to OpenH264 for good: it was re-opened at
+/// every frame before, with no picture and a second of work each time (VID-2).
+const OPEN_FAILURES: u32 = 3;
+
+/// The limit after the encoder refused a `refused` picture with limit `current`:
+/// the next [`SIZE_STEPS`] entry smaller than both, `None` when there is none.
+fn lower_limit(current: SizeLimit, refused: (u32, u32)) -> Option<SizeLimit> {
+    let area = u64::from(refused.0) * u64::from(refused.1);
+    SIZE_STEPS
+        .iter()
+        .map(|&(long, short)| SizeLimit::sides(long, short))
+        .find(|step| step.area < area && step.area < current.area)
+}
+
+/// Did Media Foundation refuse the media types (MF_E_INVALIDMEDIATYPE, what a
+/// hardware MFT answers to a size beyond its limit)?
+fn types_refused(e: &anyhow::Error) -> bool {
+    e.chain()
+        .filter_map(|c| c.downcast_ref::<windows::core::Error>())
+        .any(|e| e.code() == MF_E_INVALIDMEDIATYPE)
+}
 
 pub(crate) fn startup() -> Result<()> {
     static STARTED: OnceLock<std::result::Result<(), String>> = OnceLock::new();
@@ -577,6 +609,16 @@ pub struct MfEncoder {
     /// Long-term reference requests for the next frame.
     next_mark: Option<u8>,
     next_use: Option<u8>,
+    /// Largest picture it takes: lowered when the MFT refuses a size (VID-2).
+    limit: SizeLimit,
+    /// Sessions that failed to open in a row ([`OPEN_FAILURES`]).
+    open_failures: u32,
+    /// OpenH264 after the hardware encoder failed for good; GPU textures are read
+    /// back into RAM for it.
+    fallback: Option<OpenH264Encoder>,
+    reader: TextureReader,
+    readback: Vec<u8>,
+    scaled: Vec<u8>,
 }
 
 // Used by one thread at a time; MF objects are MTA.
@@ -599,6 +641,12 @@ impl MfEncoder {
             started: Instant::now(),
             next_mark: None,
             next_use: None,
+            limit: SizeLimit::DEFAULT,
+            open_failures: 0,
+            fallback: None,
+            reader: TextureReader::default(),
+            readback: Vec::new(),
+            scaled: Vec::new(),
         })
     }
 
@@ -620,6 +668,45 @@ impl MfEncoder {
         let ratio = self.settings.bitrate_bps as f64 / self.session_bitrate.max(1) as f64;
         let age = self.session_started.elapsed();
         (ratio < 0.85 && age > Duration::from_secs(1)) || (ratio > 1.25 && age > Duration::from_secs(3))
+    }
+
+    /// A session at `size` failed with `e`: a size refusal lowers the limit (the
+    /// caller then encodes smaller, the GPU converter scales); other failures, or
+    /// a refusal with no smaller step, count towards the switch to OpenH264.
+    fn open_failed(&mut self, e: &anyhow::Error, size: (u32, u32)) -> Result<()> {
+        if types_refused(e)
+            && let Some(limit) = lower_limit(self.limit, size)
+        {
+            warn!(
+                "{} refuses {}x{}: at most {}x{} from now on",
+                self.name, size.0, size.1, limit.long_side, limit.short_side
+            );
+            self.limit = limit;
+            return Ok(());
+        }
+        self.open_failures += 1;
+        if self.open_failures >= OPEN_FAILURES {
+            warn!("{} failed {} times in a row ({e:#}): OpenH264 from now on", self.name, self.open_failures);
+            self.fallback = Some(OpenH264Encoder::new(self.settings)?);
+        }
+        Ok(())
+    }
+
+    /// OpenH264 after the hardware encoder failed: `image` scaled to `output` on the
+    /// CPU when it is larger.
+    fn encode_software(
+        sw: &mut OpenH264Encoder,
+        scaled: &mut Vec<u8>,
+        image: &BgraImage,
+        output: (u32, u32),
+        force_keyframe: bool,
+    ) -> Result<Option<EncodedFrame>> {
+        let (w, h) = (output.0.min(image.width) & !1, output.1.min(image.height) & !1);
+        if (w, h) == (image.width, image.height) {
+            return sw.encode(image, force_keyframe);
+        }
+        convert::scale_bgra(image, w as usize, h as usize, scaled);
+        sw.encode(&BgraImage { width: w, height: h, stride: w as usize * 4, data: scaled }, force_keyframe)
     }
 
     /// Encodes a frame prepared by `make_sample` (image in RAM or GPU texture).
@@ -647,15 +734,29 @@ impl MfEncoder {
                     self.session_started = Instant::now();
                 }
                 Err(e) => {
-                    warn!("reconfiguring the hardware encoder failed: {e:#}; opening it again");
                     self.session = None;
+                    // Refused size: opening it again at the same size would be refused
+                    // too (a second lost); the next frame comes at the lower limit.
+                    if types_refused(&e) && lower_limit(self.limit, (w, h)).is_some() {
+                        self.open_failed(&e, (w, h))?;
+                        return Err(e.context("reconfiguring the hardware encoder"));
+                    }
+                    warn!("reconfiguring the hardware encoder failed: {e:#}; opening it again");
                 }
             }
         }
         if self.session.is_none() {
             self.outputs.clear();
-            let session = Session::new(&self.activate, input, (w, h), self.settings, self.device.as_ref())
-                .with_context(|| format!("starting {}", self.name))?;
+            let opened = Session::new(&self.activate, input, (w, h), self.settings, self.device.as_ref())
+                .with_context(|| format!("starting {}", self.name));
+            let session = match opened {
+                Ok(session) => session,
+                Err(e) => {
+                    self.open_failed(&e, (w, h))?;
+                    return Err(e);
+                }
+            };
+            self.open_failures = 0;
             self.session_bitrate = self.settings.bitrate_bps;
             self.session_started = Instant::now();
             let source = if self.device.is_some() { "GPU texture" } else { "RAM" };
@@ -726,10 +827,17 @@ impl MfEncoder {
 
 impl VideoEncoder for MfEncoder {
     fn name(&self) -> &'static str {
-        "mediafoundation"
+        if self.fallback.is_some() { "openh264 (Media Foundation failed)" } else { "mediafoundation" }
+    }
+
+    fn max_size(&self) -> SizeLimit {
+        self.fallback.as_ref().map_or(self.limit, |sw| sw.max_size())
     }
 
     fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<Option<EncodedFrame>> {
+        if let Some(sw) = &mut self.fallback {
+            return sw.encode(image, force_keyframe);
+        }
         if self.device.is_some() {
             bail!("encoder configured for GPU textures");
         }
@@ -744,6 +852,13 @@ impl VideoEncoder for MfEncoder {
         output: (u32, u32),
         force_keyframe: bool,
     ) -> Result<Option<EncodedFrame>> {
+        if let Some(sw) = &mut self.fallback {
+            let device =
+                self.device.as_ref().ok_or_else(|| anyhow!("encoder started without a D3D11 device"))?;
+            let (w, h) = self.reader.read(device, &texture.0, &mut self.readback)?;
+            let image = BgraImage { width: w, height: h, stride: w as usize * 4, data: &self.readback };
+            return Self::encode_software(sw, &mut self.scaled, &image, output, force_keyframe);
+        }
         self.encode_sample(input, output, force_keyframe, |session, time| {
             session.texture_sample(&texture.0, time)
         })
@@ -759,10 +874,13 @@ impl VideoEncoder for MfEncoder {
         // applied by stopping the stream and setting the types again (`reconfigure`), with
         // hysteresis. Measured after that: 1.6 Mbit/s asked, 1.5-1.6 sent.
         self.settings.bitrate_bps = bps;
+        if let Some(sw) = &mut self.fallback {
+            sw.set_bitrate(bps);
+        }
     }
 
     fn mark_ltr(&mut self, slot: u8) -> bool {
-        if !self.settings.ltr || slot >= LTR_SLOTS {
+        if self.fallback.is_some() || !self.settings.ltr || slot >= LTR_SLOTS {
             return false;
         }
         self.next_mark = Some(slot);
@@ -770,7 +888,7 @@ impl VideoEncoder for MfEncoder {
     }
 
     fn use_ltr(&mut self, slot: u8) -> bool {
-        if !self.settings.ltr || slot >= LTR_SLOTS {
+        if self.fallback.is_some() || !self.settings.ltr || slot >= LTR_SLOTS {
             return false;
         }
         self.next_use = Some(slot);
@@ -795,6 +913,89 @@ impl VideoEncoder for MfEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_refusals_step_down() {
+        let qhd = lower_limit(SizeLimit::DEFAULT, (2560, 1440)).expect("a step below 1440p");
+        // HD 2500: 2560x1440 refused -> 1920x1200 at most, which a 1440p screen
+        // gets as 1920x1080.
+        assert_eq!(qhd, SizeLimit::sides(1920, 1200));
+        assert_eq!(crate::encoded_size(2560, 1440, (0, 0), qhd), (1920, 1080));
+        // A 1920x1200 picture refused in turn: 1920x1080.
+        let fhd = lower_limit(qhd, (1920, 1200)).expect("1080p");
+        assert_eq!(fhd, SizeLimit::sides(1920, 1080));
+        // 4K refused: 2560x1600; two 1080p screens side by side (3840x1080) too.
+        assert_eq!(lower_limit(SizeLimit::DEFAULT, (3840, 2160)), Some(SizeLimit::sides(2560, 1600)));
+        assert_eq!(lower_limit(SizeLimit::DEFAULT, (3840, 1080)), Some(SizeLimit::sides(2560, 1600)));
+        // Never up again, and nothing below 1280x720: then the failures count.
+        assert_eq!(lower_limit(fhd, (3840, 2160)), Some(SizeLimit::sides(1600, 900)));
+        assert_eq!(lower_limit(SizeLimit::sides(1280, 720), (1280, 720)), None);
+        // At most six sessions are lost to refusals, from the largest picture.
+        let mut limit = SizeLimit::DEFAULT;
+        let mut steps = 0;
+        while let Some(next) = lower_limit(limit, (limit.long_side, limit.short_side)) {
+            assert!(next.area < limit.area);
+            (limit, steps) = (next, steps + 1);
+        }
+        assert_eq!(steps, SIZE_STEPS.len());
+    }
+
+    #[test]
+    fn invalid_media_type_is_a_refusal() {
+        let refused = anyhow::Error::from(windows::core::Error::from(MF_E_INVALIDMEDIATYPE))
+            .context("H.264 output type")
+            .context("starting Intel QSV");
+        assert!(types_refused(&refused));
+        let other = anyhow::Error::from(windows::core::Error::from(windows::Win32::Foundation::E_FAIL))
+            .context("ActivateObject");
+        assert!(!types_refused(&other));
+        assert!(!types_refused(&anyhow!("the encoder does not accept frames")));
+    }
+
+    /// After [`OPEN_FAILURES`] failed sessions the encoder goes over to OpenH264,
+    /// reports its limit and still takes the capture's GPU textures (read back),
+    /// scaled to the size asked. Needs a hardware MFT and a D3D11 device.
+    #[test]
+    fn falls_back_to_openh264_after_repeated_failures() {
+        let Ok(device) = crate::gpu::create_device() else {
+            eprintln!("no D3D11 device: skipped");
+            return;
+        };
+        let mut enc = match MfEncoder::with_device(EncoderSettings::default(), GpuDevice(device.clone())) {
+            Ok(enc) => enc,
+            Err(e) => {
+                eprintln!("no hardware encoder ({e:#}): skipped");
+                return;
+            }
+        };
+        for i in 1..OPEN_FAILURES {
+            enc.open_failed(&anyhow!("broken"), (1920, 1080)).unwrap();
+            assert!(enc.fallback.is_none(), "after {i} failures");
+            assert_eq!(enc.max_size(), SizeLimit::DEFAULT);
+        }
+        // A size refusal with a step left does not count.
+        let refused = anyhow::Error::from(windows::core::Error::from(MF_E_INVALIDMEDIATYPE));
+        enc.open_failed(&refused, (2560, 1440)).unwrap();
+        assert!(enc.fallback.is_none());
+        assert_eq!(enc.max_size(), SizeLimit::sides(1920, 1200));
+        enc.open_failed(&anyhow!("broken"), (1920, 1080)).unwrap();
+        assert!(enc.fallback.is_some());
+        assert_eq!(enc.max_size(), SizeLimit::OPENH264);
+        assert!(enc.name().starts_with("openh264"));
+        assert!(enc.accepts_textures(), "the capture keeps its GPU textures");
+
+        let (w, h) = (640u32, 360u32);
+        let data: Vec<u8> = (0..w * h * 4).map(|i| (i % 253) as u8).collect();
+        let texture = GpuTexture(crate::gpu::upload_bgra(&device, w, h, &data).unwrap());
+        let frame = enc.encode_texture(&texture, (w, h), (320, 180), true).unwrap().expect("frame");
+        assert!(frame.keyframe);
+        let mut decoder = crate::OpenH264Decoder::new().unwrap();
+        let yuv = crate::VideoDecoder::decode(&mut decoder, &frame.data).unwrap().expect("picture");
+        assert_eq!((yuv.width, yuv.height), (320, 180));
+        let frame = enc.encode_texture(&texture, (w, h), (w, h), true).unwrap().expect("frame");
+        let yuv = crate::VideoDecoder::decode(&mut decoder, &frame.data).unwrap().expect("picture");
+        assert_eq!((yuv.width, yuv.height), (w, h));
+    }
 
     #[test]
     fn finds_sps() {
