@@ -2330,6 +2330,65 @@ mod tests {
         std::fs::remove_file(&node).unwrap();
     }
 
+    /// The driver test forks while other threads load and unload libraries and
+    /// log through a writer whose lock they hold most of the time (as the app's
+    /// `Mutex<File>`): the child must not block on those locks (VID-6). Each
+    /// attempt in a fresh process (the verdict is kept per process), 50 of them
+    /// (`NUVIRA_TEST_PROBE_RUNS`). A driver that fails or crashes is fine here;
+    /// only "did not answer" is not.
+    #[test]
+    fn probe_with_busy_threads() {
+        if std::env::var_os("NUVIRA_TEST_PROBE_CHILD").is_some() {
+            struct Slow;
+            impl std::io::Write for Slow {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    std::thread::sleep(std::time::Duration::from_micros(500));
+                    Ok(buf.len())
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
+            }
+            let _ = tracing_subscriber::fmt().with_writer(std::sync::Mutex::new(Slow)).try_init();
+            for t in 0..4 {
+                std::thread::spawn(move || {
+                    let mut i = 0u64;
+                    loop {
+                        // SAFETY: the C library's maths library, loaded and unloaded.
+                        drop(unsafe { libloading::Library::new("libm.so.6") });
+                        info!(t, i, "busy");
+                        i += 1;
+                    }
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            let started = std::time::Instant::now();
+            let verdict = driver_survives(EncoderSettings::default());
+            eprintln!("verdict after {:?}: {verdict:?}", started.elapsed());
+            if let Err(e) = verdict {
+                assert!(!format!("{e:#}").contains("did not answer"), "{e:#}");
+            }
+            return;
+        }
+        let runs: u32 =
+            std::env::var("NUVIRA_TEST_PROBE_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
+        let exe = std::env::current_exe().unwrap();
+        let started = std::time::Instant::now();
+        for run in 0..runs {
+            let out = std::process::Command::new(&exe)
+                .args(["vaapi::tests::probe_with_busy_threads", "--exact", "--nocapture", "--test-threads=1"])
+                .env("NUVIRA_TEST_PROBE_CHILD", "1")
+                .output()
+                .unwrap();
+            let log = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "run {run}: {}\n{log}", out.status);
+            if run == 0 {
+                eprintln!("{}", log.lines().find(|l| l.starts_with("verdict")).unwrap_or("no verdict line"));
+            }
+        }
+        eprintln!("{runs} fresh processes in {:?}", started.elapsed());
+    }
+
     #[test]
     fn exp_golomb_and_nal() {
         let mut b = Bits::default();
@@ -2456,15 +2515,39 @@ static IN_PROBE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// `intel_enc_hw_context_init: Assertion 'encoder_context->mfc_context' failed` in
 /// vaCreateContext, also with ffmpeg (2026-11-12); without this the agent died at
 /// its start. A driver that only fails is left to the attempt in this process,
-/// which tells why; one that crashes or hangs is not used again in this process.
+/// which tells why; one that crashes is not used again in this process. One that
+/// does not answer within 15 s is tried once more at the next encoder (the child
+/// of a multi-threaded process can block on a lock another thread held at the
+/// fork), and then not used again either.
+///
+/// The child takes as few locks as it can: logging is switched off for it with
+/// `Dispatch::none()` (no allocation, no registration in tracing's global lists),
+/// so the process's subscriber and its writer (a `Mutex<File>` in the app) are
+/// never entered there.
 fn driver_survives(settings: EncoderSettings) -> Result<()> {
-    use std::sync::OnceLock;
-    use std::time::{Duration, Instant};
-    static VERDICT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+    driver_survives_within(settings, std::time::Duration::from_secs(15))
+}
+
+/// What [`driver_survives_within`] found so far in this process.
+enum Probe {
+    Untried,
+    TimedOutOnce,
+    Done(std::result::Result<(), String>),
+}
+
+static PROBE: std::sync::Mutex<Probe> = std::sync::Mutex::new(Probe::Untried);
+
+fn driver_survives_within(settings: EncoderSettings, limit: std::time::Duration) -> Result<()> {
+    use std::time::Instant;
     if IN_PROBE.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok(());
     }
-    let verdict = VERDICT.get_or_init(|| {
+    let mut probe = PROBE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Probe::Done(verdict) = &*probe {
+        return verdict.clone().map_err(|e| anyhow!(e));
+    }
+    let none = tracing::Dispatch::none();
+    let verdict = (|| {
         // SAFETY: the child only runs the encoder test and leaves with _exit (no
         // destructors, no atexit handlers of the parent).
         let pid = unsafe { libc::fork() };
@@ -2473,9 +2556,7 @@ fn driver_survives(settings: EncoderSettings) -> Result<()> {
         }
         if pid == 0 {
             IN_PROBE.store(true, std::sync::atomic::Ordering::Relaxed);
-            let ok = tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(), || {
-                VaapiEncoder::new(settings).is_ok()
-            });
+            let ok = tracing::dispatcher::with_default(&none, || VaapiEncoder::new(settings).is_ok());
             unsafe { libc::_exit(if ok { 0 } else { 1 }) }
         }
         let started = Instant::now();
@@ -2489,14 +2570,14 @@ fn driver_survives(settings: EncoderSettings) -> Result<()> {
             if r < 0 {
                 return Ok(());
             }
-            if started.elapsed() > Duration::from_secs(15) {
+            if started.elapsed() > limit {
                 unsafe {
                     libc::kill(pid, libc::SIGKILL);
                     libc::waitpid(pid, &mut status, 0);
                 }
-                return Err("the VA-API driver did not answer within 15 s".into());
+                return Err(format!("the VA-API driver did not answer within {} s", limit.as_secs()));
             }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         if libc::WIFSIGNALED(status) {
             return Err(format!(
@@ -2505,6 +2586,14 @@ fn driver_survives(settings: EncoderSettings) -> Result<()> {
             ));
         }
         Ok(())
-    });
-    verdict.clone().map_err(|e| anyhow::anyhow!(e))
+    })();
+    let timed_out = verdict.as_ref().is_err_and(|e| e.contains("did not answer"));
+    *probe = match &*probe {
+        Probe::Untried if timed_out => {
+            warn!("VA-API: the driver test did not answer; tried again at the next encoder");
+            Probe::TimedOutOnce
+        }
+        _ => Probe::Done(verdict.clone()),
+    };
+    verdict.map_err(|e| anyhow!(e))
 }
