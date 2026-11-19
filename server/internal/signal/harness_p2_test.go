@@ -65,6 +65,13 @@ type testServer struct {
 // startServer starts Serve on a fresh database; modules are set before Serve.
 func startServer(tb testing.TB, modules ...ext.Module) *testServer {
 	tb.Helper()
+	return startServerWith(tb, nil, modules...)
+}
+
+// startServerWith is startServer with setup applied to the Server before Serve
+// (e.g. a shorter sendTimeout).
+func startServerWith(tb testing.TB, setup func(*Server), modules ...ext.Module) *testServer {
+	tb.Helper()
 	dir := p2TempDir(tb)
 	st, err := store.Open(filepath.Join(dir, "nuvira.db"))
 	if err != nil {
@@ -91,6 +98,9 @@ func startServer(tb testing.TB, modules ...ext.Module) *testServer {
 	}
 	srv := New(st, rl, log)
 	srv.SetModules(modules)
+	if setup != nil {
+		setup(srv)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -129,10 +139,15 @@ type testClient struct {
 // dial opens a QUIC connection and the signalling stream (nothing sent yet).
 func (ts *testServer) dial(tb testing.TB) *testClient {
 	tb.Helper()
+	return ts.dialWith(tb, &quic.Config{KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second})
+}
+
+// dialWith is dial with the client's own QUIC config (e.g. a small receive window).
+func (ts *testServer) dialWith(tb testing.TB, cfg *quic.Config) *testClient {
+	tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, err := ts.client.Dial(ctx, ts.udp, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testALPN}},
-		&quic.Config{KeepAlivePeriod: 5 * time.Second, MaxIdleTimeout: 30 * time.Second})
+	conn, err := ts.client.Dial(ctx, ts.udp, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testALPN}}, cfg)
 	if err != nil {
 		tb.Fatal(err)
 	}

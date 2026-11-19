@@ -176,7 +176,7 @@ func run() error {
 	}
 	ln, err := tr.Listen(
 		&tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{alpn}, MinVersion: tls.VersionTLS13},
-		&quic.Config{KeepAlivePeriod: 10 * time.Second, MaxIdleTimeout: 30 * time.Second},
+		&quic.Config{KeepAlivePeriod: 10 * time.Second, MaxIdleTimeout: nuvirasignal.IdleTimeout},
 	)
 	if err != nil {
 		return err

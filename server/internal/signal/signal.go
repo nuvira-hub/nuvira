@@ -18,6 +18,8 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"google.golang.org/protobuf/encoding/protodelim"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/nuvira-hub/nuvira/server/internal/ext"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
@@ -40,6 +42,12 @@ const pendingTimeout = 60 * time.Second
 
 const maxMessage = 64 * 1024
 
+// IdleTimeout is the QUIC idle timeout of the signalling connections
+// (cmd/nuvira-server). It is also the longest a write to one client may take
+// (sendTimeout): a client that does not read for that long is disconnected,
+// instead of blocking whoever sends to it.
+const IdleTimeout = 30 * time.Second
+
 type client struct {
 	device *store.Device
 	conn   *quic.Conn
@@ -55,12 +63,30 @@ type client struct {
 	// Signalling protocol version of the device (Register): from 2 an agent
 	// applies the limits of each session.
 	protocol uint32
+	// Longest wait for one write (Server.sendTimeout).
+	sendTimeout time.Duration
 }
 
+// send writes one length-delimited message. Many goroutines send to one client
+// (the agent's goroutine writes a viewer's Route, the expiry and policy loops
+// write to everybody), so a client that stops reading must not hold them: the
+// write has a deadline, and a write that fails closes the connection (after a
+// partial write the framing is broken). A marshal error (nothing written)
+// closes nothing.
 func (c *client) send(msg *pb.ServerMessage) error {
+	size := proto.Size(msg)
+	buf := make([]byte, 0, protowire.SizeVarint(uint64(size))+size)
+	buf = protowire.AppendVarint(buf, uint64(size))
+	buf, err := proto.MarshalOptions{UseCachedSize: true}.MarshalAppend(buf, msg)
+	if err != nil {
+		return err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	_, err := protodelim.MarshalTo(c.stream, msg)
+	_ = c.stream.SetWriteDeadline(time.Now().Add(c.sendTimeout))
+	if _, err = c.stream.Write(buf); err != nil {
+		_ = c.conn.CloseWithError(0, "write failed")
+	}
 	return err
 }
 
@@ -109,6 +135,9 @@ type Server struct {
 	sessions map[string]*pending
 	routed   map[string]*routed // accepted sessions, until the agent's report
 
+	// Longest wait for one write to a client (IdleTimeout; shorter in tests).
+	sendTimeout time.Duration
+
 	// Protection of a public server (abuse.go).
 	blocked       blocklist
 	registerLimit *limiter
@@ -117,7 +146,7 @@ type Server struct {
 
 func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
 	return &Server{
-		store: st, relay: r, log: log,
+		store: st, relay: r, log: log, sendTimeout: IdleTimeout,
 		online: map[string]*client{}, sessions: map[string]*pending{}, routed: map[string]*routed{},
 		registerLimit: newLimiter(registerLimit), connectLimit: newLimiter(connectLimit),
 	}
@@ -242,7 +271,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	if reg == nil || len(reg.PublicKey) != ed25519.PublicKeySize {
 		return nil, errors.New("missing Register or invalid key")
 	}
-	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly, protocol: reg.ProtocolVersion}
+	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly, protocol: reg.ProtocolVersion, sendTimeout: s.sendTimeout}
 	if ip, ok := relay.HostOf(conn.RemoteAddr()); ok {
 		if s.blocked.address(ip) {
 			c.refuse("@server.blocked")
@@ -588,20 +617,25 @@ func (s *Server) expireLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
-			var expired []*pending
-			s.mu.Lock()
-			for id, p := range s.sessions {
-				if now.Sub(p.created) > pendingTimeout {
-					expired = append(expired, p)
-					delete(s.sessions, id)
-				}
-			}
-			s.mu.Unlock()
-			for _, p := range expired {
-				_ = p.viewer.send(errorMsg("@agent.no_answer", p.id))
-				s.event(ext.SessionEvent{ID: p.id, Kind: ext.SessionExpired, AgentID: p.agentID})
-			}
-			s.forgetRouted(now)
+			s.expire(now)
 		}
 	}
+}
+
+// expire ends the requests the agent did not answer in time.
+func (s *Server) expire(now time.Time) {
+	var expired []*pending
+	s.mu.Lock()
+	for id, p := range s.sessions {
+		if now.Sub(p.created) > pendingTimeout {
+			expired = append(expired, p)
+			delete(s.sessions, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, p := range expired {
+		_ = p.viewer.send(errorMsg("@agent.no_answer", p.id))
+		s.event(ext.SessionEvent{ID: p.id, Kind: ext.SessionExpired, AgentID: p.agentID})
+	}
+	s.forgetRouted(now)
 }
