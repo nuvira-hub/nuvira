@@ -542,6 +542,29 @@ fn render_nodes(dev: &std::path::Path, sys: &std::path::Path) -> Vec<String> {
     nodes.into_iter().map(|(_, path)| path).collect()
 }
 
+/// Render nodes whose driver initialised but was refused for encoding, with the
+/// reason. Their display is not terminated (`vaTerminate` unloads the driver, and
+/// Mesa's D3D12 driver, a node refused here in WSL, then crashes when the thread
+/// that used it ends): remembering them bounds that to one driver instance per
+/// node and process, instead of one more at every encoder. Only encoders skip
+/// them: the conversion tests open such drivers on purpose.
+static REFUSED: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// `vaInitialize` calls made by this process (for the tests).
+static INITIALISED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn refused(path: &str) -> Option<String> {
+    let refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+    refused.iter().find(|(p, _)| p == path).map(|(_, why)| why.clone())
+}
+
+fn refuse(path: &str, why: &str) {
+    let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+    if !refused.iter().any(|(p, _)| p == path) {
+        refused.push((path.into(), why.into()));
+    }
+}
+
 impl Display {
     fn open() -> Result<Self> {
         Self::open_with(true)
@@ -555,9 +578,17 @@ impl Display {
             Ok(path) => vec![path],
             Err(_) => render_nodes(std::path::Path::new("/dev/dri"), std::path::Path::new("/sys/class/drm")),
         };
+        Self::open_paths(va, paths, encoder)
+    }
+
+    fn open_paths(va: &'static Va, paths: Vec<String>, encoder: bool) -> Result<Self> {
         let mut errors = Vec::new();
         for path in paths {
             if !std::path::Path::new(&path).exists() {
+                continue;
+            }
+            if encoder && let Some(why) = refused(&path) {
+                errors.push(format!("{path}: {why} (not tried again)"));
                 continue;
             }
             match Self::open_one(va, &path, encoder) {
@@ -573,13 +604,16 @@ impl Display {
 
     fn open_one(va: &'static Va, path: &str, encoder: bool) -> Result<Self> {
         let file = File::options().read(true).write(true).open(path).context("not accessible")?;
-        // SAFETY: plain libva calls; the display lives in `Display` and is terminated on drop.
+        // SAFETY: plain libva calls. A display that initialised is never terminated
+        // (see `shared_display`), also when its driver is refused here: that one
+        // is remembered (`refuse`), so it is initialised at most once per process.
         unsafe {
             let dpy = (va.get_display_drm)(file.as_raw_fd());
             if dpy.is_null() {
                 bail!("no VA display");
             }
             let (mut major, mut minor) = (0, 0);
+            INITIALISED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let status = (va.initialize)(dpy, &mut major, &mut minor);
             if status != VA_STATUS_SUCCESS {
                 (va.terminate)(dpy);
@@ -604,8 +638,9 @@ impl Display {
                 vendor,
                 path: path.into(),
             };
-            if encoder {
-                display.choose_profile()?;
+            if encoder && let Err(e) = display.choose_profile() {
+                refuse(path, &format!("{e:#}"));
+                return Err(e);
             }
             display.vpp_config = display.find_vpp();
             Ok(display)
@@ -2269,6 +2304,30 @@ mod tests {
         // No render node at all.
         assert!(render_nodes(&root.join("none"), &sys).is_empty());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A node refused for encoding is not initialised again (VID-5): its driver
+    /// instance is never terminated, so a second `vaInitialize` would leak another.
+    /// The real refusal (nouveau, D3D12) needs that hardware; here a node is
+    /// marked refused by hand and must not reach `vaInitialize`.
+    #[test]
+    fn refused_node_not_opened_again() {
+        let Ok(va) = va() else { return eprintln!("no libva: skipped") };
+        let node = std::env::temp_dir().join(format!("nuvira-refused-node-{}", std::process::id()));
+        std::fs::write(&node, b"").unwrap();
+        let path = node.to_string_lossy().into_owned();
+        refuse(&path, "the driver does not encode H.264");
+        let before = INITIALISED.load(std::sync::atomic::Ordering::Relaxed);
+        for _ in 0..20 {
+            let e = Display::open_paths(va, vec![path.clone()], true).err().expect("refused");
+            assert!(format!("{e:#}").contains("does not encode H.264 (not tried again)"), "{e:#}");
+        }
+        assert_eq!(INITIALISED.load(std::sync::atomic::Ordering::Relaxed), before);
+        // The first reason stays.
+        assert_eq!(refused(&path).as_deref(), Some("the driver does not encode H.264"));
+        refuse(&path, "another reason");
+        assert_eq!(refused(&path).as_deref(), Some("the driver does not encode H.264"));
+        std::fs::remove_file(&node).unwrap();
     }
 
     #[test]
