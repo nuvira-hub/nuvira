@@ -505,6 +505,7 @@
   "tf.disabled": "Authentification à deux facteurs désactivée",
   "server.otp_required": "saisis le code de l'application d'authentification",
   "server.otp_wrong": "code erroné ou déjà utilisé",
+  "server.too_many_attempts": "trop de tentatives erronées : attends quelques minutes et réessaie",
   "server.two_factor_active": "l'authentification à deux facteurs est déjà activée",
   "server.two_factor_not_set": "recommence l'activation",
   "server.two_factor_off": "l'authentification à deux facteurs n'est pas activée",
