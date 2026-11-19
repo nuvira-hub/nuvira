@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -277,5 +278,43 @@ func TestPruneUnused(t *testing.T) {
 	}
 	if again, _ := s.ByID(d.ID); again == nil {
 		t.Fatal("no row for the device registered again")
+	}
+}
+
+// LastSeen answers for every existing ID, across chunks, and skips the others.
+func TestLastSeen(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "nuvira.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var ids []string
+	want := map[string]int64{}
+	for i := range 3 {
+		d, err := s.Register(bytes.Repeat([]byte{byte(i + 1)}, 32), "pc", "linux")
+		if err != nil {
+			t.Fatal(err)
+		}
+		at := int64(1_700_000_000 + i)
+		_, _ = s.DB().Exec(`UPDATE devices SET last_seen = ? WHERE id = ?`, at, d.ID)
+		want[d.ID] = at
+	}
+	for i := range 2 * lastSeenChunk {
+		ids = append(ids, fmt.Sprintf("%09d", 100000000+i))
+	}
+	for id := range want {
+		ids = append(ids, id, id) // last chunk, twice
+	}
+	got, err := s.LastSeen(ids)
+	if err != nil || len(got) != len(want) {
+		t.Fatalf("%v %v", got, err)
+	}
+	for id, at := range want {
+		if got[id] != at {
+			t.Errorf("%s: %d, want %d", id, got[id], at)
+		}
+	}
+	if got, err := s.LastSeen(nil); err != nil || len(got) != 0 {
+		t.Fatalf("none: %v %v", got, err)
 	}
 }

@@ -61,9 +61,11 @@ func (s *Server) getPresence(c *client, req *pb.GetPresence, resp *pb.ApiRespons
 		list = append(list, &pb.Presence{DeviceId: id, Online: s.online[id] != nil})
 	}
 	s.mu.Unlock()
-	for _, p := range list {
-		if d, err := s.store.ByID(p.DeviceId); err == nil && d != nil {
-			p.LastSeen = d.LastSeen.Unix()
+	// One query for the whole list (it was one per ID on the single database
+	// connection: ~7.5 ms for 256 IDs on MSI-UBUNTU).
+	if seen, err := s.store.LastSeen(req.GetDeviceIds()); err == nil {
+		for _, p := range list {
+			p.LastSeen = seen[p.DeviceId]
 		}
 	}
 	resp.Result = &pb.ApiResponse_Presence{Presence: &pb.PresenceList{Devices: list}}
@@ -95,11 +97,21 @@ func (s *Server) Presence(books *pb.Books) {
 		online[id] = true
 	}
 	s.mu.Unlock()
+	var ids []string
+	for _, book := range books.GetBooks() {
+		for _, e := range book.GetEntries() {
+			ids = append(ids, e.GetDeviceId())
+		}
+	}
+	seen, err := s.store.LastSeen(ids)
+	if err != nil {
+		seen = nil // last access unknown: left as it is, like a missing device
+	}
 	for _, book := range books.GetBooks() {
 		for _, e := range book.GetEntries() {
 			e.Online = online[e.GetDeviceId()]
-			if d, err := s.store.ByID(e.GetDeviceId()); err == nil && d != nil {
-				e.LastSeen = d.LastSeen.Unix()
+			if t, ok := seen[e.GetDeviceId()]; ok {
+				e.LastSeen = t
 			}
 		}
 	}

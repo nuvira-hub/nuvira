@@ -254,6 +254,42 @@ func (s *Store) ByID(id string) (*Device, error) {
 	return d, nil
 }
 
+// lastSeenChunk is the most IDs per query of LastSeen (SQLite's limit on
+// parameters is far higher; this keeps each query short).
+const lastSeenChunk = 500
+
+// LastSeen returns the last access (Unix seconds) of the devices among ids that
+// exist, with one query per lastSeenChunk IDs instead of one per ID.
+func (s *Store) LastSeen(ids []string) (map[string]int64, error) {
+	seen := make(map[string]int64, len(ids))
+	for len(ids) > 0 {
+		chunk := ids[:min(len(ids), lastSeenChunk)]
+		ids = ids[len(chunk):]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		rows, err := s.db.Query(`SELECT id, last_seen FROM devices WHERE id IN (?`+strings.Repeat(`,?`, len(chunk)-1)+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			var t int64
+			if err := rows.Scan(&id, &t); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			seen[id] = t
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return seen, nil
+}
+
 // Touch updates the last access.
 func (s *Store) Touch(id string) error {
 	_, err := s.db.Exec(`UPDATE devices SET last_seen = ? WHERE id = ?`, time.Now().Unix(), id)
