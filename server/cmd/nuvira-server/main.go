@@ -160,6 +160,7 @@ func run() error {
 
 	if wsListen := env("NUVIRA_WS_LISTEN", ":21116"); wsListen != "off" {
 		conn.WebSockets().SetLogger(log)
+		conn.WebSockets().SetLimitMode(limitMode)
 		mux := http.NewServeMux()
 		mux.Handle("/nuvira", conn.WebSockets())
 		mux.Handle(updates.Prefix, updates.Handler(filepath.Join(dataDir, "updates")))

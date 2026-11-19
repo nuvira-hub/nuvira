@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
 )
 
 // WebSockets carries QUIC datagrams inside WebSocket connections, for devices
@@ -22,6 +24,13 @@ import (
 type WebSockets struct {
 	conn *Conn
 	log  *slog.Logger
+
+	// Limits per address (NUVIRA_RATE_LIMITS): connections at once and
+	// datagrams per second of each connection. Set before serving.
+	mode    limits.Mode
+	open    *limits.Counter
+	perSec  float64
+	maxConn int
 
 	next  atomic.Uint64
 	mu    sync.Mutex
@@ -45,8 +54,50 @@ const wsOutQueue = 1024
 // Maximum size of a datagram (QUIC uses at most ~1500 bytes).
 const wsMaxMessage = 2048
 
+// WebSocket connections open at once per address: each browser tab of the web
+// client keeps one for the server and one per session, so an office of
+// technicians behind one address stays far below it.
+const wsMaxPerAddress = 64
+
+// Datagrams per second (and burst) one WebSocket connection may deliver: far
+// above a video session (about 2,000/s at 20 Mbit/s, keyframes in bursts of a
+// few hundred), but one connection can no longer fill the queue shared with
+// the UDP port (inQueue) and make every session drop.
+const wsDatagramsPerSecond = 10000
+
 func newWebSockets(c *Conn) *WebSockets {
-	return &WebSockets{conn: c, log: slog.Default(), peers: map[wsAddr]*wsPeer{}}
+	w := &WebSockets{conn: c, log: slog.Default(), peers: map[wsAddr]*wsPeer{}}
+	w.SetLimitMode(limits.Public)
+	return w
+}
+
+// SetLimitMode sets to which client addresses the limits apply, before serving.
+func (w *WebSockets) SetLimitMode(mode limits.Mode) {
+	w.setLimits(mode, wsMaxPerAddress, wsDatagramsPerSecond)
+}
+
+func (w *WebSockets) setLimits(mode limits.Mode, maxConn int, perSec float64) {
+	w.mode, w.maxConn, w.perSec = mode, maxConn, perSec
+	w.open = nil
+	if mode != limits.Off {
+		w.open = limits.NewCounter(mode, maxConn)
+	}
+}
+
+// wsBucket is the token bucket of one connection's datagrams.
+type wsBucket struct {
+	rate, tokens float64
+	last         time.Time
+}
+
+func (b *wsBucket) take(now time.Time) bool {
+	b.tokens = min(b.rate, b.tokens+now.Sub(b.last).Seconds()*b.rate)
+	b.last = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
 }
 
 // SetLogger sets the logger used for the connections.
@@ -54,12 +105,30 @@ func (w *WebSockets) SetLogger(log *slog.Logger) { w.log = log }
 
 // ServeHTTP accepts a WebSocket connection and connects it to the dispatching.
 func (w *WebSockets) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	host := remoteHost(req)
+	var bucket *wsBucket
+	if ip, err := netip.ParseAddr(host); err == nil {
+		release, ok := w.open.Add(ip)
+		if !ok {
+			w.log.Debug("WebSocket refused: too many connections from this address", "from", host)
+			http.Error(rw, "too many connections", http.StatusTooManyRequests)
+			return
+		}
+		defer release()
+		if w.mode.Applies(ip) {
+			bucket = &wsBucket{rate: w.perSec, tokens: w.perSec, last: time.Now()}
+		}
+	}
+	// Any Origin: the tunnel carries only end-to-end encrypted QUIC with
+	// authentication by key and no cookies, so a page of another site gains no
+	// authority through a visitor's browser (it could send datagrams, like any
+	// UDP sender); and the web client may be hosted on another site.
 	ws, err := websocket.Accept(rw, req, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
 	ws.SetReadLimit(wsMaxMessage)
-	addr := wsAddr(fmt.Sprintf("ws:%d@%s", w.next.Add(1), remoteHost(req)))
+	addr := wsAddr(fmt.Sprintf("ws:%d@%s", w.next.Add(1), host))
 	ctx, cancel := context.WithCancel(req.Context())
 	peer := &wsPeer{out: make(chan []byte, wsOutQueue), cancel: cancel}
 	w.mu.Lock()
@@ -98,6 +167,9 @@ func (w *WebSockets) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if typ == websocket.MessageBinary && len(data) > 0 {
+			if bucket != nil && !bucket.take(time.Now()) {
+				continue // over the rate of a connection: dropped (QUIC retransmits)
+			}
 			w.conn.deliver(data, addr)
 		}
 	}
