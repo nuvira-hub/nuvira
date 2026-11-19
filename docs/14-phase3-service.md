@@ -93,6 +93,50 @@ Tests of 2026-10-27 on PC-LABORATORIO, viewer from the NUC:
 - temporary password with the app closed: refused immediately, the viewer shows "connection not accepted on the device";
 - the app reconnects after an agent update and after two closes in a row. The first version did not recreate the pipe after the app closed ("Access denied" with `FIRST_PIPE_INSTANCE`): fixed by preparing the next instance in advance.
 
+## The display stays on during a session (Windows)
+
+A monitor that power saving has switched off is a problem for an unattended
+session: DXGI Desktop Duplication delivers a frame only when DWM composes and
+presents one, and with the display off some machines compose nothing at all.
+On PC-LABORATORIO (Windows 10, a desktop monitor) the duplication gives not a
+single frame while the monitor is off (while a GDI `BitBlt` still reads the
+windows); a session there started black and the viewer, which only starts after
+the first frame, also never began file transfers, until a technician happened to
+move the mouse and woke the monitor. PC-LENOVO-ALE (Windows 11, laptop panel)
+keeps giving a frame per change. This matches macOS, where the lock screen's
+display-off hid the picture until `DisplayAwake` kept it on (see
+[33-macos.md](33-macos.md), "Locked screen").
+
+So while a session's capture is open (`client/capture/src/awake.rs`,
+`DisplayAwake`, wrapped around the capturer by `client/agent/src/display_awake.rs`):
+
+- a **power request** is held — `PowerCreateRequest` +
+  `PowerSetRequest(PowerRequestDisplayRequired)` and `PowerRequestSystemRequired`,
+  named "NuviraHub remote session" (shown by `powercfg /requests`), released when
+  the session ends and by Windows if the process exits, so a crash cannot leave
+  it set. It keeps the power plan from turning the display off while it is held;
+  both requests together, as the documentation asks. It does not stop a sleep the
+  person starts (lid, power button) nor the screen saver, and it does not turn a
+  display that is **already** off back on;
+- so a display that is off anyway is **woken** with a one-pixel pointer move and
+  back through the agent's own injector (`nuvira_input::wake_display`, tagged so
+  privacy mode lets it through, on the input desktop so it also reaches the lock
+  screen and UAC): when no picture has come for about a quarter of a second, and
+  again whenever Windows reports the display went off (the lock screen turns it
+  off after its own "console lock display off timeout", 60 s by default). The
+  wake is repeated at most every 3 s for a few tries, then every 30 s. The net
+  movement is zero, so the pointer does not jump.
+
+Not done in a Remote Desktop session (`GetSystemMetrics(SM_REMOTESESSION)`): it
+has no physical monitor to wake and the request would be pointless.
+
+The person at the controlled computer therefore sees their monitor stay on (or
+come back on) for the length of the session: the visible change the user chose on
+2026-11-18, parity with macOS. Privacy mode still works — it is a black topmost
+window excluded from the capture, not a powered-off monitor — so with privacy on
+the person sees black on the lit monitor, and the tagged wake move is not dropped
+by its input hook.
+
 ## Remote Desktop sessions
 
 When a user connects to the PC with Remote Desktop their session leaves the console, which is left on the sign-in screen. The service follows the console when someone is signed in there, otherwise the first Remote Desktop session in use with a user (`choose_session` in `launch.rs`, unit-tested); the agent is restarted when the choice changes, as for a user switch. Where DXGI Desktop Duplication is not available (some Remote Desktop sessions, virtual machines) capture falls back to GDI (`client/capture/src/gdi.rs`): a copy of the screen every 33 ms, reported only when it changed; `NUVIRA_CAPTURE=gdi` forces it. On the NUC, forced: 1920x1080, ~14 fps, 17 ms.

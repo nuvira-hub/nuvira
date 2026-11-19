@@ -10,6 +10,8 @@ use std::time::Duration;
 
 mod all;
 #[cfg(windows)]
+pub mod awake;
+#[cfg(windows)]
 pub mod desktop;
 #[cfg(windows)]
 mod gdi;

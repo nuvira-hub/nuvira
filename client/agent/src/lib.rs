@@ -8,6 +8,8 @@
 mod abr;
 pub mod access;
 pub mod cli;
+#[cfg(any(windows, test))]
+mod display_awake;
 #[cfg(windows)]
 pub mod clip_user;
 mod files;
@@ -124,7 +126,11 @@ impl AgentConfig {
                 } else {
                     nuvira_codec::dmabuf_import_modifiers()
                 });
-                nuvira_capture::open(self.display)
+                let capturer = nuvira_capture::open(self.display)?;
+                // Windows: the display stays on while the session captures it (VID-10).
+                #[cfg(windows)]
+                let capturer = display_awake::wrap(capturer);
+                Ok(capturer)
             }
         }
     }
