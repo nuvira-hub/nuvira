@@ -48,3 +48,40 @@ func TestKey(t *testing.T) {
 		t.Errorf("/48: %s", got)
 	}
 }
+
+func TestCounter(t *testing.T) {
+	c := NewCounter(Public, 2)
+	pub, pub2, local := netip.MustParseAddr("203.0.113.1"), netip.MustParseAddr("203.0.113.2"), netip.MustParseAddr("10.0.0.1")
+	r1, ok1 := c.Add(pub)
+	_, ok2 := c.Add(netip.MustParseAddr("::ffff:203.0.113.1"))
+	if _, ok3 := c.Add(pub); !ok1 || !ok2 || ok3 {
+		t.Fatalf("cap 2: %v %v %v", ok1, ok2, ok3)
+	}
+	if _, ok := c.Add(pub2); !ok {
+		t.Fatal("another address refused")
+	}
+	for range 10 {
+		if _, ok := c.Add(local); !ok {
+			t.Fatal("local address counted")
+		}
+	}
+	r1()
+	r1() // twice: released once
+	if c.Open(pub) != 1 {
+		t.Fatalf("open %d", c.Open(pub))
+	}
+	if _, ok := c.Add(pub); !ok {
+		t.Fatal("place not given back")
+	}
+	all := NewCounter(All, 1)
+	if _, ok := all.Add(local); !ok {
+		t.Fatal("all: first")
+	}
+	if _, ok := all.Add(local); ok {
+		t.Fatal("all: local not capped")
+	}
+	var none *Counter
+	if _, ok := none.Add(pub); !ok {
+		t.Fatal("nil counter")
+	}
+}

@@ -172,9 +172,18 @@ func Wrap(db *sql.DB) *Store { return &Store{db: db} }
 // DB exposes the database to the other stores of the same file (accounts and address book).
 func (s *Store) DB() *sql.DB { return s.db }
 
+// ErrNewDeviceRefused is returned by RegisterWith when allowNew refuses a new row.
+var ErrNewDeviceRefused = errors.New("new device refused")
+
 // Register returns the device with this key, creating it with a new ID the first
 // time; it updates name, system and last access.
 func (s *Store) Register(publicKey []byte, name, os string) (*Device, error) {
+	return s.RegisterWith(publicKey, name, os, nil)
+}
+
+// RegisterWith is Register; when the key is new, allowNew (if not nil) is asked
+// first, and ErrNewDeviceRefused returned if it says no (a budget of new rows).
+func (s *Store) RegisterWith(publicKey []byte, name, os string, allowNew func() bool) (*Device, error) {
 	now := time.Now()
 	d := &Device{PublicKey: publicKey, Name: name, OS: os, LastSeen: now}
 	// known finds the device of this key and updates it; false if there is none.
@@ -196,6 +205,9 @@ func (s *Store) Register(publicKey []byte, name, os string) (*Device, error) {
 		return nil, err
 	} else if found {
 		return d, nil
+	}
+	if allowNew != nil && !allowNew() {
+		return nil, ErrNewDeviceRefused
 	}
 
 	d.CreatedAt = now

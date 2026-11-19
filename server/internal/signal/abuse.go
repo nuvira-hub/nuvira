@@ -28,9 +28,23 @@ var (
 	registerLimit = rate{perMinute: 30, burst: 100}
 	// Connection requests: guessing IDs, or bothering a PC with requests.
 	connectLimit = rate{perMinute: 10, burst: 15}
+	// Registrations of a key never seen (each creates a device row, kept): the
+	// burst lets an office install all its PCs at once. Per IPv6 /48, since a
+	// site holding many /64s must not multiply it.
+	newDeviceLimit = rate{perMinute: 10, burst: 100, v6bits: 48}
 )
 
-type rate struct{ perMinute, burst float64 }
+// Connections open at once from one address, registered or not. Each app
+// keeps a few (agent, address book, viewer while in a session): an office of
+// about 80 PCs behind one address stays below it.
+const maxConnsPerAddress = 256
+
+// rate is a token bucket: tokens per minute, burst, and the IPv6 prefix of
+// its key (64 when 0).
+type rate struct {
+	perMinute, burst float64
+	v6bits           int
+}
 
 // limiter is a token bucket per address.
 type limiter struct {
@@ -61,7 +75,11 @@ func (l *limiter) allow(ip netip.Addr, now time.Time) bool {
 	if l == nil || !l.mode.Applies(ip) {
 		return true
 	}
-	key := limits.Key(ip)
+	bits := l.rate.v6bits
+	if bits == 0 {
+		bits = 64
+	}
+	key := limits.KeyBits(ip, bits)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	b := l.buckets[key]

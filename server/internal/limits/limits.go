@@ -1,8 +1,12 @@
 // Package limits holds what the server's limits per address share: which
-// addresses they apply to (NUVIRA_RATE_LIMITS) and the key of an address.
+// addresses they apply to (NUVIRA_RATE_LIMITS), the key of an address, and a
+// cap on the connections open at once from one address.
 package limits
 
-import "net/netip"
+import (
+	"net/netip"
+	"sync"
+)
 
 // Mode says to which client addresses the limits per address apply.
 type Mode int
@@ -67,4 +71,52 @@ func KeyBits(ip netip.Addr, v6bits int) netip.Prefix {
 	}
 	p, _ := ip.Prefix(v6bits)
 	return p
+}
+
+// Counter caps the connections open at once from one address (Key).
+type Counter struct {
+	mode Mode
+	max  int
+	mu   sync.Mutex
+	open map[netip.Prefix]int
+}
+
+// NewCounter allows at most max connections per address the mode applies to.
+func NewCounter(mode Mode, max int) *Counter {
+	return &Counter{mode: mode, max: max, open: map[netip.Prefix]int{}}
+}
+
+// Add takes a place for a connection from ip. If ok, release must be called
+// (once) when the connection ends. A nil Counter allows everything.
+func (c *Counter) Add(ip netip.Addr) (release func(), ok bool) {
+	if c == nil || !c.mode.Applies(ip) {
+		return func() {}, true
+	}
+	key := Key(ip)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.open[key] >= c.max {
+		return nil, false
+	}
+	c.open[key]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.open[key]--; c.open[key] <= 0 {
+				delete(c.open, key)
+			}
+		})
+	}, true
+}
+
+// Open is the number of connections counted for the address of ip.
+func (c *Counter) Open(ip netip.Addr) int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.open[Key(ip)]
 }

@@ -171,3 +171,25 @@ func TestConcurrentFirstRegistrationOfOneKey(t *testing.T) {
 		t.Fatalf("%d device rows for %d keys (%v)", rows, rounds, err)
 	}
 }
+
+// RegisterWith asks allowNew only for a key never seen.
+func TestRegisterWithNewDeviceBudget(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "nuvira.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	asked := 0
+	no := func() bool { asked++; return false }
+	if _, err := s.RegisterWith(bytes.Repeat([]byte{1}, 32), "a", "linux", no); !errors.Is(err, ErrNewDeviceRefused) || asked != 1 {
+		t.Fatalf("new key: %v, asked %d", err, asked)
+	}
+	known, err := s.Register(bytes.Repeat([]byte{1}, 32), "a", "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.RegisterWith(bytes.Repeat([]byte{1}, 32), "a2", "linux", no)
+	if err != nil || d.ID != known.ID || asked != 1 {
+		t.Fatalf("known key: %v %v, asked %d", d, err, asked)
+	}
+}

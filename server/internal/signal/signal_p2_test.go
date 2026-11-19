@@ -560,3 +560,65 @@ func TestConcurrentReconnectsOfOneDevice(t *testing.T) {
 		t.Fatalf("%d connections of the same device still open", open)
 	}
 }
+
+// SRV-8: at most maxConnsPerAddress connections open at once per address
+// (3 here), registered or not; a place is given back when one closes.
+func TestConnectionsPerAddressCapped(t *testing.T) {
+	ts := startServerWith(t, func(s *Server) {
+		s.SetLimitMode(limits.All)
+		s.connections = limits.NewCounter(limits.All, 3)
+	})
+	a := ts.device(t, "a")
+	ts.device(t, "b")
+	idle := ts.dial(t) // not registered yet: counted too
+	_, _ = idle.stream.Write([]byte{0x05})
+	time.Sleep(200 * time.Millisecond)
+	c := ts.dial(t)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	_ = c.send(registerMsg(key.Public().(ed25519.PublicKey), "d", false))
+	if text := refusal(t, c); text != "@server.rate_limited" {
+		t.Fatalf("4th connection: %q", text)
+	}
+	_ = a.conn.CloseWithError(0, "")
+	ts.waitOnline(t, a.id, false)
+	for range 50 {
+		if ts.srv.connections.Open(netip.MustParseAddr("127.0.0.1")) < 3 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ts.device(t, "e")
+	// The default mode does not count loopback at all.
+	def := startServer(t)
+	for i := range 5 {
+		def.device(t, fmt.Sprintf("lan-%d", i))
+	}
+}
+
+// SRV-8: registrations that create a device row have a budget of their own
+// (newDeviceLimit; burst 2 here); a known key registers again freely.
+func TestNewDevicesPerAddressBudget(t *testing.T) {
+	ts := startServerWith(t, func(s *Server) {
+		s.SetLimitMode(limits.All)
+		s.newDeviceLimit = newLimiterMode(rate{perMinute: 1, burst: 2, v6bits: 48}, limits.All)
+	})
+	first := ts.device(t, "one")
+	ts.device(t, "two")
+	if err := ts.dial(t).register(nil, "three", false); err == nil || err.Error() != "server error: @server.rate_limited" {
+		t.Fatalf("third new key: %v", err)
+	}
+	again := ts.dial(t)
+	if err := again.register(first.key, "one again", false); err != nil || again.id != first.id {
+		t.Fatalf("known key: %v %s", err, again.id)
+	}
+	var rows int
+	if err := ts.store.DB().QueryRow(`SELECT COUNT(*) FROM devices`).Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("%d rows (%v)", rows, err)
+	}
+	// The key of the IPv6 budget is the /48.
+	l := newLimiterMode(rate{perMinute: 1, burst: 1, v6bits: 48}, limits.Public)
+	now := time.Now()
+	if !l.allow(netip.MustParseAddr("2001:db8:1:1::1"), now) || l.allow(netip.MustParseAddr("2001:db8:1:ffff::1"), now) {
+		t.Fatal("/48 not shared")
+	}
+}
