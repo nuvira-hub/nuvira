@@ -47,36 +47,55 @@ var smallOrderKeys = func() map[string]bool {
 
 func smallOrderKey(pub []byte) bool { return smallOrderKeys[string(pub)] }
 
-// KNOWN BUG (Phase 2, new finding, signal.go register): the proof of the key
-// uses crypto/ed25519.Verify, which does not refuse small-order public keys.
-// With the all-zero key (a point of order 4) and the all-zero signature the
-// check passes for about 1 nonce in 4, so anybody registers a device without
-// holding any private key (always the same ID for the same weak key).
-// Expected after fix: Register refuses small-order (and non-canonical) keys.
+// The test's own list (computed from the curve) is the production one.
+func TestWeakKeysAreTheSmallOrderPoints(t *testing.T) {
+	if len(weakKeys) != 14 || len(smallOrderKeys) != 14 {
+		t.Fatalf("%d / %d encodings", len(weakKeys), len(smallOrderKeys))
+	}
+	for k := range smallOrderKeys {
+		if !weakKey([]byte(k)) {
+			t.Errorf("%x not refused", k)
+		}
+	}
+	for range 1000 {
+		pub, _, _ := ed25519.GenerateKey(nil)
+		if weakKey(pub) {
+			t.Fatalf("real key %x refused", pub)
+		}
+	}
+}
+
+// Fixed (SRV-6, was K20): the proof of the key used crypto/ed25519.Verify alone,
+// which does not refuse small-order public keys: with the all-zero key (a point
+// of order 4) and the all-zero signature the check passed for about 1 nonce in
+// 4, so anybody registered a device without holding any private key. Now every
+// small-order (and non-canonical small-order) key gets "invalid proof of the key".
 func TestCharacterisesBug_SmallOrderKeyRegisters(t *testing.T) {
 	ts := startServer(t)
-	zero := make([]byte, ed25519.PublicKeySize)
-	if !smallOrderKey(zero) {
-		t.Fatal("list of small-order keys")
+	const tries = 64 // with the bug: P(no success) = (3/4)^64 ≈ 1e-8
+	keys := make([][]byte, 0, len(smallOrderKeys))
+	for k := range smallOrderKeys {
+		keys = append(keys, []byte(k))
 	}
-	ok, ids := 0, map[string]bool{}
-	const tries = 64 // P(no success) = (3/4)^64 ≈ 1e-8
-	for range tries {
+	for i := range tries {
+		key := keys[i%len(keys)]
+		if i < tries/2 {
+			key = make([]byte, ed25519.PublicKeySize) // the all-zero key, half the tries
+		}
 		c := ts.dial(t)
-		_ = c.send(registerMsg(zero, "weak", false))
+		_ = c.send(registerMsg(key, "weak", false))
 		if m, err := c.read(5 * time.Second); err != nil || m.GetChallenge() == nil {
 			t.Fatalf("challenge: %v %v", m, err)
 		}
 		_ = c.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Proof{Proof: &pb.Proof{Signature: make([]byte, 64)}}})
 		m, err := c.read(5 * time.Second)
-		if err == nil && m.GetRegistered() != nil {
-			ok++
-			ids[m.GetRegistered().DeviceId] = true
+		if err != nil || m.GetError().GetMessage() != "invalid proof of the key" {
+			t.Fatalf("key %x, try %d: %v %v", key, i+1, m, err)
 		}
 		_ = c.conn.CloseWithError(0, "")
 	}
-	t.Logf("all-zero key and signature registered %d/%d times", ok, tries)
-	if ok == 0 || len(ids) != 1 {
-		t.Fatalf("registered %d times, IDs %v", ok, ids)
+	var rows int
+	if err := ts.store.DB().QueryRow(`SELECT COUNT(*) FROM devices`).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("%d device rows (%v)", rows, err)
 	}
 }

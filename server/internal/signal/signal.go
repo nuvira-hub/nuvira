@@ -301,7 +301,8 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	}
 	proof := msg.GetProof()
 	signed := append([]byte(registerContext), nonce...)
-	if proof == nil || !ed25519.Verify(reg.PublicKey, signed, proof.Signature) {
+	// A small-order key proves nothing (weakkey.go): refused like a bad signature.
+	if proof == nil || weakKey(reg.PublicKey) || !ed25519.Verify(reg.PublicKey, signed, proof.Signature) {
 		c.refuse("invalid proof of the key")
 		return nil, errors.New("invalid signature")
 	}
