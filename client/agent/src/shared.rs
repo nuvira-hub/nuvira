@@ -285,19 +285,9 @@ pub async fn guest_session(
     gate: &Gate<'_>,
 ) -> Result<()> {
     let mut ctrl_tx = FramedSend::new(send);
-    let mut ctrl_rx = FramedRecv::new(recv);
-    let Some(ControlMessage { msg: Some(Msg::Hello(hello)) }) = ctrl_rx.recv().await? else {
-        bail!("the viewer did not introduce itself");
-    };
-    info!(
-        device = hello.device_name,
-        os = hello.os,
-        version = hello.app_version,
-        "viewer joining the session in progress"
-    );
-    if hello.protocol_version < nuvira_proto::MIN_PROTOCOL_VERSION {
-        bail!("viewer protocol version not supported: {}", hello.protocol_version);
-    }
+    // Small messages only until the viewer has authenticated.
+    let mut ctrl_rx = FramedRecv::with_limit(recv, crate::HANDSHAKE_MESSAGE_LIMIT);
+    let hello = crate::read_hello(&mut ctrl_rx, "viewer joining the session in progress").await?;
     let policy = gate.policy();
     let Some(shared) = gate.ctx.shared.lock().expect("shared").clone() else {
         bail!("@agent.busy");
@@ -311,10 +301,7 @@ pub async fn guest_session(
     let cursor_cache = cursor && hello.cursor_cache;
     let answer = Hello { password_required: true, text: input, audio, cursor, cursor_cache, ..local_hello() };
     ctrl_tx.send(&control(Msg::Hello(answer))).await?;
-    let given = match ctrl_rx.recv::<ControlMessage>().await? {
-        Some(ControlMessage { msg: Some(Msg::Auth(auth)) }) => auth,
-        _ => bail!("the viewer did not send the password"),
-    };
+    let given = crate::read_auth(&mut ctrl_rx).await?;
     // Only the first viewer has a terminal; a recording required by the rules cannot
     // be made by a guest.
     let refused = if hello.terminal_only {
@@ -353,6 +340,7 @@ pub async fn guest_session(
         tokio::time::sleep(Duration::from_millis(pause)).await;
         bail!("{reason}");
     }
+    ctrl_rx.set_limit(nuvira_proto::framing::MAX_MESSAGE_LEN);
 
     let name = match gate.request.viewer_name.as_str() {
         "" => gate.request.viewer_id.clone(),
@@ -431,7 +419,7 @@ pub async fn guest_session(
         }
     };
     let input_loop = async {
-        let mut rx = FramedRecv::new(conn.accept_uni().await?);
+        let mut rx = FramedRecv::with_limit(conn.accept_uni().await?, crate::HANDSHAKE_MESSAGE_LIMIT);
         while let Some(event) = rx.recv::<InputEvent>().await? {
             if input {
                 let _ = shared.input.send(event);

@@ -109,12 +109,28 @@ fn length_above_the_limit_is_refused_at_once_and_sticky() {
 }
 
 #[test]
-fn the_limit_applies_to_every_message_type() {
-    // KNOWN LEAD (features.md, UNVERIFIED): the same 16 MiB limit holds for small
-    // control messages too; the decoder has no per-type limit.
+fn a_smaller_limit_can_be_set_per_stream() {
+    // Was KNOWN LEAD K7 (Phase 2): every stream had the same 16 MiB limit, with no
+    // way to ask for less (review NET-3). The default stays 16 MiB, for any type.
     let mut dec = Decoder::default();
     dec.push(&varint(MAX_MESSAGE_LEN as u64));
     assert!(matches!(dec.next_message::<ControlMessage>(), Ok(None)));
+    // A decoder with its own limit refuses above it, from the length alone.
+    const LIMIT: usize = 64 * 1024;
+    let mut dec = Decoder::with_limit(LIMIT);
+    dec.push(&varint(LIMIT as u64 + 1));
+    assert!(matches!(dec.next_message::<ControlMessage>(), Err(FrameError::TooLarge(n)) if n == LIMIT + 1));
+    // Exactly the limit: waits for the body.
+    let mut dec = Decoder::with_limit(LIMIT);
+    dec.push(&varint(LIMIT as u64));
+    assert!(matches!(dec.next_message::<ControlMessage>(), Ok(None)));
+    // Raised later (after authentication): the waiting length is accepted then.
+    let mut dec = Decoder::with_limit(LIMIT);
+    let big = encode(&FileChunk { data: vec![7; LIMIT], ..Default::default() });
+    dec.push(&big);
+    assert!(matches!(dec.next_message::<FileChunk>(), Err(FrameError::TooLarge(_))));
+    dec.set_limit(MAX_MESSAGE_LEN);
+    assert_eq!(dec.next_message::<FileChunk>().unwrap().map(|c| c.data.len()), Some(LIMIT));
 }
 
 #[test]

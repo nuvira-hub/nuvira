@@ -9,8 +9,11 @@
 //! server restart; impaired relay; several agents and viewers at once and the
 //! shared session with its guest limit; abrupt kill of the viewer; the idle
 //! limit fed by the viewer's input; the baseline bugs (back-to-back sessions
-//! refused as busy, churn signalling timeouts) and a new one (an unauthenticated
-//! viewer keeps the agent busy).
+//! refused as busy, churn signalling timeouts). Since Phase 6 lot 2 (AGT-1): an
+//! unauthenticated viewer does not keep the agent busy and is let go after 10 s,
+//! connections waiting for their password are capped, of two viewers connecting
+//! at once the first to authenticate gets the session, and the longer waits
+//! (confirmation, two-factor code) are not cut by the 10 s deadline.
 
 use std::time::{Duration, Instant};
 
@@ -40,15 +43,22 @@ pub fn cases() -> Vec<Case> {
         Case::new("server/auth/confirmation-accept-and-refuse", confirmation).needs(SRV),
         Case::new("server/auth/two-factor-replay-and-lockout", two_factor).needs(SRV),
         Case::new("server/security/impostor-viewer-refused", impostor).needs(SRV).timeout_s(240),
-        Case::new("server/security/characterises_bug_unauthenticated_viewer_keeps_agent_busy", unauth_busy)
+        Case::new("server/security/unauthenticated-viewer-does-not-keep-agent-busy", unauth_busy)
             .needs(SRV)
             .timeout_s(240),
+        Case::new("server/security/pending-handshakes-capped", pending_capped).needs(SRV).timeout_s(240),
+        Case::new("server/auth/two-viewers-authenticate-at-once", two_at_once).needs(SRV),
         Case::new("server/reconnect/characterises_bug_back_to_back_busy", back_to_back).needs(SRV),
         Case::new("server/reconnect/server-restart", server_restart).needs(SRV),
         Case::new("server/kill/viewer-process", kill_viewer).needs(SRV),
         Case::new("server/concurrent/agents-and-viewers", concurrent).needs(SRV),
         Case::new("server/concurrent/shared-session-guests", guests).needs(SRV),
         Case::new("server/auth/confirmation-no-answer", confirmation_no_answer).needs(SRV).group(Group::Long),
+        Case::new("server/auth/confirmation-answered-at-29s", confirmation_late).needs(SRV).group(Group::Long),
+        Case::new("server/auth/two-factor-code-after-60s", two_factor_late)
+            .needs(SRV)
+            .group(Group::Long)
+            .timeout_s(240),
         Case::new("server/idle/input-counts-as-activity", idle_limit)
             .needs(SRV)
             .group(Group::Long)
@@ -475,10 +485,12 @@ fn impostor(ctx: &mut Ctx) -> Result<()> {
     Ok(())
 }
 
-/// KNOWN BUG (Phase 2, new): a viewer that knows only the device ID connects,
-/// sends its Hello and never the password: the agent waits for it with no time
-/// limit and refuses every other viewer as busy. Expected after fix: a time limit
-/// for the password, then the next viewer is served.
+/// Was KNOWN BUG K33 (Phase 2): a viewer that knew only the device ID connected,
+/// sent its Hello and never the password, and the agent refused every other
+/// viewer as busy for as long as it stayed. Fixed in Phase 6 lot 2 (AGT-1): it
+/// does not make the agent busy (another viewer is served at once), the agent
+/// lets it go after 10 s, and its end is not reported to the app while the other
+/// session goes on.
 fn unauth_busy(ctx: &mut Ctx) -> Result<()> {
     let rig = Rig::start(ctx, AgentSpec::default())?;
     let squatter = rig.viewer(ctx, "squatter")?;
@@ -488,34 +500,185 @@ fn unauth_busy(ctx: &mut Ctx) -> Result<()> {
         let mut raw = Raw::open(conn).await?;
         raw.hello(true).await?;
         let t = Instant::now();
-        let mut tries = Vec::new();
-        // Past the agent's 20 s connection wait and the 10 s idle timeout.
-        while t.elapsed() < Duration::from_secs(32) {
-            let r = async {
-                let (s, _) = open(&rig, &viewer, TransportMode::Udp).await?;
-                s.close().await;
-                anyhow::Ok(())
-            }
-            .await;
-            match r {
-                Ok(()) => bail!("another viewer was served while the first one never authenticated"),
-                Err(e) => tries.push(format!("{:.1} s: {e:#}", t.elapsed().as_secs_f64())),
-            }
-            tokio::time::sleep(Duration::from_secs(4)).await;
-        }
-        for r in &tries {
-            ctx.note(r);
-        }
-        ensure(tries.iter().all(|r| r.contains("@agent.busy")), || format!("refusals {tries:?}"))?;
-        ensure(raw.conn.close_reason().is_none(), || {
-            format!("squatter closed: {:?}", raw.conn.close_reason())
-        })?;
-        // The squatter leaves: the agent is free again.
-        raw.conn.close(0u32.into(), b"bye");
-        rig.ended(0, Duration::from_secs(15)).await?;
-        let (s, _) = open(&rig, &viewer, TransportMode::Udp).await?;
+        let from = rig.agent.events.len();
+        let (s, _) = open(&rig, &viewer, TransportMode::Udp).await.context("viewer while the squatter waits")?;
         rig::frames(&s, 10, Duration::from_secs(20)).await?;
+        let served = t.elapsed();
+        ctx.note(format!("other viewer served {} ms after the squatter's Hello", served.as_millis()));
+        ensure(raw.conn.close_reason().is_none(), || {
+            format!("squatter closed before the other viewer was served: {:?}", raw.conn.close_reason())
+        })?;
+        let (ended, _) = rig::wait_closed(&raw.conn, Duration::from_secs(20)).await?;
+        let after = t.elapsed();
+        ctx.note(format!("squatter: {ended} {} ms after its Hello", after.as_millis()));
+        ensure(ended == "closed 0 end of session", || ended.clone())?;
+        ensure(after >= Duration::from_secs(9) && after <= Duration::from_secs(16), || format!("after {after:?}"))?;
+        // The session goes on, and the app still sees it.
+        rig::frames(&s, 10, Duration::from_secs(20)).await.context("frames after the squatter left")?;
+        let ends = rig.agent.events.all()[from..]
+            .iter()
+            .filter(|e| matches!(e, AgentEvent::SessionEnded { .. }))
+            .count();
+        ensure(ends == 0, || format!("SessionEnded during the session: {:?}", rig.agent.events.kinds(from)))?;
         s.close().await;
+        let (_, error) = rig.ended(from, Duration::from_secs(15)).await?;
+        ctx.note(format!("SessionEnded of the session: {error:?}"));
+        anyhow::Ok(())
+    })?;
+    rig.stop();
+    Ok(())
+}
+
+/// AGT-1 (Phase 6 lot 2): at most MAX_PENDING_SESSIONS sessions may wait for
+/// their viewer's password at once. Squatters that ask for a route and never
+/// connect (the agent waits for each until the relay gives up on it, about 15 s
+/// after the route, or 20 s for the connection): with one place left a viewer is
+/// served, with none it is refused as busy, and once the waits end it is served.
+fn pending_capped(ctx: &mut Ctx) -> Result<()> {
+    let rig = Rig::start(ctx, AgentSpec::default())?;
+    let viewer = rig.viewer(ctx, "viewer")?;
+    let max = nuvira_agent::MAX_PENDING_SESSIONS as usize;
+    rig.vrt.block_on(async {
+        let mut squatters = Vec::new();
+        let t = Instant::now();
+        for i in 0..max {
+            if i == max - 1 {
+                let from = rig.agent.events.len();
+                let (s, _) = open(&rig, &viewer, TransportMode::Udp).await.context("with one place left")?;
+                rig::frames(&s, 10, Duration::from_secs(20)).await?;
+                s.close().await;
+                rig.ended(from, Duration::from_secs(15)).await?;
+                ctx.note(format!("served with {} waiting, {} ms", squatters.len(), t.elapsed().as_millis()));
+            }
+            let who = rig.viewer(ctx, &format!("squatter-{i}"))?;
+            let mut sig = rig::viewer_signal(&rig.srv, &who, TransportMode::Udp).await?;
+            rig::request_route(&rig.srv, &mut sig, &rig.id).await?;
+            squatters.push(sig);
+        }
+        let full = t.elapsed();
+        match open(&rig, &viewer, TransportMode::Udp).await {
+            Ok((s, _)) => {
+                s.close().await;
+                bail!("served with {max} sessions waiting for their password")
+            }
+            Err(e) => {
+                let e = format!("{e:#}");
+                ctx.note(format!("with {max} waiting ({} ms): {e}", full.as_millis()));
+                ensure(e.contains("@agent.busy"), || e.clone())?;
+            }
+        }
+        ensure(t.elapsed() < Duration::from_secs(19), || format!("too slow to fill: {:?}", t.elapsed()))?;
+        // The waits end (relay bind about 15 s, connection 20 s): the agent serves again.
+        let mut tries = Vec::new();
+        let s = loop {
+            match open(&rig, &viewer, TransportMode::Udp).await {
+                Ok((s, _)) => break s,
+                Err(e) if t.elapsed() < Duration::from_secs(45) => {
+                    tries.push(format!("{:.1} s: {e:#}", t.elapsed().as_secs_f64()));
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                Err(e) => bail!("not served after the waits ended: {tries:?} {e:#}"),
+            }
+        };
+        rig::frames(&s, 10, Duration::from_secs(20)).await?;
+        ctx.note(format!("served again {} ms after the first squatter; refused before: {tries:?}", t.elapsed().as_millis()));
+        s.close().await;
+        drop(squatters);
+        anyhow::Ok(())
+    })?;
+    rig.stop();
+    Ok(())
+}
+
+/// AGT-1 (Phase 6 lot 2): two viewers in the handshake at once (neither counts
+/// as busy before its password): the first to authenticate gets the session, the
+/// other is refused as busy after its right password, and the app sees one
+/// session that ends once, when it ends.
+fn two_at_once(ctx: &mut Ctx) -> Result<()> {
+    let rig = Rig::start(ctx, AgentSpec::default())?;
+    let (v1, v2) = (rig.viewer(ctx, "first")?, rig.viewer(ctx, "second")?);
+    rig.vrt.block_on(async {
+        let from = rig.agent.events.len();
+        let mut a = Raw::open(rig::connect_via(&rig.srv, &v1, &rig.id, TransportMode::Udp).await?.0).await?;
+        a.hello(true).await?;
+        let mut b = Raw::open(rig::connect_via(&rig.srv, &v2, &rig.id, TransportMode::Udp).await?.0).await?;
+        b.hello(true).await?;
+        let ra = rig::auth_result(&a.auth(rig::PASSWORD, "").await?)?;
+        ensure(ra == (true, String::new()), || format!("first: {ra:?}"))?;
+        let rb = rig::auth_result(&b.auth(rig::PASSWORD, "").await?)?;
+        ensure(rb == (false, "@agent.busy".into()), || format!("second: {rb:?}"))?;
+        let (ended, _) = rig::wait_closed(&b.conn, Duration::from_secs(10)).await?;
+        ensure(ended == "closed 0 @agent.busy", || ended.clone())?;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let events = rig.agent.events.all();
+        let count = |f: fn(&AgentEvent) -> bool| events[from..].iter().filter(|e| f(e)).count();
+        let started = count(|e| matches!(e, AgentEvent::SessionStarted { .. }));
+        let ends = count(|e| matches!(e, AgentEvent::SessionEnded { .. }));
+        ctx.note(format!("events: {:?}", rig.agent.events.kinds(from)));
+        ensure(started == 1 && ends == 0, || format!("started {started}, ended {ends}"))?;
+        ensure(a.conn.close_reason().is_none(), || format!("first closed: {:?}", a.conn.close_reason()))?;
+        a.conn.close(0u32.into(), b"done");
+        rig.ended(from, Duration::from_secs(15)).await?;
+        anyhow::Ok(())
+    })?;
+    rig.stop();
+    Ok(())
+}
+
+/// AGT-1 scope guard (Phase 6 lot 2): the 10 s handshake deadline is not around
+/// the confirmation: an answer 29 s after the request is still accepted.
+fn confirmation_late(ctx: &mut Ctx) -> Result<()> {
+    let rig = Rig::start(ctx, AgentSpec { confirm: true, ..Default::default() })?;
+    let viewer = rig.viewer(ctx, "viewer")?;
+    rig.vrt.block_on(async {
+        let from = rig.agent.events.len();
+        let mut a = attempt(&rig, &viewer, rig::PASSWORD, "", true).await?;
+        ensure(matches!(a.first, Msg::ConfirmationPending(_)), || format!("{:?}", a.first))?;
+        let (_, e) = rig
+            .agent
+            .events
+            .wait(from, Duration::from_secs(10), |e| matches!(e, AgentEvent::Incoming { .. }))
+            .await?;
+        let AgentEvent::Incoming { session_id, .. } = e else { unreachable!() };
+        tokio::time::sleep(Duration::from_secs(29)).await;
+        rig.agent.command(AgentCommand::Respond { session_id, accept: true })?;
+        let r = match a.raw.next(Duration::from_secs(10)).await? {
+            Some(ControlMessage { msg: Some(m) }) => rig::auth_result(&m)?,
+            other => bail!("after Respond: {other:?}"),
+        };
+        ctx.note(format!("answered after 29 s: {r:?}"));
+        ensure(r == (true, String::new()), || format!("{r:?}"))?;
+        a.raw.conn.close(0u32.into(), b"done");
+        rig.ended(from, Duration::from_secs(15)).await?;
+        anyhow::Ok(())
+    })?;
+    rig.stop();
+    Ok(())
+}
+
+/// AGT-1 scope guard (Phase 6 lot 2): the 10 s handshake deadline is not around
+/// the two-factor code: a code typed 60 s after CodeRequired is still accepted.
+fn two_factor_late(ctx: &mut Ctx) -> Result<()> {
+    const PERMANENT: &str = "permanent-e2e-pass";
+    let secret = nuvira_secret::totp_secret();
+    let spec = AgentSpec { permanent_hash: Some(nuvira_secret::hash(PERMANENT)), ..Default::default() };
+    let rules = nuvira_agent::access::AccessRules { totp: Some(secret.clone()), ..Default::default() };
+    rules.save(&ctx.tmp.join("agent"))?;
+    let rig = Rig::start(ctx, spec)?;
+    let viewer = rig.viewer(ctx, "viewer")?;
+    rig.vrt.block_on(async {
+        let from = rig.agent.events.len();
+        let mut a = attempt(&rig, &viewer, PERMANENT, "", true).await?;
+        ensure(matches!(a.first, Msg::CodeRequired(_)), || format!("expected CodeRequired, got {:?}", a.first))?;
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() / 30);
+        let code = nuvira_secret::totp_code(&secret, now).context("code")?;
+        let r = a.result(PERMANENT, Some(&code)).await?;
+        ctx.note(format!("code after 60 s: {r:?}"));
+        ensure(r == (true, String::new()), || format!("{r:?}"))?;
+        a.raw.conn.close(0u32.into(), b"done");
+        rig.ended(from, Duration::from_secs(15)).await?;
         anyhow::Ok(())
     })?;
     rig.stop();

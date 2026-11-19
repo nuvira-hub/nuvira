@@ -30,12 +30,30 @@ pub fn encode<M: Message>(msg: &M) -> Vec<u8> {
 }
 
 /// Collects the received bytes and returns the complete messages.
-#[derive(Default)]
 pub struct Decoder {
     buf: BytesMut,
+    limit: usize,
+}
+
+impl Default for Decoder {
+    fn default() -> Self {
+        Self::with_limit(MAX_MESSAGE_LEN)
+    }
 }
 
 impl Decoder {
+    /// A decoder that refuses messages longer than `limit` bytes (instead of
+    /// [`MAX_MESSAGE_LEN`]), e.g. on a stream whose peer is not authenticated yet.
+    pub fn with_limit(limit: usize) -> Self {
+        Self { buf: BytesMut::new(), limit }
+    }
+
+    /// Changes the limit for the messages not decoded yet (e.g. raised once the
+    /// peer has authenticated).
+    pub fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+    }
+
     pub fn push(&mut self, data: &[u8]) {
         self.buf.extend_from_slice(data);
     }
@@ -49,7 +67,7 @@ impl Decoder {
             Err(_) if self.buf.len() < 10 => return Ok(None),
             Err(e) => return Err(FrameError::Decode(e)),
         };
-        if len > MAX_MESSAGE_LEN {
+        if len > self.limit {
             return Err(FrameError::TooLarge(len));
         }
         let header = self.buf.len() - peek.len();
@@ -94,5 +112,16 @@ mod tests {
         prost::encoding::encode_varint((MAX_MESSAGE_LEN + 1) as u64, &mut wire);
         dec.push(&wire);
         assert!(matches!(dec.next_message::<Ping>(), Err(FrameError::TooLarge(_))));
+    }
+
+    #[test]
+    fn limit_per_decoder() {
+        let ping = encode(&Ping { sent_us: 1 });
+        let mut dec = Decoder::with_limit(ping.len() - 2);
+        dec.push(&ping);
+        assert!(matches!(dec.next_message::<Ping>(), Err(FrameError::TooLarge(n)) if n == ping.len() - 1));
+        // Raised: the same bytes, still there, decode.
+        dec.set_limit(MAX_MESSAGE_LEN);
+        assert_eq!(dec.next_message::<Ping>().unwrap(), Some(Ping { sent_us: 1 }));
     }
 }

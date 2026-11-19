@@ -4,8 +4,8 @@
 //!
 //! Pinned here: frames and close, wrong password, wrong certificate, malformed
 //! and oversized first messages, video as datagrams, degraded network (netem
-//! proxy), short outages, abrupt kill of either side, and how long an
-//! unauthenticated connection can hold the agent.
+//! proxy), short outages, abrupt kill of either side, and that an
+//! unauthenticated connection holds the agent at most 10 s (Phase 6 lot 2).
 
 use std::time::{Duration, Instant};
 
@@ -23,16 +23,16 @@ pub fn cases() -> Vec<Case> {
         Case::new("loopback/reverse/wrong-password", wrong_password),
         Case::new("loopback/reverse/wrong-certificate-refused", wrong_certificate),
         Case::new("loopback/reverse/malformed-first-message", malformed_first_message),
-        Case::new("loopback/reverse/max-size-message-before-auth", max_size_before_auth)
+        Case::new("loopback/reverse/oversized-message-before-auth-refused", max_size_before_auth)
             .env(&[("RUST_LOG", "warn,quinn=warn")]),
-        Case::new("loopback/reverse/unauthenticated-connection-holds-agent", unauthenticated_holds),
+        Case::new("loopback/reverse/unauthenticated-connection-released-after-10s", unauthenticated_holds),
         Case::new("loopback/netem/degraded-N3-N5", degraded),
         Case::new("loopback/netem/outage-1s-3s-recovered", outage_short),
         Case::new("loopback/kill/viewer-process", kill_viewer),
         Case::new("loopback/kill/agent-process", kill_agent),
         Case::new("loopback/direct/no-password-and-back-to-back", direct_back_to_back)
             .needs(&[Need::Wildcard]),
-        Case::new("loopback/direct/idle-connection-blocks-next-viewer", direct_idle_blocks)
+        Case::new("loopback/direct/idle-connection-released-after-10s", direct_idle_blocks)
             .needs(&[Need::Wildcard]),
         Case::new("loopback/netem/characterises_bug_outage_8s_not_always_recovered", outage_8s)
             .group(Group::Long)
@@ -176,74 +176,93 @@ fn malformed_first_message(ctx: &mut Ctx) -> Result<()> {
     Ok(())
 }
 
-/// Before any password the agent reads and decodes a control message of the full
-/// 16 MiB limit (and logs the device name in it).
+/// Was K35 (Phase 2): before any password the agent read and decoded a control
+/// message of the full 16 MiB limit (and logged the whole device name in it).
+/// Fixed in Phase 6 lot 2 (AGT-3, NET-3): before authentication the control
+/// stream takes at most 64 KiB; a Hello of exactly that size is still answered
+/// (its name is cut in the log), one byte more is refused from its length.
 fn max_size_before_auth(ctx: &mut Ctx) -> Result<()> {
     use prost::Message;
-    let max = nuvira_proto::framing::MAX_MESSAGE_LEN;
-    let mut hello = rig::viewer_hello(true);
-    let base = rig::control(Msg::Hello(hello.clone())).encoded_len();
-    let mut n = max - base - 8;
-    let msg = loop {
-        hello.device_name = "x".repeat(n);
-        let m = rig::control(Msg::Hello(hello.clone()));
-        match m.encoded_len() {
-            l if l == max => break m,
-            l if l < max => n += max - l,
-            l => n -= l - max,
+    let limit = nuvira_agent::HANDSHAKE_MESSAGE_LIMIT;
+    let hello_of = |len: usize| {
+        let mut hello = rig::viewer_hello(true);
+        let base = rig::control(Msg::Hello(hello.clone())).encoded_len();
+        let mut n = len - base - 8;
+        loop {
+            hello.device_name = "x".repeat(n);
+            let m = rig::control(Msg::Hello(hello.clone()));
+            match m.encoded_len() {
+                l if l == len => break m,
+                l if l < len => n += len - l,
+                l => n -= l - len,
+            }
         }
     };
-    let (art, vrt) = rig::runtimes()?;
-    let agent = reverse(&art, ctx)?;
-    let (addr, fp) = (agent.addr, agent.fingerprint);
-    vrt.block_on(async {
-        let mut raw = Raw::open(loopback_connect(addr, Some(fp)).await?).await?;
-        let t = Instant::now();
-        raw.tx.send(&msg).await?;
-        match raw.next(Duration::from_secs(30)).await? {
-            Some(nuvira_proto::v1::ControlMessage { msg: Some(Msg::Hello(h)) }) => {
-                ctx.note(format!("16 MiB Hello answered in {} ms", t.elapsed().as_millis()));
-                ensure(h.password_required, || "no password asked".into())
+    let max = nuvira_proto::framing::MAX_MESSAGE_LEN;
+    for (len, answered) in [(limit, true), (limit + 1, false), (max, false)] {
+        let msg = hello_of(len);
+        let (art, vrt) = rig::runtimes()?;
+        let agent = reverse(&art, ctx)?;
+        let (addr, fp) = (agent.addr, agent.fingerprint);
+        vrt.block_on(async {
+            let mut raw = Raw::open(loopback_connect(addr, Some(fp)).await?).await?;
+            let t = Instant::now();
+            // The agent may close while a refused message is still being sent.
+            let _ = raw.tx.send(&msg).await;
+            match raw.next(Duration::from_secs(30)).await {
+                Ok(Some(nuvira_proto::v1::ControlMessage { msg: Some(Msg::Hello(h)) })) if answered => {
+                    ctx.note(format!("{len} B Hello answered in {} ms", t.elapsed().as_millis()));
+                    ensure(h.password_required, || "no password asked".into())?;
+                    raw.conn.close(0u32.into(), b"done");
+                }
+                other if !answered => {
+                    let (ended, after) = rig::wait_closed(&raw.conn, Duration::from_secs(10)).await?;
+                    ctx.note(format!("{len} B Hello: {other:?}, {ended} after {} ms", after.as_millis()));
+                    ensure(ended == "closed 0 end of session", || ended.clone())?;
+                    ensure(!matches!(other, Ok(Some(_))), || format!("{len} B: answered {other:?}"))?;
+                }
+                other => bail!("{len} B: expected the agent's Hello, got {other:?}"),
             }
-            other => bail!("expected the agent's Hello, got {other:?}"),
-        }?;
-        raw.conn.close(0u32.into(), b"done");
-        anyhow::Ok(())
-    })?;
-    let _ = agent.finish(&art, Duration::from_secs(5));
+            anyhow::Ok(())
+        })?;
+        let r = agent.finish(&art, Duration::from_secs(5));
+        if !answered {
+            ensure(format!("{r:?}").contains("message too large"), || format!("{len} B: agent {r:?}"))?;
+        }
+    }
     Ok(())
 }
 
-/// KNOWN BUG (Phase 2, new): an unauthenticated connection holds the agent with
-/// no time limit, as long as the viewer's keep-alives arrive: no control stream
-/// at all, or a Hello and never the password. Expected after fix: the agent
-/// gives up after a handshake timeout.
+/// Was KNOWN BUG K34 (Phase 2): an unauthenticated connection held the agent
+/// with no time limit, as long as the viewer's keep-alives arrived: no control
+/// stream at all, or a Hello and never the password. Fixed in Phase 6 lot 2
+/// (AGT-1, AGT-2): the agent gives up on either after 10 s.
 fn unauthenticated_holds(ctx: &mut Ctx) -> Result<()> {
     let (art, vrt) = rig::runtimes()?;
     let silent = reverse(&art, ctx)?;
     let no_auth =
         LoopbackAgent::start(&art, rig::config(), AgentEntry::Reverse, &ctx.tmp.join("agent2"), true)?;
-    let wait = Duration::from_secs(12);
     vrt.block_on(async {
         let c1 = loopback_connect(silent.addr, Some(silent.fingerprint)).await?;
+        let t1 = Instant::now();
         let mut raw = Raw::open(loopback_connect(no_auth.addr, Some(no_auth.fingerprint)).await?).await?;
         raw.hello(true).await?;
-        // Longer than the 10 s idle timeout: the keep-alives keep both open.
-        tokio::time::sleep(wait).await;
-        ensure(c1.close_reason().is_none() && raw.conn.close_reason().is_none(), || {
-            format!("closed: {:?} {:?}", c1.close_reason(), raw.conn.close_reason())
-        })?;
-        ensure(!silent.is_finished() && !no_auth.is_finished(), || "an agent gave up".into())?;
-        ctx.note(format!("both agents still waiting after {wait:?}"));
-        c1.close(0u32.into(), b"bye");
-        raw.conn.close(0u32.into(), b"bye");
+        let t2 = Instant::now();
+        for (what, conn, t) in [("no control stream", &c1, t1), ("Hello without password", &raw.conn, t2)] {
+            let (ended, _) = rig::wait_closed(conn, Duration::from_secs(20)).await?;
+            let after = t.elapsed();
+            ctx.note(format!("{what}: {ended} after {} ms", after.as_millis()));
+            ensure(ended == "closed 0 end of session", || format!("{what}: {ended}"))?;
+            ensure(after >= Duration::from_secs(9) && after <= Duration::from_secs(15), || {
+                format!("{what}: after {after:?}")
+            })?;
+        }
         anyhow::Ok(())
     })?;
-    // Closed by the viewer: both end.
-    for a in [silent, no_auth] {
-        let r = a.finish(&art, Duration::from_secs(5));
-        ensure(!format!("{r:?}").contains("aborted"), || format!("agent still running: {r:?}"))?;
-    }
+    let r = silent.finish(&art, Duration::from_secs(5));
+    ensure(format!("{r:?}").contains("did not open the control channel within 10 s"), || format!("{r:?}"))?;
+    let r = no_auth.finish(&art, Duration::from_secs(5));
+    ensure(format!("{r:?}").contains("did not send the password within 10 s"), || format!("{r:?}"))?;
     Ok(())
 }
 
@@ -488,48 +507,38 @@ fn direct_back_to_back(ctx: &mut Ctx) -> Result<()> {
     Ok(())
 }
 
-/// KNOWN BUG (Phase 2, new): in LAN mode one connection that never opens the
-/// control stream keeps every other viewer out (one session at a time, no
-/// handshake timeout). Expected after fix: the next viewer is served after a
-/// handshake timeout.
+/// Was KNOWN BUG K34 (Phase 2): in LAN mode one connection that never opened the
+/// control stream kept every other viewer out (one session at a time, no
+/// handshake timeout). Fixed in Phase 6 lot 2 (AGT-2): the agent drops it after
+/// 10 s and serves the next viewer, while the idle one is still open on its side.
 fn direct_idle_blocks(ctx: &mut Ctx) -> Result<()> {
     let (art, vrt) = rig::runtimes()?;
     let agent = LoopbackAgent::start(&art, rig::config(), AgentEntry::Direct, &ctx.tmp.join("agent"), false)?;
     let (addr, fp) = (agent.addr, agent.fingerprint);
     vrt.block_on(async {
         let idle = loopback_connect(addr, Some(fp)).await?;
-        let second = tokio::time::timeout(
-            Duration::from_secs(12),
-            HeadlessViewer::connect_direct(addr, Some(fp), ViewerOptions::default()),
-        )
-        .await;
-        let second = match second {
-            Err(_) => "no session in 12 s".to_string(),
-            Ok(Err(e)) => format!("failed: {e:#}"),
-            Ok(Ok(s)) => {
-                s.close().await;
-                bail!("the second viewer got a session while the first held the agent");
-            }
-        };
-        ctx.note(format!("second viewer while the first is idle: {second}"));
-        // Once the idle one closes, a next viewer is served; the agent first works
-        // through the handshakes that waited meanwhile (each until its own 10 s
-        // timeout), so one more attempt may time out before.
-        idle.close(0u32.into(), b"bye");
         let t = Instant::now();
+        // A viewer that arrived meanwhile waits in the queue (its own QUIC handshake
+        // may time out first: then it tries again, as a person would).
         let mut attempts = Vec::new();
         let s = loop {
             match HeadlessViewer::connect_direct(addr, Some(fp), ViewerOptions::default()).await {
                 Ok(s) => break s,
-                Err(e) if attempts.len() < 3 => attempts.push(format!("{e:#}")),
-                Err(e) => bail!("no session after the idle one closed: {attempts:?} {e:#}"),
+                Err(e) if t.elapsed() < Duration::from_secs(30) => attempts.push(format!("{e:#}")),
+                Err(e) => bail!("no session while the idle connection waits: {attempts:?} {e:#}"),
             }
         };
+        let served = t.elapsed();
         rig::frames(&s, 10, Duration::from_secs(20)).await?;
-        ctx.note(format!(
-            "served {} ms after the idle one closed; failed attempts before: {attempts:?}",
-            t.elapsed().as_millis()
-        ));
+        let idle_end = match idle.close_reason() {
+            Some(e) => rig::ended(&e),
+            None => "still open".into(),
+        };
+        let ms = served.as_millis();
+        ctx.note(format!("served {ms} ms after the idle connection; idle one {idle_end}; before: {attempts:?}"));
+        let in_time = served >= Duration::from_secs(9) && served <= Duration::from_secs(25);
+        ensure(in_time, || format!("served after {served:?}"))?;
+        ensure(idle_end == "closed 0 end of session", || idle_end.clone())?;
         s.close().await;
         anyhow::Ok(())
     })?;

@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use nuvira_proto::framing::MAX_MESSAGE_LEN;
 use nuvira_proto::v1::{FileChunk, Ping};
-use nuvira_transport::{Connection, FramedRecv, nested, read_stream, recv_one, send_stream};
+use nuvira_transport::{
+    Connection, FramedRecv, nested, read_stream, recv_one, recv_one_with_limit, send_stream,
+};
 use prost::Message;
 
 /// A QUIC connection on the loopback: (client side, server side).
@@ -81,6 +83,31 @@ async fn recv_one_size_limit() {
     let mut rx = uni(&c, &s, &varint(MAX_MESSAGE_LEN as u64)).await;
     let err = recv_one::<Ping>(&mut rx).await.unwrap_err().to_string();
     assert!(!err.contains("too large"), "{err}");
+    // With a limit of its own (review NET-3): refused above it, before reading the body.
+    let limit = nuvira_transport::STREAM_HEADER_LIMIT;
+    let mut rx = uni(&c, &s, &varint(limit as u64 + 1)).await;
+    let err = recv_one_with_limit::<Ping>(&mut rx, limit).await.unwrap_err().to_string();
+    assert_eq!(err, format!("message too large: {}", limit + 1));
+    let mut rx = uni(&c, &s, &framed(&Ping { sent_us: 5 })).await;
+    assert_eq!(recv_one_with_limit::<Ping>(&mut rx, limit).await.unwrap(), Some(Ping { sent_us: 5 }));
+}
+
+#[tokio::test]
+async fn framed_recv_limit_can_be_raised() {
+    // Review NET-3: a stream read with a small limit (before authentication),
+    // raised afterwards.
+    let (c, s, _e) = pair().await;
+    let big = FileChunk { data: vec![1; 70 * 1024], ..Default::default() };
+    let mut wire = framed(&Ping { sent_us: 1 });
+    wire.extend(framed(&big));
+    let mut rx = FramedRecv::with_limit(uni(&c, &s, &wire).await, 64 * 1024);
+    assert_eq!(rx.recv::<Ping>().await.unwrap(), Some(Ping { sent_us: 1 }));
+    rx.set_limit(MAX_MESSAGE_LEN);
+    assert_eq!(rx.recv::<FileChunk>().await.unwrap().map(|m| m.data.len()), Some(70 * 1024));
+    // Not raised: refused.
+    let mut rx = FramedRecv::with_limit(uni(&c, &s, &framed(&big)).await, 64 * 1024);
+    let err = rx.recv::<FileChunk>().await.unwrap_err().to_string();
+    assert!(err.contains("message too large"), "{err}");
 }
 
 #[tokio::test]
