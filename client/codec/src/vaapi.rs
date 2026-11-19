@@ -5,7 +5,8 @@
 //! software encoder is used. Nothing else is needed (no GStreamer or FFmpeg).
 //!
 //! - Device: the first DRM render node (`/dev/dri/renderD128`…) whose driver
-//!   encodes H.264; `NUVIRA_VAAPI_DEVICE` picks one.
+//!   encodes H.264, Intel's and AMD's nodes first, nouveau's left out
+//!   (`render_nodes`); `NUVIRA_VAAPI_DEVICE` picks one.
 //! - Profile Main (CABAC), else High, else Constrained Baseline; slice encoding,
 //!   else the low-power one (newer Intel). Only P frames referring to the previous
 //!   one, keyframes when asked (as the other encoders): one frame out for every
@@ -509,6 +510,38 @@ fn shared_display() -> Result<&'static Display> {
     Ok(display)
 }
 
+/// The render nodes to try, `renderD128` to `renderD135` under `dev`: those of
+/// Intel's and AMD's kernel drivers (`i915`, `xe`, `amdgpu`) first, the others
+/// after them in their order. Nodes driven by `nouveau` are left out: Mesa's
+/// nouveau VA driver encodes no H.264, and initialising it on a hybrid laptop
+/// (MX150 next to an Intel UHD 620) put warnings in the kernel log and then made
+/// the encoder test time out (2026-11-17). `NUVIRA_VAAPI_DEVICE` can still name
+/// one. The kernel driver is read from `sys` (`renderDN/device/driver`).
+fn render_nodes(dev: &std::path::Path, sys: &std::path::Path) -> Vec<String> {
+    let mut nodes: Vec<(u8, String)> = Vec::new();
+    for n in 128..136 {
+        let name = format!("renderD{n}");
+        let path = dev.join(&name);
+        if !path.exists() {
+            continue;
+        }
+        let driver = std::fs::read_link(sys.join(&name).join("device/driver"))
+            .ok()
+            .and_then(|link| link.file_name().map(|d| d.to_string_lossy().into_owned()));
+        let rank = match driver.as_deref() {
+            Some("nouveau") => {
+                debug!("VA-API: {} left out (nouveau encodes no H.264)", path.display());
+                continue;
+            }
+            Some("i915" | "xe" | "amdgpu") => 0,
+            _ => 1,
+        };
+        nodes.push((rank, path.to_string_lossy().into_owned()));
+    }
+    nodes.sort_by_key(|(rank, _)| *rank);
+    nodes.into_iter().map(|(_, path)| path).collect()
+}
+
 impl Display {
     fn open() -> Result<Self> {
         Self::open_with(true)
@@ -520,7 +553,7 @@ impl Display {
         let va = va()?;
         let paths: Vec<String> = match std::env::var("NUVIRA_VAAPI_DEVICE") {
             Ok(path) => vec![path],
-            Err(_) => (128..136).map(|n| format!("/dev/dri/renderD{n}")).collect(),
+            Err(_) => render_nodes(std::path::Path::new("/dev/dri"), std::path::Path::new("/sys/class/drm")),
         };
         let mut errors = Vec::new();
         for path in paths {
@@ -2126,22 +2159,32 @@ impl VideoEncoder for VaapiEncoder {
 mod tests {
     use super::*;
 
-    /// The GPU conversion against the CPU's, and their times at 1080p. Skipped
-    /// without a VA driver that processes video. On a driver without H.264
-    /// encoding too (Mesa's D3D12 driver on the NUC's Intel UHD, in WSL).
+    /// The GPU conversion against the CPU's, and their times at 1080p, on the node
+    /// the encoder uses (`Display::open`), else on the first node that processes
+    /// video without encoding H.264 (Mesa's D3D12 driver on the NUC's Intel UHD,
+    /// in WSL). Skipped without a VA driver that processes video, unless
+    /// `NUVIRA_EXPECT_VAAPI_VPP=1` (a machine whose driver has it): then a skip
+    /// fails.
     #[test]
     fn vpp_matches_cpu() {
-        let d = match Display::open_with(false) {
-            Ok(d) if d.vpp_config != VA_INVALID_ID => d,
-            Ok(_) => return eprintln!("no video processing: skipped"),
-            Err(e) => return eprintln!("no VA-API ({e:#}): skipped"),
+        let expected = std::env::var("NUVIRA_EXPECT_VAAPI_VPP").is_ok_and(|v| v == "1");
+        let skip = |why: String| {
+            assert!(!expected, "NUVIRA_EXPECT_VAAPI_VPP=1 but nothing was compared: {why}");
+            eprintln!("{why}");
         };
-        eprintln!("driver: {}", d.vendor);
+        let d = match Display::open().or_else(|_| Display::open_with(false)) {
+            Ok(d) if d.vpp_config != VA_INVALID_ID => d,
+            Ok(_) => return skip("no video processing: skipped".into()),
+            Err(e) => return skip(format!("no VA-API ({e:#}): skipped")),
+        };
+        eprintln!("driver: {} on {}", d.vendor, d.path);
         // Mesa's D3D12 driver in WSL has no RGB surfaces (only NV12 and P010): it
         // fails here and the encoder keeps the CPU conversion.
         let diff = match vpp_check(&d, 256, 64) {
             Ok(diff) => diff,
-            Err(e) => return eprintln!("GPU conversion refused ({e:#}): the encoder converts on the CPU"),
+            Err(e) => {
+                return skip(format!("GPU conversion refused ({e:#}): the encoder converts on the CPU"));
+            }
         };
         eprintln!("largest difference on flat colours: {diff}");
         assert!(diff <= VPP_TOLERANCE, "GPU colours differ by {diff}");
@@ -2181,6 +2224,51 @@ mod tests {
             vpp.destroy(&d);
             (va.destroy_surfaces)(d.dpy, &mut surface, 1);
         }
+    }
+
+    /// A fake `/dev/dri` and `/sys/class/drm`: nouveau's node is left out, Intel's
+    /// and AMD's come first, a node whose driver is unknown stays, in its order.
+    #[test]
+    fn render_node_order() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("nuvira-render-nodes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (dev, sys) = (root.join("dev"), root.join("sys"));
+        std::fs::create_dir_all(&dev).unwrap();
+        let node = |n: u32, driver: Option<&str>| {
+            std::fs::write(dev.join(format!("renderD{n}")), b"").unwrap();
+            if let Some(driver) = driver {
+                let device = sys.join(format!("renderD{n}/device"));
+                std::fs::create_dir_all(&device).unwrap();
+                symlink(format!("../../../bus/pci/drivers/{driver}"), device.join("driver")).unwrap();
+            }
+        };
+        let names = |paths: Vec<String>| -> Vec<String> {
+            paths.iter().map(|p| p.rsplit('/').next().unwrap().to_string()).collect()
+        };
+
+        // PC-LENOVO-ALE: the MX150 (nouveau) before the UHD 620.
+        node(128, Some("nouveau"));
+        node(129, Some("i915"));
+        assert_eq!(names(render_nodes(&dev, &sys)), ["renderD129"]);
+
+        // Unknown or missing drivers after Intel's and AMD's, in their order; a
+        // node only in sysfs is not tried.
+        node(130, Some("virtio_gpu"));
+        node(131, None);
+        node(132, Some("amdgpu"));
+        node(133, Some("xe"));
+        let device = sys.join("renderD134/device");
+        std::fs::create_dir_all(&device).unwrap();
+        symlink("../../../bus/pci/drivers/i915", device.join("driver")).unwrap();
+        assert_eq!(
+            names(render_nodes(&dev, &sys)),
+            ["renderD129", "renderD132", "renderD133", "renderD130", "renderD131"]
+        );
+
+        // No render node at all.
+        assert!(render_nodes(&root.join("none"), &sys).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
