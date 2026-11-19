@@ -12,6 +12,7 @@ pub mod cli;
 pub mod clip_user;
 mod files;
 mod fsops;
+mod guesses;
 #[cfg(any(windows, unix))]
 pub mod ipc;
 mod inventory;
@@ -515,6 +516,7 @@ pub async fn serve_via_server(
             .unwrap_or_else(nuvira_transport::identity::data_dir),
         last_code_step: AtomicU64::new(0),
         wrong_codes: Mutex::new(Vec::new()),
+        guesses: Mutex::new(Default::default()),
         features: Mutex::new(Vec::new()),
         unattended: opts.unattended,
         restarting: Mutex::new(None),
@@ -675,6 +677,8 @@ struct SessionContext {
     last_code_step: AtomicU64,
     /// When the last wrong two-factor codes came.
     wrong_codes: Mutex<Vec<Instant>>,
+    /// Wrong passwords, by viewer and in all ([`guesses`]).
+    guesses: Mutex<guesses::Guesses>,
 }
 
 impl SessionContext {
@@ -1209,6 +1213,7 @@ async fn relayed_session(
         terminal_only: AtomicBool::new(false),
         profile_off: AtomicU8::new(0),
         claimed: AtomicBool::new(false),
+        throttled: AtomicBool::new(false),
     };
     let result = tokio::select! {
         r = async {
@@ -1320,6 +1325,9 @@ struct Gate<'a> {
     profile_off: AtomicU8,
     /// This viewer's session is the one in progress ([`Gate::claim`]).
     claimed: AtomicBool,
+    /// Refused as a wrong password without checking it ([`guesses`]): the
+    /// connection is closed without the longer pause of a wrong password.
+    throttled: AtomicBool,
 }
 
 /// A gate dropped with its claim still on (its session over) frees the computer.
@@ -1410,6 +1418,15 @@ impl Gate<'_> {
         } else if !auth.support_ticket.is_empty() {
             set("wrong_password");
             return Err("@agent.support_ticket_invalid".into());
+        } else if let Some(refusal) = ctx.guesses.lock().expect("guesses").check(viewer) {
+            // Before any password is checked (no PBKDF2), answered like a wrong one.
+            match refusal {
+                guesses::Refusal::Locked => info!(viewer, "too many wrong passwords from this viewer"),
+                guesses::Refusal::Budget => info!(viewer, "too many wrong passwords: new viewer refused"),
+            }
+            self.throttled.store(true, Ordering::Relaxed);
+            set("wrong_password");
+            return Err(WRONG_PASSWORD.into());
         } else if let Some(profile) = self.permanent(given, rules.as_ref().ok()) {
             // A permanent password: the rules hold, and an unreadable file refuses it.
             let Ok(rules) = &rules else {
@@ -1424,6 +1441,7 @@ impl Gate<'_> {
             if let Some(secret) = &rules.totp {
                 self.check_code(secret, &auth.code)?;
             }
+            ctx.guesses.lock().expect("guesses").right(viewer);
             match profile {
                 Some(profile) => {
                     let off = profile.off.iter().filter_map(|n| switches::bit(n)).fold(0, |a, b| a | b);
@@ -1444,6 +1462,17 @@ impl Gate<'_> {
         } else {
             let temporary = ctx.password.lock().expect("password").clone();
             if !same_secret(given, &temporary) {
+                // An empty password guesses nothing (it is never right).
+                if !given.is_empty() {
+                    let wrong = ctx.guesses.lock().expect("guesses").wrong(viewer);
+                    if let Some(lock) = wrong.lock {
+                        let lock_s = lock.as_secs();
+                        warn!(viewer, lock_s, "too many wrong passwords from this viewer: locked for a while");
+                    }
+                    if wrong.budget_reached {
+                        warn!("too many wrong passwords: only viewers already known here let in for a while");
+                    }
+                }
                 set("wrong_password");
                 return Err(WRONG_PASSWORD.into());
             }
@@ -1452,6 +1481,7 @@ impl Gate<'_> {
                 set("not_allowed");
                 return Err(NOT_ALLOWED.into());
             }
+            ctx.guesses.lock().expect("guesses").right(viewer);
             set("temporary");
             if !ctx.confirm && !confirm_always {
                 return self.started();
@@ -1501,6 +1531,8 @@ impl Gate<'_> {
         if given.is_empty() {
             return None;
         }
+        #[cfg(test)]
+        gate_characterisation::VERIFY_CALLS.with(|c| c.set(c.get() + 1));
         if nuvira_secret::verify(given, main) {
             return Some(None);
         }
@@ -1924,8 +1956,10 @@ async fn run_session(
         ctrl_tx.send(&control(Msg::AuthResult(AuthResult { ok, message }))).await?;
         if let Err(reason) = verdict {
             // The reason must reach the viewer before the connection closes; with a
-            // wrong password the pause is longer, against rapid-fire attempts.
-            let pause = if reason == WRONG_PASSWORD { 2000 } else { 500 };
+            // wrong password the pause is longer, against rapid-fire attempts (not when
+            // refused without checking it: the attempt frees its slot at once).
+            let checked = !gate.throttled.load(Ordering::Relaxed);
+            let pause = if reason == WRONG_PASSWORD && checked { 2000 } else { 500 };
             tokio::time::sleep(Duration::from_millis(pause)).await;
             bail!("{reason}");
         }
@@ -3843,6 +3877,16 @@ mod gate_characterisation {
     const PROFILE: &str = "view only please";
     const VIEWER: &str = "111 222 333";
 
+    thread_local! {
+        /// PBKDF2 checks of a permanent password made on this thread (the tests'
+        /// runtime is single-threaded).
+        pub(super) static VERIFY_CALLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    fn verify_calls() -> u32 {
+        VERIFY_CALLS.with(|c| c.get())
+    }
+
     /// The PBKDF2 hashes, made once (300 000 iterations each).
     fn hashes() -> &'static (String, String) {
         static H: OnceLock<(String, String)> = OnceLock::new();
@@ -3906,6 +3950,7 @@ mod gate_characterisation {
             access_dir: dir,
             last_code_step: AtomicU64::new(0),
             wrong_codes: Mutex::new(Vec::new()),
+        guesses: Mutex::new(Default::default()),
             features: Mutex::new(Vec::new()),
             unattended: permanent,
             restarting: Mutex::new(None),
@@ -3945,6 +3990,7 @@ mod gate_characterisation {
             terminal_only: AtomicBool::new(false),
             profile_off: AtomicU8::new(0),
             claimed: AtomicBool::new(false),
+            throttled: AtomicBool::new(false),
         }
     }
 
@@ -4020,23 +4066,83 @@ mod gate_characterisation {
         assert!(drain(&mut f).is_empty());
     }
 
-    #[tokio::test]
-    async fn characterises_wrong_passwords_are_never_locked_out() {
-        // KNOWN LIMIT (Phase 2): the gate counts wrong two-factor codes, not wrong
-        // passwords: after any number of wrong temporary or permanent passwords
-        // the right one still works. The only brake is the 2 s pause before
-        // `session()` closes a connection after a wrong password.
-        // Expected after a fix (if one is decided): a lockout or growing delay.
-        let f = fixture("nolock", true, false, None);
-        let req = request(VIEWER, false);
-        // 20 here: each wrong guess also costs a PBKDF2 check (300 000 iterations)
-        // against the permanent hash, slow in debug builds.
-        for i in 0..20 {
+    #[tokio::test(start_paused = true)]
+    async fn wrong_passwords_lock_the_viewer_for_a_while() {
+        // Review AGT-4 (Phase 6 lot 3; was the Phase 2 pin
+        // `characterises_wrong_passwords_are_never_locked_out`, K15): after
+        // guesses::MAX_WRONG wrong passwords from one viewer ID, that ID is refused
+        // like a wrong password, also with the right one, without the password being
+        // checked (no PBKDF2), until the lock ends. Other IDs are not affected.
+        let f = fixture("lock", true, false, None);
+        let (req, other) = (request(VIEWER, false), request("444 555 666", false));
+        for i in 0..guesses::MAX_WRONG {
+            let before = verify_calls();
             let v = authorize(&f.ctx, &req, &password(&format!("guess{i}"))).await;
-            assert_eq!(v.result, Err(WRONG_PASSWORD.into()));
+            assert_eq!((v.result, v.access), (Err(WRONG_PASSWORD.into()), "wrong_password"));
+            assert_eq!(verify_calls(), before + 1, "a wrong guess is checked");
+        }
+        let before = verify_calls();
+        for p in [TEMPORARY, PERMANENT, "guess again"] {
+            let access = std::sync::Mutex::new("");
+            let g = gate(&f.ctx, &req, &access, "s1");
+            assert_eq!(g.authorize(&password(p), None).await, Err(WRONG_PASSWORD.into()), "{p}");
+            assert!(g.throttled.load(Ordering::Relaxed), "no 2 s pause for a refusal without a check");
+            assert_eq!(*access.lock().unwrap(), "wrong_password");
+        }
+        assert_eq!(verify_calls(), before, "no PBKDF2 while the viewer is locked");
+        assert_eq!(f.ctx.busy.load(Ordering::Relaxed), 0);
+        // Another viewer ID still gets in.
+        assert_eq!(authorize(&f.ctx, &other, &password(PERMANENT)).await.result, Ok(()));
+        f.ctx.busy.store(0, Ordering::Relaxed);
+        // Once the lock is over the right password works, and the wrong ones are forgotten.
+        tokio::time::advance(guesses::FIRST_LOCK).await;
+        assert_eq!(authorize(&f.ctx, &req, &password(PERMANENT)).await.result, Ok(()));
+        f.ctx.busy.store(0, Ordering::Relaxed);
+        for _ in 1..guesses::MAX_WRONG {
+            authorize(&f.ctx, &req, &password("wrong")).await;
         }
         assert_eq!(authorize(&f.ctx, &req, &password(TEMPORARY)).await.result, Ok(()));
-        assert_eq!(authorize(&f.ctx, &req, &password(PERMANENT)).await.result, Ok(()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn wrong_temporary_passwords_also_lock_and_empty_ones_do_not_count() {
+        let f = fixture("lock-temp", false, false, None);
+        let req = request(VIEWER, false);
+        for _ in 0..3 * guesses::MAX_WRONG {
+            assert_eq!(authorize(&f.ctx, &req, &password("")).await.result, Err(WRONG_PASSWORD.into()));
+        }
+        for _ in 0..guesses::MAX_WRONG {
+            authorize(&f.ctx, &req, &password("ABCD2345")).await;
+        }
+        assert_eq!(authorize(&f.ctx, &req, &password(TEMPORARY)).await.result, Err(WRONG_PASSWORD.into()));
+        tokio::time::advance(guesses::FIRST_LOCK).await;
+        assert_eq!(authorize(&f.ctx, &req, &password(TEMPORARY)).await.result, Ok(()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_budget_spares_viewers_that_were_right_here() {
+        // Review AGT-4: guesses spread over many new IDs use up the computer's
+        // budget; then only IDs that already gave a right password get in (the
+        // technician cannot be locked out by an attacker); new ones are refused
+        // without a check until the wrong passwords are old enough.
+        let f = fixture("budget", true, false, None);
+        let known = request(VIEWER, false);
+        assert_eq!(authorize(&f.ctx, &known, &password(PERMANENT)).await.result, Ok(()));
+        f.ctx.busy.store(0, Ordering::Relaxed);
+        for i in 0..guesses::BUDGET {
+            let req = request(&format!("900 000 {i:03}"), false);
+            assert_eq!(authorize(&f.ctx, &req, &password("guess")).await.result, Err(WRONG_PASSWORD.into()));
+        }
+        let before = verify_calls();
+        let new = request("777 888 999", false);
+        assert_eq!(authorize(&f.ctx, &new, &password(PERMANENT)).await.result, Err(WRONG_PASSWORD.into()));
+        assert_eq!(verify_calls(), before, "refused before the check");
+        assert_eq!(authorize(&f.ctx, &known, &password(PERMANENT)).await.result, Ok(()), "known viewer");
+        f.ctx.busy.store(0, Ordering::Relaxed);
+        assert_eq!(authorize(&f.ctx, &known, &password(TEMPORARY)).await.result, Ok(()), "known viewer");
+        f.ctx.busy.store(0, Ordering::Relaxed);
+        tokio::time::advance(guesses::WINDOW).await;
+        assert_eq!(authorize(&f.ctx, &new, &password(PERMANENT)).await.result, Ok(()));
     }
 
     #[tokio::test]
