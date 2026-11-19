@@ -225,6 +225,11 @@ impl Case for ComposedCase {
         if let Some(p) = self.profile {
             r.param("profile", p).param("netem_spec", profile_spec(p));
         }
+        if self.scene == Scene::Resize {
+            // The sizes really encoded (the big one capped as the agent does, VID-3).
+            let sizes = crate::fixtures::scenes::resize_sizes(self.width, self.height);
+            r.param("s6_sizes", sizes.iter().map(|(w, h)| format!("{w}x{h}")).collect::<Vec<_>>().join(","));
+        }
         r.extra.insert("source".into(), (if source.ring.is_some() { "ring" } else { "generator" }).into());
         fill_metrics(&mut r, &runs, self);
         Ok(r)

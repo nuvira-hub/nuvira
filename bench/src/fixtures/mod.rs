@@ -493,6 +493,8 @@ mod tests {
         let s3: Vec<Frame> = Scene::Scroll.frames(320, 180, 2).collect();
         let row = 320 * 4;
         assert_eq!(&s3[1].data[..row * 100], &s3[0].data[row * 4..row * 104]);
+        // S6 at a 4K base: the big segment capped as the agent does (VID-3).
+        assert_eq!(scenes::resize_sizes(3840, 2160), [(3840, 2160), (4096, 2304), (2560, 1440), (3840, 2160)]);
         // S6 sizes: base, 4/3, 2/3, base.
         let sizes: Vec<(u32, u32)> =
             Scene::Resize.frames(1920, 1080, 8).map(|f| (f.width, f.height)).collect();
