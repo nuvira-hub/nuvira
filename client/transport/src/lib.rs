@@ -25,6 +25,7 @@ pub mod api;
 pub mod fec;
 pub mod identity;
 pub mod keystore;
+pub mod liveness;
 pub mod nested;
 pub mod p2p;
 pub mod signal;
