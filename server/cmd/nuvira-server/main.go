@@ -167,7 +167,7 @@ func run() error {
 		for _, m := range modules {
 			m.Routes(mux)
 		}
-		wsServer := &http.Server{Addr: wsListen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+		wsServer := newHTTPServer(wsListen, mux, httpIdleTimeout)
 		go func() {
 			if err := wsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Error("WebSocket fallback not available", "err", err)
@@ -198,6 +198,18 @@ func run() error {
 	}
 	log.Info("nuvira-server stopped")
 	return nil
+}
+
+// httpIdleTimeout closes a keep-alive HTTP connection idle between requests
+// (without it one stayed open until the client left).
+const httpIdleTimeout = 2 * time.Minute
+
+// newHTTPServer is the HTTP server of the WebSocket fallback, updates and
+// modules. No ReadTimeout/WriteTimeout: their deadlines would stay on the
+// hijacked WebSocket connections and cut the long-lived tunnels; IdleTimeout
+// applies only between requests, never to a hijacked connection.
+func newHTTPServer(addr string, handler http.Handler, idle time.Duration) *http.Server {
+	return &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: idle}
 }
 
 // rateLimitMode reads NUVIRA_RATE_LIMITS and says in the log what it means.
