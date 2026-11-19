@@ -23,11 +23,12 @@ const (
 	All
 )
 
-// ParseMode reads NUVIRA_RATE_LIMITS: "" (Public), "off" or "all". ok is false
-// for any other value, which is read as Public, as before "all" existed.
+// ParseMode reads NUVIRA_RATE_LIMITS: "" or "on" (Public: the Unraid template
+// sets "on"), "off" or "all". ok is false for any other value, which is read
+// as Public, as before "all" existed.
 func ParseMode(s string) (m Mode, ok bool) {
 	switch s {
-	case "":
+	case "", "on":
 		return Public, true
 	case "off":
 		return Off, true

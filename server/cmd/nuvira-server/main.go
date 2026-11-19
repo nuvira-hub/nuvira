@@ -9,7 +9,7 @@
 //	NUVIRA_DATA_DIR  folder for database and certificate (default "./data")
 //	NUVIRA_LOG       debug | info (default) | warn
 //	NUVIRA_RATE_LIMITS  limits per address (registrations, connection requests):
-//	               unset = public addresses only (this machine and local
+//	               unset or "on" = public addresses only (this machine and local
 //	               networks have none); "all" = local addresses too (behind a
 //	               userland UDP proxy, e.g. rootless Docker or Podman, every
 //	               client looks local); "off" = none
@@ -216,7 +216,7 @@ func newHTTPServer(addr string, handler http.Handler, idle time.Duration) *http.
 func rateLimitMode(value string, log *slog.Logger) limits.Mode {
 	mode, ok := limits.ParseMode(value)
 	if !ok {
-		log.Warn("NUVIRA_RATE_LIMITS not understood: limits on public addresses only", "value", value, "valid", "unset, all, off")
+		log.Warn("NUVIRA_RATE_LIMITS not understood: limits on public addresses only", "value", value, "valid", "unset, on, all, off")
 	}
 	switch mode {
 	case limits.Off:

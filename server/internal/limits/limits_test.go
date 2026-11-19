@@ -10,7 +10,7 @@ func TestParseMode(t *testing.T) {
 		in   string
 		want Mode
 		ok   bool
-	}{{"", Public, true}, {"off", Off, true}, {"all", All, true}, {"on", Public, false}, {"ALL", Public, false}} {
+	}{{"", Public, true}, {"on", Public, true}, {"off", Off, true}, {"all", All, true}, {"yes", Public, false}, {"ALL", Public, false}} {
 		if m, ok := ParseMode(c.in); m != c.want || ok != c.ok {
 			t.Errorf("%q: %v %v", c.in, m, ok)
 		}

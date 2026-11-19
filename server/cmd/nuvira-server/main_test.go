@@ -225,7 +225,7 @@ func TestHealthcheck(t *testing.T) {
 
 func TestRateLimitMode(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	for in, want := range map[string]limits.Mode{"": limits.Public, "off": limits.Off, "all": limits.All, "yes": limits.Public} {
+	for in, want := range map[string]limits.Mode{"": limits.Public, "on": limits.Public, "off": limits.Off, "all": limits.All, "yes": limits.Public} {
 		if got := rateLimitMode(in, log); got != want {
 			t.Errorf("%q: %v", in, got)
 		}
