@@ -301,13 +301,17 @@ fn encode_loop(
     let mut stats = Stats::default();
     // Frames left to refine a still screen (see REFINE_FRAMES).
     let mut refine_left = 0u32;
+    // Encoding errors in a row (see `Failures`).
+    let mut failures = Failures::default();
 
     while !shared.stop.load(Ordering::Relaxed) {
         // Frames-per-second limit: meanwhile the slot is updated with the most recent image.
         let t_loop = Instant::now();
         let min_interval = Duration::from_secs(1) / max_fps.load(Ordering::Relaxed).max(1);
         let wait = min_interval.saturating_sub(last_encoded.elapsed());
-        if !wait.is_zero() && !keyframe.load(Ordering::Relaxed) {
+        // A pending keyframe goes out at once, unless encoding is failing: then the
+        // pace is kept, or a failing encoder would be retried at full speed (VID-M1).
+        if !wait.is_zero() && (!keyframe.load(Ordering::Relaxed) || failures.failing()) {
             std::thread::sleep(wait);
         }
 
@@ -486,10 +490,13 @@ fn encode_loop(
             Ok(Some(e)) => e,
             Ok(None) => continue,
             Err(e) => {
-                warn!("encoding failed: {e:#}");
+                failures.failed(&e);
+                // Retried at the frame rate, not at once.
+                last_encoded = t;
                 continue;
             }
         };
+        failures.recovered();
         // The pace is measured from the start of encoding, not from its end.
         last_encoded = t;
         if !std::mem::replace(&mut first_encoded, true) {
@@ -528,6 +535,45 @@ fn encode_loop(
             break;
         }
         stats.report(shared);
+    }
+}
+
+/// Encoding errors in a row: the first is logged, then one summary every
+/// [`Failures::EVERY`] while they go on (a failing encoder used to log one per frame).
+#[derive(Default)]
+struct Failures {
+    count: u64,
+    unlogged: u64,
+    logged_at: Option<Instant>,
+}
+
+impl Failures {
+    const EVERY: Duration = Duration::from_secs(5);
+
+    fn failing(&self) -> bool {
+        self.count > 0
+    }
+
+    fn failed(&mut self, e: &anyhow::Error) {
+        self.count += 1;
+        match self.logged_at {
+            Some(at) if at.elapsed() < Self::EVERY => self.unlogged += 1,
+            Some(_) => {
+                warn!("encoding failed {} more times, last: {e:#}", self.unlogged + 1);
+                (self.unlogged, self.logged_at) = (0, Some(Instant::now()));
+            }
+            None => {
+                warn!("encoding failed: {e:#}");
+                self.logged_at = Some(Instant::now());
+            }
+        }
+    }
+
+    fn recovered(&mut self) {
+        if self.count > 0 {
+            info!("encoding works again after {} failed frames", self.count);
+            *self = Self::default();
+        }
     }
 }
 
@@ -681,6 +727,99 @@ mod tests {
         assert_eq!((yuv.width, yuv.height), (3840, 1080));
         assert!(frames.recv_timeout(Duration::from_secs(10)).is_ok(), "no second frame");
         drop(pipeline);
+    }
+
+    /// OpenH264 behind a size check: it refuses pictures wider than `refuse_over`
+    /// and then reports a limit below them, as a hardware encoder that refused a
+    /// size does (Media Foundation, VID-2); `always_fail` refuses every frame.
+    struct Picky {
+        inner: nuvira_codec::OpenH264Encoder,
+        refuse_over: u32,
+        limit: SizeLimit,
+        always_fail: bool,
+        calls: Arc<AtomicU64>,
+    }
+
+    impl VideoEncoder for Picky {
+        fn name(&self) -> &'static str {
+            "picky"
+        }
+
+        fn max_size(&self) -> SizeLimit {
+            self.limit
+        }
+
+        fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<Option<nuvira_codec::EncodedFrame>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            if self.always_fail {
+                anyhow::bail!("broken encoder");
+            }
+            if image.width > self.refuse_over {
+                self.limit = SizeLimit::sides(self.refuse_over, self.refuse_over * 9 / 16);
+                anyhow::bail!("{}x{} refused", image.width, image.height);
+            }
+            self.inner.encode(image, force_keyframe)
+        }
+    }
+
+    fn start_picky(
+        refuse_over: u32,
+        always_fail: bool,
+        fps: u32,
+    ) -> (Pipeline, mpsc::Receiver<VideoFrame>, Arc<AtomicU64>) {
+        let (tx, rx) = mpsc::channel(1);
+        let calls = Arc::new(AtomicU64::new(0));
+        let c = calls.clone();
+        let (_, pipeline) = Pipeline::start(
+            || Ok(Box::new(nuvira_capture::SyntheticCapturer::new(1920, 1080, 60)) as Box<dyn Capturer>),
+            move |_| {
+                Ok(Box::new(Picky {
+                    inner: nuvira_codec::OpenH264Encoder::new(Default::default())?,
+                    refuse_over,
+                    limit: SizeLimit::DEFAULT,
+                    always_fail,
+                    calls: c,
+                }) as Box<dyn VideoEncoder>)
+            },
+            false,
+            tx,
+            Controls {
+                max_fps: Arc::new(AtomicU32::new(fps)),
+                keyframe: Arc::new(AtomicBool::new(true)),
+                bitrate: Arc::new(AtomicU32::new(2_000_000)),
+                view: Arc::new(AtomicU64::new(0)),
+                stats: None,
+            },
+        )
+        .context("start")
+        .unwrap();
+        (pipeline, rx, calls)
+    }
+
+    /// An encoder that refuses the screen's size and reports a smaller limit:
+    /// the next frames come at a size it takes (VID-2).
+    #[test]
+    fn encoder_refusing_a_size_gets_a_smaller_one() {
+        let (pipeline, mut rx, calls) = start_picky(1280, false, 60);
+        let frame = rx.blocking_recv().expect("no frame after the refusal");
+        assert!(frame.keyframe);
+        let mut decoder = nuvira_codec::OpenH264Decoder::new().unwrap();
+        let yuv = nuvira_codec::VideoDecoder::decode(&mut decoder, &frame.data).unwrap().expect("picture");
+        assert_eq!((yuv.width, yuv.height), (1280, 720));
+        drop(pipeline);
+        assert!(calls.load(Ordering::Relaxed) >= 2, "the refused frame was not tried");
+    }
+
+    /// An encoder that fails every frame is retried at the frame rate, not as
+    /// fast as the loop turns while a keyframe is pending (VID-M1).
+    #[test]
+    fn failing_encoder_keeps_the_pace() {
+        let (pipeline, _rx, calls) = start_picky(u32::MAX, true, 10);
+        std::thread::sleep(Duration::from_secs(2));
+        drop(pipeline);
+        let calls = calls.load(Ordering::Relaxed);
+        // 10 fps for 2 s: about 20 attempts (the capture alone gives 60 images a second).
+        assert!((10..=25).contains(&calls), "{calls} attempts in 2 s at 10 fps");
     }
 
     #[test]
