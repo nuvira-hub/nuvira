@@ -157,6 +157,62 @@ impl Default for EncoderSettings {
 /// Long-term reference slots, with [`EncoderSettings::ltr`].
 pub const LTR_SLOTS: u8 = 2;
 
+/// The largest picture an encoder takes ([`VideoEncoder::max_size`]): its longer
+/// side, its shorter side (so an upright screen gets the same rule) and its area
+/// in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SizeLimit {
+    pub long_side: u32,
+    pub short_side: u32,
+    pub area: u64,
+}
+
+impl SizeLimit {
+    /// H.264 level 5.1 (36 864 macroblocks, 4096x2304) and 4096 on a side: the
+    /// hardware encoders' limit. All the screens side by side go beyond it (two 4K
+    /// screens, or a Mac's screens at the Retina scale: 6400x2160 was refused by
+    /// VideoToolbox, which then failed every frame).
+    pub const DEFAULT: Self = Self::sides(4096, 4096).with_area(36_864 * 256);
+    /// OpenH264 (the `openh264` crate's own check, before the library's): 3840x2160,
+    /// or 2160x3840 upright.
+    pub const OPENH264: Self = Self::sides(3840, 2160);
+
+    /// `long` x `short` (area: their product).
+    pub const fn sides(long: u32, short: u32) -> Self {
+        Self { long_side: long, short_side: short, area: long as u64 * short as u64 }
+    }
+
+    const fn with_area(self, area: u64) -> Self {
+        Self { area, ..self }
+    }
+
+    /// Does a `width` x `height` picture fit?
+    pub fn fits(&self, width: u32, height: u32) -> bool {
+        width.max(height) <= self.long_side
+            && width.min(height) <= self.short_side
+            && u64::from(width) * u64::from(height) <= self.area
+    }
+}
+
+/// Size at which a `width` x `height` screen is encoded for a viewer area `view`
+/// (width, height; 0 = full size) by an encoder that takes up to `limit`: reduced to
+/// fit both, aspect kept, even sizes; never larger than the screen.
+pub fn encoded_size(width: u32, height: u32, (vw, vh): (u32, u32), limit: SizeLimit) -> (u32, u32) {
+    let (long, short) = (width.max(height).max(1), width.min(height).max(1));
+    let fit_limit = (f64::from(limit.long_side) / f64::from(long))
+        .min(f64::from(limit.short_side) / f64::from(short))
+        .min((limit.area as f64 / (f64::from(width) * f64::from(height)).max(1.0)).sqrt());
+    if (vw == 0 || vh == 0 || (vw >= width && vh >= height)) && fit_limit >= 1.0 {
+        return (width, height);
+    }
+    let mut scale = fit_limit.min(1.0);
+    if vw > 0 && vh > 0 {
+        scale = scale.min(f64::from(vw) / f64::from(width)).min(f64::from(vh) / f64::from(height));
+    }
+    let fit = |n: u32| (((f64::from(n) * scale).round() as u32) & !1).max(64).min(n);
+    (fit(width), fit(height))
+}
+
 #[cfg(target_os = "linux")]
 static DMABUF_MODIFIERS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 
@@ -213,6 +269,13 @@ pub trait VideoEncoder: Send {
     /// The encoder wants frames as GPU textures instead of in RAM.
     fn accepts_textures(&self) -> bool {
         false
+    }
+
+    /// The largest picture it takes now: the caller encodes larger screens reduced
+    /// to it ([`encoded_size`]). It can shrink during a session (a hardware encoder
+    /// that refused a size, or one that went over to OpenH264).
+    fn max_size(&self) -> SizeLimit {
+        SizeLimit::DEFAULT
     }
 
     /// Encodes `image` reduced to `size`, scaling it itself (on the GPU) with the

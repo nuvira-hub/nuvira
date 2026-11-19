@@ -1,12 +1,12 @@
 //! Software H.264 with OpenH264 (Cisco, BSD licence).
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use openh264::OpenH264API;
 use openh264::decoder::{Decoder, DecoderConfig};
 use openh264::encoder::{BitRate, Encoder, EncoderConfig, FrameRate, FrameType, RateControlMode, UsageType};
 use openh264::formats::{YUVSlices, YUVSource};
 
-use crate::{BgraImage, EncodedFrame, EncoderSettings, VideoDecoder, VideoEncoder, YuvFrame};
+use crate::{BgraImage, EncodedFrame, EncoderSettings, SizeLimit, VideoDecoder, VideoEncoder, YuvFrame};
 
 pub struct OpenH264Encoder {
     encoder: Encoder,
@@ -54,9 +54,17 @@ impl VideoEncoder for OpenH264Encoder {
         self.bitrate_applied = false;
     }
 
+    fn max_size(&self) -> SizeLimit {
+        SizeLimit::OPENH264
+    }
+
     fn encode(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<Option<EncodedFrame>> {
-        crate::convert::bgra_to_i420(image, &mut self.y, &mut self.u, &mut self.v);
+        // The crate refuses it anyway: without spending the conversion first.
         let (w, h) = crate::convert::even_size(image);
+        if !SizeLimit::OPENH264.fits(w as u32, h as u32) {
+            bail!("OpenH264 takes at most 3840x2160 (or 2160x3840), not {w}x{h}");
+        }
+        crate::convert::bgra_to_i420(image, &mut self.y, &mut self.u, &mut self.v);
         let yuv = YUVSlices::new((&self.y, &self.u, &self.v), (w, h), (w, w / 2, w / 2));
 
         if force_keyframe {
@@ -155,5 +163,36 @@ mod tests {
         assert_eq!((frame.width, frame.height), (w, h));
         assert_eq!(frame.y.len(), (w * h) as usize);
         assert_eq!(frame.u.len(), (w / 2 * h / 2) as usize);
+    }
+
+    /// The `openh264` crate's own size check (0.9.9 `encoder.rs` `reinit`), which
+    /// [`SizeLimit::OPENH264`] follows: an update that lifts or changes it fails here.
+    #[test]
+    fn refuses_beyond_3840() {
+        let encode = |w: usize, h: usize| {
+            let mut enc =
+                Encoder::with_api_config(OpenH264API::from_source(), EncoderConfig::new()).expect("encoder");
+            let yuv = openh264::formats::YUVBuffer::new(w, h);
+            enc.encode(&yuv).map(|_| ())
+        };
+        assert!(encode(3840, 2160).is_ok());
+        assert!(encode(2160, 3840).is_ok(), "upright");
+        assert!(encode(3842, 2160).is_err());
+        assert!(encode(3840, 2162).is_err());
+        assert!(encode(4096, 2304).is_err());
+        assert!(encode(2162, 3840).is_err());
+        for (w, h, fits) in [(3840, 2160, true), (2160, 3840, true), (3842, 2160, false), (3840, 2162, false)]
+        {
+            assert_eq!(SizeLimit::OPENH264.fits(w, h), fits, "{w}x{h}");
+        }
+
+        // The encoder refuses it before converting the picture.
+        let data = vec![0u8; 4096 * 4 * 2304];
+        let image = BgraImage { width: 4096, height: 2304, stride: 4096 * 4, data: &data };
+        let mut ours = OpenH264Encoder::new(EncoderSettings::default()).unwrap();
+        let Err(error) = ours.encode(&image, true) else { panic!("4096x2304 accepted") };
+        let error = error.to_string();
+        assert!(error.contains("3840x2160"), "{error}");
+        assert!(ours.y.is_empty(), "converted anyway");
     }
 }
