@@ -28,7 +28,7 @@ use rustls::{DigitallySignedStruct, DistinguishedName, SignatureScheme};
 use tracing::debug;
 
 use crate::identity::{Identity, PublicKey};
-use crate::{ALPN, provider, transport_config};
+use crate::{ALPN, provider, session_transport_config};
 
 /// Role in the relay (same values as `nuvira.v1.Role`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,7 +395,7 @@ pub async fn agent_endpoint(identity: &Identity, route: &Route) -> Result<Endpoi
         .with_single_cert(certs, key)?;
     tls.alpn_protocols = vec![ALPN.to_vec()];
     let mut config = ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
-    config.transport_config(transport_config());
+    config.transport_config(session_transport_config());
     Ok(session_endpoint(route, Some(config)).await?.0)
 }
 
@@ -420,7 +420,7 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
         .with_client_auth_cert(certs, key)?;
     tls.alpn_protocols = vec![ALPN.to_vec()];
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
-    config.transport_config(transport_config());
+    config.transport_config(session_transport_config());
     let (mut endpoint, peers) = session_endpoint(route, None).await?;
     endpoint.set_default_client_config(config);
 

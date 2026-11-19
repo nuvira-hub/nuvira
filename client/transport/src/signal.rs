@@ -10,7 +10,7 @@ use quinn::ClientConfig;
 use quinn::crypto::rustls::QuicClientConfig;
 
 use crate::identity::Identity;
-use crate::{Fingerprint, FramedRecv, FramedSend, PinnedCert, ServerTransport, provider, transport_config};
+use crate::{Fingerprint, FramedRecv, FramedSend, PinnedCert, ServerTransport, provider, signal_transport_config};
 
 /// Signalling ALPN (must match the server's).
 const ALPN: &[u8] = b"nuvira-signal/1";
@@ -187,7 +187,7 @@ pub async fn connect(
         .with_no_client_auth();
     tls.alpn_protocols = vec![ALPN.to_vec()];
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
-    config.transport_config(transport_config());
+    config.transport_config(signal_transport_config());
 
     let mut endpoint = crate::endpoint_for(transport, server, None, None).await?;
     endpoint.set_default_client_config(config);

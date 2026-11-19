@@ -56,6 +56,8 @@ Technician (A)           Server                      Remote (B)
 
 With the WebSocket fallback the same QUIC connection runs inside the WebSocket tunnel, so the channels are unchanged.
 
+**Timeouts of the connection.** Both sides send a QUIC keep-alive every 2 s. The session connection (also switch sides and the web client) asks for a QUIC idle timeout of 30 s, the signalling connection to the server for 10 s; QUIC takes the smaller value of the two sides, so a session with a device of 0.28.0 or older keeps 10 s. The long value lets a session survive outages of a few seconds: afterwards the side that was sending the video can stay silent, waiting for its congestion window, for up to ~18 s after the other side's last packet. The agent ends a session by itself when nothing has arrived from the viewer for 10 s (a viewer killed or cut off frees the computer as before); a viewer whose agent vanished sees "connection lost: timed out" after 30 s, with the picture frozen meanwhile (review lot 9: NET-1).
+
 ## 5. Capabilities and permissions
 
 The first plan, kept for reference; what was built is in [32-session-permissions.md](32-session-permissions.md) (the server's `Policy`, the limits of the session, the switches of the person at the PC, the agent's `Permissions` message). The signed audit events were not made.

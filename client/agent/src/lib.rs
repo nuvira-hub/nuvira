@@ -1218,7 +1218,7 @@ async fn relayed_session(
     let result = tokio::select! {
         r = async {
             match request.join {
-                true => shared::guest_session(conn.clone(), streams, &gate).await,
+                true => watched(&conn, shared::guest_session(conn.clone(), streams, &gate)).await,
                 false => session(conn.clone(), streams, &ctx.config, Some(&gate), None).await,
             }
         } => r,
@@ -1707,6 +1707,16 @@ async fn control_channel(conn: &Connection) -> Result<(quinn::SendStream, quinn:
         .context("control channel")
 }
 
+/// `work` on the viewer's connection `conn`, closed and ended as "timed out" once
+/// nothing has arrived from the viewer for 10 s (a viewer killed or cut off). The
+/// connection's own idle timeout is longer, 30 s (review NET-1): this keeps the
+/// computer from staying busy that long, from a task of its own.
+async fn watched<T>(conn: &Connection, work: impl std::future::Future<Output = Result<T>>) -> Result<T> {
+    let watch = nuvira_transport::liveness::watch(conn, nuvira_transport::liveness::PEER_SILENCE_LIMIT);
+    let result = work.await;
+    watch.result(result)
+}
+
 /// [`run_session`], ending its statistics log (if any) with the reason it ended.
 async fn session(
     conn: Connection,
@@ -1716,7 +1726,7 @@ async fn session(
     reverse: Option<&Reverse>,
 ) -> Result<()> {
     let recorder = Mutex::new(None);
-    let result = run_session(conn, streams, config, gate, reverse, &recorder).await;
+    let result = watched(&conn.clone(), run_session(conn, streams, config, gate, reverse, &recorder)).await;
     if let Some(r) = recorder.into_inner().ok().flatten() {
         r.finish(nuvira_transport::stats::exit_reason(&result));
     }

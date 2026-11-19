@@ -34,10 +34,14 @@ pub fn cases() -> Vec<Case> {
             .needs(&[Need::Wildcard]),
         Case::new("loopback/direct/idle-connection-released-after-10s", direct_idle_blocks)
             .needs(&[Need::Wildcard]),
-        Case::new("loopback/netem/characterises_bug_outage_8s_not_always_recovered", outage_8s)
+        Case::new("loopback/netem/outage-8s-recovered", outage_8s).group(Group::Long).timeout_s(300),
+        Case::new("loopback/netem/outage-8s-recovered-cubic", outage_8s)
+            .env(&[("NUVIRA_CC_CUBIC", "1")])
             .group(Group::Long)
             .timeout_s(300),
-        Case::new("loopback/netem/outage-12s-session-lost", outage_12s).group(Group::Long).timeout_s(240),
+        Case::new("loopback/netem/outage-12s-agent-ends-at-10s", outage_12s)
+            .group(Group::Long)
+            .timeout_s(240),
     ]
 }
 
@@ -342,19 +346,16 @@ fn outage_short(ctx: &mut Ctx) -> Result<()> {
     agent.finish(&art, Duration::from_secs(5))
 }
 
-/// KNOWN BUG (Phase 2, baseline B-MACRO-07 outage/NX-8): repeated 8 s outages on
-/// one session. In the baseline (bench, 1080p60 8 Mbit/s, netem process) the
-/// first was recovered and the second or third killed the session ("connection
-/// lost: timed out") in 4 of 4 runs, while 1, 3 and 12 s behaved. Here (same
-/// source, in-process proxy) every 8 s outage was recovered on all three
-/// machines: whether the session survives depends on where the peers' PTO
-/// back-off puts the first packet after the outage relative to the 10 s idle
-/// timeout, so it is not deterministic.
-/// Pinned (the deterministic part): each of 6 outages of 8 s (1 s apart) either
-/// recovers with a fresh frame within 15 s or ends the session with "timed out"
-/// (never another error, never a session left open without frames); the counts
-/// are in the notes. Expected after fix: every 8 s outage recovered (it is shorter
-/// than the idle timeout).
+/// Was KNOWN BUG K38 (Phase 2, baseline B-MACRO-07 outage/NX-8): repeated 8 s
+/// outages on one session. The sender of the video stays congestion-blocked after
+/// an outage and quinn then sends nothing, not even an ACK, until a backed-off
+/// loss probe up to ~18 s after the viewer's last receipt, so the viewer's 10 s
+/// idle timeout ended the session ("timed out") in some runs (Phase 4 E1: 2 of 5
+/// runs with BBR, 5 of 5 with Cubic). Fixed in Phase 6 lot 9 (NET-1): session
+/// connections have a 30 s idle timeout, and the agent ends by itself a session
+/// whose viewer is silent for 10 s. Now each of the 6 outages of 8 s (1 s apart)
+/// recovers with a fresh frame within 15 s, also with `NUVIRA_CC_CUBIC=1` (the
+/// `-cubic` case), which made it much worse before.
 fn outage_8s(ctx: &mut Ctx) -> Result<()> {
     let (art, vrt) = rig::runtimes()?;
     // The baseline's source (B-MACRO-07: 1080p60 at a fixed 8 Mbit/s).
@@ -365,31 +366,31 @@ fn outage_8s(ctx: &mut Ctx) -> Result<()> {
     vrt.block_on(async {
         let s = HeadlessViewer::connect_direct(paddr, Some(fp), rig::opts(rig::REVERSE_PASSWORD)).await?;
         rig::frames(&s, 10, Duration::from_secs(20)).await?;
-        let (mut recovered, mut lost) = (0, 0);
+        let mut recovered = 0;
         for i in 1..=6 {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let (back, err) = outage(&s, &proxy, 8).await;
             ctx.note(format!("outage {i} of 8 s: fresh frame after {back:?} ({err:?})"));
             match (back, err) {
                 (Some(_), None) => recovered += 1,
-                (None, Some(e)) if e.contains("timed out") => {
-                    lost += 1;
-                    break;
-                }
-                (b, e) => bail!("outage {i}: neither recovered nor timed out: {b:?} {e:?}"),
+                (b, e) => bail!("outage {i} of 8 s not recovered: fresh frame {b:?}, error {e:?}"),
             }
         }
-        ctx.note(format!("8 s outages: {recovered} recovered, {lost} lost the session"));
+        ctx.note(format!("8 s outages: {recovered} of 6 recovered"));
         s.close().await;
         anyhow::Ok(())
     })?;
     proxy.stop();
-    let _ = agent.finish(&art, Duration::from_secs(5));
-    Ok(())
+    // The viewer closed normally: serve_reverse ends without an error.
+    agent.finish(&art, Duration::from_secs(5))
 }
 
-/// 12 s is longer than the 10 s idle timeout: the session is lost (timed out)
-/// on both sides.
+/// A 12 s outage: the agent hears nothing from the viewer for 10 s and ends the
+/// session by itself ("timed out", NET-1), during the outage. The viewer's own
+/// QUIC idle timeout is 30 s since Phase 6 lot 9 (it was 10 s and both sides timed
+/// out): it gets no fresh frame and its session ends with "timed out" (its idle
+/// timeout, or the agent's close "timed out" if that still reaches it), about 30 s
+/// after its last packet from the agent.
 fn outage_12s(ctx: &mut Ctx) -> Result<()> {
     let (art, vrt) = rig::runtimes()?;
     let agent = reverse(&art, ctx)?;
@@ -398,23 +399,46 @@ fn outage_12s(ctx: &mut Ctx) -> Result<()> {
     vrt.block_on(async {
         let s = HeadlessViewer::connect_direct(paddr, Some(fp), rig::opts(rig::REVERSE_PASSWORD)).await?;
         rig::frames(&s, 10, Duration::from_secs(20)).await?;
-        let (back, err) = outage(&s, &proxy, 12).await;
-        ctx.note(format!("outage 12 s: {back:?} {err:?}"));
-        ensure(back.is_none() && err.as_deref().is_some_and(|e| e.contains("timed out")), || {
-            format!("12 s outage: back {back:?}, error {err:?}")
+        let start_us = nuvira_proto::now_us();
+        let start = Instant::now();
+        proxy.blackhole(Duration::from_secs(12));
+        // The agent ends its side during the outage.
+        while !agent.is_finished() && start.elapsed() < Duration::from_secs(30) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let agent_end = start.elapsed();
+        while s.error().is_none() && start.elapsed() < Duration::from_secs(45) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let viewer_end = start.elapsed();
+        let err = s.error();
+        let fresh = s.snapshot().per_frame.iter().any(|f| f.capture_us >= start_us + 12_000_000);
+        ctx.note(format!(
+            "outage 12 s: agent ended after {} ms, viewer after {} ms ({err:?}), fresh frame {fresh}",
+            agent_end.as_millis(),
+            viewer_end.as_millis()
+        ));
+        ensure(agent_end >= Duration::from_secs(9) && agent_end <= Duration::from_secs(12), || {
+            format!("agent ended after {agent_end:?}")
+        })?;
+        ensure(!fresh, || "a fresh frame after the agent ended the session".into())?;
+        ensure(err.as_deref().is_some_and(|e| e.contains("timed out")), || format!("viewer error {err:?}"))?;
+        ensure(viewer_end >= Duration::from_secs(25) && viewer_end <= Duration::from_secs(36), || {
+            format!("viewer ended after {viewer_end:?}")
         })?;
         s.close().await;
         anyhow::Ok(())
     })?;
     proxy.stop();
-    match agent.finish(&art, Duration::from_secs(15)) {
+    match agent.finish(&art, Duration::from_secs(5)) {
         Err(e) if format!("{e:#}").contains("timed out") => Ok(()),
         other => bail!("agent result {other:?}"),
     }
 }
 
-/// The viewer's process is killed: the agent notices by the idle timeout (10 s)
-/// and serve_reverse ends with "timed out".
+/// The viewer's process is killed: the agent notices that nothing arrives from it
+/// any more (10 s, NET-1; the QUIC idle timeout is 30 s) and serve_reverse ends
+/// with "timed out".
 fn kill_viewer(ctx: &mut Ctx) -> Result<()> {
     let (art, _vrt) = rig::runtimes()?;
     let agent = reverse(&art, ctx)?;
@@ -445,7 +469,9 @@ fn kill_viewer(ctx: &mut Ctx) -> Result<()> {
 }
 
 /// The agent's process is killed: the viewer's session fails with "timed out"
-/// after the idle timeout.
+/// after the QUIC idle timeout, 30 s since Phase 6 lot 9 (NET-1; it was 10 s). The
+/// session view stays frozen meanwhile: the cost of keeping sessions through
+/// outages of a few seconds.
 fn kill_agent(ctx: &mut Ctx) -> Result<()> {
     let vrt = nuvira_bench::net::viewer_runtime(2)?;
     let dir = ctx.tmp.join("agent-host");
@@ -472,13 +498,13 @@ fn kill_agent(ctx: &mut Ctx) -> Result<()> {
         rig::frames(&s, 10, Duration::from_secs(20)).await?;
         host.kill();
         let t = Instant::now();
-        while s.error().is_none() && t.elapsed() < Duration::from_secs(30) {
+        while s.error().is_none() && t.elapsed() < Duration::from_secs(45) {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         let err = s.error();
         ctx.note(format!("viewer error {} ms after the kill: {err:?}", t.elapsed().as_millis()));
         ensure(err.as_deref().is_some_and(|e| e.contains("timed out")), || format!("viewer error {err:?}"))?;
-        ensure(t.elapsed() >= Duration::from_secs(5) && t.elapsed() <= Duration::from_secs(16), || {
+        ensure(t.elapsed() >= Duration::from_secs(25) && t.elapsed() <= Duration::from_secs(36), || {
             format!("after {:?}", t.elapsed())
         })?;
         s.close().await;
@@ -535,7 +561,9 @@ fn direct_idle_blocks(ctx: &mut Ctx) -> Result<()> {
             None => "still open".into(),
         };
         let ms = served.as_millis();
-        ctx.note(format!("served {ms} ms after the idle connection; idle one {idle_end}; before: {attempts:?}"));
+        ctx.note(format!(
+            "served {ms} ms after the idle connection; idle one {idle_end}; before: {attempts:?}"
+        ));
         let in_time = served >= Duration::from_secs(9) && served <= Duration::from_secs(25);
         ensure(in_time, || format!("served after {served:?}"))?;
         ensure(idle_end == "closed 0 end of session", || idle_end.clone())?;
