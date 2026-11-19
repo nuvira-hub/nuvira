@@ -332,8 +332,13 @@ func (s *Server) setOnline(c *client) {
 	}
 	s.mu.Lock()
 	if old := s.online[c.device.ID]; old != nil {
-		// Same device reconnected: the old connection is no longer needed.
-		_ = old.conn.CloseWithError(0, "replaced by a new connection")
+		// Same device reconnected: the old connection is no longer needed. It
+		// may still have unsent data (its own Registered, if it was replaced
+		// while registering): linger first, so that is not dropped by the close.
+		go func() {
+			old.linger()
+			_ = old.conn.CloseWithError(0, "replaced by a new connection")
+		}()
 	}
 	s.online[c.device.ID] = c
 	s.mu.Unlock()

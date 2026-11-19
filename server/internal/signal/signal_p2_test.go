@@ -425,10 +425,10 @@ func TestConcurrentSessionsOverQUIC(t *testing.T) {
 }
 
 // The same device reconnecting many times at once: exactly one connection
-// stays online, the others are closed ("replaced by a new connection"). A
-// connection replaced while its registration is in flight may lose even the
-// Registered answer (see TestCharacterisesBug_RegistrationRefusalUsuallyLost):
-// such a failed register is counted, not an error.
+// stays online, the others are closed ("replaced by a new connection"). Every
+// connection gets its Registered first, even one replaced while its
+// registration was in flight (SRV-5: the replacement's close used to drop it;
+// SRV-3: the store race failed some first registrations).
 func TestConcurrentReconnectsOfOneDevice(t *testing.T) {
 	ts := startServer(t)
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
@@ -465,18 +465,18 @@ func TestConcurrentReconnectsOfOneDevice(t *testing.T) {
 			id = c.id
 		}
 	}
-	if lost == n || id == "" {
-		t.Fatal("no registration answered")
+	if lost != 0 || id == "" {
+		t.Fatalf("registrations whose answer was lost: %d/%d", lost, n)
 	}
 	ts.waitOnline(t, id, true)
-	time.Sleep(time.Second)
+	// Longer than the replaced connections' linger (refuseLinger).
+	time.Sleep(refuseLinger + 1500*time.Millisecond)
 	open := 0
 	for _, c := range cs {
 		if c.conn.Context().Err() == nil {
 			open++
 		}
 	}
-	t.Logf("registrations whose answer was lost to the replacement: %d/%d", lost, n)
 	if open != 1 {
 		t.Fatalf("%d connections of the same device still open", open)
 	}
