@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/nuvira-hub/nuvira/server/internal/ext"
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
 	"github.com/nuvira-hub/nuvira/server/internal/relay"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
@@ -161,12 +162,19 @@ func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
 	}
 }
 
-// SetRateLimits turns the limits per address on (the default) or off, before Serve.
+// SetRateLimits turns the limits per address on (limits.Public, the default)
+// or off, before Serve.
 func (s *Server) SetRateLimits(on bool) {
-	s.registerLimit, s.connectLimit = nil, nil
 	if on {
-		s.registerLimit, s.connectLimit = newLimiter(registerLimit), newLimiter(connectLimit)
+		s.SetLimitMode(limits.Public)
+	} else {
+		s.SetLimitMode(limits.Off)
 	}
+}
+
+// SetLimitMode sets to which addresses the limits per address apply, before Serve.
+func (s *Server) SetLimitMode(mode limits.Mode) {
+	s.registerLimit, s.connectLimit = newLimiterMode(registerLimit, mode), newLimiterMode(connectLimit, mode)
 }
 
 // SetModules sets the optional modules, before Serve.

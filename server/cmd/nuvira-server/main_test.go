@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
 	"github.com/nuvira-hub/nuvira/server/internal/tlsutil"
 )
@@ -213,5 +216,14 @@ func TestHealthcheck(t *testing.T) {
 	t.Setenv("NUVIRA_LISTEN", "no-port")
 	if err := healthcheck(); err == nil {
 		t.Fatal("address without a port accepted")
+	}
+}
+
+func TestRateLimitMode(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for in, want := range map[string]limits.Mode{"": limits.Public, "off": limits.Off, "all": limits.All, "yes": limits.Public} {
+		if got := rateLimitMode(in, log); got != want {
+			t.Errorf("%q: %v", in, got)
+		}
 	}
 }

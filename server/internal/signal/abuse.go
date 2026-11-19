@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
 	"github.com/nuvira-hub/nuvira/server/internal/relay"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
 )
@@ -18,7 +19,8 @@ import (
 const reloadEvery = 30 * time.Second
 
 // Limits per IP address (per /64 for IPv6, which a single home usually holds).
-// Addresses of this machine and of local networks have none.
+// Addresses of this machine and of local networks have none, unless the server
+// runs with NUVIRA_RATE_LIMITS=all (limits.Mode).
 var (
 	// Registrations: an app opens a few connections (agent, viewer, address book),
 	// reconnects after network changes; an office behind one address reconnects
@@ -30,9 +32,10 @@ var (
 
 type rate struct{ perMinute, burst float64 }
 
-// limiter is a token bucket per key.
+// limiter is a token bucket per address.
 type limiter struct {
 	rate    rate
+	mode    limits.Mode
 	mu      sync.Mutex
 	buckets map[netip.Prefix]*bucket
 }
@@ -42,14 +45,23 @@ type bucket struct {
 	last   time.Time
 }
 
-func newLimiter(r rate) *limiter { return &limiter{rate: r, buckets: map[netip.Prefix]*bucket{}} }
+// newLimiter limits the public addresses (limits.Public).
+func newLimiter(r rate) *limiter { return newLimiterMode(r, limits.Public) }
+
+// newLimiterMode limits the addresses the mode applies to; nil for limits.Off.
+func newLimiterMode(r rate, mode limits.Mode) *limiter {
+	if mode == limits.Off {
+		return nil
+	}
+	return &limiter{rate: r, mode: mode, buckets: map[netip.Prefix]*bucket{}}
+}
 
 // allow takes a request of ip; a nil limiter (limits off) allows everything.
 func (l *limiter) allow(ip netip.Addr, now time.Time) bool {
-	if l == nil || ip.IsLoopback() || ip.IsPrivate() {
+	if l == nil || !l.mode.Applies(ip) {
 		return true
 	}
-	key := addressKey(ip)
+	key := limits.Key(ip)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	b := l.buckets[key]
@@ -78,16 +90,6 @@ func (l *limiter) prune(now time.Time) {
 			delete(l.buckets, k)
 		}
 	}
-}
-
-// addressKey is the key of an address in the limits: the IPv4 address, or the
-// IPv6 /64 network.
-func addressKey(ip netip.Addr) netip.Prefix {
-	if ip.Is4() {
-		return netip.PrefixFrom(ip, 32)
-	}
-	p, _ := ip.Prefix(64)
-	return p
 }
 
 // blocklist is the in-memory copy of the blocks.

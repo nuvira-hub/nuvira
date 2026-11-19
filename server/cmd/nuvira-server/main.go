@@ -8,8 +8,11 @@
 //	               as wss:// on 443 behind a reverse proxy.
 //	NUVIRA_DATA_DIR  folder for database and certificate (default "./data")
 //	NUVIRA_LOG       debug | info (default) | warn
-//	NUVIRA_RATE_LIMITS  "off" disables the limits per address on registrations
-//	               and connection requests (local addresses never have them)
+//	NUVIRA_RATE_LIMITS  limits per address (registrations, connection requests):
+//	               unset = public addresses only (this machine and local
+//	               networks have none); "all" = local addresses too (behind a
+//	               userland UDP proxy, e.g. rootless Docker or Podman, every
+//	               client looks local); "off" = none
 //	NUVIRA_RELAY_FAKE_REFLEXIVE  tests only: announces unreachable public addresses
 //	                   (simulates two devices behind the same router)
 //	NUVIRA_RELAY_IMPAIR  tests only: simulates a worse network on the relay, e.g.
@@ -46,6 +49,7 @@ import (
 	"github.com/quic-go/quic-go"
 
 	"github.com/nuvira-hub/nuvira/server/internal/ext"
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
 	"github.com/nuvira-hub/nuvira/server/internal/relay"
 	nuvirasignal "github.com/nuvira-hub/nuvira/server/internal/signal"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
@@ -146,10 +150,8 @@ func run() error {
 	tr := &quic.Transport{Conn: conn}
 
 	srv := nuvirasignal.New(st, rl, log)
-	if os.Getenv("NUVIRA_RATE_LIMITS") == "off" {
-		srv.SetRateLimits(false)
-		log.Info("limits per address off")
-	}
+	limitMode := rateLimitMode(os.Getenv("NUVIRA_RATE_LIMITS"), log)
+	srv.SetLimitMode(limitMode)
 	modules, err := ext.Open(ext.Env{DB: st.DB(), DataDir: dataDir, Log: log, Host: srv})
 	if err != nil {
 		return fmt.Errorf("modules: %w", err)
@@ -195,6 +197,25 @@ func run() error {
 	}
 	log.Info("nuvira-server stopped")
 	return nil
+}
+
+// rateLimitMode reads NUVIRA_RATE_LIMITS and says in the log what it means.
+func rateLimitMode(value string, log *slog.Logger) limits.Mode {
+	mode, ok := limits.ParseMode(value)
+	if !ok {
+		log.Warn("NUVIRA_RATE_LIMITS not understood: limits on public addresses only", "value", value, "valid", "unset, all, off")
+	}
+	switch mode {
+	case limits.Off:
+		log.Info("limits per address off")
+	case limits.All:
+		log.Info("limits per address on every address, local ones too")
+	default:
+		// Behind a userland UDP proxy every client has a local address and
+		// would escape every limit: say how to change it.
+		log.Info("limits per address on public addresses; local addresses have none (NUVIRA_RATE_LIMITS=all limits them too, e.g. behind a UDP proxy)")
+	}
+	return mode
 }
 
 // Commands of the open server: blocks against abuse (see package signal).

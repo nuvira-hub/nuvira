@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
 )
@@ -274,6 +275,66 @@ func TestCharacterisesAbuseLimits(t *testing.T) {
 		if !l.allow(ip, now) || l.allow(ip, now) {
 			t.Errorf("%s exempt, expected limited", s)
 		}
+	}
+	// SRV-9: NUVIRA_RATE_LIMITS=all limits the local addresses too (for servers
+	// behind a userland UDP proxy, where every client looks local); off: none.
+	for _, s := range append(exempt, limited...) {
+		l := newLimiterMode(rate{perMinute: 1, burst: 1}, limits.All)
+		ip := netip.MustParseAddr(s)
+		if !l.allow(ip, now) || l.allow(ip, now) {
+			t.Errorf("all: %s not limited", s)
+		}
+	}
+	if newLimiterMode(registerLimit, limits.Off) != nil {
+		t.Error("off: a limiter")
+	}
+}
+
+// With NUVIRA_RATE_LIMITS=all a loopback client is limited, so the refusals of
+// the limits can be seen end to end: the Error reaches the client before the
+// close (refuse), and a refused connection request leaves the viewer connected.
+func TestRateLimitRefusalsOverQUIC(t *testing.T) {
+	ts := startServerWith(t, func(s *Server) {
+		s.SetLimitMode(limits.All)
+		s.registerLimit = newLimiterMode(rate{perMinute: 1, burst: 3}, limits.All)
+	})
+	viewer := ts.device(t, "viewer")
+	agent := ts.device(t, "agent")
+	ts.waitOnline(t, agent.id, true)
+	ts.device(t, "third")
+	c := ts.dial(t)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	_ = c.send(registerMsg(key.Public().(ed25519.PublicKey), "fourth", false))
+	if text := refusal(t, c); text != "@server.rate_limited" {
+		t.Fatalf("registration over the burst: %q", text)
+	}
+	// connectLimit: burst 15 per address, then refused; the viewer stays.
+	errorOf := func() string {
+		t.Helper()
+		m, err := viewer.readUntil(5*time.Second, func(m *pb.ServerMessage) bool { return m.GetError() != nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.GetError().Message
+	}
+	refused := 0
+	for i := range 15 {
+		_ = viewer.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Connect{Connect: &pb.Connect{DeviceId: agent.id}}})
+		in, err := agent.readUntil(5*time.Second, func(m *pb.ServerMessage) bool { return m.GetIncoming() != nil })
+		if err != nil {
+			t.Fatalf("connect %d: %v", i+1, err)
+		}
+		_ = agent.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Reject{Reject: &pb.Reject{SessionId: in.GetIncoming().SessionId}}})
+		if text := errorOf(); text != "@agent.rejected" {
+			t.Fatalf("connect %d: %q", i+1, text)
+		}
+	}
+	_ = viewer.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Connect{Connect: &pb.Connect{DeviceId: agent.id}}})
+	if text := errorOf(); text == "@server.rate_limited" {
+		refused++
+	}
+	if refused != 1 || viewer.conn.Context().Err() != nil {
+		t.Fatalf("refused %d, viewer closed %v", refused, viewer.conn.Context().Err())
 	}
 }
 
