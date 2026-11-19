@@ -21,7 +21,6 @@
 
 use std::io::Write;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
-use std::sync::OnceLock;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -75,44 +74,9 @@ for (const w of workspace.windowList()) {
 "#;
 const SHOWN_SCRIPT_NAME: &str = "nuvirahub-privacy-shown";
 
-/// KWin's major and minor version, if KWin runs this session.
-fn kwin_version() -> Option<(u32, u32)> {
-    static VERSION: OnceLock<Option<(u32, u32)>> = OnceLock::new();
-    *VERSION.get_or_init(|| {
-        // Own thread: the caller may be inside the agent's async runtime.
-        std::thread::spawn(|| -> Result<(u32, u32)> {
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-            rt.block_on(async {
-                let conn = zbus::Connection::session().await?;
-                let reply = conn
-                    .call_method(
-                        Some("org.kde.KWin"),
-                        "/KWin",
-                        Some("org.kde.KWin"),
-                        "supportInformation",
-                        &(),
-                    )
-                    .await?;
-                let text: String = reply.body().deserialize()?;
-                parse_version(&text).context("no version in KWin's support information")
-            })
-        })
-        .join()
-        .ok()
-        .and_then(Result::ok)
-    })
-}
-
-/// "KWin version: 6.6.6" in KWin's support information.
-fn parse_version(text: &str) -> Option<(u32, u32)> {
-    let rest = text.lines().find_map(|l| l.trim().strip_prefix("KWin version:"))?;
-    let mut parts = rest.trim().split('.');
-    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
-}
-
 /// This is a KDE Plasma session whose KWin can leave windows out of the capture.
 pub fn supported() -> bool {
-    kwin_version().is_some_and(|v| v >= (6, 6))
+    nuvira_portal::plasma::kwin_version().is_some_and(|v| v >= (6, 6))
 }
 
 /// Why privacy mode cannot start here, if it cannot.
@@ -569,13 +533,3 @@ delegate_noop!(State: ignore wl_buffer::WlBuffer);
 delegate_noop!(State: ignore wl_surface::WlSurface);
 delegate_noop!(State: ignore wl_region::WlRegion);
 delegate_noop!(State: ignore wl_output::WlOutput);
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn kwin_version_line() {
-        let text = "KWin Support Information:\n==========================\n\nVersion\n=======\nKWin version: 6.6.6\nQt Version: 6.10.1\n";
-        assert_eq!(super::parse_version(text), Some((6, 6)));
-        assert_eq!(super::parse_version("nothing"), None);
-    }
-}

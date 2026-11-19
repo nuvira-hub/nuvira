@@ -19,6 +19,7 @@ pub use nuvira_pointer as cursor;
 pub mod display_config;
 mod kwin;
 mod mutter;
+pub mod plasma;
 
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
@@ -256,6 +257,11 @@ fn run(
             return;
         }
     };
+    // Asked before the session opens: a notch sent as `wheel_scale` steps.
+    let wheel_scale = plasma::portal_wheel_scale();
+    if wheel_scale != 1 {
+        info!(wheel_scale, "KDE portal before Plasma 6.9: a wheel notch sent as {wheel_scale} steps");
+    }
     rt.block_on(async {
         let (remote, screencast, session, screens) = match open(&token_file, ask).await {
             Ok(v) => v,
@@ -303,6 +309,7 @@ fn run(
                 }
                 Cmd::Wheel(axis, steps) => {
                     let options = NotifyPointerAxisDiscreteOptions::default();
+                    let steps = steps.saturating_mul(wheel_scale);
                     remote.notify_pointer_axis_discrete(&session, axis, steps, options).await
                 }
                 Cmd::Scroll(dx, dy) => {

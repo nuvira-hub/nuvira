@@ -826,7 +826,14 @@ mod linux {
             (6, true),
             (6, false),
         ]);
-        if wayland() {
+        let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.contains("KDE"));
+        if wayland() && kde {
+            // KWin's portal: every notch reaches Xwayland as one click (before Plasma
+            // 6.9 a notch is sent as 10 smooth units, Xwayland's click; Phase 2 saw
+            // 1 click for the 5 notches at most: VWR-3).
+            report(&format!("wayland buttons seen {buttons:?}"));
+            assert_eq!(buttons, want, "buttons and wheel through KWin's portal");
+        } else if wayland() {
             // Through Mutter the wheel arrives as Xwayland's own scroll buttons; pin the order seen.
             report(&format!("wayland buttons seen {buttons:?}"));
             assert_eq!(&buttons[..10], &want[..10], "buttons through Mutter");
@@ -872,7 +879,6 @@ mod linux {
             .collect();
         let want: Vec<u32> = typed.chars().map(nuvira_input::keys::keysym).collect();
         report(&format!("text keysyms {syms:x?}, with the state {levels:x?}, expected {want:x?}"));
-        let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.contains("KDE"));
         if wayland() && kde {
             // KWin's portal (NotifyKeyboardKeysym) types a character as the key
             // that carries it, its Shift or AltGr level in the modifier state of
