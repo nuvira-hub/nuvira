@@ -15,9 +15,12 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/quic-go/quic-go"
 	"google.golang.org/protobuf/encoding/protodelim"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/nuvira-hub/nuvira/server/internal/ext"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
@@ -40,6 +43,12 @@ const pendingTimeout = 60 * time.Second
 
 const maxMessage = 64 * 1024
 
+// IdleTimeout is the QUIC idle timeout of the signalling connections
+// (cmd/nuvira-server). It is also the longest a write to one client may take
+// (sendTimeout): a client that does not read for that long is disconnected,
+// instead of blocking whoever sends to it.
+const IdleTimeout = 30 * time.Second
+
 type client struct {
 	device *store.Device
 	conn   *quic.Conn
@@ -55,13 +64,58 @@ type client struct {
 	// Signalling protocol version of the device (Register): from 2 an agent
 	// applies the limits of each session.
 	protocol uint32
+	// Longest wait for one write (Server.sendTimeout).
+	sendTimeout time.Duration
 }
 
+// send writes one length-delimited message. Many goroutines send to one client
+// (the agent's goroutine writes a viewer's Route, the expiry and policy loops
+// write to everybody), so a client that stops reading must not hold them: the
+// write has a deadline, and a write that fails closes the connection (after a
+// partial write the framing is broken). A marshal error (nothing written)
+// closes nothing.
 func (c *client) send(msg *pb.ServerMessage) error {
+	size := proto.Size(msg)
+	buf := make([]byte, 0, protowire.SizeVarint(uint64(size))+size)
+	buf = protowire.AppendVarint(buf, uint64(size))
+	buf, err := proto.MarshalOptions{UseCachedSize: true}.MarshalAppend(buf, msg)
+	if err != nil {
+		return err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	_, err := protodelim.MarshalTo(c.stream, msg)
+	_ = c.stream.SetWriteDeadline(time.Now().Add(c.sendTimeout))
+	if _, err = c.stream.Write(buf); err != nil {
+		_ = c.conn.CloseWithError(0, "write failed")
+	}
 	return err
+}
+
+// refuseLinger is how long a refused connection is kept open after its Error,
+// so that the Error is delivered before the close (the client closes on it at
+// once; one that does not is cut after this).
+const refuseLinger = time.Second
+
+// refuse sends a refusal and lets it reach the client before the caller closes
+// the connection: CloseWithError drops stream data not yet sent.
+func (c *client) refuse(text string) {
+	_ = c.send(errorMsg(text, ""))
+	c.linger()
+}
+
+// linger ends the stream (FIN after what was sent) and waits until the client
+// closes the connection, at most refuseLinger. The stream is closed under c.mu:
+// quic-go's SendStream.Close must not run concurrently with Write.
+func (c *client) linger() {
+	c.mu.Lock()
+	_ = c.stream.Close()
+	c.mu.Unlock()
+	t := time.NewTimer(refuseLinger)
+	defer t.Stop()
+	select {
+	case <-c.conn.Context().Done():
+	case <-t.C:
+	}
 }
 
 type pending struct {
@@ -82,6 +136,9 @@ type Server struct {
 	sessions map[string]*pending
 	routed   map[string]*routed // accepted sessions, until the agent's report
 
+	// Longest wait for one write to a client (IdleTimeout; shorter in tests).
+	sendTimeout time.Duration
+
 	// Protection of a public server (abuse.go).
 	blocked       blocklist
 	registerLimit *limiter
@@ -90,7 +147,7 @@ type Server struct {
 
 func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
 	return &Server{
-		store: st, relay: r, log: log,
+		store: st, relay: r, log: log, sendTimeout: IdleTimeout,
 		online: map[string]*client{}, sessions: map[string]*pending{}, routed: map[string]*routed{},
 		registerLimit: newLimiter(registerLimit), connectLimit: newLimiter(connectLimit),
 	}
@@ -215,19 +272,19 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	if reg == nil || len(reg.PublicKey) != ed25519.PublicKeySize {
 		return nil, errors.New("missing Register or invalid key")
 	}
-	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly, protocol: reg.ProtocolVersion}
+	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly, protocol: reg.ProtocolVersion, sendTimeout: s.sendTimeout}
 	if ip, ok := relay.HostOf(conn.RemoteAddr()); ok {
 		if s.blocked.address(ip) {
-			_ = c.send(errorMsg("@server.blocked", ""))
+			c.refuse("@server.blocked")
 			return nil, errors.New("blocked address")
 		}
 		if !s.registerLimit.allow(ip, time.Now()) {
-			_ = c.send(errorMsg("@server.rate_limited", ""))
+			c.refuse("@server.rate_limited")
 			return nil, errors.New("too many registrations from this address")
 		}
 	}
 	if reg.ProtocolVersion < ProtocolVersion {
-		_ = c.send(errorMsg("@server.old_version", ""))
+		c.refuse("@server.old_version")
 		return nil, fmt.Errorf("protocol %d", reg.ProtocolVersion)
 	}
 
@@ -245,7 +302,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	proof := msg.GetProof()
 	signed := append([]byte(registerContext), nonce...)
 	if proof == nil || !ed25519.Verify(reg.PublicKey, signed, proof.Signature) {
-		_ = c.send(errorMsg("invalid proof of the key", ""))
+		c.refuse("invalid proof of the key")
 		return nil, errors.New("invalid signature")
 	}
 
@@ -255,7 +312,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	}
 	c.device = device
 	if s.blocked.device(device.ID) {
-		_ = c.send(errorMsg("@server.blocked", ""))
+		c.refuse("@server.blocked")
 		return nil, fmt.Errorf("blocked device %s", device.ID)
 	}
 	registered := &pb.Registered{DeviceId: device.ID}
@@ -292,11 +349,18 @@ func aliasError(err error) string {
 	}
 }
 
+// limit cuts s to at most n bytes on a character boundary: a cut inside a
+// UTF-8 character makes the string invalid, and every message carrying it
+// (the viewer's name in Incoming) would fail to marshal. Register has already
+// been checked as valid UTF-8 by Unmarshal.
 func limit(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
+	if len(s) <= n {
+		return s
 	}
-	return s
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 func (s *Server) setOnline(c *client) {
@@ -305,8 +369,13 @@ func (s *Server) setOnline(c *client) {
 	}
 	s.mu.Lock()
 	if old := s.online[c.device.ID]; old != nil {
-		// Same device reconnected: the old connection is no longer needed.
-		_ = old.conn.CloseWithError(0, "replaced by a new connection")
+		// Same device reconnected: the old connection is no longer needed. It
+		// may still have unsent data (its own Registered, if it was replaced
+		// while registering): linger first, so that is not dropped by the close.
+		go func() {
+			old.linger()
+			_ = old.conn.CloseWithError(0, "replaced by a new connection")
+		}()
 	}
 	s.online[c.device.ID] = c
 	s.mu.Unlock()
@@ -324,8 +393,10 @@ func (s *Server) setOffline(c *client) {
 	if gone {
 		delete(s.online, c.device.ID)
 	}
-	_ = s.store.Touch(c.device.ID)
 	s.mu.Unlock()
+	// Outside s.mu: the database write can wait behind other queries (one pool
+	// connection), and every connect, take and presence call needs s.mu.
+	_ = s.store.Touch(c.device.ID)
 	if gone {
 		for _, d := range s.supportDesks() {
 			d.DeviceOffline(c.device.ID)
@@ -556,20 +627,25 @@ func (s *Server) expireLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
-			var expired []*pending
-			s.mu.Lock()
-			for id, p := range s.sessions {
-				if now.Sub(p.created) > pendingTimeout {
-					expired = append(expired, p)
-					delete(s.sessions, id)
-				}
-			}
-			s.mu.Unlock()
-			for _, p := range expired {
-				_ = p.viewer.send(errorMsg("@agent.no_answer", p.id))
-				s.event(ext.SessionEvent{ID: p.id, Kind: ext.SessionExpired, AgentID: p.agentID})
-			}
-			s.forgetRouted(now)
+			s.expire(now)
 		}
 	}
+}
+
+// expire ends the requests the agent did not answer in time.
+func (s *Server) expire(now time.Time) {
+	var expired []*pending
+	s.mu.Lock()
+	for id, p := range s.sessions {
+		if now.Sub(p.created) > pendingTimeout {
+			expired = append(expired, p)
+			delete(s.sessions, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, p := range expired {
+		_ = p.viewer.send(errorMsg("@agent.no_answer", p.id))
+		s.event(ext.SessionEvent{ID: p.id, Kind: ext.SessionExpired, AgentID: p.agentID})
+	}
+	s.forgetRouted(now)
 }

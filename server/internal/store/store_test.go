@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -125,4 +126,48 @@ func TestAliases(t *testing.T) {
 		t.Fatal(err)
 	}
 	again.Close()
+}
+
+// Several connections registering the same new key at the same moment all get
+// the device's one ID, none fails (SRV-3: the SELECT and the INSERT are two
+// statements, the losers' INSERT failed on public_key UNIQUE and they got
+// "no free ID").
+func TestConcurrentFirstRegistrationOfOneKey(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "nuvira.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	const rounds, n = 50, 4
+	for round := range rounds {
+		key := bytes.Repeat([]byte{byte(round + 1)}, 32)
+		key[0] = 0xEE
+		ids := make([]string, n)
+		errs := make([]error, n)
+		var wg sync.WaitGroup
+		for i := range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				d, err := s.Register(key, "same", "test")
+				errs[i] = err
+				if d != nil {
+					ids[i] = d.ID
+				}
+			}()
+		}
+		wg.Wait()
+		for i := range n {
+			if errs[i] != nil {
+				t.Fatalf("round %d, registration %d: %v", round, i, errs[i])
+			}
+			if ids[i] != ids[0] {
+				t.Fatalf("round %d: two IDs for one key: %s, %s", round, ids[0], ids[i])
+			}
+		}
+	}
+	var rows int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM devices`).Scan(&rows); err != nil || rows != rounds {
+		t.Fatalf("%d device rows for %d keys (%v)", rows, rounds, err)
+	}
 }
