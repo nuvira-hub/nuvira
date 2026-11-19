@@ -40,7 +40,13 @@ after a save, `AgentCommand::GetAccess`), and a save sends a change
 (`access::Edit`) that keeps from the file what the app does not know (the
 hashes of profiles not changed, the current secret). A file that cannot be read
 refuses every permanent password rather than ignoring rules someone wrote; the
-app says so and saving the rules again replaces it.
+app says so and saving the rules again replaces it. The temporary password keeps
+working from any computer while the file cannot be read, also if the broken file
+had "Also with the temporary password" (it cannot be parsed, so the agent cannot
+know): the temporary password is shown only on the PC and changes, the person at
+the PC still accepts each session when confirmation is on, and refusing it too
+would leave nobody able to help remotely to fix the file. This is a decision, not
+an oversight (review AGT-5, accepted as is).
 
 From the command line, as administrator: `nuvira access show` prints the rules
 (no hashes, no secret); `nuvira access save --file CHANGE.json` applies a change

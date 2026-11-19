@@ -4237,7 +4237,8 @@ mod gate_characterisation {
         // An access.json that does not parse refuses every permanent password
         // (documented in access.rs). The temporary password is still accepted from
         // any computer, even if the broken file meant to restrict it
-        // (`allow_attended`): `attended_allowed` falls back to true.
+        // (`allow_attended`): `attended_allowed` falls back to true. Kept on purpose
+        // (review AGT-5, user decision of 2026-11-18; docs/42-access-rules.md).
         let f = fixture("broken", true, false, Some(r#"{"allow":[{"id":"999888777"}],"allow_attended":true,"#));
         let req = request(VIEWER, false);
         let v = authorize(&f.ctx, &req, &password(PERMANENT)).await;
