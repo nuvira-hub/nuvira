@@ -37,8 +37,9 @@ const POINTER_METADATA: u32 = 4;
 /// `fake_input.axis`: vertical and horizontal wheel.
 const AXIS_VERTICAL: u32 = 0;
 const AXIS_HORIZONTAL: u32 = 1;
-/// One wheel notch, in the units of `axis` (libinput's 15 degrees).
-const NOTCH: f64 = 15.0;
+/// One wheel notch, in the units of `axis`: Xwayland, GTK and Qt treat 10 of
+/// these non-discrete units as one notch (15 scrolled a notch and a half).
+const NOTCH: f64 = 10.0;
 
 #[derive(Default)]
 struct State {
