@@ -112,7 +112,7 @@ func TestHelpAndUnknownCommand(t *testing.T) {
 	for _, name := range []string{"help", "-h", "--help"} {
 		code, out, errs := capture(t, func() int { return command(name, nil) })
 		if code != 0 || out != "" || !strings.Contains(errs, "healthcheck") || !strings.Contains(errs, "block ") ||
-			!strings.Contains(errs, "(open)") || strings.Contains(errs, "unknown command") {
+			!strings.Contains(errs, "("+edition+")") || strings.Contains(errs, "unknown command") {
 			t.Errorf("%s: %d %q %q", name, code, out, errs)
 		}
 	}
