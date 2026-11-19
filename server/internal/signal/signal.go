@@ -64,6 +64,33 @@ func (c *client) send(msg *pb.ServerMessage) error {
 	return err
 }
 
+// refuseLinger is how long a refused connection is kept open after its Error,
+// so that the Error is delivered before the close (the client closes on it at
+// once; one that does not is cut after this).
+const refuseLinger = time.Second
+
+// refuse sends a refusal and lets it reach the client before the caller closes
+// the connection: CloseWithError drops stream data not yet sent.
+func (c *client) refuse(text string) {
+	_ = c.send(errorMsg(text, ""))
+	c.linger()
+}
+
+// linger ends the stream (FIN after what was sent) and waits until the client
+// closes the connection, at most refuseLinger. The stream is closed under c.mu:
+// quic-go's SendStream.Close must not run concurrently with Write.
+func (c *client) linger() {
+	c.mu.Lock()
+	_ = c.stream.Close()
+	c.mu.Unlock()
+	t := time.NewTimer(refuseLinger)
+	defer t.Stop()
+	select {
+	case <-c.conn.Context().Done():
+	case <-t.C:
+	}
+}
+
 type pending struct {
 	id      string
 	viewer  *client
@@ -218,16 +245,16 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly, protocol: reg.ProtocolVersion}
 	if ip, ok := relay.HostOf(conn.RemoteAddr()); ok {
 		if s.blocked.address(ip) {
-			_ = c.send(errorMsg("@server.blocked", ""))
+			c.refuse("@server.blocked")
 			return nil, errors.New("blocked address")
 		}
 		if !s.registerLimit.allow(ip, time.Now()) {
-			_ = c.send(errorMsg("@server.rate_limited", ""))
+			c.refuse("@server.rate_limited")
 			return nil, errors.New("too many registrations from this address")
 		}
 	}
 	if reg.ProtocolVersion < ProtocolVersion {
-		_ = c.send(errorMsg("@server.old_version", ""))
+		c.refuse("@server.old_version")
 		return nil, fmt.Errorf("protocol %d", reg.ProtocolVersion)
 	}
 
@@ -245,7 +272,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	proof := msg.GetProof()
 	signed := append([]byte(registerContext), nonce...)
 	if proof == nil || !ed25519.Verify(reg.PublicKey, signed, proof.Signature) {
-		_ = c.send(errorMsg("invalid proof of the key", ""))
+		c.refuse("invalid proof of the key")
 		return nil, errors.New("invalid signature")
 	}
 
@@ -255,7 +282,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	}
 	c.device = device
 	if s.blocked.device(device.ID) {
-		_ = c.send(errorMsg("@server.blocked", ""))
+		c.refuse("@server.blocked")
 		return nil, fmt.Errorf("blocked device %s", device.ID)
 	}
 	registered := &pb.Registered{DeviceId: device.ID}

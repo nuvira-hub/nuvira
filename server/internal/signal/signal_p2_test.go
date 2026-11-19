@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
+	"github.com/nuvira-hub/nuvira/server/internal/store"
 )
 
 func TestRegisterOverQUIC(t *testing.T) {
@@ -74,20 +75,15 @@ func refusal(t *testing.T, c *testClient) string {
 	return m.GetError().GetMessage()
 }
 
-// KNOWN BUG (Phase 2, new finding): the refusals during registration (bad
-// proof, old protocol, blocked, rate limited) send an Error and return at once;
-// handle's deferred conn.CloseWithError(0, "") then closes the connection
-// before the stream data is delivered, so the client usually gets only the
-// close (measured on Windows loopback: old_version 1/30, invalid proof 3-4/30).
-// This test accepts both outcomes and counts them.
-// Expected after fix: the client always gets the Error text before the close.
-func TestCharacterisesBug_RegistrationRefusalUsuallyLost(t *testing.T) {
+// The refusals during registration (bad proof, old protocol, blocked, rate
+// limited) reach the client before the close (K19, SRV-1: they used to be lost
+// to handle's immediate CloseWithError, 0-4 of 30 delivered).
+func TestRegistrationRefusalDelivered(t *testing.T) {
 	ts := startServer(t)
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	pub := key.Public().(ed25519.PublicKey)
 	const tries = 10
-	got := map[string]int{}
-	for range tries {
+	for i := range tries {
 		// Wrong signature: no device row either.
 		c := ts.dial(t)
 		_ = c.send(registerMsg(pub, "x", false))
@@ -95,28 +91,53 @@ func TestCharacterisesBug_RegistrationRefusalUsuallyLost(t *testing.T) {
 			t.Fatalf("challenge: %v %v", m, err)
 		}
 		_ = c.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Proof{Proof: &pb.Proof{Signature: make([]byte, 64)}}})
-		switch text := refusal(t, c); text {
-		case "", "invalid proof of the key":
-			got["proof:"+text]++
-		default:
-			t.Fatalf("bad proof: %q", text)
+		if text := refusal(t, c); text != "invalid proof of the key" {
+			t.Fatalf("bad proof, try %d: %q", i+1, text)
 		}
 		// Old protocol: refused before any challenge.
 		c = ts.dial(t)
 		old := registerMsg(pub, "x", false)
 		old.GetRegister().ProtocolVersion = 0
 		_ = c.send(old)
-		switch text := refusal(t, c); text {
-		case "", "@server.old_version":
-			got["old:"+text]++
-		default:
-			t.Fatalf("old protocol: %q", text)
+		if text := refusal(t, c); text != "@server.old_version" {
+			t.Fatalf("old protocol, try %d: %q", i+1, text)
 		}
 	}
-	t.Logf("outcomes over %d tries (\"\" = closed without the error): %v", tries, got)
 	var rows int
 	if err := ts.store.DB().QueryRow(`SELECT COUNT(*) FROM devices`).Scan(&rows); err != nil || rows != 0 {
 		t.Fatalf("device rows %d %v", rows, err)
+	}
+}
+
+// A blocked address and a blocked device get "@server.blocked" before the close
+// (SRV-1). The rate-limit refusal goes through the same refuse(), but loopback
+// is never rate limited, so it is not reachable from this test.
+func TestRegistrationBlockedDelivered(t *testing.T) {
+	ts := startServer(t)
+	dev := ts.device(t, "to-block")
+	_ = dev.conn.CloseWithError(0, "")
+	ts.waitOnline(t, dev.id, false)
+	ts.srv.blocked.set([]store.Block{{Value: dev.id}})
+	for i := range 5 {
+		c := ts.dial(t)
+		_ = c.send(registerMsg(dev.key.Public().(ed25519.PublicKey), "to-block", false))
+		m, err := c.read(5 * time.Second)
+		if err != nil || m.GetChallenge() == nil {
+			t.Fatalf("challenge: %v %v", m, err)
+		}
+		sig := ed25519.Sign(dev.key, append([]byte(registerContext), m.GetChallenge().Nonce...))
+		_ = c.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Proof{Proof: &pb.Proof{Signature: sig}}})
+		if text := refusal(t, c); text != "@server.blocked" {
+			t.Fatalf("blocked device, try %d: %q", i+1, text)
+		}
+	}
+	ts.srv.blocked.set([]store.Block{{Value: "127.0.0.0/8"}})
+	for i := range 5 {
+		c := ts.dial(t)
+		_ = c.send(registerMsg(dev.key.Public().(ed25519.PublicKey), "to-block", false))
+		if text := refusal(t, c); text != "@server.blocked" {
+			t.Fatalf("blocked address, try %d: %q", i+1, text)
+		}
 	}
 }
 
