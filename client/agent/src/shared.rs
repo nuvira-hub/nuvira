@@ -336,7 +336,9 @@ pub async fn guest_session(
     };
     ctrl_tx.send(&control(Msg::AuthResult(AuthResult { ok, message }))).await?;
     if let Err(reason) = verdict {
-        let pause = if reason == WRONG_PASSWORD { 2000 } else { 500 };
+        // Refused without checking the password: no longer pause (see run_session).
+        let checked = !gate.throttled.load(Ordering::Relaxed);
+        let pause = if reason == WRONG_PASSWORD && checked { 2000 } else { 500 };
         tokio::time::sleep(Duration::from_millis(pause)).await;
         bail!("{reason}");
     }

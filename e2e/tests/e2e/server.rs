@@ -3,7 +3,8 @@
 //! `serve_via_server`: what a real session goes through, on 127.0.0.1.
 //!
 //! Pinned here: direct path, forced relay, WebSocket; temporary password right
-//! and wrong (no lockout), confirmation accepted, refused and unanswered,
+//! and wrong (a viewer locked after 5 wrong ones, Phase 6 lot 3), confirmation
+//! accepted, refused and unanswered,
 //! permanent password with a two-factor code (replay refused, lockout after 5
 //! wrong codes); an impostor viewer refused by the agent's certificate check;
 //! server restart; impaired relay; several agents and viewers at once and the
@@ -39,7 +40,7 @@ pub fn cases() -> Vec<Case> {
         Case::new("server/relay/impaired-relay-session", impaired_relay)
             .needs(SRV)
             .env(&[("NUVIRA_FORCE_RELAY", "1")]),
-        Case::new("server/auth/wrong-password-no-lockout", wrong_password).needs(SRV),
+        Case::new("server/auth/wrong-passwords-lock-the-viewer", wrong_password).needs(SRV),
         Case::new("server/auth/confirmation-accept-and-refuse", confirmation).needs(SRV),
         Case::new("server/auth/two-factor-replay-and-lockout", two_factor).needs(SRV),
         Case::new("server/security/impostor-viewer-refused", impostor).needs(SRV).timeout_s(240),
@@ -240,29 +241,43 @@ impl Attempt {
     }
 }
 
-/// Temporary password: each wrong one is refused after a 2 s pause, with no
-/// limit on the attempts; the right one still works after them.
+/// Temporary password (review AGT-4, Phase 6 lot 3; was the Phase 2 pin
+/// `server/auth/wrong-password-no-lockout`, K36): each of the first 5 wrong ones
+/// is refused after a 2 s pause; from then that viewer ID is refused like a wrong
+/// password, also with the right one, and the connection closes without the 2 s
+/// pause; another viewer ID still gets in with the right password.
 fn wrong_password(ctx: &mut Ctx) -> Result<()> {
     let rig = Rig::start(ctx, AgentSpec::default())?;
     let viewer = rig.viewer(ctx, "viewer")?;
     rig.vrt.block_on(async {
         let mut from = rig.agent.events.len();
-        for i in 0..6 {
-            let mut a = attempt(&rig, &viewer, &format!("wrong-{i}"), "", true).await?;
+        for i in 0..7 {
+            // 0..5 wrong and checked; 5 wrong and 6 right, both refused unchecked.
+            let (password, checked) = match i {
+                0..5 => (format!("wrong-{i}"), true),
+                5 => ("wrong-5".to_string(), false),
+                _ => (rig::PASSWORD.to_string(), false),
+            };
+            let mut a = attempt(&rig, &viewer, &password, "", true).await?;
             let r = a.result("", None).await?;
             let (ended, after) = a.closed().await?;
             ensure(r == (false, "@agent.wrong_password".into()), || format!("attempt {i}: {r:?}"))?;
             ensure(ended == "closed 0 @agent.wrong_password", || format!("attempt {i}: {ended}"))?;
-            ensure(after >= Duration::from_millis(1800), || format!("attempt {i}: closed after {after:?}"))?;
+            let pause_ok = match checked {
+                true => after >= Duration::from_millis(1800),
+                false => after < Duration::from_millis(1500),
+            };
+            ensure(pause_ok, || format!("attempt {i}: closed after {after:?}"))?;
             let (i2, error) = rig.ended(from, Duration::from_secs(15)).await?;
             ensure(error.as_deref().is_some_and(|e| e.contains("@agent.wrong_password")), || {
                 format!("{error:?}")
             })?;
             from = i2 + 1;
         }
-        ctx.note("6 wrong temporary passwords refused, each closed about 2 s after the answer");
-        let (s, _) = open(&rig, &viewer, TransportMode::Udp).await?;
-        rig::frames(&s, 10, Duration::from_secs(20)).await.context("right password after 6 wrong ones")?;
+        ctx.note("5 wrong passwords refused after about 2 s, then that viewer at once (right password too)");
+        let other = rig.viewer(ctx, "viewer2")?;
+        let (s, _) = open(&rig, &other, TransportMode::Udp).await?;
+        rig::frames(&s, 10, Duration::from_secs(20)).await.context("another viewer with the right password")?;
         s.close().await;
         anyhow::Ok(())
     })?;
