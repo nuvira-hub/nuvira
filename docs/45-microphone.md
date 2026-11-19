@@ -85,7 +85,14 @@ Web Audio (a ScriptProcessor: no worklet file under the page's CSP), mono duplic
 to stereo, encoded at 48 kHz, 32 kbit/s, 20 ms frames, and each packet goes as a
 datagram in the format of the desktop viewer (`0xA0, seq, packet`). The agent's
 `MicrophoneState` comes back to the page: off with a reason (muted at the computer, a
-rule) turns the button off and shows the reason. Off at every connection.
+rule) turns the button off and shows the reason. Off at every connection. If the
+session ends while the browser is still asking for the microphone (its permission
+prompt open), the capture that the answer starts is stopped at once and nothing is
+shown; the packets of a capture go only to the session it was started for, never to
+a later session of the page (review lot 10, WEB-4; before, the capture kept running
+until the page was reloaded and its packets went to the next computer). Tried
+headless on the NUC with fake devices in Chromium 156 and Firefox 157; not tried on
+Safari.
 
 | Browser | Microphone | Towards | Result |
 |---|---|---|---|
