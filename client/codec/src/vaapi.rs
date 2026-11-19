@@ -5,7 +5,8 @@
 //! software encoder is used. Nothing else is needed (no GStreamer or FFmpeg).
 //!
 //! - Device: the first DRM render node (`/dev/dri/renderD128`…) whose driver
-//!   encodes H.264; `NUVIRA_VAAPI_DEVICE` picks one.
+//!   encodes H.264, Intel's and AMD's nodes first, nouveau's left out
+//!   (`render_nodes`); `NUVIRA_VAAPI_DEVICE` picks one.
 //! - Profile Main (CABAC), else High, else Constrained Baseline; slice encoding,
 //!   else the low-power one (newer Intel). Only P frames referring to the previous
 //!   one, keyframes when asked (as the other encoders): one frame out for every
@@ -509,6 +510,61 @@ fn shared_display() -> Result<&'static Display> {
     Ok(display)
 }
 
+/// The render nodes to try, `renderD128` to `renderD135` under `dev`: those of
+/// Intel's and AMD's kernel drivers (`i915`, `xe`, `amdgpu`) first, the others
+/// after them in their order. Nodes driven by `nouveau` are left out: Mesa's
+/// nouveau VA driver encodes no H.264, and initialising it on a hybrid laptop
+/// (MX150 next to an Intel UHD 620) put warnings in the kernel log and then made
+/// the encoder test time out (2026-11-17). `NUVIRA_VAAPI_DEVICE` can still name
+/// one. The kernel driver is read from `sys` (`renderDN/device/driver`).
+fn render_nodes(dev: &std::path::Path, sys: &std::path::Path) -> Vec<String> {
+    let mut nodes: Vec<(u8, String)> = Vec::new();
+    for n in 128..136 {
+        let name = format!("renderD{n}");
+        let path = dev.join(&name);
+        if !path.exists() {
+            continue;
+        }
+        let driver = std::fs::read_link(sys.join(&name).join("device/driver"))
+            .ok()
+            .and_then(|link| link.file_name().map(|d| d.to_string_lossy().into_owned()));
+        let rank = match driver.as_deref() {
+            Some("nouveau") => {
+                debug!("VA-API: {} left out (nouveau encodes no H.264)", path.display());
+                continue;
+            }
+            Some("i915" | "xe" | "amdgpu") => 0,
+            _ => 1,
+        };
+        nodes.push((rank, path.to_string_lossy().into_owned()));
+    }
+    nodes.sort_by_key(|(rank, _)| *rank);
+    nodes.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Render nodes whose driver initialised but was refused for encoding, with the
+/// reason. Their display is not terminated (`vaTerminate` unloads the driver, and
+/// Mesa's D3D12 driver, a node refused here in WSL, then crashes when the thread
+/// that used it ends): remembering them bounds that to one driver instance per
+/// node and process, instead of one more at every encoder. Only encoders skip
+/// them: the conversion tests open such drivers on purpose.
+static REFUSED: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// `vaInitialize` calls made by this process (for the tests).
+static INITIALISED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn refused(path: &str) -> Option<String> {
+    let refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+    refused.iter().find(|(p, _)| p == path).map(|(_, why)| why.clone())
+}
+
+fn refuse(path: &str, why: &str) {
+    let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+    if !refused.iter().any(|(p, _)| p == path) {
+        refused.push((path.into(), why.into()));
+    }
+}
+
 impl Display {
     fn open() -> Result<Self> {
         Self::open_with(true)
@@ -520,11 +576,19 @@ impl Display {
         let va = va()?;
         let paths: Vec<String> = match std::env::var("NUVIRA_VAAPI_DEVICE") {
             Ok(path) => vec![path],
-            Err(_) => (128..136).map(|n| format!("/dev/dri/renderD{n}")).collect(),
+            Err(_) => render_nodes(std::path::Path::new("/dev/dri"), std::path::Path::new("/sys/class/drm")),
         };
+        Self::open_paths(va, paths, encoder)
+    }
+
+    fn open_paths(va: &'static Va, paths: Vec<String>, encoder: bool) -> Result<Self> {
         let mut errors = Vec::new();
         for path in paths {
             if !std::path::Path::new(&path).exists() {
+                continue;
+            }
+            if encoder && let Some(why) = refused(&path) {
+                errors.push(format!("{path}: {why} (not tried again)"));
                 continue;
             }
             match Self::open_one(va, &path, encoder) {
@@ -540,13 +604,16 @@ impl Display {
 
     fn open_one(va: &'static Va, path: &str, encoder: bool) -> Result<Self> {
         let file = File::options().read(true).write(true).open(path).context("not accessible")?;
-        // SAFETY: plain libva calls; the display lives in `Display` and is terminated on drop.
+        // SAFETY: plain libva calls. A display that initialised is never terminated
+        // (see `shared_display`), also when its driver is refused here: that one
+        // is remembered (`refuse`), so it is initialised at most once per process.
         unsafe {
             let dpy = (va.get_display_drm)(file.as_raw_fd());
             if dpy.is_null() {
                 bail!("no VA display");
             }
             let (mut major, mut minor) = (0, 0);
+            INITIALISED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let status = (va.initialize)(dpy, &mut major, &mut minor);
             if status != VA_STATUS_SUCCESS {
                 (va.terminate)(dpy);
@@ -571,8 +638,9 @@ impl Display {
                 vendor,
                 path: path.into(),
             };
-            if encoder {
-                display.choose_profile()?;
+            if encoder && let Err(e) = display.choose_profile() {
+                refuse(path, &format!("{e:#}"));
+                return Err(e);
             }
             display.vpp_config = display.find_vpp();
             Ok(display)
@@ -2126,22 +2194,32 @@ impl VideoEncoder for VaapiEncoder {
 mod tests {
     use super::*;
 
-    /// The GPU conversion against the CPU's, and their times at 1080p. Skipped
-    /// without a VA driver that processes video. On a driver without H.264
-    /// encoding too (Mesa's D3D12 driver on the NUC's Intel UHD, in WSL).
+    /// The GPU conversion against the CPU's, and their times at 1080p, on the node
+    /// the encoder uses (`Display::open`), else on the first node that processes
+    /// video without encoding H.264 (Mesa's D3D12 driver on the NUC's Intel UHD,
+    /// in WSL). Skipped without a VA driver that processes video, unless
+    /// `NUVIRA_EXPECT_VAAPI_VPP=1` (a machine whose driver has it): then a skip
+    /// fails.
     #[test]
     fn vpp_matches_cpu() {
-        let d = match Display::open_with(false) {
-            Ok(d) if d.vpp_config != VA_INVALID_ID => d,
-            Ok(_) => return eprintln!("no video processing: skipped"),
-            Err(e) => return eprintln!("no VA-API ({e:#}): skipped"),
+        let expected = std::env::var("NUVIRA_EXPECT_VAAPI_VPP").is_ok_and(|v| v == "1");
+        let skip = |why: String| {
+            assert!(!expected, "NUVIRA_EXPECT_VAAPI_VPP=1 but nothing was compared: {why}");
+            eprintln!("{why}");
         };
-        eprintln!("driver: {}", d.vendor);
+        let d = match Display::open().or_else(|_| Display::open_with(false)) {
+            Ok(d) if d.vpp_config != VA_INVALID_ID => d,
+            Ok(_) => return skip("no video processing: skipped".into()),
+            Err(e) => return skip(format!("no VA-API ({e:#}): skipped")),
+        };
+        eprintln!("driver: {} on {}", d.vendor, d.path);
         // Mesa's D3D12 driver in WSL has no RGB surfaces (only NV12 and P010): it
         // fails here and the encoder keeps the CPU conversion.
         let diff = match vpp_check(&d, 256, 64) {
             Ok(diff) => diff,
-            Err(e) => return eprintln!("GPU conversion refused ({e:#}): the encoder converts on the CPU"),
+            Err(e) => {
+                return skip(format!("GPU conversion refused ({e:#}): the encoder converts on the CPU"));
+            }
         };
         eprintln!("largest difference on flat colours: {diff}");
         assert!(diff <= VPP_TOLERANCE, "GPU colours differ by {diff}");
@@ -2181,6 +2259,134 @@ mod tests {
             vpp.destroy(&d);
             (va.destroy_surfaces)(d.dpy, &mut surface, 1);
         }
+    }
+
+    /// A fake `/dev/dri` and `/sys/class/drm`: nouveau's node is left out, Intel's
+    /// and AMD's come first, a node whose driver is unknown stays, in its order.
+    #[test]
+    fn render_node_order() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("nuvira-render-nodes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (dev, sys) = (root.join("dev"), root.join("sys"));
+        std::fs::create_dir_all(&dev).unwrap();
+        let node = |n: u32, driver: Option<&str>| {
+            std::fs::write(dev.join(format!("renderD{n}")), b"").unwrap();
+            if let Some(driver) = driver {
+                let device = sys.join(format!("renderD{n}/device"));
+                std::fs::create_dir_all(&device).unwrap();
+                symlink(format!("../../../bus/pci/drivers/{driver}"), device.join("driver")).unwrap();
+            }
+        };
+        let names = |paths: Vec<String>| -> Vec<String> {
+            paths.iter().map(|p| p.rsplit('/').next().unwrap().to_string()).collect()
+        };
+
+        // PC-LENOVO-ALE: the MX150 (nouveau) before the UHD 620.
+        node(128, Some("nouveau"));
+        node(129, Some("i915"));
+        assert_eq!(names(render_nodes(&dev, &sys)), ["renderD129"]);
+
+        // Unknown or missing drivers after Intel's and AMD's, in their order; a
+        // node only in sysfs is not tried.
+        node(130, Some("virtio_gpu"));
+        node(131, None);
+        node(132, Some("amdgpu"));
+        node(133, Some("xe"));
+        let device = sys.join("renderD134/device");
+        std::fs::create_dir_all(&device).unwrap();
+        symlink("../../../bus/pci/drivers/i915", device.join("driver")).unwrap();
+        assert_eq!(
+            names(render_nodes(&dev, &sys)),
+            ["renderD129", "renderD132", "renderD133", "renderD130", "renderD131"]
+        );
+
+        // No render node at all.
+        assert!(render_nodes(&root.join("none"), &sys).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A node refused for encoding is not initialised again (VID-5): its driver
+    /// instance is never terminated, so a second `vaInitialize` would leak another.
+    /// The real refusal (nouveau, D3D12) needs that hardware; here a node is
+    /// marked refused by hand and must not reach `vaInitialize`.
+    #[test]
+    fn refused_node_not_opened_again() {
+        let Ok(va) = va() else { return eprintln!("no libva: skipped") };
+        let node = std::env::temp_dir().join(format!("nuvira-refused-node-{}", std::process::id()));
+        std::fs::write(&node, b"").unwrap();
+        let path = node.to_string_lossy().into_owned();
+        refuse(&path, "the driver does not encode H.264");
+        let before = INITIALISED.load(std::sync::atomic::Ordering::Relaxed);
+        for _ in 0..20 {
+            let e = Display::open_paths(va, vec![path.clone()], true).err().expect("refused");
+            assert!(format!("{e:#}").contains("does not encode H.264 (not tried again)"), "{e:#}");
+        }
+        assert_eq!(INITIALISED.load(std::sync::atomic::Ordering::Relaxed), before);
+        // The first reason stays.
+        assert_eq!(refused(&path).as_deref(), Some("the driver does not encode H.264"));
+        refuse(&path, "another reason");
+        assert_eq!(refused(&path).as_deref(), Some("the driver does not encode H.264"));
+        std::fs::remove_file(&node).unwrap();
+    }
+
+    /// The driver test forks while other threads load and unload libraries and
+    /// log through a writer whose lock they hold most of the time (as the app's
+    /// `Mutex<File>`): the child must not block on those locks (VID-6). Each
+    /// attempt in a fresh process (the verdict is kept per process), 50 of them
+    /// (`NUVIRA_TEST_PROBE_RUNS`). A driver that fails or crashes is fine here;
+    /// only "did not answer" is not.
+    #[test]
+    fn probe_with_busy_threads() {
+        if std::env::var_os("NUVIRA_TEST_PROBE_CHILD").is_some() {
+            struct Slow;
+            impl std::io::Write for Slow {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    std::thread::sleep(std::time::Duration::from_micros(500));
+                    Ok(buf.len())
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
+            }
+            let _ = tracing_subscriber::fmt().with_writer(std::sync::Mutex::new(Slow)).try_init();
+            for t in 0..4 {
+                std::thread::spawn(move || {
+                    let mut i = 0u64;
+                    loop {
+                        // SAFETY: the C library's maths library, loaded and unloaded.
+                        drop(unsafe { libloading::Library::new("libm.so.6") });
+                        info!(t, i, "busy");
+                        i += 1;
+                    }
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            let started = std::time::Instant::now();
+            let verdict = driver_survives(EncoderSettings::default());
+            eprintln!("verdict after {:?}: {verdict:?}", started.elapsed());
+            if let Err(e) = verdict {
+                assert!(!format!("{e:#}").contains("did not answer"), "{e:#}");
+            }
+            return;
+        }
+        let runs: u32 =
+            std::env::var("NUVIRA_TEST_PROBE_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
+        let exe = std::env::current_exe().unwrap();
+        let started = std::time::Instant::now();
+        for run in 0..runs {
+            let out = std::process::Command::new(&exe)
+                .args(["vaapi::tests::probe_with_busy_threads", "--exact", "--nocapture", "--test-threads=1"])
+                .env("NUVIRA_TEST_PROBE_CHILD", "1")
+                .output()
+                .unwrap();
+            let log = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "run {run}: {}\n{log}", out.status);
+            if run == 0 {
+                eprintln!("{}", log.lines().find(|l| l.starts_with("verdict")).unwrap_or("no verdict line"));
+            }
+        }
+        eprintln!("{runs} fresh processes in {:?}", started.elapsed());
     }
 
     #[test]
@@ -2309,15 +2515,39 @@ static IN_PROBE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// `intel_enc_hw_context_init: Assertion 'encoder_context->mfc_context' failed` in
 /// vaCreateContext, also with ffmpeg (2026-11-12); without this the agent died at
 /// its start. A driver that only fails is left to the attempt in this process,
-/// which tells why; one that crashes or hangs is not used again in this process.
+/// which tells why; one that crashes is not used again in this process. One that
+/// does not answer within 15 s is tried once more at the next encoder (the child
+/// of a multi-threaded process can block on a lock another thread held at the
+/// fork), and then not used again either.
+///
+/// The child takes as few locks as it can: logging is switched off for it with
+/// `Dispatch::none()` (no allocation, no registration in tracing's global lists),
+/// so the process's subscriber and its writer (a `Mutex<File>` in the app) are
+/// never entered there.
 fn driver_survives(settings: EncoderSettings) -> Result<()> {
-    use std::sync::OnceLock;
-    use std::time::{Duration, Instant};
-    static VERDICT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+    driver_survives_within(settings, std::time::Duration::from_secs(15))
+}
+
+/// What [`driver_survives_within`] found so far in this process.
+enum Probe {
+    Untried,
+    TimedOutOnce,
+    Done(std::result::Result<(), String>),
+}
+
+static PROBE: std::sync::Mutex<Probe> = std::sync::Mutex::new(Probe::Untried);
+
+fn driver_survives_within(settings: EncoderSettings, limit: std::time::Duration) -> Result<()> {
+    use std::time::Instant;
     if IN_PROBE.load(std::sync::atomic::Ordering::Relaxed) {
         return Ok(());
     }
-    let verdict = VERDICT.get_or_init(|| {
+    let mut probe = PROBE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Probe::Done(verdict) = &*probe {
+        return verdict.clone().map_err(|e| anyhow!(e));
+    }
+    let none = tracing::Dispatch::none();
+    let verdict = (|| {
         // SAFETY: the child only runs the encoder test and leaves with _exit (no
         // destructors, no atexit handlers of the parent).
         let pid = unsafe { libc::fork() };
@@ -2326,9 +2556,7 @@ fn driver_survives(settings: EncoderSettings) -> Result<()> {
         }
         if pid == 0 {
             IN_PROBE.store(true, std::sync::atomic::Ordering::Relaxed);
-            let ok = tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(), || {
-                VaapiEncoder::new(settings).is_ok()
-            });
+            let ok = tracing::dispatcher::with_default(&none, || VaapiEncoder::new(settings).is_ok());
             unsafe { libc::_exit(if ok { 0 } else { 1 }) }
         }
         let started = Instant::now();
@@ -2342,14 +2570,14 @@ fn driver_survives(settings: EncoderSettings) -> Result<()> {
             if r < 0 {
                 return Ok(());
             }
-            if started.elapsed() > Duration::from_secs(15) {
+            if started.elapsed() > limit {
                 unsafe {
                     libc::kill(pid, libc::SIGKILL);
                     libc::waitpid(pid, &mut status, 0);
                 }
-                return Err("the VA-API driver did not answer within 15 s".into());
+                return Err(format!("the VA-API driver did not answer within {} s", limit.as_secs()));
             }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         if libc::WIFSIGNALED(status) {
             return Err(format!(
@@ -2358,6 +2586,14 @@ fn driver_survives(settings: EncoderSettings) -> Result<()> {
             ));
         }
         Ok(())
-    });
-    verdict.clone().map_err(|e| anyhow::anyhow!(e))
+    })();
+    let timed_out = verdict.as_ref().is_err_and(|e| e.contains("did not answer"));
+    *probe = match &*probe {
+        Probe::Untried if timed_out => {
+            warn!("VA-API: the driver test did not answer; tried again at the next encoder");
+            Probe::TimedOutOnce
+        }
+        _ => Probe::Done(verdict.clone()),
+    };
+    verdict.map_err(|e| anyhow!(e))
 }
