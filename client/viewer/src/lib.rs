@@ -588,6 +588,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         rtt_us: 0,
         pressed_keys: HashSet::new(),
         remote_mac: false,
+        remote_windows: true,
         altgr: AltGrFix::default(),
         input_blocked: false,
         switched_off: Vec::new(),
@@ -808,8 +809,10 @@ struct App {
     pressed_keys: HashSet<String>,
     /// The controlled computer is a Mac (see [`w3c_code`]).
     remote_mac: bool,
-    /// Windows towards a Mac: when the left Ctrl went down, and whether it was the one
-    /// Windows adds to AltGr (see [`AltGrFix`]).
+    /// The controlled computer runs Windows: AltGr needs no [`AltGrFix`] there.
+    remote_windows: bool,
+    /// Windows towards a Mac or Linux: when the left Ctrl went down, and whether it was
+    /// the one Windows adds to AltGr (see [`AltGrFix`]).
     altgr: AltGrFix,
     exit_reason: Option<String>,
     /// Why the session ended, for the user (translated); printed as `@closed` for the app.
@@ -1699,6 +1702,7 @@ impl ApplicationHandler<NetEvent> for App {
                 file_manager,
                 secure_attention,
                 remote_mac,
+                remote_windows,
                 privacy,
                 terminal,
                 tunnel,
@@ -1731,6 +1735,7 @@ impl ApplicationHandler<NetEvent> for App {
                     self.send_control(nuvira_proto::v1::control_message::Msg::SetWallpaper(set));
                 }
                 self.remote_mac = remote_mac;
+                self.remote_windows = remote_windows;
                 self.lock.available = lock_on_end;
                 self.lock.on = false;
                 self.lock.forced = false;
@@ -2655,7 +2660,7 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                     return;
                 }
-                let keys = if cfg!(windows) && self.remote_mac {
+                let keys = if altgr_fix_needed(self.remote_windows) {
                     self.altgr.filter(&code, down, Instant::now())
                 } else {
                     vec![(code, down)]
@@ -2705,11 +2710,22 @@ fn w3c_code(code: winit::keyboard::KeyCode, remote_mac: bool) -> String {
     if cfg!(target_os = "macos") && !remote_mac { mac_swap(name) } else { name }
 }
 
-/// AltGr from Windows towards a Mac. Windows reports AltGr as a left Ctrl followed at
-/// once by the right Alt; a Mac would get Ctrl+Option, which types nothing, where
-/// Option alone types what AltGr types on Windows (`[`, `{`, `@`, `#` on Italian
-/// layouts). When the right Alt goes down within a few milliseconds of the left Ctrl,
-/// the Ctrl is let go on the Mac and its own release is dropped.
+/// From a Windows viewer towards a Mac or Linux, AltGr goes through [`AltGrFix`].
+fn altgr_fix_needed(remote_windows: bool) -> bool {
+    cfg!(windows) && !remote_windows
+}
+
+/// AltGr from Windows towards a Mac or Linux. Windows reports AltGr as a left Ctrl
+/// followed at once by the right Alt. A Mac would get Ctrl+Option, which types
+/// nothing, where Option alone types what AltGr types on Windows (`[`, `{`, `@`, `#` on
+/// Italian layouts); Linux would get Ctrl with AltGr, which programs take as a shortcut
+/// (Ctrl+@, Ctrl+[) and type nothing. winit drops that Ctrl itself when the right Alt
+/// is already queued behind it, but not when something slows the keys down between
+/// the two (a low-level keyboard hook, as PowerToys, AutoHotkey and KVM tools install:
+/// with one of 5 ms per key, `AltGr+ò` typed nothing on Linux). When the right Alt
+/// goes down within a few milliseconds of the left Ctrl, the Ctrl is let go on the
+/// remote computer and its own release is dropped. Towards Windows nothing changes:
+/// the right Alt is AltGr again there.
 #[derive(Default)]
 struct AltGrFix {
     ctrl_down: Option<Instant>,
@@ -2802,6 +2818,20 @@ mod tests {
     fn mac_to_mac_keeps_cmd() {
         assert_eq!(w3c_code(winit::keyboard::KeyCode::SuperLeft, true), "MetaLeft");
         assert_eq!(w3c_code(winit::keyboard::KeyCode::ControlLeft, true), "ControlLeft");
+    }
+
+    #[test]
+    fn altgr_fix_from_windows_towards_mac_and_linux() {
+        // Mac and Linux agents (VWR-10: Linux got Ctrl with AltGr and typed nothing).
+        for os in ["macos", "linux"] {
+            assert!(!net::remote_is_windows(os), "{os}");
+            assert_eq!(altgr_fix_needed(net::remote_is_windows(os)), cfg!(windows), "{os}");
+        }
+        // Windows, and older agents that send no system (all Windows): left alone.
+        for os in ["windows", ""] {
+            assert!(net::remote_is_windows(os), "{os:?}");
+            assert!(!altgr_fix_needed(net::remote_is_windows(os)), "{os:?}");
+        }
     }
 
     #[test]
