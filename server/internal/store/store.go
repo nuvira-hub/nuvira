@@ -177,16 +177,25 @@ func (s *Store) DB() *sql.DB { return s.db }
 func (s *Store) Register(publicKey []byte, name, os string) (*Device, error) {
 	now := time.Now()
 	d := &Device{PublicKey: publicKey, Name: name, OS: os, LastSeen: now}
-	var created int64
-	err := s.db.QueryRow(`SELECT id, created_at FROM devices WHERE public_key = ?`, publicKey).Scan(&d.ID, &created)
-	switch {
-	case err == nil:
+	// known finds the device of this key and updates it; false if there is none.
+	known := func() (bool, error) {
+		var created int64
+		err := s.db.QueryRow(`SELECT id, created_at FROM devices WHERE public_key = ?`, publicKey).Scan(&d.ID, &created)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
 		d.CreatedAt = time.Unix(created, 0)
 		_, err = s.db.Exec(`UPDATE devices SET name = ?, os = ?, last_seen = ? WHERE id = ?`,
 			name, os, now.Unix(), d.ID)
-		return d, err
-	case !errors.Is(err, sql.ErrNoRows):
+		return true, err
+	}
+	found, err := known()
+	if err != nil {
 		return nil, err
+	} else if found {
+		return d, nil
 	}
 
 	d.CreatedAt = now
@@ -198,6 +207,13 @@ func (s *Store) Register(publicKey []byte, name, os string) (*Device, error) {
 		_, err = s.db.Exec(`INSERT INTO devices (id, public_key, name, os, created_at, last_seen)
 			VALUES (?, ?, ?, ?, ?, ?)`, d.ID, publicKey, name, os, now.Unix(), now.Unix())
 		if err == nil {
+			return d, nil
+		}
+		// The same key registered at the same moment by another connection
+		// (the SELECT above and this INSERT are two statements): its row wins.
+		if found, e := known(); e != nil {
+			return nil, e
+		} else if found {
 			return d, nil
 		}
 		// ID collision (very rare): another one is tried.
