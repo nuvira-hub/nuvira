@@ -20,8 +20,9 @@
 //! - Wayland GNOME (Mutter's remote desktop through `nuvira_portal`, direct
 //!   mode): moves land on the screen, keys reach the focused window.
 //! - Wayland KDE: only through the portal (`NUVIRA_TEST_PORTAL=1`, a person or a
-//!   helper approves the dialog: MT-P2-05); text loses its Shift/AltGr level
-//!   there (known bug, pinned).
+//!   helper approves the dialog: MT-P2-05); characters arrive as themselves,
+//!   their Shift/AltGr level in the event's state (Phase 2 read only the key's
+//!   first column and took that for a loss: K42, a test bug).
 
 #![cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code, unused_imports))]
 
@@ -490,8 +491,9 @@ mod linux {
 
     #[derive(Debug, Clone, PartialEq)]
     enum Got {
-        /// Key code and the keysym of its first column at the time it came.
-        Key(u8, u32, bool),
+        /// Key code, the keysym of its first column and the keysym of the level
+        /// the event's modifier state selects, both at the time it came.
+        Key(u8, u32, u32, bool),
         Button(u8, bool),
     }
 
@@ -542,21 +544,41 @@ mod linux {
             w
         }
 
-        fn keysym(&self, keycode: u8) -> u32 {
-            self.conn
-                .get_keyboard_mapping(keycode, 1)
-                .ok()
-                .and_then(|c| c.reply().ok())
-                .and_then(|m| m.keysyms.first().copied())
-                .unwrap_or(0)
+        /// The key's first column, and the column its state selects: Shift the
+        /// second, Mod5 (ISO_Level3_Shift, AltGr) the fifth and sixth, as Xlib's
+        /// lookup does with the core map of an XKB server. KWin types a character
+        /// of the layout as its key with the level in the state, without
+        /// pressing Shift or AltGr.
+        fn keysyms(&self, keycode: u8, state: u16) -> (u32, u32) {
+            let Some(map) = self.conn.get_keyboard_mapping(keycode, 1).ok().and_then(|c| c.reply().ok())
+            else {
+                return (0, 0);
+            };
+            let col = |i: usize| map.keysyms.get(i).copied().filter(|s| *s != 0);
+            let base = col(0).unwrap_or(0);
+            let shift = state & 0x1 != 0;
+            let level3 = state & 0x80 != 0;
+            let level = match (shift, level3) {
+                (false, false) => Some(base),
+                (true, false) => col(1),
+                (false, true) => col(4),
+                (true, true) => col(5).or(col(4)),
+            };
+            (base, level.unwrap_or(base))
         }
 
         fn drain(&self) -> Vec<Got> {
             let mut got = Vec::new();
             while let Ok(Some(e)) = self.conn.poll_for_event() {
                 match e {
-                    XEvent::KeyPress(k) => got.push(Got::Key(k.detail, self.keysym(k.detail), true)),
-                    XEvent::KeyRelease(k) => got.push(Got::Key(k.detail, self.keysym(k.detail), false)),
+                    XEvent::KeyPress(k) => {
+                        let (base, level) = self.keysyms(k.detail, u16::from(k.state));
+                        got.push(Got::Key(k.detail, base, level, true));
+                    }
+                    XEvent::KeyRelease(k) => {
+                        let (base, level) = self.keysyms(k.detail, u16::from(k.state));
+                        got.push(Got::Key(k.detail, base, level, false));
+                    }
                     XEvent::ButtonPress(b) => got.push(Got::Button(b.detail, true)),
                     XEvent::ButtonRelease(b) => got.push(Got::Button(b.detail, false)),
                     _ => {}
@@ -724,10 +746,9 @@ mod linux {
             let got = s.window.pointer();
             let want = expected(screen, x, y);
             report(&format!("move ({x}, {y}) -> {got:?}, expected {want:?}"));
-            assert!(
-                (got.0 - want.0).abs() <= 1 && (got.1 - want.1).abs() <= 1,
-                "move ({x}, {y}): {got:?} vs {want:?}"
-            );
+            // Rounded on every backend (Wayland too: VWR-8, Phase 2 P5 saw Mutter
+            // and KWin a pixel off where the point fell on a half).
+            assert_eq!(got, want, "move ({x}, {y})");
         }
     }
 
@@ -804,7 +825,14 @@ mod linux {
             (6, true),
             (6, false),
         ]);
-        if wayland() {
+        let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.contains("KDE"));
+        if wayland() && kde {
+            // KWin's portal: every notch reaches Xwayland as one click (before Plasma
+            // 6.9 a notch is sent as 10 smooth units, Xwayland's click; Phase 2 saw
+            // 1 click for the 5 notches at most: VWR-3).
+            report(&format!("wayland buttons seen {buttons:?}"));
+            assert_eq!(buttons, want, "buttons and wheel through KWin's portal");
+        } else if wayland() {
             // Through Mutter the wheel arrives as Xwayland's own scroll buttons; pin the order seen.
             report(&format!("wayland buttons seen {buttons:?}"));
             assert_eq!(&buttons[..10], &want[..10], "buttons through Mutter");
@@ -823,11 +851,15 @@ mod linux {
         s.inj.inject(&key("NoSuchKey", true)).unwrap();
         let got = s.window.collect(Duration::from_millis(500));
         report(&format!("keys: {got:?}"));
-        let presses: Vec<u8> =
-            got.iter().filter_map(|g| if let Got::Key(k, _, true) = g { Some(*k) } else { None }).collect();
+        let presses: Vec<u8> = got
+            .iter()
+            .filter_map(|g| if let Got::Key(k, _, _, true) = g { Some(*k) } else { None })
+            .collect();
         assert_eq!(presses, vec![38, 24], "KeyA and KeyQ by evdev code + 8");
-        let releases: Vec<u8> =
-            got.iter().filter_map(|g| if let Got::Key(k, _, false) = g { Some(*k) } else { None }).collect();
+        let releases: Vec<u8> = got
+            .iter()
+            .filter_map(|g| if let Got::Key(k, _, _, false) = g { Some(*k) } else { None })
+            .collect();
         assert_eq!(releases, vec![38, 24], "no release for KeyZ, never pressed");
 
         // Text: each character a key whose symbol is the character.
@@ -836,26 +868,28 @@ mod linux {
         s.inj.inject(&text(typed)).unwrap();
         let got = s.window.collect(Duration::from_millis(800));
         report(&format!("text: {got:?}"));
-        let syms: Vec<u32> =
-            got.iter().filter_map(|g| if let Got::Key(_, s, true) = g { Some(*s) } else { None }).collect();
+        let syms: Vec<u32> = got
+            .iter()
+            .filter_map(|g| if let Got::Key(_, s, _, true) = g { Some(*s) } else { None })
+            .collect();
+        let levels: Vec<u32> = got
+            .iter()
+            .filter_map(|g| if let Got::Key(_, _, l, true) = g { Some(*l) } else { None })
+            .collect();
         let want: Vec<u32> = typed.chars().map(nuvira_input::keys::keysym).collect();
-        report(&format!("text keysyms {syms:x?}, expected {want:x?}"));
-        let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.contains("KDE"));
+        report(&format!("text keysyms {syms:x?}, with the state {levels:x?}, expected {want:x?}"));
         if wayland() && kde {
-            // KNOWN BUG (Phase 2, MT-P2-05, VM-Kubuntu Plasma 6.6, 3 of 3 runs): through
-            // KWin's portal (NotifyKeyboardKeysym) a character is typed as the key that
-            // carries it, without the Shift or AltGr its level needs, and no modifier
-            // press reaches the window: "àè€ñZ" arrived as à è e n z on an Italian
-            // layout. Expected after fix: Z and € arrive as themselves (the modifiers
-            // held around the key, as Mutter does), ñ as itself or by Unicode entry.
-            let modifier = |s: u32| (0xffe1..=0xffee).contains(&s) || (0xfe01..=0xfe13).contains(&s);
-            assert!(
-                !syms.iter().any(|s| modifier(*s)),
-                "characterises_bug: no modifier through KWin: {syms:x?}"
-            );
-            assert_eq!(syms.len(), want.len(), "one key press per character through KWin: {syms:x?}");
-            assert_eq!(syms[4], 0x7a, "characterises_bug: Z typed through KWin arrives as z (no Shift)");
-            assert_ne!(syms[2], want[2], "characterises_bug: € typed through KWin loses its AltGr level");
+            // KWin's portal (NotifyKeyboardKeysym) types a character as the key
+            // that carries it, its Shift or AltGr level in the modifier state of
+            // the event (no modifier press): with the state the symbols are the
+            // characters (the first column alone read à è e n z, Phase 2 K42).
+            // The layout's own keysyms are compared as characters: Latin-1 and
+            // EuroSign (0x20ac) are their code points, a Unicode keysym is
+            // 0x01000000 + the code point.
+            let char_of = |s: u32| if s >= 0x0100_0000 { s - 0x0100_0000 } else { s };
+            let got: Vec<u32> = levels.iter().copied().map(char_of).collect();
+            let want: Vec<u32> = want.iter().copied().map(char_of).collect();
+            assert_eq!(got, want, "characters typed through KWin, read with the event's state");
         } else if wayland() {
             // Mutter types the compositor's layout keys: a character of the
             // layout is its key, with Shift (0xffe1) or AltGr (ISO_Level3_Shift,

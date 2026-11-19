@@ -37,8 +37,9 @@ const POINTER_METADATA: u32 = 4;
 /// `fake_input.axis`: vertical and horizontal wheel.
 const AXIS_VERTICAL: u32 = 0;
 const AXIS_HORIZONTAL: u32 = 1;
-/// One wheel notch, in the units of `axis` (libinput's 15 degrees).
-const NOTCH: f64 = 15.0;
+/// One wheel notch, in the units of `axis`: Xwayland, GTK and Qt treat 10 of
+/// these non-discrete units as one notch (15 scrolled a notch and a half).
+const NOTCH: f64 = 10.0;
 
 #[derive(Default)]
 struct State {
@@ -265,7 +266,10 @@ pub(crate) fn run(
                         // KWin wants positions in the whole desktop's logical space.
                         // One screen at the sign-in screen: the greeter's.
                         Cmd::Motion(_, x, y) => {
-                            fake.pointer_motion_absolute(x + f64::from(screen.left), y + f64::from(screen.top));
+                            fake.pointer_motion_absolute(
+                                (x + f64::from(screen.left)).round(),
+                                (y + f64::from(screen.top)).round(),
+                            );
                         }
                         Cmd::Button(button, down) => fake.button(button as u32, u32::from(down)),
                         Cmd::Wheel(axis, steps) => {
