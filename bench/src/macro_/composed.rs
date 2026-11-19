@@ -87,8 +87,10 @@ pub fn register(reg: &mut Registry) {
         for scene in [Scene::Terminal, Scene::Scroll, Scene::Video, Scene::Drag, Scene::Resize] {
             for (w, h, fps) in sizes {
                 // Full tier: every scene at 1080p, the other sizes on S5 only (time
-                // budget, plan section 13).
-                if (w, h) != (1920, 1080) && scene != Scene::Drag {
+                // budget, plan section 13). Hardware S6 also at a 4K base: the
+                // largest size change the agent makes (to 4096x2304, VID-3).
+                let hw_s6_4k = hardware && scene == Scene::Resize && w == 3840;
+                if (w, h) != (1920, 1080) && scene != Scene::Drag && !hw_s6_4k {
                     continue;
                 }
                 let quick = matches!(scene, Scene::Video | Scene::Drag) && (w, h) == (1920, 1080);
