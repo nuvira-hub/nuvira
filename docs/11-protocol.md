@@ -22,7 +22,7 @@ Client                                   Server
 
 The device then keeps a presence connection (QUIC, or WebSocket as a fallback) open, also used to receive connection requests.
 
-A refused registration (invalid proof, old protocol, blocked, rate limited) gets an `Error` with the reason, then the end of the stream; the server closes the connection when the client does, at most 1 s later. When the same device registers again, the older connection is closed the same way. The server gives up on a write to a device that does not read its stream for 30 s (the server's idle timeout) and closes that connection.
+The client must open the stream and send `Register`, then `Proof`, each within 10 s, or the server closes the connection; after `Registered` the stream may stay silent. Small-order Ed25519 public keys are refused as an invalid proof. A refused registration (invalid proof, old protocol, blocked, rate limited: too many registrations, new devices or connections from the address, see [deploy/README.md](../deploy/README.md#limits-per-address)) gets an `Error` with the reason, then the end of the stream; the server closes the connection when the client does, at most 1 s later. When the same device registers again, the older connection is closed the same way. The server gives up on a write to a device that does not read its stream for 30 s (the server's idle timeout) and closes that connection.
 
 ## 3. Starting a session
 

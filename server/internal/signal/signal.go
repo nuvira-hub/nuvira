@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/nuvira-hub/nuvira/server/internal/ext"
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
 	"github.com/nuvira-hub/nuvira/server/internal/relay"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
@@ -48,6 +49,12 @@ const maxMessage = 64 * 1024
 // (sendTimeout): a client that does not read for that long is disconnected,
 // instead of blocking whoever sends to it.
 const IdleTimeout = 30 * time.Second
+
+// registerTimeout is how long a new connection may take to open its stream and
+// to send each registration message (Register, then Proof). A real client does
+// both at once (2 round trips, the key is in memory); without a deadline a
+// connection that never registers stays open as long as the peer keeps it alive.
+const registerTimeout = 10 * time.Second
 
 type client struct {
 	device *store.Device
@@ -138,26 +145,45 @@ type Server struct {
 
 	// Longest wait for one write to a client (IdleTimeout; shorter in tests).
 	sendTimeout time.Duration
+	// Longest wait for the stream and each registration message (registerTimeout).
+	registerTimeout time.Duration
 
 	// Protection of a public server (abuse.go).
-	blocked       blocklist
-	registerLimit *limiter
-	connectLimit  *limiter
+	blocked        blocklist
+	registerLimit  *limiter
+	connectLimit   *limiter
+	newDeviceLimit *limiter
+	presenceLimit  *limiter        // device IDs asked by GetPresence
+	connections    *limits.Counter // open connections per address
 }
 
 func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
-	return &Server{
-		store: st, relay: r, log: log, sendTimeout: IdleTimeout,
+	s := &Server{
+		store: st, relay: r, log: log, sendTimeout: IdleTimeout, registerTimeout: registerTimeout,
 		online: map[string]*client{}, sessions: map[string]*pending{}, routed: map[string]*routed{},
-		registerLimit: newLimiter(registerLimit), connectLimit: newLimiter(connectLimit),
+	}
+	s.SetLimitMode(limits.Public)
+	return s
+}
+
+// SetRateLimits turns the limits per address on (limits.Public, the default)
+// or off, before Serve.
+func (s *Server) SetRateLimits(on bool) {
+	if on {
+		s.SetLimitMode(limits.Public)
+	} else {
+		s.SetLimitMode(limits.Off)
 	}
 }
 
-// SetRateLimits turns the limits per address on (the default) or off, before Serve.
-func (s *Server) SetRateLimits(on bool) {
-	s.registerLimit, s.connectLimit = nil, nil
-	if on {
-		s.registerLimit, s.connectLimit = newLimiter(registerLimit), newLimiter(connectLimit)
+// SetLimitMode sets to which addresses the limits per address apply, before Serve.
+func (s *Server) SetLimitMode(mode limits.Mode) {
+	s.registerLimit, s.connectLimit = newLimiterMode(registerLimit, mode), newLimiterMode(connectLimit, mode)
+	s.newDeviceLimit = newLimiterMode(newDeviceLimit, mode)
+	s.presenceLimit = newLimiterMode(presenceLimit, mode)
+	s.connections = nil
+	if mode != limits.Off {
+		s.connections = limits.NewCounter(mode, maxConnsPerAddress)
 	}
 }
 
@@ -169,6 +195,7 @@ func (s *Server) Serve(ctx context.Context, ln *quic.Listener) error {
 	s.reloadBlocks()
 	go s.expireLoop(ctx)
 	go s.blocksLoop(ctx)
+	go s.pruneLoop(ctx)
 	for {
 		conn, err := ln.Accept(ctx)
 		if err != nil {
@@ -194,7 +221,19 @@ func errorMsg(text, session string) *pb.ServerMessage {
 
 func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 	defer conn.CloseWithError(0, "")
-	stream, err := conn.AcceptStream(ctx)
+	// Too many connections open from this address: refused at Register (the
+	// client gets the Error), bounded meanwhile by the registration deadline.
+	crowded := false
+	if ip, ok := relay.HostOf(conn.RemoteAddr()); ok {
+		release, ok := s.connections.Add(ip)
+		if ok {
+			defer release()
+		}
+		crowded = !ok
+	}
+	actx, cancel := context.WithTimeout(ctx, s.registerTimeout)
+	stream, err := conn.AcceptStream(actx)
+	cancel()
 	if err != nil {
 		return err
 	}
@@ -205,10 +244,12 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 		return msg, err
 	}
 
-	c, err := s.register(conn, stream, read)
+	c, err := s.register(conn, stream, read, crowded)
 	if err != nil {
 		return fmt.Errorf("registration: %w", err)
 	}
+	// Registered: from now on the connection may stay silent (keep-alives).
+	_ = stream.SetReadDeadline(time.Time{})
 	s.setOnline(c)
 	defer s.setOffline(c)
 	// Files sent to the server, each on a stream of its own.
@@ -262,8 +303,10 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 }
 
 // register checks that the device holds the private key of the public key it
-// presents and assigns (or finds) its ID.
-func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb.ClientMessage, error)) (*client, error) {
+// presents and assigns (or finds) its ID. crowded: its address already has too
+// many connections open.
+func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb.ClientMessage, error), crowded bool) (*client, error) {
+	_ = stream.SetReadDeadline(time.Now().Add(s.registerTimeout))
 	msg, err := read()
 	if err != nil {
 		return nil, err
@@ -273,10 +316,15 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 		return nil, errors.New("missing Register or invalid key")
 	}
 	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly, protocol: reg.ProtocolVersion, sendTimeout: s.sendTimeout}
-	if ip, ok := relay.HostOf(conn.RemoteAddr()); ok {
+	ip, hasIP := relay.HostOf(conn.RemoteAddr())
+	if hasIP {
 		if s.blocked.address(ip) {
 			c.refuse("@server.blocked")
 			return nil, errors.New("blocked address")
+		}
+		if crowded {
+			c.refuse("@server.rate_limited")
+			return nil, errors.New("too many connections from this address")
 		}
 		if !s.registerLimit.allow(ip, time.Now()) {
 			c.refuse("@server.rate_limited")
@@ -295,18 +343,26 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	if err := c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Challenge{Challenge: &pb.Challenge{Nonce: nonce}}}); err != nil {
 		return nil, err
 	}
+	_ = stream.SetReadDeadline(time.Now().Add(s.registerTimeout))
 	msg, err = read()
 	if err != nil {
 		return nil, err
 	}
 	proof := msg.GetProof()
 	signed := append([]byte(registerContext), nonce...)
-	if proof == nil || !ed25519.Verify(reg.PublicKey, signed, proof.Signature) {
+	// A small-order key proves nothing (weakkey.go): refused like a bad signature.
+	if proof == nil || weakKey(reg.PublicKey) || !ed25519.Verify(reg.PublicKey, signed, proof.Signature) {
 		c.refuse("invalid proof of the key")
 		return nil, errors.New("invalid signature")
 	}
 
-	device, err := s.store.Register(reg.PublicKey, limit(reg.DeviceName, 64), limit(reg.Os, 32))
+	// A key never seen creates a row kept in the database: a budget of its own.
+	allowNew := func() bool { return !hasIP || s.newDeviceLimit.allow(ip, time.Now()) }
+	device, err := s.store.RegisterWith(reg.PublicKey, limit(reg.DeviceName, 64), limit(reg.Os, 32), allowNew)
+	if errors.Is(err, store.ErrNewDeviceRefused) {
+		c.refuse("@server.rate_limited")
+		return nil, errors.New("too many new devices from this address")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -615,6 +671,8 @@ func (s *Server) blocksLoop(ctx context.Context) {
 			s.reloadBlocks()
 			s.registerLimit.prune(now)
 			s.connectLimit.prune(now)
+			s.newDeviceLimit.prune(now)
+			s.presenceLimit.prune(now)
 		}
 	}
 }

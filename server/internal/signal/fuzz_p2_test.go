@@ -121,8 +121,9 @@ func FuzzPreRegistration(f *testing.F) {
 			if err != nil {
 				return // closed, reset or not decodable: fine for the server
 			}
-			if m.GetRegistered() != nil && !smallOrderKey(firstKey(data)) {
-				t.Fatalf("registered from %x", data)
+			// Not even with a small-order key (SRV-6): no private key, no ID.
+			if m.GetRegistered() != nil {
+				t.Fatalf("registered from %x (small-order key: %v)", data, smallOrderKey(firstKey(data)))
 			}
 		}
 	})

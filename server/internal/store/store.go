@@ -172,9 +172,18 @@ func Wrap(db *sql.DB) *Store { return &Store{db: db} }
 // DB exposes the database to the other stores of the same file (accounts and address book).
 func (s *Store) DB() *sql.DB { return s.db }
 
+// ErrNewDeviceRefused is returned by RegisterWith when allowNew refuses a new row.
+var ErrNewDeviceRefused = errors.New("new device refused")
+
 // Register returns the device with this key, creating it with a new ID the first
 // time; it updates name, system and last access.
 func (s *Store) Register(publicKey []byte, name, os string) (*Device, error) {
+	return s.RegisterWith(publicKey, name, os, nil)
+}
+
+// RegisterWith is Register; when the key is new, allowNew (if not nil) is asked
+// first, and ErrNewDeviceRefused returned if it says no (a budget of new rows).
+func (s *Store) RegisterWith(publicKey []byte, name, os string, allowNew func() bool) (*Device, error) {
 	now := time.Now()
 	d := &Device{PublicKey: publicKey, Name: name, OS: os, LastSeen: now}
 	// known finds the device of this key and updates it; false if there is none.
@@ -187,15 +196,23 @@ func (s *Store) Register(publicKey []byte, name, os string) (*Device, error) {
 			return false, err
 		}
 		d.CreatedAt = time.Unix(created, 0)
-		_, err = s.db.Exec(`UPDATE devices SET name = ?, os = ?, last_seen = ? WHERE id = ?`,
+		res, err := s.db.Exec(`UPDATE devices SET name = ?, os = ?, last_seen = ? WHERE id = ?`,
 			name, os, now.Unix(), d.ID)
-		return true, err
+		if err != nil {
+			return false, err
+		}
+		// Removed in between by PruneUnused: registered again as a new device.
+		n, err := res.RowsAffected()
+		return n == 1, err
 	}
 	found, err := known()
 	if err != nil {
 		return nil, err
 	} else if found {
 		return d, nil
+	}
+	if allowNew != nil && !allowNew() {
+		return nil, ErrNewDeviceRefused
 	}
 
 	d.CreatedAt = now
@@ -237,10 +254,169 @@ func (s *Store) ByID(id string) (*Device, error) {
 	return d, nil
 }
 
+// lastSeenChunk is the most IDs per query of LastSeen (SQLite's limit on
+// parameters is far higher; this keeps each query short).
+const lastSeenChunk = 500
+
+// LastSeen returns the last access (Unix seconds) of the devices among ids that
+// exist, with one query per lastSeenChunk IDs instead of one per ID.
+func (s *Store) LastSeen(ids []string) (map[string]int64, error) {
+	seen := make(map[string]int64, len(ids))
+	for len(ids) > 0 {
+		chunk := ids[:min(len(ids), lastSeenChunk)]
+		ids = ids[len(chunk):]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		rows, err := s.db.Query(`SELECT id, last_seen FROM devices WHERE id IN (?`+strings.Repeat(`,?`, len(chunk)-1)+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			var t int64
+			if err := rows.Scan(&id, &t); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			seen[id] = t
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return seen, nil
+}
+
 // Touch updates the last access.
 func (s *Store) Touch(id string) error {
 	_, err := s.db.Exec(`UPDATE devices SET last_seen = ? WHERE id = ?`, time.Now().Unix(), id)
 	return err
+}
+
+// Columns of other tables (the modules') that hold device IDs: a device they
+// mention is never pruned.
+var deviceColumns = map[string]bool{"device_id": true, "agent_id": true, "viewer_id": true}
+
+// PruneUnused looks at up to limit devices with an ID after `after` (in ID
+// order) and removes those registered and never seen again:
+// created before `before`, whose last access is within life of the
+// registration, with no alias, not kept by keep (connected now: last access is
+// written at the disconnection) and not mentioned by any other table of the
+// database in a column device_id, agent_id or viewer_id (address books,
+// history, inventory of the modules). It returns how many it removed and the
+// ID to continue after ("" when there are no more).
+func (s *Store) PruneUnused(before time.Time, life time.Duration, keep func(id string) bool, after string, limit int) (removed int, next string, err error) {
+	const unused = `created_at < ? AND last_seen - created_at <= ? AND alias = ''`
+	rows, err := s.db.Query(`SELECT id FROM devices WHERE id > ? AND `+unused+` ORDER BY id LIMIT ?`,
+		after, before.Unix(), int64(life/time.Second), limit)
+	if err != nil {
+		return 0, "", err
+	}
+	var ids []string
+	seen := 0
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, "", err
+		}
+		seen++
+		next = id
+		if keep == nil || !keep(id) {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, "", err
+	}
+	if seen < limit {
+		next = ""
+	}
+	if len(ids) == 0 {
+		return 0, next, nil
+	}
+	refs, err := s.referencingColumns()
+	if err != nil {
+		return 0, "", err
+	}
+	candidates := map[string]bool{}
+	for _, id := range ids {
+		candidates[id] = true
+	}
+	for _, ref := range refs {
+		mentioned, err := s.mentioned(ref[0], ref[1], ids)
+		if err != nil {
+			return 0, "", err
+		}
+		for _, id := range mentioned {
+			delete(candidates, id)
+		}
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, "", err
+	}
+	defer tx.Rollback()
+	for id := range candidates {
+		// The conditions again: the device may have registered meanwhile.
+		res, err := tx.Exec(`DELETE FROM devices WHERE id = ? AND `+unused, id, before.Unix(), int64(life/time.Second))
+		if err != nil {
+			return 0, "", err
+		}
+		n, _ := res.RowsAffected()
+		removed += int(n)
+	}
+	return removed, next, tx.Commit()
+}
+
+// referencingColumns lists the (table, column) pairs that hold device IDs.
+func (s *Store) referencingColumns() ([][2]string, error) {
+	rows, err := s.db.Query(`SELECT m.name, p.name FROM sqlite_master m, pragma_table_info(m.name) p
+		WHERE m.type = 'table' AND m.name <> 'devices'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var refs [][2]string
+	for rows.Next() {
+		var table, column string
+		if err := rows.Scan(&table, &column); err != nil {
+			return nil, err
+		}
+		if deviceColumns[strings.ToLower(column)] {
+			refs = append(refs, [2]string{table, column})
+		}
+	}
+	return refs, rows.Err()
+}
+
+// mentioned returns which of ids appear in table.column.
+func (s *Store) mentioned(table, column string, ids []string) ([]string, error) {
+	quote := func(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	q := `SELECT DISTINCT ` + quote(column) + ` FROM ` + quote(table) + ` WHERE ` + quote(column) +
+		` IN (?` + strings.Repeat(`,?`, len(ids)-1) + `)`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // Block is a blocked device ID, address or network (see the signal package).

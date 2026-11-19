@@ -1,11 +1,13 @@
 package signal
 
 import (
+	"context"
 	"net/netip"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
 	"github.com/nuvira-hub/nuvira/server/internal/relay"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
 )
@@ -18,7 +20,8 @@ import (
 const reloadEvery = 30 * time.Second
 
 // Limits per IP address (per /64 for IPv6, which a single home usually holds).
-// Addresses of this machine and of local networks have none.
+// Addresses of this machine and of local networks have none, unless the server
+// runs with NUVIRA_RATE_LIMITS=all (limits.Mode).
 var (
 	// Registrations: an app opens a few connections (agent, viewer, address book),
 	// reconnects after network changes; an office behind one address reconnects
@@ -26,13 +29,32 @@ var (
 	registerLimit = rate{perMinute: 30, burst: 100}
 	// Connection requests: guessing IDs, or bothering a PC with requests.
 	connectLimit = rate{perMinute: 10, burst: 15}
+	// Registrations of a key never seen (each creates a device row, kept): the
+	// burst lets an office install all its PCs at once. Per IPv6 /48, since a
+	// site holding many /64s must not multiply it.
+	newDeviceLimit = rate{perMinute: 10, burst: 100, v6bits: 48}
+	// Device IDs asked by GetPresence (no sign-in needed): the apps' address
+	// books ask for their entries every few seconds, at most 256 per request;
+	// enumerating the 900 million IDs must take years, not hours.
+	presenceLimit = rate{perMinute: 2048, burst: 4096}
 )
 
-type rate struct{ perMinute, burst float64 }
+// Connections open at once from one address, registered or not. Each app
+// keeps a few (agent, address book, viewer while in a session): an office of
+// about 80 PCs behind one address stays below it.
+const maxConnsPerAddress = 256
 
-// limiter is a token bucket per key.
+// rate is a token bucket: tokens per minute, burst, and the IPv6 prefix of
+// its key (64 when 0).
+type rate struct {
+	perMinute, burst float64
+	v6bits           int
+}
+
+// limiter is a token bucket per address.
 type limiter struct {
 	rate    rate
+	mode    limits.Mode
 	mu      sync.Mutex
 	buckets map[netip.Prefix]*bucket
 }
@@ -42,14 +64,30 @@ type bucket struct {
 	last   time.Time
 }
 
-func newLimiter(r rate) *limiter { return &limiter{rate: r, buckets: map[netip.Prefix]*bucket{}} }
+// newLimiter limits the public addresses (limits.Public).
+func newLimiter(r rate) *limiter { return newLimiterMode(r, limits.Public) }
+
+// newLimiterMode limits the addresses the mode applies to; nil for limits.Off.
+func newLimiterMode(r rate, mode limits.Mode) *limiter {
+	if mode == limits.Off {
+		return nil
+	}
+	return &limiter{rate: r, mode: mode, buckets: map[netip.Prefix]*bucket{}}
+}
 
 // allow takes a request of ip; a nil limiter (limits off) allows everything.
-func (l *limiter) allow(ip netip.Addr, now time.Time) bool {
-	if l == nil || ip.IsLoopback() || ip.IsPrivate() {
+func (l *limiter) allow(ip netip.Addr, now time.Time) bool { return l.allowN(ip, now, 1) }
+
+// allowN takes n tokens for ip at once, or none.
+func (l *limiter) allowN(ip netip.Addr, now time.Time, n int) bool {
+	if l == nil || !l.mode.Applies(ip) {
 		return true
 	}
-	key := addressKey(ip)
+	bits := l.rate.v6bits
+	if bits == 0 {
+		bits = 64
+	}
+	key := limits.KeyBits(ip, bits)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	b := l.buckets[key]
@@ -59,10 +97,10 @@ func (l *limiter) allow(ip netip.Addr, now time.Time) bool {
 	}
 	b.tokens = min(l.rate.burst, b.tokens+now.Sub(b.last).Minutes()*l.rate.perMinute)
 	b.last = now
-	if b.tokens < 1 {
+	if b.tokens < float64(n) {
 		return false
 	}
-	b.tokens--
+	b.tokens -= float64(n)
 	return true
 }
 
@@ -80,14 +118,57 @@ func (l *limiter) prune(now time.Time) {
 	}
 }
 
-// addressKey is the key of an address in the limits: the IPv4 address, or the
-// IPv6 /64 network.
-func addressKey(ip netip.Addr) netip.Prefix {
-	if ip.Is4() {
-		return netip.PrefixFrom(ip, 32)
+// Devices registered and never seen again (a key used once, as in a flood of
+// Register from fresh keys) are removed after pruneAge: the row of a device
+// whose whole life was within pruneLife of its registration, with no alias and
+// not mentioned by a module's table (store.PruneUnused). Such a device coming
+// back gets a new ID.
+const (
+	pruneAge   = 30 * 24 * time.Hour
+	pruneLife  = 10 * time.Minute
+	pruneEvery = 6 * time.Hour
+	pruneBatch = 500
+)
+
+// Pause between two batches of pruneDevices (a variable: shorter in tests).
+var pruneYield = 100 * time.Millisecond
+
+// pruneLoop runs pruneDevices a minute after the start, then every pruneEvery.
+func (s *Server) pruneLoop(ctx context.Context) {
+	t := time.NewTimer(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			s.pruneDevices(ctx, now)
+			t.Reset(pruneEvery)
+		}
 	}
-	p, _ := ip.Prefix(64)
-	return p
+}
+
+// pruneDevices removes the devices never seen again, in batches (the database
+// has one connection: others get their turn between batches).
+func (s *Server) pruneDevices(ctx context.Context, now time.Time) int {
+	total, after := 0, ""
+	for ctx.Err() == nil {
+		n, next, err := s.store.PruneUnused(now.Add(-pruneAge), pruneLife, s.Online, after, pruneBatch)
+		if err != nil {
+			s.log.Warn("devices never seen again not removed", "err", err)
+			break
+		}
+		total += n
+		if next == "" {
+			break
+		}
+		after = next
+		time.Sleep(pruneYield)
+	}
+	if total > 0 {
+		s.log.Info("devices registered and never seen again removed", "count", total, "older than", pruneAge)
+	}
+	return total
 }
 
 // blocklist is the in-memory copy of the blocks.

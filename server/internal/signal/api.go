@@ -2,10 +2,12 @@ package signal
 
 import (
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/nuvira-hub/nuvira/server/internal/ext"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
+	"github.com/nuvira-hub/nuvira/server/internal/relay"
 )
 
 // Limits of GetPresence, which needs no sign-in.
@@ -55,19 +57,33 @@ func (s *Server) getPresence(c *client, req *pb.GetPresence, resp *pb.ApiRespons
 	if early {
 		return errors.New("too many requests")
 	}
+	// A budget of IDs per address too: a new connection does not reset it.
+	if ip, ok := c.addr(); ok && !s.presenceLimit.allowN(ip, time.Now(), len(req.GetDeviceIds())) {
+		return errors.New("too many requests")
+	}
 	s.mu.Lock()
 	list := make([]*pb.Presence, 0, len(req.GetDeviceIds()))
 	for _, id := range req.GetDeviceIds() {
 		list = append(list, &pb.Presence{DeviceId: id, Online: s.online[id] != nil})
 	}
 	s.mu.Unlock()
-	for _, p := range list {
-		if d, err := s.store.ByID(p.DeviceId); err == nil && d != nil {
-			p.LastSeen = d.LastSeen.Unix()
+	// One query for the whole list (it was one per ID on the single database
+	// connection: ~7.5 ms for 256 IDs on MSI-UBUNTU).
+	if seen, err := s.store.LastSeen(req.GetDeviceIds()); err == nil {
+		for _, p := range list {
+			p.LastSeen = seen[p.DeviceId]
 		}
 	}
 	resp.Result = &pb.ApiResponse_Presence{Presence: &pb.PresenceList{Devices: list}}
 	return nil
+}
+
+// addr is the client's IP address (false without a connection: unit tests).
+func (c *client) addr() (netip.Addr, bool) {
+	if c.conn == nil {
+		return netip.Addr{}, false
+	}
+	return relay.HostOf(c.conn.RemoteAddr())
 }
 
 // DeviceID, RemoteAddr, Session and SetSession make the connection an ext.Conn.
@@ -95,11 +111,21 @@ func (s *Server) Presence(books *pb.Books) {
 		online[id] = true
 	}
 	s.mu.Unlock()
+	var ids []string
+	for _, book := range books.GetBooks() {
+		for _, e := range book.GetEntries() {
+			ids = append(ids, e.GetDeviceId())
+		}
+	}
+	seen, err := s.store.LastSeen(ids)
+	if err != nil {
+		seen = nil // last access unknown: left as it is, like a missing device
+	}
 	for _, book := range books.GetBooks() {
 		for _, e := range book.GetEntries() {
 			e.Online = online[e.GetDeviceId()]
-			if d, err := s.store.ByID(e.GetDeviceId()); err == nil && d != nil {
-				e.LastSeen = d.LastSeen.Unix()
+			if t, ok := seen[e.GetDeviceId()]; ok {
+				e.LastSeen = t
 			}
 		}
 	}

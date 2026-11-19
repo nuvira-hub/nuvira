@@ -4,9 +4,13 @@ package main
 // of the open server, called in-process (os.Stdout / os.Stderr swapped).
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
+	"io"
+	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,8 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/quic-go/quic-go"
 
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
+	"github.com/nuvira-hub/nuvira/server/internal/relay"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
 	"github.com/nuvira-hub/nuvira/server/internal/tlsutil"
 )
@@ -213,5 +220,77 @@ func TestHealthcheck(t *testing.T) {
 	t.Setenv("NUVIRA_LISTEN", "no-port")
 	if err := healthcheck(); err == nil {
 		t.Fatal("address without a port accepted")
+	}
+}
+
+func TestRateLimitMode(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for in, want := range map[string]limits.Mode{"": limits.Public, "on": limits.Public, "off": limits.Off, "all": limits.All, "yes": limits.Public} {
+		if got := rateLimitMode(in, log); got != want {
+			t.Errorf("%q: %v", in, got)
+		}
+	}
+}
+
+// SRV-17: a keep-alive HTTP connection idle between requests is closed after
+// the idle timeout (300 ms here), while a WebSocket tunnel (hijacked) on the
+// same server stays open well past it.
+func TestHTTPIdleTimeout(t *testing.T) {
+	udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := relay.NewConn(udp, relay.New(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	defer conn.Close()
+	mux := http.NewServeMux()
+	mux.Handle("/nuvira", conn.WebSockets())
+	mux.HandleFunc("/hello", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "hi") })
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const idle = 300 * time.Millisecond
+	srv := newHTTPServer(ln.Addr().String(), mux, idle)
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws://"+ln.Addr().String()+"/nuvira", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := io.WriteString(c, "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(c)
+	resp, err := http.ReadResponse(r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	start := time.Now()
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := r.ReadByte(); err != io.EOF {
+		t.Fatalf("idle keep-alive connection: %v", err)
+	}
+	if d := time.Since(start); d < idle/2 || d > 3*time.Second {
+		t.Fatalf("closed after %v", d)
+	}
+	time.Sleep(3 * idle)
+	if err := ws.Write(ctx, websocket.MessageBinary, []byte{0x40}); err != nil {
+		t.Fatalf("WebSocket cut by the idle timeout: %v", err)
+	}
+	ws.CloseRead(ctx)
+	if err := ws.Ping(ctx); err != nil {
+		t.Fatalf("WebSocket after the idle timeout: %v", err)
 	}
 }

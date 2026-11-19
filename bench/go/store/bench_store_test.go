@@ -9,11 +9,16 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/nuvira-hub/nuvira/server/internal/pb"
+	"github.com/nuvira-hub/nuvira/server/internal/relay"
+	"github.com/nuvira-hub/nuvira/server/internal/signal"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
 )
 
@@ -153,6 +158,31 @@ func BenchmarkStore(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			if err := st.Touch(ids[i%devices]); err != nil {
 				b.Fatal(err)
+			}
+		}
+	})
+	// Last access of the 256 devices of an address book (the 200 registered and
+	// 56 unknown IDs), as Server.Presence fills them for the Pro books (SRV-7;
+	// GetPresence does the same per request of the apps). Exported API, present
+	// on both sides of a comparison.
+	b.Run("presence-256", func(b *testing.B) {
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		srv := signal.New(st, relay.New(log), log)
+		book := &pb.Book{}
+		for i := range 256 {
+			id := fmt.Sprintf("%09d", 100000000+i)
+			if i < devices {
+				id = ids[i]
+			}
+			book.Entries = append(book.Entries, &pb.Entry{DeviceId: id})
+		}
+		books := &pb.Books{Books: []*pb.Book{book}}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			srv.Presence(books)
+			if book.Entries[0].LastSeen == 0 {
+				b.Fatal("no last access")
 			}
 		}
 	})

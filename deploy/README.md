@@ -17,6 +17,7 @@ Images for `linux/amd64` and `linux/arm64`, built `FROM scratch` (only the stati
 | Volume | `/data` | e.g. `/mnt/user/appdata/nuvira-server` | `nuvira.db`, `cert.pem`/`key.pem` (server identity) |
 | Variable | `NUVIRA_LOG` | `info` | `debug`, `info`, `warn` |
 | Variable | `NUVIRA_WS_LISTEN` | `:21116` | `off` disables the WebSocket fallback |
+| Variable | `NUVIRA_RATE_LIMITS` | unset (= `on`) | limits per address on public addresses only; `all` also on local addresses; `off` none (see [Limits per address](#limits-per-address)) |
 
 The image runs as user 65532. With a bind mount owned by another user, run the container with that user (`--user UID:GID`) or give the folder to 65532.
 
@@ -25,6 +26,33 @@ The image runs as user 65532. With a bind mount owned by another user, run the c
 This is the open server: signalling, relay and updates; each app keeps its own address book. Server address books, accounts and central rules are NuviraHub Pro modules, with their own image.
 
 No public address has to be configured: clients reach the relay at the same address and port they use for the server.
+
+## Limits per address
+
+A server open to anybody protects itself per client address (an IPv4 address, or an IPv6 /64 network). The numbers are fixed:
+
+| What | Limit | Over the limit |
+|---|---|---|
+| Registration of a connection | within 10 s of the connection (stream, `Register`, then the proof of the key) | closed |
+| Connections open at once (registered or not) | 256 | `@server.rate_limited` at its registration |
+| Registrations | 30 a minute, burst 100 | `@server.rate_limited` |
+| Registrations of keys never seen (each creates a device) | 10 a minute, burst 100, per IPv6 /48 | `@server.rate_limited` |
+| Connection requests | 10 a minute, burst 15 | `@server.rate_limited` |
+| Presence of devices (`GetPresence`, no sign-in) | 2,048 device IDs a minute, burst 4,096, besides one request of at most 256 IDs every 2 s per connection | "too many requests" |
+| WebSocket connections at once | 64 | HTTP 429 |
+| Datagrams of one WebSocket connection | 10,000 a second | dropped (QUIC sends them again) |
+
+The bursts let an office behind one address restart or install all its PCs at once (each app keeps a few connections: agent, address book, viewer during a session).
+
+`NUVIRA_RATE_LIMITS` says to which addresses they apply:
+
+- unset or `on` (default): public addresses only. Addresses of the server's machine and of local networks (loopback, 10/8, 172.16/12, 192.168/16, IPv6 `fc00::/7`) have no limits, so a company server on its LAN is never limited.
+- `all`: local addresses too. Use it when the server sees every client with a local address: behind a userland UDP proxy (rootless Docker or Podman port forwarding, Docker's userland proxy, a UDP load balancer). Docker's default port publishing and the host network keep the real addresses: there the default is right. The start-up log says which mode is active.
+- `off`: no limits at all.
+
+WebSocket clients behind a reverse proxy on the same machine or network are counted by the address the proxy adds last to `X-Forwarded-For`.
+
+Other protections, always active: devices **registered and never seen again** are removed from the database after 30 days (a device whose only connection lasted at most 10 minutes, with no alias, not connected, and not in an address book, history, inventory or support queue of the Pro modules); such a device coming back gets a new ID. Idle keep-alive HTTP connections are closed after 2 minutes (WebSocket tunnels are not affected). Blocks of devices, addresses and networks: `nuvira-server block ID|IP|NETWORK`, `unblock`, `blocked` (read by the running server within 30 seconds).
 
 ## docker compose
 

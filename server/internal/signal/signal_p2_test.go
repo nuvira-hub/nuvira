@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nuvira-hub/nuvira/server/internal/limits"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
 )
@@ -159,30 +160,48 @@ func TestRegisterWrongFirstMessage(t *testing.T) {
 	}
 }
 
-// Characterisation (lead: "unregistered QUIC connections can stay open"): the
-// server sets no deadline on the first message; a connection that opens the
-// stream and sends nothing stays open as long as the client keeps it alive
-// (here 3 s; in production until the 30 s idle timeout, forever with keep-alives).
+// Fixed (SRV-8, was K21 "unregistered QUIC connections can stay open"): the
+// server set no deadline on the first message, so a connection that opened the
+// stream and sent nothing (or never opened one) stayed open as long as the
+// client kept it alive. Now the stream and each registration message must come
+// within registerTimeout (10 s; 300 ms here), and a registered device may then
+// stay silent.
 func TestCharacterisesUnregisteredConnectionStaysOpen(t *testing.T) {
-	ts := startServer(t)
-	c := ts.dial(t)
+	const deadline = 300 * time.Millisecond
+	ts := startServerWith(t, func(s *Server) { s.registerTimeout = deadline })
+	closedWithin := func(c *testClient, what string) {
+		t.Helper()
+		select {
+		case <-c.conn.Context().Done():
+		case <-time.After(deadline + 3*time.Second):
+			t.Fatalf("%s: still open after the registration deadline", what)
+		}
+	}
 	// The stream exists for the server only once something is written: one byte
 	// of a length prefix, never completed.
+	c := ts.dial(t)
 	if _, err := c.stream.Write([]byte{0x05}); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(3 * time.Second)
-	if err := c.conn.Context().Err(); err != nil {
-		t.Fatalf("connection closed by the server: %v", context.Cause(c.conn.Context()))
+	closedWithin(c, "half a Register")
+	// Without opening a stream at all.
+	closedWithin(ts.dial(t), "no stream")
+	// Register sent, Proof never.
+	c3 := ts.dial(t)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	_ = c3.send(registerMsg(key.Public().(ed25519.PublicKey), "slow", false))
+	if m, err := c3.read(2 * time.Second); err != nil || m.GetChallenge() == nil {
+		t.Fatalf("challenge: %v %v", m, err)
 	}
-	// Without opening a stream at all, the same.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	c2 := ts.dial(t)
-	_ = c2
-	<-ctx.Done()
-	if c2.conn.Context().Err() != nil {
-		t.Fatal("silent connection closed")
+	closedWithin(c3, "no Proof")
+	// A registered device stays connected while silent, well past the deadline.
+	dev := ts.device(t, "quiet")
+	time.Sleep(4 * deadline)
+	if dev.conn.Context().Err() != nil {
+		t.Fatalf("registered device closed: %v", context.Cause(dev.conn.Context()))
+	}
+	if !ts.srv.Online(dev.id) {
+		t.Fatal("registered device not online")
 	}
 }
 
@@ -257,11 +276,73 @@ func TestCharacterisesAbuseLimits(t *testing.T) {
 			t.Errorf("%s exempt, expected limited", s)
 		}
 	}
+	// SRV-9: NUVIRA_RATE_LIMITS=all limits the local addresses too (for servers
+	// behind a userland UDP proxy, where every client looks local); off: none.
+	for _, s := range append(exempt, limited...) {
+		l := newLimiterMode(rate{perMinute: 1, burst: 1}, limits.All)
+		ip := netip.MustParseAddr(s)
+		if !l.allow(ip, now) || l.allow(ip, now) {
+			t.Errorf("all: %s not limited", s)
+		}
+	}
+	if newLimiterMode(registerLimit, limits.Off) != nil {
+		t.Error("off: a limiter")
+	}
+}
+
+// With NUVIRA_RATE_LIMITS=all a loopback client is limited, so the refusals of
+// the limits can be seen end to end: the Error reaches the client before the
+// close (refuse), and a refused connection request leaves the viewer connected.
+func TestRateLimitRefusalsOverQUIC(t *testing.T) {
+	ts := startServerWith(t, func(s *Server) {
+		s.SetLimitMode(limits.All)
+		s.registerLimit = newLimiterMode(rate{perMinute: 1, burst: 3}, limits.All)
+	})
+	viewer := ts.device(t, "viewer")
+	agent := ts.device(t, "agent")
+	ts.waitOnline(t, agent.id, true)
+	ts.device(t, "third")
+	c := ts.dial(t)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	_ = c.send(registerMsg(key.Public().(ed25519.PublicKey), "fourth", false))
+	if text := refusal(t, c); text != "@server.rate_limited" {
+		t.Fatalf("registration over the burst: %q", text)
+	}
+	// connectLimit: burst 15 per address, then refused; the viewer stays.
+	errorOf := func() string {
+		t.Helper()
+		m, err := viewer.readUntil(5*time.Second, func(m *pb.ServerMessage) bool { return m.GetError() != nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.GetError().Message
+	}
+	refused := 0
+	for i := range 15 {
+		_ = viewer.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Connect{Connect: &pb.Connect{DeviceId: agent.id}}})
+		in, err := agent.readUntil(5*time.Second, func(m *pb.ServerMessage) bool { return m.GetIncoming() != nil })
+		if err != nil {
+			t.Fatalf("connect %d: %v", i+1, err)
+		}
+		_ = agent.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Reject{Reject: &pb.Reject{SessionId: in.GetIncoming().SessionId}}})
+		if text := errorOf(); text != "@agent.rejected" {
+			t.Fatalf("connect %d: %q", i+1, text)
+		}
+	}
+	_ = viewer.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Connect{Connect: &pb.Connect{DeviceId: agent.id}}})
+	if text := errorOf(); text == "@server.rate_limited" {
+		refused++
+	}
+	if refused != 1 || viewer.conn.Context().Err() != nil {
+		t.Fatalf("refused %d, viewer closed %v", refused, viewer.conn.Context().Err())
+	}
 }
 
 // Characterisation (lead api.go:45): GetPresence needs no sign-in; any device
 // learns online/last seen of any ID, 256 IDs per request, one request per 2 s
 // per connection (not per device: a second connection asks again at once).
+// From a local address, as here, there is no budget of IDs per address (the
+// default NUVIRA_RATE_LIMITS); TestPresenceBudgetPerAddress covers it (SRV-7).
 func TestCharacterisesPresenceEnumeration(t *testing.T) {
 	ts := startServer(t)
 	target := ts.device(t, "target")
@@ -479,5 +560,139 @@ func TestConcurrentReconnectsOfOneDevice(t *testing.T) {
 	}
 	if open != 1 {
 		t.Fatalf("%d connections of the same device still open", open)
+	}
+}
+
+// SRV-8: at most maxConnsPerAddress connections open at once per address
+// (3 here), registered or not; a place is given back when one closes.
+func TestConnectionsPerAddressCapped(t *testing.T) {
+	ts := startServerWith(t, func(s *Server) {
+		s.SetLimitMode(limits.All)
+		s.connections = limits.NewCounter(limits.All, 3)
+	})
+	a := ts.device(t, "a")
+	ts.device(t, "b")
+	idle := ts.dial(t) // not registered yet: counted too
+	_, _ = idle.stream.Write([]byte{0x05})
+	time.Sleep(200 * time.Millisecond)
+	c := ts.dial(t)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	_ = c.send(registerMsg(key.Public().(ed25519.PublicKey), "d", false))
+	if text := refusal(t, c); text != "@server.rate_limited" {
+		t.Fatalf("4th connection: %q", text)
+	}
+	_ = a.conn.CloseWithError(0, "")
+	ts.waitOnline(t, a.id, false)
+	for range 50 {
+		if ts.srv.connections.Open(netip.MustParseAddr("127.0.0.1")) < 3 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	ts.device(t, "e")
+	// The default mode does not count loopback at all.
+	def := startServer(t)
+	for i := range 5 {
+		def.device(t, fmt.Sprintf("lan-%d", i))
+	}
+}
+
+// SRV-8: registrations that create a device row have a budget of their own
+// (newDeviceLimit; burst 2 here); a known key registers again freely.
+func TestNewDevicesPerAddressBudget(t *testing.T) {
+	ts := startServerWith(t, func(s *Server) {
+		s.SetLimitMode(limits.All)
+		s.newDeviceLimit = newLimiterMode(rate{perMinute: 1, burst: 2, v6bits: 48}, limits.All)
+	})
+	first := ts.device(t, "one")
+	ts.device(t, "two")
+	if err := ts.dial(t).register(nil, "three", false); err == nil || err.Error() != "server error: @server.rate_limited" {
+		t.Fatalf("third new key: %v", err)
+	}
+	again := ts.dial(t)
+	if err := again.register(first.key, "one again", false); err != nil || again.id != first.id {
+		t.Fatalf("known key: %v %s", err, again.id)
+	}
+	var rows int
+	if err := ts.store.DB().QueryRow(`SELECT COUNT(*) FROM devices`).Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("%d rows (%v)", rows, err)
+	}
+	// The key of the IPv6 budget is the /48.
+	l := newLimiterMode(rate{perMinute: 1, burst: 1, v6bits: 48}, limits.Public)
+	now := time.Now()
+	if !l.allow(netip.MustParseAddr("2001:db8:1:1::1"), now) || l.allow(netip.MustParseAddr("2001:db8:1:ffff::1"), now) {
+		t.Fatal("/48 not shared")
+	}
+}
+
+// SRV-8 pruning: a device registered long ago whose only connection was short
+// is removed, unless it is connected now (its last access is written only at
+// the disconnection).
+func TestPruneDevicesKeepsOnlineDevices(t *testing.T) {
+	ts := startServer(t)
+	old := time.Now().Add(-pruneAge - time.Hour).Unix()
+	on := ts.device(t, "connected for a month")
+	ts.waitOnline(t, on.id, true)
+	off := ts.device(t, "used once")
+	_ = off.conn.CloseWithError(0, "")
+	ts.waitOnline(t, off.id, false)
+	time.Sleep(200 * time.Millisecond) // setOffline's Touch
+	for _, id := range []string{on.id, off.id} {
+		if _, err := ts.store.DB().Exec(`UPDATE devices SET created_at = ?, last_seen = ? WHERE id = ?`, old, old, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := ts.srv.pruneDevices(context.Background(), time.Now()); n != 1 {
+		t.Fatalf("removed %d", n)
+	}
+	if d, _ := ts.store.ByID(off.id); d != nil {
+		t.Fatal("device used once kept")
+	}
+	if d, _ := ts.store.ByID(on.id); d == nil {
+		t.Fatal("connected device removed")
+	}
+}
+
+// SRV-7: the IDs asked by GetPresence have a budget per address (presenceLimit:
+// 2048 a minute, burst 4096; burst 512 here), shared by every connection of the
+// address, so new connections do not multiply the per-connection interval.
+func TestPresenceBudgetPerAddress(t *testing.T) {
+	ts := startServerWith(t, func(s *Server) {
+		s.SetLimitMode(limits.All)
+		s.presenceLimit = newLimiterMode(rate{perMinute: 1, burst: 512}, limits.All)
+	})
+	ids := make([]string, maxPresenceIDs)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%09d", 100000000+i)
+	}
+	ask := func(c *testClient, reqID uint32) string {
+		t.Helper()
+		_ = c.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Api{Api: &pb.ApiRequest{Id: reqID,
+			Call: &pb.ApiRequest_GetPresence{GetPresence: &pb.GetPresence{DeviceIds: ids}}}}})
+		m, err := c.readUntil(5*time.Second, func(m *pb.ServerMessage) bool { return m.GetApi().GetId() == reqID })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.GetApi().Error
+	}
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	for i := range 3 {
+		c := ts.dial(t)
+		if err := c.register(key, "scanner", true); err != nil {
+			t.Fatal(err)
+		}
+		want := ""
+		if i == 2 {
+			want = "too many requests"
+		}
+		if got := ask(c, uint32(i+1)); got != want {
+			t.Fatalf("request %d (connection %d): %q", i+1, i+1, got)
+		}
+	}
+	// Default mode: loopback has no budget (TestCharacterisesPresenceEnumeration).
+	l := newLimiter(presenceLimit)
+	pub := netip.MustParseAddr("203.0.113.7")
+	if !l.allowN(pub, time.Now(), 4096) || l.allowN(pub, time.Now(), 1) {
+		t.Fatal("presence burst 4096")
 	}
 }
