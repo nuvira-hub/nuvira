@@ -206,6 +206,9 @@ pub fn run_encode(
 
     let mut stream: Vec<Output> = Vec::new();
     let mut keep_next = true;
+    // Frames scaled down to the encoder's limit, and the sizes encoded that way.
+    #[cfg_attr(not(bench_codec_max_size), allow(unused_mut))]
+    let mut limited: Vec<String> = Vec::new();
     let mut lp = RepLoop::new(ctx);
     let reps = lp.run(|_, measured| {
         let keep = measured && keep_next;
@@ -215,9 +218,29 @@ pub fn run_encode(
         let mut enc = make(b, settings)?;
         let mut pending: VecDeque<u32> = VecDeque::new();
         let mut o = RepOut::default();
+        let mut fitted: Vec<u8> = Vec::new();
         for i in 0..n {
             generator.render(i, &mut frame);
             let img = frame.image();
+            // As the agent does: a picture beyond what the encoder takes now is
+            // encoded reduced to its limit (Media Foundation lowers it after a
+            // refused size, VID-2). Code without encoder limits encodes as it was.
+            #[cfg(bench_codec_max_size)]
+            let limit = enc.max_size();
+            #[cfg(bench_codec_max_size)]
+            let img = match nuvira_codec::encoded_size(img.width, img.height, (0, 0), limit) {
+                size if size == (img.width, img.height) => img,
+                (fw, fh) => {
+                    nuvira_codec::convert::scale_bgra(&img, fw as usize, fh as usize, &mut fitted);
+                    let size = format!("{}x{}->{fw}x{fh}", img.width, img.height);
+                    if !limited.contains(&size) {
+                        limited.push(size);
+                    }
+                    nuvira_codec::BgraImage { width: fw, height: fh, stride: fw as usize * 4, data: &fitted }
+                }
+            };
+            #[cfg(not(bench_codec_max_size))]
+            let _ = &mut fitted;
             let counted = i >= warm;
             let tw = Instant::now();
             if hardware {
@@ -227,7 +250,20 @@ pub fn run_encode(
             let a0 = ThreadAllocs::take();
             let p0 = cpu_time_process();
             let t0 = Instant::now();
-            let out = enc.encode(&img, i == 0).with_context(|| format!("encoding frame {i}"))?;
+            let out = enc.encode(&img, i == 0);
+            // A size refused by an encoder that then lowered its limit: the frame
+            // is lost (as in the agent) and the next ones come smaller.
+            #[cfg(bench_codec_max_size)]
+            let out = match out {
+                Err(_) if enc.max_size() != limit => {
+                    if counted {
+                        o.skipped += 1;
+                    }
+                    continue;
+                }
+                out => out,
+            };
+            let out = out.with_context(|| format!("encoding frame {i}"))?;
             let dt = t0.elapsed();
             let cpu = cpu_time_process().saturating_sub(p0);
             let al = ThreadAllocs::take().since(&a0);
@@ -308,6 +344,9 @@ pub fn run_encode(
         .param("height", h)
         .param("encoder", name.as_str())
         .param("quality_rep", 1);
+    if !limited.is_empty() {
+        r.param("size_limited", limited.join(", "));
+    }
     if let Some(s) = crate::fixtures::Manifest::embedded()?.scene_sha256(scene, w, h, n) {
         r.checksum("input", s);
     }
