@@ -746,10 +746,9 @@ mod linux {
             let got = s.window.pointer();
             let want = expected(screen, x, y);
             report(&format!("move ({x}, {y}) -> {got:?}, expected {want:?}"));
-            assert!(
-                (got.0 - want.0).abs() <= 1 && (got.1 - want.1).abs() <= 1,
-                "move ({x}, {y}): {got:?} vs {want:?}"
-            );
+            // Rounded on every backend (Wayland too: VWR-8, Phase 2 P5 saw Mutter
+            // and KWin a pixel off where the point fell on a half).
+            assert_eq!(got, want, "move ({x}, {y})");
         }
     }
 

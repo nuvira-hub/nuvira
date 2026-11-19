@@ -200,11 +200,12 @@ impl InputInjector for PortalInjector {
         match &event.event {
             Some(Event::MouseMove(m)) => {
                 // Logical coordinates of the screen under the point, as the portal
-                // wants them.
+                // wants them, rounded as on X11 and Windows: Mutter and KWin cut
+                // the fraction off, which put half the moves a pixel up or left.
                 let (index, fx, fy) = place(&self.session, self.screen, f64::from(m.x), f64::from(m.y));
                 let screen = self.session.screens()[index];
-                let x = fx * f64::from(screen.width.saturating_sub(1));
-                let y = fy * f64::from(screen.height.saturating_sub(1));
+                let x = (fx * f64::from(screen.width.saturating_sub(1))).round();
+                let y = (fy * f64::from(screen.height.saturating_sub(1))).round();
                 self.session.pointer_motion(index, x, y);
             }
             Some(Event::MouseButton(b)) => self.button(b.button(), b.down),

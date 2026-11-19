@@ -266,7 +266,10 @@ pub(crate) fn run(
                         // KWin wants positions in the whole desktop's logical space.
                         // One screen at the sign-in screen: the greeter's.
                         Cmd::Motion(_, x, y) => {
-                            fake.pointer_motion_absolute(x + f64::from(screen.left), y + f64::from(screen.top));
+                            fake.pointer_motion_absolute(
+                                (x + f64::from(screen.left)).round(),
+                                (y + f64::from(screen.top)).round(),
+                            );
                         }
                         Cmd::Button(button, down) => fake.button(button as u32, u32::from(down)),
                         Cmd::Wheel(axis, steps) => {
