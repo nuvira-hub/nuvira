@@ -810,7 +810,8 @@ fn server_restart(ctx: &mut Ctx) -> Result<()> {
 }
 
 /// The viewer's process is killed in a session through the server: the agent
-/// ends the session by the idle timeout and is free for the next viewer.
+/// ends the session once nothing has arrived from the viewer for 10 s (NET-1; the
+/// QUIC idle timeout is 30 s) and is free for the next viewer.
 fn kill_viewer(ctx: &mut Ctx) -> Result<()> {
     let rig = Rig::start(ctx, AgentSpec::default())?;
     let fp = nuvira_transport::fingerprint_hex(&rig.srv.fingerprint);

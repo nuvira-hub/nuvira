@@ -73,7 +73,7 @@ The macOS viewer on the Mac mini M1 (Scaleway, macOS 27.2.1, 2026-11-16; app bui
 
 ## Related
 
-A viewer killed abruptly left the agent "busy" until the QUIC timeout (20 s). Now the timeout is 10 s with a keep-alive packet every 2 s (`transport/src/lib.rs`).
+A viewer killed abruptly left the agent "busy" until the QUIC timeout (20 s). Then the timeout became 10 s with a keep-alive packet every 2 s (`transport/src/lib.rs`). Since review lot 9 (NET-1) the session's QUIC idle timeout is 30 s (to survive outages of a few seconds) and the agent ends the session itself after 10 s without packets from the viewer (`transport/src/liveness.rs`): the agent is free again after 10 s as before; a viewer whose agent vanished waits 30 s before "connection lost".
 
 ## To do
 

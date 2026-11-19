@@ -11,9 +11,15 @@
 //!   (fresh), the freeze around it, keyframe requests and the agent's keyframes.
 //!   One session, so the agent is `serve_reverse` on 127.0.0.1 (same `session()`);
 //!   (a) direct, (c) need `serve_direct(once = false)`, which binds 0.0.0.0.
-//! - (c) `outage/NX-12`: 12 s is longer than the 10 s idle timeout, the session
-//!   dies; time from the end of the outage until a new session (same agent,
+//! - (c) `outage/NX-12`: 12 s is longer than the agent's 10 s, the session dies;
+//!   time from the end of the outage until a new session (same agent,
 //!   `once = false`, through the proxy) shows its first frame, and the attempts.
+//!   Before Phase 6 lot 9 both sides had a 10 s QUIC idle timeout, so the viewer
+//!   had seen the end by the end of the outage (`old_session_died` = 1 per
+//!   outage). Since lot 9 (NET-1) the agent ends the session after 10 s without
+//!   packets from the viewer, but the viewer's idle timeout is 30 s: it usually
+//!   has not seen the end yet when the outage ends (`old_session_died` = 0; an
+//!   info metric) and drops it as a person would.
 //! - (d) `server-restart`: the local `nuvira-server` is killed and started again
 //!   (same port and data); time until the agent is registered again
 //!   (`AgentEvent::Online`) and until a new session reaches its first frame.
@@ -273,7 +279,7 @@ fn outage(ctx: &mut RunCtx, r: &mut CaseResult, secs: u64) -> Result<()> {
     finish(r, errors, ok)
 }
 
-/// (c) NX-12: the session dies at the idle timeout; a new one through the proxy.
+/// (c) NX-12: the agent ends the session during the outage; a new one through the proxy.
 fn outage_long(ctx: &mut RunCtx, r: &mut CaseResult) -> Result<()> {
     let n = events_for(ctx.tier, 1, 10);
     let (agent_rt, viewer_rt) = server_mode::runtimes()?;
@@ -292,7 +298,8 @@ fn outage_long(ctx: &mut RunCtx, r: &mut CaseResult) -> Result<()> {
             tokio::time::sleep(outage).await;
             let end = Instant::now();
             old_died += u32::from(s.error().is_some());
-            // The old session is gone (idle timeout): drop it as the viewer would.
+            // The old session is gone on the agent (it heard nothing for 10 s; the
+            // viewer may still wait for its own idle timeout): drop it as a person would.
             s.close().await;
             let mut tries = 0u32;
             let new = loop {

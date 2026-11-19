@@ -154,13 +154,36 @@ pub(crate) fn provider() -> Arc<CryptoProvider> {
     Arc::new(ring::default_provider())
 }
 
-pub(crate) fn transport_config() -> Arc<TransportConfig> {
+/// QUIC idle timeout of a session connection (agent and viewer, also switch
+/// sides). An outage of a few seconds can leave the side that was sending video
+/// silent for up to ~18 s after the other side's last packet: its congestion
+/// window is full of packets lost in the outage, and quinn then sends nothing on
+/// that connection, not even an ACK, until a backed-off loss probe (review NET-1,
+/// K38). 30 s keeps such a session; the agent notices a vanished viewer sooner,
+/// with [`liveness`]. QUIC takes the smaller value of the two sides, so with an
+/// older peer (10 s) the session keeps 10 s.
+pub const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// QUIC idle timeout of the signalling connection to nuvira-server: the server
+/// notices a vanished device (presence) and the device a vanished server after
+/// 10 s, as before NET-1. The server asks for 30 s and the smaller value wins.
+pub const SIGNAL_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Configuration of the session connections (see [`SESSION_IDLE_TIMEOUT`]).
+pub(crate) fn session_transport_config() -> Arc<TransportConfig> {
+    transport_config(SESSION_IDLE_TIMEOUT)
+}
+
+/// Configuration of the signalling connection (see [`SIGNAL_IDLE_TIMEOUT`]).
+pub(crate) fn signal_transport_config() -> Arc<TransportConfig> {
+    transport_config(SIGNAL_IDLE_TIMEOUT)
+}
+
+fn transport_config(idle: Duration) -> Arc<TransportConfig> {
     let mut t = TransportConfig::default();
-    // If the other side disappears without closing (viewer killed, network down) the
-    // agent stays "busy" until the timeout: 10 s, with a packet every 2 s so that a
-    // live connection is never silent for that long.
+    // A packet every 2 s, so that a live connection is never silent for long.
     t.keep_alive_interval(Some(Duration::from_secs(2)));
-    t.max_idle_timeout(Some(Duration::from_secs(10).try_into().expect("valid duration")));
+    t.max_idle_timeout(Some(idle.try_into().expect("valid duration")));
     // GSO (several datagrams in a single send call) loses packets on loopback on
     // Windows, and after the loss the connection receives nothing more. Between two
     // PCs it works (2026-11-01: 20 sessions over Wi-Fi and cable) but gains nothing at
@@ -199,7 +222,7 @@ pub fn server_config() -> Result<(ServerConfig, Fingerprint)> {
     tls.alpn_protocols = vec![ALPN.to_vec()];
 
     let mut config = ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
-    config.transport_config(transport_config());
+    config.transport_config(session_transport_config());
     Ok((config, fingerprint))
 }
 
@@ -216,7 +239,7 @@ pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<
     tls.alpn_protocols = vec![ALPN.to_vec()];
 
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
-    config.transport_config(transport_config());
+    config.transport_config(session_transport_config());
 
     let bind: SocketAddr = if addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
     let mut endpoint = Endpoint::client(bind)?;
