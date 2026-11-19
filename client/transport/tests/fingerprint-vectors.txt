@@ -1,0 +1,53 @@
+# Test vectors of parse_fingerprint: the copy in nuvira-transport (client/transport/src/lib.rs)
+# and the web client's copy in nuvira-pro (web/src/tls.rs) read this same file (review WEB-14).
+#
+# Format: one vector per line, "ok" or "err", a TAB, then the input. In the input:
+#   {fp}   the 64 lower-case hexadecimal digits of the line "fp" below
+#   {FP}   the same in upper case
+#   {fp:}  lower case, the 32 pairs joined by ":"     {FP }  upper case, pairs joined by " "
+#   {fp-}  lower case, pairs joined by "-"             {fp62} the first 62 digits only
+#   {}     nothing (to write an empty input, or one of spaces only)
+#   \t \r \n  a tab, a carriage return, a line feed
+# An "ok" input gives the 32 bytes of "fp"; an "err" input gives the error
+# "the fingerprint must have 64 hexadecimal digits".
+fp	48d987cf57a2d06d447e6eca844e12b21baaac710463baac6f8019eaf74f711d
+# As written by nuvira-server (start line, config.json, the console) and copied by hand.
+ok	{fp}
+ok	{FP}
+ok	{fp:}
+ok	{FP }
+ok	  {fp}\n
+ok	\t{fp}\r\n
+ok	{fp:}:
+ok	4 8:d9 87cf57a2d06d447e6eca844e12b21baaac710463baac6f8019eaf74f711d
+# A "sha256" label, as other tools print fingerprints, with ":" or a space after it.
+ok	sha256:{fp}
+ok	SHA256:{fp:}
+ok	sha-256 {fp}
+ok	SHA-256: {FP }
+ok	Sha256 \t{fp}
+# Wrong number of digits.
+err	{}
+err	{}   {}
+err	{fp62}
+err	{fp}00
+err	{fp}0
+err	{fp}{fp}
+# Anything else around or between the digits.
+err	zz {fp}
+err	{fp} -_
+err	{fp-}
+err	0x{fp}
+err	#{fp}
+err	"{fp}"
+err	{fp}é
+err	é{fp}
+err	{fp},
+# A label that is not "sha256", not at the start, or without a separator.
+err	sha256{fp}
+err	sha1:{fp}
+err	sha512:{fp}
+err	md5:{fp}
+err	{fp} sha256
+err	sha256:
+err	sha256:sha256:{fp}

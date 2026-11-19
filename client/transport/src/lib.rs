@@ -138,14 +138,42 @@ pub fn fingerprint_hex(fp: &Fingerprint) -> String {
     fp.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub fn parse_fingerprint(hex: &str) -> Result<Fingerprint> {
-    let hex: String = hex.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    if hex.len() != 64 {
-        bail!("the fingerprint must have 64 hexadecimal digits");
+/// A certificate fingerprint as people write it: 64 hexadecimal digits, upper or
+/// lower case, with `:` or white space anywhere between them, optionally after a
+/// "sha256" (or "sha-256") label and a `:` or a space. Anything else is refused
+/// (review WEB-14: other characters used to be dropped before counting, so
+/// "zz <fp>" passed and "sha256:<fp>" did not). The web client has the same
+/// parser (nuvira-pro `web/src/tls.rs`); both are checked against
+/// `tests/fingerprint-vectors.txt`.
+pub fn parse_fingerprint(text: &str) -> Result<Fingerprint> {
+    const WRONG: &str = "the fingerprint must have 64 hexadecimal digits";
+    let mut text = text.trim();
+    for label in ["sha256", "sha-256"] {
+        if let Some(rest) =
+            text.get(..label.len()).filter(|l| l.eq_ignore_ascii_case(label)).map(|_| &text[label.len()..])
+        {
+            if !rest.starts_with(|c: char| c == ':' || c.is_ascii_whitespace()) {
+                bail!(WRONG);
+            }
+            text = rest;
+            break;
+        }
     }
     let mut fp = [0u8; 32];
-    for (i, b) in fp.iter_mut().enumerate() {
-        *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)?;
+    let mut digits = 0;
+    for c in text.chars() {
+        if c == ':' || c.is_ascii_whitespace() {
+            continue;
+        }
+        let Some(d) = c.to_digit(16) else { bail!(WRONG) };
+        if digits == 64 {
+            bail!(WRONG);
+        }
+        fp[digits / 2] |= (d as u8) << if digits % 2 == 0 { 4 } else { 0 };
+        digits += 1;
+    }
+    if digits != 64 {
+        bail!(WRONG);
     }
     Ok(fp)
 }
@@ -455,5 +483,57 @@ mod tests {
             hex.as_bytes().chunks(4).map(|c| std::str::from_utf8(c).unwrap()).collect::<Vec<_>>().join(":");
         assert_eq!(parse_fingerprint(&spaced).unwrap(), fp);
         assert!(parse_fingerprint("abc").is_err());
+    }
+
+    /// The vectors shared with the web client's copy (nuvira-pro `web/src/tls.rs`).
+    #[test]
+    fn fingerprint_vectors() {
+        let text = include_str!("../tests/fingerprint-vectors.txt");
+        let mut hex = "";
+        let mut count = (0, 0);
+        for line in text.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+            let (kind, input) = line.split_once('\t').expect("kind TAB input");
+            if kind == "fp" {
+                hex = input;
+                continue;
+            }
+            let pairs = |sep: &str| {
+                hex.as_bytes()
+                    .chunks(2)
+                    .map(|c| std::str::from_utf8(c).unwrap())
+                    .collect::<Vec<_>>()
+                    .join(sep)
+            };
+            let input = input
+                .replace("{fp62}", &hex[..62])
+                .replace("{fp:}", &pairs(":"))
+                .replace("{fp-}", &pairs("-"))
+                .replace("{FP }", &pairs(" ").to_uppercase())
+                .replace("{FP}", &hex.to_uppercase())
+                .replace("{fp}", hex)
+                .replace("{}", "")
+                .replace("\\t", "\t")
+                .replace("\\r", "\r")
+                .replace("\\n", "\n");
+            let got = parse_fingerprint(&input);
+            match kind {
+                "ok" => {
+                    assert_eq!(
+                        fingerprint_hex(&got.unwrap_or_else(|e| panic!("{input:?}: {e}"))),
+                        hex,
+                        "{input:?}"
+                    );
+                    count.0 += 1;
+                }
+                "err" => {
+                    let e = got.err().unwrap_or_else(|| panic!("{input:?} accepted"));
+                    assert_eq!(e.to_string(), "the fingerprint must have 64 hexadecimal digits", "{input:?}");
+                    count.1 += 1;
+                }
+                other => panic!("unknown kind {other:?}"),
+            }
+        }
+        assert_eq!(hex.len(), 64);
+        assert!(count.0 >= 10 && count.1 >= 20, "{count:?}");
     }
 }

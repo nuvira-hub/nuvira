@@ -125,7 +125,7 @@ nuvira-agent.exe --server 192.168.1.10              # prints ID and password
 nuvira-viewer.exe --server 192.168.1.10 123456789 --password abcd2345
 ```
 
-At the first connection agent and viewer remember the fingerprint of the server's certificate (`servers.txt` in the data folder) and then refuse a server with a different certificate; `--server-key` pins it by hand.
+At the first connection agent and viewer remember the fingerprint of the server's certificate (`servers.txt` in the data folder) and then refuse a server with a different certificate; `--server-key` pins it by hand. A fingerprint (here, in `--fingerprint`, in `key=` of a renamed installer and in the MSI's `KEY`) is the 64 hexadecimal digits of the SHA-256, as the server prints it in its start line; upper case, `:` or spaces between the digits, and a leading `sha256:` label are accepted, anything else is refused (since the review's lot 11: other characters used to be dropped).
 
 ## LAN measurements (2026-10-26)
 
