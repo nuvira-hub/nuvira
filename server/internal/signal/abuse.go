@@ -33,6 +33,10 @@ var (
 	// burst lets an office install all its PCs at once. Per IPv6 /48, since a
 	// site holding many /64s must not multiply it.
 	newDeviceLimit = rate{perMinute: 10, burst: 100, v6bits: 48}
+	// Device IDs asked by GetPresence (no sign-in needed): the apps' address
+	// books ask for their entries every few seconds, at most 256 per request;
+	// enumerating the 900 million IDs must take years, not hours.
+	presenceLimit = rate{perMinute: 2048, burst: 4096}
 )
 
 // Connections open at once from one address, registered or not. Each app
@@ -72,7 +76,10 @@ func newLimiterMode(r rate, mode limits.Mode) *limiter {
 }
 
 // allow takes a request of ip; a nil limiter (limits off) allows everything.
-func (l *limiter) allow(ip netip.Addr, now time.Time) bool {
+func (l *limiter) allow(ip netip.Addr, now time.Time) bool { return l.allowN(ip, now, 1) }
+
+// allowN takes n tokens for ip at once, or none.
+func (l *limiter) allowN(ip netip.Addr, now time.Time, n int) bool {
 	if l == nil || !l.mode.Applies(ip) {
 		return true
 	}
@@ -90,10 +97,10 @@ func (l *limiter) allow(ip netip.Addr, now time.Time) bool {
 	}
 	b.tokens = min(l.rate.burst, b.tokens+now.Sub(b.last).Minutes()*l.rate.perMinute)
 	b.last = now
-	if b.tokens < 1 {
+	if b.tokens < float64(n) {
 		return false
 	}
-	b.tokens--
+	b.tokens -= float64(n)
 	return true
 }
 

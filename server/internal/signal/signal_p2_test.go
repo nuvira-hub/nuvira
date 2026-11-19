@@ -341,6 +341,8 @@ func TestRateLimitRefusalsOverQUIC(t *testing.T) {
 // Characterisation (lead api.go:45): GetPresence needs no sign-in; any device
 // learns online/last seen of any ID, 256 IDs per request, one request per 2 s
 // per connection (not per device: a second connection asks again at once).
+// From a local address, as here, there is no budget of IDs per address (the
+// default NUVIRA_RATE_LIMITS); TestPresenceBudgetPerAddress covers it (SRV-7).
 func TestCharacterisesPresenceEnumeration(t *testing.T) {
 	ts := startServer(t)
 	target := ts.device(t, "target")
@@ -648,5 +650,49 @@ func TestPruneDevicesKeepsOnlineDevices(t *testing.T) {
 	}
 	if d, _ := ts.store.ByID(on.id); d == nil {
 		t.Fatal("connected device removed")
+	}
+}
+
+// SRV-7: the IDs asked by GetPresence have a budget per address (presenceLimit:
+// 2048 a minute, burst 4096; burst 512 here), shared by every connection of the
+// address, so new connections do not multiply the per-connection interval.
+func TestPresenceBudgetPerAddress(t *testing.T) {
+	ts := startServerWith(t, func(s *Server) {
+		s.SetLimitMode(limits.All)
+		s.presenceLimit = newLimiterMode(rate{perMinute: 1, burst: 512}, limits.All)
+	})
+	ids := make([]string, maxPresenceIDs)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%09d", 100000000+i)
+	}
+	ask := func(c *testClient, reqID uint32) string {
+		t.Helper()
+		_ = c.send(&pb.ClientMessage{Msg: &pb.ClientMessage_Api{Api: &pb.ApiRequest{Id: reqID,
+			Call: &pb.ApiRequest_GetPresence{GetPresence: &pb.GetPresence{DeviceIds: ids}}}}})
+		m, err := c.readUntil(5*time.Second, func(m *pb.ServerMessage) bool { return m.GetApi().GetId() == reqID })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.GetApi().Error
+	}
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	for i := range 3 {
+		c := ts.dial(t)
+		if err := c.register(key, "scanner", true); err != nil {
+			t.Fatal(err)
+		}
+		want := ""
+		if i == 2 {
+			want = "too many requests"
+		}
+		if got := ask(c, uint32(i+1)); got != want {
+			t.Fatalf("request %d (connection %d): %q", i+1, i+1, got)
+		}
+	}
+	// Default mode: loopback has no budget (TestCharacterisesPresenceEnumeration).
+	l := newLimiter(presenceLimit)
+	pub := netip.MustParseAddr("203.0.113.7")
+	if !l.allowN(pub, time.Now(), 4096) || l.allowN(pub, time.Now(), 1) {
+		t.Fatal("presence burst 4096")
 	}
 }

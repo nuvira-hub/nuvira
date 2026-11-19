@@ -153,6 +153,7 @@ type Server struct {
 	registerLimit  *limiter
 	connectLimit   *limiter
 	newDeviceLimit *limiter
+	presenceLimit  *limiter        // device IDs asked by GetPresence
 	connections    *limits.Counter // open connections per address
 }
 
@@ -179,6 +180,7 @@ func (s *Server) SetRateLimits(on bool) {
 func (s *Server) SetLimitMode(mode limits.Mode) {
 	s.registerLimit, s.connectLimit = newLimiterMode(registerLimit, mode), newLimiterMode(connectLimit, mode)
 	s.newDeviceLimit = newLimiterMode(newDeviceLimit, mode)
+	s.presenceLimit = newLimiterMode(presenceLimit, mode)
 	s.connections = nil
 	if mode != limits.Off {
 		s.connections = limits.NewCounter(mode, maxConnsPerAddress)
@@ -670,6 +672,7 @@ func (s *Server) blocksLoop(ctx context.Context) {
 			s.registerLimit.prune(now)
 			s.connectLimit.prune(now)
 			s.newDeviceLimit.prune(now)
+			s.presenceLimit.prune(now)
 		}
 	}
 }

@@ -2,10 +2,12 @@ package signal
 
 import (
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/nuvira-hub/nuvira/server/internal/ext"
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
+	"github.com/nuvira-hub/nuvira/server/internal/relay"
 )
 
 // Limits of GetPresence, which needs no sign-in.
@@ -55,6 +57,10 @@ func (s *Server) getPresence(c *client, req *pb.GetPresence, resp *pb.ApiRespons
 	if early {
 		return errors.New("too many requests")
 	}
+	// A budget of IDs per address too: a new connection does not reset it.
+	if ip, ok := c.addr(); ok && !s.presenceLimit.allowN(ip, time.Now(), len(req.GetDeviceIds())) {
+		return errors.New("too many requests")
+	}
 	s.mu.Lock()
 	list := make([]*pb.Presence, 0, len(req.GetDeviceIds()))
 	for _, id := range req.GetDeviceIds() {
@@ -70,6 +76,14 @@ func (s *Server) getPresence(c *client, req *pb.GetPresence, resp *pb.ApiRespons
 	}
 	resp.Result = &pb.ApiResponse_Presence{Presence: &pb.PresenceList{Devices: list}}
 	return nil
+}
+
+// addr is the client's IP address (false without a connection: unit tests).
+func (c *client) addr() (netip.Addr, bool) {
+	if c.conn == nil {
+		return netip.Addr{}, false
+	}
+	return relay.HostOf(c.conn.RemoteAddr())
 }
 
 // DeviceID, RemoteAddr, Session and SetSession make the connection an ext.Conn.
