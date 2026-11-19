@@ -505,6 +505,7 @@
   "tf.disabled": "Zwei-Faktor-Authentifizierung deaktiviert",
   "server.otp_required": "gib den Code der Authenticator-App ein",
   "server.otp_wrong": "falscher oder bereits verwendeter Code",
+  "server.too_many_attempts": "zu viele falsche Versuche: warte ein paar Minuten und versuche es erneut",
   "server.two_factor_active": "die Zwei-Faktor-Authentifizierung ist bereits aktiv",
   "server.two_factor_not_set": "starte die Aktivierung erneut",
   "server.two_factor_off": "die Zwei-Faktor-Authentifizierung ist nicht aktiv",
