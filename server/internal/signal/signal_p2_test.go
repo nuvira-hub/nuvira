@@ -159,30 +159,48 @@ func TestRegisterWrongFirstMessage(t *testing.T) {
 	}
 }
 
-// Characterisation (lead: "unregistered QUIC connections can stay open"): the
-// server sets no deadline on the first message; a connection that opens the
-// stream and sends nothing stays open as long as the client keeps it alive
-// (here 3 s; in production until the 30 s idle timeout, forever with keep-alives).
+// Fixed (SRV-8, was K21 "unregistered QUIC connections can stay open"): the
+// server set no deadline on the first message, so a connection that opened the
+// stream and sent nothing (or never opened one) stayed open as long as the
+// client kept it alive. Now the stream and each registration message must come
+// within registerTimeout (10 s; 300 ms here), and a registered device may then
+// stay silent.
 func TestCharacterisesUnregisteredConnectionStaysOpen(t *testing.T) {
-	ts := startServer(t)
-	c := ts.dial(t)
+	const deadline = 300 * time.Millisecond
+	ts := startServerWith(t, func(s *Server) { s.registerTimeout = deadline })
+	closedWithin := func(c *testClient, what string) {
+		t.Helper()
+		select {
+		case <-c.conn.Context().Done():
+		case <-time.After(deadline + 3*time.Second):
+			t.Fatalf("%s: still open after the registration deadline", what)
+		}
+	}
 	// The stream exists for the server only once something is written: one byte
 	// of a length prefix, never completed.
+	c := ts.dial(t)
 	if _, err := c.stream.Write([]byte{0x05}); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(3 * time.Second)
-	if err := c.conn.Context().Err(); err != nil {
-		t.Fatalf("connection closed by the server: %v", context.Cause(c.conn.Context()))
+	closedWithin(c, "half a Register")
+	// Without opening a stream at all.
+	closedWithin(ts.dial(t), "no stream")
+	// Register sent, Proof never.
+	c3 := ts.dial(t)
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	_ = c3.send(registerMsg(key.Public().(ed25519.PublicKey), "slow", false))
+	if m, err := c3.read(2 * time.Second); err != nil || m.GetChallenge() == nil {
+		t.Fatalf("challenge: %v %v", m, err)
 	}
-	// Without opening a stream at all, the same.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	c2 := ts.dial(t)
-	_ = c2
-	<-ctx.Done()
-	if c2.conn.Context().Err() != nil {
-		t.Fatal("silent connection closed")
+	closedWithin(c3, "no Proof")
+	// A registered device stays connected while silent, well past the deadline.
+	dev := ts.device(t, "quiet")
+	time.Sleep(4 * deadline)
+	if dev.conn.Context().Err() != nil {
+		t.Fatalf("registered device closed: %v", context.Cause(dev.conn.Context()))
+	}
+	if !ts.srv.Online(dev.id) {
+		t.Fatal("registered device not online")
 	}
 }
 

@@ -49,6 +49,12 @@ const maxMessage = 64 * 1024
 // instead of blocking whoever sends to it.
 const IdleTimeout = 30 * time.Second
 
+// registerTimeout is how long a new connection may take to open its stream and
+// to send each registration message (Register, then Proof). A real client does
+// both at once (2 round trips, the key is in memory); without a deadline a
+// connection that never registers stays open as long as the peer keeps it alive.
+const registerTimeout = 10 * time.Second
+
 type client struct {
 	device *store.Device
 	conn   *quic.Conn
@@ -138,6 +144,8 @@ type Server struct {
 
 	// Longest wait for one write to a client (IdleTimeout; shorter in tests).
 	sendTimeout time.Duration
+	// Longest wait for the stream and each registration message (registerTimeout).
+	registerTimeout time.Duration
 
 	// Protection of a public server (abuse.go).
 	blocked       blocklist
@@ -147,7 +155,7 @@ type Server struct {
 
 func New(st *store.Store, r *relay.Relay, log *slog.Logger) *Server {
 	return &Server{
-		store: st, relay: r, log: log, sendTimeout: IdleTimeout,
+		store: st, relay: r, log: log, sendTimeout: IdleTimeout, registerTimeout: registerTimeout,
 		online: map[string]*client{}, sessions: map[string]*pending{}, routed: map[string]*routed{},
 		registerLimit: newLimiter(registerLimit), connectLimit: newLimiter(connectLimit),
 	}
@@ -194,7 +202,9 @@ func errorMsg(text, session string) *pb.ServerMessage {
 
 func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 	defer conn.CloseWithError(0, "")
-	stream, err := conn.AcceptStream(ctx)
+	actx, cancel := context.WithTimeout(ctx, s.registerTimeout)
+	stream, err := conn.AcceptStream(actx)
+	cancel()
 	if err != nil {
 		return err
 	}
@@ -209,6 +219,8 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 	if err != nil {
 		return fmt.Errorf("registration: %w", err)
 	}
+	// Registered: from now on the connection may stay silent (keep-alives).
+	_ = stream.SetReadDeadline(time.Time{})
 	s.setOnline(c)
 	defer s.setOffline(c)
 	// Files sent to the server, each on a stream of its own.
@@ -264,6 +276,7 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 // register checks that the device holds the private key of the public key it
 // presents and assigns (or finds) its ID.
 func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb.ClientMessage, error)) (*client, error) {
+	_ = stream.SetReadDeadline(time.Now().Add(s.registerTimeout))
 	msg, err := read()
 	if err != nil {
 		return nil, err
@@ -295,6 +308,7 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 	if err := c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Challenge{Challenge: &pb.Challenge{Nonce: nonce}}}); err != nil {
 		return nil, err
 	}
+	_ = stream.SetReadDeadline(time.Now().Add(s.registerTimeout))
 	msg, err = read()
 	if err != nil {
 		return nil, err
