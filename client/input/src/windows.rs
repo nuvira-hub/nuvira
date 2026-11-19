@@ -181,6 +181,24 @@ fn send(input: INPUT) {
     }
 }
 
+/// Turns on a display that power saving turned off: a one-pixel relative move
+/// and back (no net movement), which Windows counts as user input. Tagged like the
+/// rest of the injected input, so privacy mode's hook lets it through. The calling
+/// thread must be on the input desktop (the lock screen is `Winlogon`).
+pub fn wake_display() {
+    let step = |dx: i32| INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT { dx, dy: 0, mouseData: 0, dwFlags: MOUSEEVENTF_MOVE, time: 0, dwExtraInfo: INJECTED_TAG },
+        },
+    };
+    let inputs = [step(1), step(-1)];
+    let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+    if sent as usize != inputs.len() {
+        debug!("display wake-up refused: {}", windows::core::Error::from_thread());
+    }
+}
+
 impl InputInjector for SendInputInjector {
     fn inject(&mut self, event: &InputEvent) -> Result<()> {
         match &event.event {

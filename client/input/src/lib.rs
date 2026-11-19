@@ -106,6 +106,14 @@ pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
     }
 }
 
+/// Windows: turns on a display that power saving turned off (an injected
+/// one-pixel move and back, which privacy mode lets through). Call it from a
+/// thread on the input desktop.
+#[cfg(windows)]
+pub fn wake_display() {
+    windows::wake_display();
+}
+
 /// Makes the process per-monitor DPI aware: coordinates in physical pixels,
 /// consistent with the capture ones. Call it at start-up, before creating windows.
 pub fn set_dpi_awareness() {
