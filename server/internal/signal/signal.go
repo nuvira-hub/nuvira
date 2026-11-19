@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/quic-go/quic-go"
 	"google.golang.org/protobuf/encoding/protodelim"
@@ -348,11 +349,18 @@ func aliasError(err error) string {
 	}
 }
 
+// limit cuts s to at most n bytes on a character boundary: a cut inside a
+// UTF-8 character makes the string invalid, and every message carrying it
+// (the viewer's name in Incoming) would fail to marshal. Register has already
+// been checked as valid UTF-8 by Unmarshal.
 func limit(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
+	if len(s) <= n {
+		return s
 	}
-	return s
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 func (s *Server) setOnline(c *client) {
