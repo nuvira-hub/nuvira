@@ -47,6 +47,9 @@ pub enum NetEvent {
         secure_attention: bool,
         /// The remote computer is a Mac: from a Mac, Cmd and Ctrl stay what they are.
         remote_mac: bool,
+        /// The remote computer runs Windows (see `remote_is_windows`): from Windows
+        /// towards any other, AltGr needs the viewer's AltGr fix.
+        remote_windows: bool,
         /// The agent can turn on privacy mode.
         privacy: bool,
         /// The agent opens remote terminals.
@@ -425,6 +428,11 @@ impl std::fmt::Display for Denied {
 
 impl std::error::Error for Denied {}
 
+/// The agent's system is Windows: older agents send none, and they are all Windows.
+pub(crate) fn remote_is_windows(os: &str) -> bool {
+    os.is_empty() || os == "windows"
+}
+
 fn control(msg: Msg) -> ControlMessage {
     ControlMessage { msg: Some(msg) }
 }
@@ -649,6 +657,7 @@ async fn handshake(
             file_manager: false,
             secure_attention: false,
             remote_mac: agent.os == "macos",
+            remote_windows: remote_is_windows(&agent.os),
             privacy: false,
             terminal: true,
             tunnel: agent.tunnel,
@@ -687,6 +696,7 @@ async fn handshake(
         // Older agents send no system: they are all Windows.
         secure_attention: agent.os.is_empty() || agent.os == "windows",
         remote_mac: agent.os == "macos",
+        remote_windows: remote_is_windows(&agent.os),
         privacy: agent.privacy_mode,
         terminal: agent.terminal,
         tunnel: agent.tunnel,
