@@ -19,12 +19,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/qlog"
 	"google.golang.org/protobuf/encoding/protodelim"
 
 	"github.com/nuvira-hub/nuvira/server/internal/pb"
@@ -67,9 +69,26 @@ func benchTempDir(tb testing.TB) string {
 	return dir
 }
 
+// benchQUICConfig adds the qlog tracer when QLOGDIR is set (one file per
+// connection and side: to see why a dial timed out, SRV-16).
+func benchQUICConfig(c *quic.Config) *quic.Config {
+	if os.Getenv("QLOGDIR") != "" {
+		c.Tracer = qlog.DefaultConnectionTracer
+	}
+	return c
+}
+
 // benchServer starts the signalling server as cmd/nuvira-server does, on
 // 127.0.0.1 with a fresh data directory and the rate limits off.
 func benchServer(tb testing.TB) (string, *signal.Server) {
+	tb.Helper()
+	addr, srv, _ := benchServerConn(tb)
+	return addr, srv
+}
+
+// benchServerConn is benchServer that also returns the server's socket
+// (relay.Conn), for its counters.
+func benchServerConn(tb testing.TB) (string, *signal.Server, *relay.Conn) {
 	tb.Helper()
 	dir := benchTempDir(tb)
 	st, err := store.Open(filepath.Join(dir, "nuvira.db"))
@@ -84,13 +103,17 @@ func benchServer(tb testing.TB) (string, *signal.Server) {
 	if err != nil {
 		tb.Fatal(err)
 	}
+	// As cmd/nuvira-server/main.go: quic-go cannot enlarge the buffers of a
+	// relay.Conn itself (it is no *net.UDPConn), so the server sets them.
+	_ = udp.SetReadBuffer(7 << 20)
+	_ = udp.SetWriteBuffer(7 << 20)
 	log := benchLog()
 	rl := relay.New(log)
 	conn := relay.NewConn(udp, rl)
 	tr := &quic.Transport{Conn: conn}
 	ln, err := tr.Listen(
 		&tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{benchALPN}, MinVersion: tls.VersionTLS13},
-		&quic.Config{KeepAlivePeriod: 10 * time.Second, MaxIdleTimeout: 30 * time.Second},
+		benchQUICConfig(&quic.Config{KeepAlivePeriod: 10 * time.Second, MaxIdleTimeout: 30 * time.Second}),
 	)
 	if err != nil {
 		tb.Fatal(err)
@@ -113,7 +136,26 @@ func benchServer(tb testing.TB) (string, *signal.Server) {
 		_ = tr.Close()
 		_ = st.Close()
 	})
-	return udp.LocalAddr().String(), srv
+	return udp.LocalAddr().String(), srv, conn
+}
+
+// benchQueueDrops reads the datagrams the server's relay.Conn dropped with a
+// full queue (Counters().Drops), through reflection: Counters is newer than the
+// baseline tag, where this file must build too.
+func benchQueueDrops(c *relay.Conn) string {
+	m := reflect.ValueOf(c).MethodByName("Counters")
+	if !m.IsValid() || m.Type().NumIn() != 0 || m.Type().NumOut() != 1 {
+		return "n/a (no relay.Conn.Counters in this version)"
+	}
+	v := m.Call(nil)[0]
+	if v.Kind() != reflect.Struct {
+		return "n/a"
+	}
+	f := v.FieldByName("Drops")
+	if !f.IsValid() || !f.CanUint() {
+		return "n/a"
+	}
+	return fmt.Sprint(f.Uint())
 }
 
 // benchDialer dials every connection of a sub-benchmark from one client socket
@@ -131,12 +173,21 @@ func newBenchDialer(tb testing.TB) *benchDialer {
 	if err != nil {
 		tb.Fatal(err)
 	}
+	_ = udp.SetReadBuffer(7 << 20)
+	_ = udp.SetWriteBuffer(7 << 20)
 	d := &benchDialer{udp: udp, tr: &quic.Transport{Conn: udp}}
 	tb.Cleanup(func() {
 		_ = d.tr.Close()
 		_ = udp.Close()
 	})
 	return d
+}
+
+func (d *benchDialer) localAddr() string {
+	if d == nil {
+		return "a new socket per dial"
+	}
+	return d.udp.LocalAddr().String()
 }
 
 type benchClient struct {
@@ -182,7 +233,7 @@ func (c *benchClient) close() { _ = c.conn.CloseWithError(0, "") }
 // connection gets a socket of its own (quic.DialAddr).
 func benchRegister(ctx context.Context, d *benchDialer, addr string, priv ed25519.PrivateKey, name string) (*benchClient, error) {
 	tlsConf := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{benchALPN}}
-	qconf := &quic.Config{KeepAlivePeriod: 2 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	qconf := benchQUICConfig(&quic.Config{KeepAlivePeriod: 2 * time.Second, MaxIdleTimeout: 30 * time.Second})
 	var conn *quic.Conn
 	var err error
 	if d == nil {
@@ -195,7 +246,7 @@ func benchRegister(ctx context.Context, d *benchDialer, addr string, priv ed2551
 		conn, err = d.tr.Dial(ctx, ua, tlsConf, qconf)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("dial: %w", err)
 	}
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
@@ -270,11 +321,16 @@ func TestBenchSignalLiterals(t *testing.T) {
 // One operation = a new QUIC connection + Register/Challenge/Proof/Registered +
 // close. "new-device" uses a new key each time (store insert), "known-device"
 // one of 64 keys already registered (store update). Every connection of a
-// sub-benchmark is dialled from one client socket (SRV-15).
+// sub-benchmark is dialled from one client socket (SRV-15); the server socket has
+// the 7 MiB buffers of cmd/nuvira-server. A failed registration is reported with
+// the operation, the time it took (5 s = handshake idle timeout, 30 s = idle
+// timeout), the client and server addresses and the server's queue drops
+// (SRV-16: seen on the Mac, 1 dial in ~5,000); QLOGDIR=<dir> writes a qlog per
+// connection.
 func BenchmarkSignalRegister(b *testing.B) {
 	for _, mode := range []string{"new-device", "known-device"} {
 		b.Run(mode, func(b *testing.B) {
-			addr, _ := benchServer(b)
+			addr, _, sconn := benchServerConn(b)
 			d := newBenchDialer(b)
 			ctx := context.Background()
 			const known = 64
@@ -284,7 +340,8 @@ func BenchmarkSignalRegister(b *testing.B) {
 					keys = append(keys, benchKey(i))
 					c, err := benchRegister(ctx, d, addr, keys[i], "bench")
 					if err != nil {
-						b.Fatal(err)
+						b.Fatalf("registering known key %d: %v (client %s, server %s, server queue drops %s)",
+							i, err, d.localAddr(), addr, benchQueueDrops(sconn))
 					}
 					c.close()
 				}
@@ -302,7 +359,9 @@ func BenchmarkSignalRegister(b *testing.B) {
 				t0 := time.Now()
 				c, err := benchRegister(ctx, d, addr, keys[i%len(keys)], "bench")
 				if err != nil {
-					b.Fatal(err)
+					b.Fatalf("%s: operation %d of %d failed after %v: %v (client %s, server %s, server queue drops %s, p50 of the %d before %.2f ms)",
+						mode, i+1, b.N, time.Since(t0).Round(time.Millisecond), err, d.localAddr(), addr,
+						benchQueueDrops(sconn), len(times), benchP50ms(append([]time.Duration(nil), times...)))
 				}
 				times = append(times, time.Since(t0))
 				c.close()
