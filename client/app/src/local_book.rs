@@ -158,7 +158,7 @@ pub fn auto_add(device_id: &str, name: &str, password: &str) -> Result<bool, Str
 }
 
 #[cfg(windows)]
-fn protect(plain: &str) -> Result<String, String> {
+pub(crate) fn protect(plain: &str) -> Result<String, String> {
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Cryptography::{
         CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData,
@@ -180,7 +180,7 @@ fn protect(plain: &str) -> Result<String, String> {
 
 /// Empty if the password cannot be read (another user or computer).
 #[cfg(windows)]
-fn unprotect(stored: &str) -> String {
+pub(crate) fn unprotect(stored: &str) -> String {
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Cryptography::{
         CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptUnprotectData,
@@ -290,7 +290,7 @@ fn load_book_key(path: &std::path::Path) -> Result<[u8; 32], String> {
 }
 
 #[cfg(not(windows))]
-fn protect(plain: &str) -> Result<String, String> {
+pub(crate) fn protect(plain: &str) -> Result<String, String> {
     use ring::aead::{Aad, NONCE_LEN, Nonce};
 
     let key = book_key()?;
@@ -305,7 +305,7 @@ fn protect(plain: &str) -> Result<String, String> {
 
 /// Empty if the password cannot be read (another user or computer).
 #[cfg(not(windows))]
-fn unprotect(stored: &str) -> String {
+pub(crate) fn unprotect(stored: &str) -> String {
     use ring::aead::{Aad, NONCE_LEN, Nonce};
 
     let Some(bytes) = stored.strip_prefix("key:").and_then(unhex) else {

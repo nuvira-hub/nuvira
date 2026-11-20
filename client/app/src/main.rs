@@ -239,9 +239,20 @@ struct SessionUi {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct Settings {
     server: String,
-    /// Remembered address book sign-in (server token, not the password).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Remembered address book sign-in (server token, not the password), in
+    /// memory only: the file has it protected as the local address book's
+    /// passwords are ([`Settings::token_protected`]).
+    #[serde(skip)]
     token: Option<String>,
+    /// The token protected with DPAPI on Windows, with the address book's key
+    /// (the Keychain, the Secret Service) elsewhere: a copy of `app.json` alone
+    /// does not sign anybody in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    token_protected: Option<String>,
+    /// The token in clear text, as versions up to 0.28 saved it: read once and
+    /// saved protected.
+    #[serde(default, rename = "token", skip_serializing)]
+    plain_token: Option<String>,
     /// Interface language ("auto" or a code from `nuvira_i18n::LANGUAGES`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
@@ -486,8 +497,25 @@ impl Settings {
 fn load_settings_from(path: &std::path::Path) -> Settings {
     let problem = match std::fs::read_to_string(path) {
         // Editors such as Notepad (and PowerShell 5) may add a UTF-8 byte order mark.
-        Ok(text) => match serde_json::from_str(text.trim_start_matches('\u{feff}')) {
-            Ok(settings) => return settings,
+        Ok(text) => match serde_json::from_str::<Settings>(text.trim_start_matches('\u{feff}')) {
+            Ok(mut settings) => {
+                settings.token =
+                    settings.token_protected.as_deref().map(local_book::unprotect).filter(|t| !t.is_empty());
+                if settings.token_protected.is_some() && settings.token.is_none() {
+                    // Another user's or computer's, or the key store locked:
+                    // signed out, as after a sign-out.
+                    warn!("the saved address book sign-in cannot be read here: sign in again");
+                }
+                if let Some(plain) = settings.plain_token.take() {
+                    // Saved by an earlier version: from now on protected.
+                    settings.token = Some(plain);
+                    match save_settings_to(path, &settings) {
+                        Ok(()) => info!("address book sign-in in {} now protected", path.display()),
+                        Err(e) => warn!("settings not saved: {e:#}"),
+                    }
+                }
+                return settings;
+            }
             Err(e) => e.to_string(),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
@@ -515,12 +543,42 @@ fn load_settings_from(path: &std::path::Path) -> Settings {
 }
 
 /// Written aside and renamed: a crash halfway leaves the previous file whole.
+/// The sign-in token only protected; on Linux and macOS the file is the
+/// person's alone (0600).
 fn save_settings_to(path: &std::path::Path, settings: &Settings) -> anyhow::Result<()> {
+    let mut stored = settings.clone();
+    stored.plain_token = None;
+    stored.token_protected = match &settings.token {
+        // The same token as loaded: its protected text as it is.
+        Some(token)
+            if settings.token_protected.as_deref().map(local_book::unprotect).as_deref() == Some(token) =>
+        {
+            settings.token_protected.clone()
+        }
+        Some(token) => match local_book::protect(token) {
+            Ok(protected) => Some(protected),
+            Err(e) => {
+                warn!("address book sign-in not saved (it cannot be protected here: {e})");
+                None
+            }
+        },
+        None => None,
+    };
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let part = path.with_extension("json.part");
-    std::fs::write(&part, serde_json::to_string_pretty(settings)?)?;
+    let text = serde_json::to_string_pretty(&stored)?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::remove_file(&part);
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&part)?;
+        file.write_all(text.as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&part, text)?;
     std::fs::rename(&part, path)?;
     Ok(())
 }
@@ -2344,6 +2402,45 @@ mod tests {
         // Not text at all.
         std::fs::write(&path, [0xffu8, 0xfe, 0x00]).unwrap();
         assert!(load_settings_from(&path).no_tunnel);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// APP-6: the sign-in token is saved protected; a plain one of an older
+    /// version is read once and saved protected.
+    #[test]
+    fn token_saved_protected() {
+        let dir = test_dir("token");
+        let path = dir.join("app.json");
+        let token = "0123456789abcdef-token";
+        std::fs::write(&path, format!(r#"{{"server": "nuvira.example.com", "token": "{token}"}}"#)).unwrap();
+        let loaded = load_settings_from(&path);
+        assert_eq!(loaded.token.as_deref(), Some(token));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains(token) && !text.contains("\"token\""), "{text}");
+        assert!(text.contains("\"token_protected\""), "{text}");
+        assert_eq!(load_settings_from(&path).token.as_deref(), Some(token));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+
+        // A new sign-in, then a sign-out.
+        let mut settings = load_settings_from(&path);
+        settings.token = Some("another".into());
+        save_settings_to(&path, &settings).unwrap();
+        assert_eq!(load_settings_from(&path).token.as_deref(), Some("another"));
+        settings.token = None;
+        save_settings_to(&path, &settings).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("token"), "{text}");
+        assert_eq!(load_settings_from(&path).token, None);
+
+        // Protected for someone else (or garbage): signed out, nothing else lost.
+        std::fs::write(&path, r#"{"server": "s", "no_print": true, "token_protected": "dpapi:00"}"#).unwrap();
+        let loaded = load_settings_from(&path);
+        assert_eq!(loaded.token, None);
+        assert!(loaded.no_print && loaded.server == "s");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
