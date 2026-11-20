@@ -15,6 +15,7 @@
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -151,7 +152,13 @@ async fn bind_relay_ws(socket: &crate::ws::WsSocket, route: &Route) -> Result<()
     bail!("the other device did not bind to the relay")
 }
 
-fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Result<Candidates> {
+/// `cancel` stops it between two binds (the session it was for is gone).
+fn bind_relay(
+    socket: &UdpSocket,
+    route: &Route,
+    locals: &[SocketAddr],
+    cancel: &AtomicBool,
+) -> Result<Candidates> {
     let bind = bind_message(route, locals);
     let ipv6_socket = socket.local_addr()?.is_ipv6();
     let relay = for_socket(route.relay, ipv6_socket);
@@ -170,6 +177,9 @@ fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Resul
     let mut acked = false;
     // ~15 s: the other side may arrive a few seconds later.
     for _ in 0..60 {
+        if cancel.load(Ordering::Relaxed) {
+            bail!("binding to the relay stopped: the session is gone");
+        }
         if let Some((to, msg)) = &announce {
             // Errors ignored: the other family may have no route at all.
             let _ = socket.send_to(msg, *to);
@@ -177,7 +187,8 @@ fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Resul
         socket.send_to(&bind, relay)?;
         loop {
             match socket.recv_from(&mut buf) {
-                Ok((n, from)) if canonical(from) == route.relay => match bound_state(&buf[..n], &route.token) {
+                Ok((n, from)) if canonical(from) == route.relay => match bound_state(&buf[..n], &route.token)
+                {
                     Some(true) => {
                         socket.set_read_timeout(None)?;
                         return Ok(parse_candidates(&buf[22..n]));
@@ -273,7 +284,12 @@ fn parse_candidates(b: &[u8]) -> Candidates {
 /// Local addresses this PC uses to reach the relay or the Internet (the main
 /// network interface), one per family the socket has, with the session socket's
 /// port. On IPv6 the local address is also the public one (no NAT).
-fn local_candidates(relay: SocketAddr, relay_alt: Option<SocketAddr>, port: u16, ipv6_socket: bool) -> Vec<SocketAddr> {
+fn local_candidates(
+    relay: SocketAddr,
+    relay_alt: Option<SocketAddr>,
+    port: u16,
+    ipv6_socket: bool,
+) -> Vec<SocketAddr> {
     // Towards the relay where it has an address of that family, otherwise a public
     // one (connect on UDP sends nothing: it only asks the system which interface
     // it would use).
@@ -312,19 +328,24 @@ fn usable_ipv6(ip: std::net::Ipv6Addr, relay: SocketAddr) -> bool {
         && (!ip.is_loopback() || relay.ip().is_loopback())
 }
 
+/// An opening packet: the magic, then 16 zero bytes. Nobody reads it, in any
+/// version (QUIC drops it: first byte without the 0x40 bit). It used to carry
+/// the relay token, and the other side's private addresses can be unrelated
+/// hosts on this side's network, which could then re-point the relayed session
+/// (review NET-2); the length stays 20 bytes so that NATs and firewalls see what
+/// they saw before.
+const PUNCH: [u8; 20] = [0x00, b'N', b'X', b'P', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
 /// Opening packets towards the other side: they open the NAT mapping and the local
 /// firewall state, so the other side's direct QUIC packets can get in.
-/// QUIC drops them (first byte without the 0x40 bit).
-fn punch(socket: &UdpSocket, peer: SocketAddr, token: &[u8; 16]) {
+fn punch(socket: &UdpSocket, peer: SocketAddr) {
     let Ok(local) = socket.local_addr() else { return };
     if !reachable(peer, local.is_ipv6()) {
         return;
     }
     let peer = for_socket(peer, local.is_ipv6());
-    let mut packet = vec![0x00, b'N', b'X', b'P'];
-    packet.extend_from_slice(token);
     for _ in 0..3 {
-        let _ = socket.send_to(&packet, peer);
+        let _ = socket.send_to(&PUNCH, peer);
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -356,14 +377,27 @@ async fn session_endpoint(
     }
 }
 
+/// Sets the flag when dropped: with the future of [`session_socket`] (a viewer
+/// window closed, an agent session cancelled), so that its blocking task stops
+/// binding to the relay within ~250 ms instead of ~15 s (review NET-14).
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
     let socket = session_udp(route.relay)?;
     let route = route.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _cancel_on_drop = CancelOnDrop(cancel.clone());
     tokio::task::spawn_blocking(move || {
         let local = socket.local_addr()?;
         let locals = local_candidates(route.relay, route.relay_alt, local.port(), local.is_ipv6());
         debug!(?locals, "this side's addresses");
-        let candidates = bind_relay(&socket, &route, &locals)?;
+        let candidates = bind_relay(&socket, &route, &locals, &cancel)?;
         debug!(?candidates, "addresses of the other side");
         let relays = [Some(route.relay), route.relay_alt];
         // Only families this PC has a route for (an IPv4-only network has no IPv6
@@ -376,7 +410,7 @@ async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
             .filter(|a| !relays.contains(&Some(*a)) && reachable(*a, local.is_ipv6()) && has_family(a))
             .collect();
         for peer in &peers {
-            punch(&socket, *peer, &route.token);
+            punch(&socket, *peer);
         }
         socket.set_nonblocking(true)?;
         Ok((socket, peers))
@@ -424,7 +458,8 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     let (mut endpoint, peers) = session_endpoint(route, None).await?;
     endpoint.set_default_client_config(config);
 
-    let mut relay = Box::pin(endpoint.connect(route.relay, "nuvira-device")?);
+    let connecting = endpoint.connect(route.relay, "nuvira-device")?;
+    let mut relay = Box::pin(async move { connecting.await.context("connecting through the relay") });
     // NUVIRA_FORCE_RELAY=1: relay only, to measure its cost in tests.
     let force_relay = std::env::var_os("NUVIRA_FORCE_RELAY").is_some();
     // Direct attempts towards all the other side's addresses, in parallel.
@@ -444,31 +479,8 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
         }
     }
 
-    // The first direct connection wins; the relay is used only if no direct one
-    // succeeds within DIRECT_GRACE of the relay being ready.
     let mut relayed: Option<Result<Connection>> = None;
-    let mut deadline = None;
-    let chosen = loop {
-        tokio::select! {
-            Some(r) = direct.join_next(), if !direct.is_empty() => match r {
-                Ok(Ok(conn)) => break (conn, Path::Direct),
-                Ok(Err((peer, e))) => debug!(%peer, "direct path failed: {e}"),
-                Err(e) => debug!("direct attempt interrupted: {e}"),
-            },
-            r = &mut relay, if relayed.is_none() => {
-                relayed = Some(r.context("connecting through the relay"));
-                deadline = Some(tokio::time::Instant::now() + DIRECT_GRACE);
-            }
-            _ = tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)), if deadline.is_some() => {
-                break (relayed.take().expect("relay ready")?, Path::Relay);
-            }
-        }
-        // All direct attempts failed and the relay is ready: no point waiting.
-        if direct.is_empty() && relayed.is_some() {
-            break (relayed.take().expect("relay ready")?, Path::Relay);
-        }
-    };
-    let (conn, path) = chosen;
+    let (conn, path) = choose(&mut direct, &mut relay, &mut relayed).await?;
     // The other attempts are closed: the agent uses the connection the session opens on.
     direct.abort_all();
     match relayed {
@@ -485,6 +497,43 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     }
     debug!(?path, remote = %canonical(conn.remote_address()), "connected");
     Ok((conn, path))
+}
+
+/// The first direct connection wins; the relay is used only if no direct one
+/// succeeds within [`DIRECT_GRACE`] of the relay being ready. A relay that fails
+/// does not end the attempt while direct attempts still run (review NET-15: it
+/// used to, 1.5 s later): its error is returned once they have all failed.
+/// `relayed` keeps the relay's result, if it came, for the caller to close.
+async fn choose<C: Send + 'static, E: std::fmt::Display + Send + 'static>(
+    direct: &mut tokio::task::JoinSet<Result<C, (SocketAddr, E)>>,
+    relay: &mut (impl Future<Output = Result<C>> + Unpin),
+    relayed: &mut Option<Result<C>>,
+) -> Result<(C, Path)> {
+    let mut deadline = None;
+    loop {
+        tokio::select! {
+            Some(r) = direct.join_next(), if !direct.is_empty() => match r {
+                Ok(Ok(conn)) => return Ok((conn, Path::Direct)),
+                Ok(Err((peer, e))) => debug!(%peer, "direct path failed: {e}"),
+                Err(e) => debug!("direct attempt interrupted: {e}"),
+            },
+            r = &mut *relay, if relayed.is_none() => {
+                match &r {
+                    Ok(_) => deadline = Some(tokio::time::Instant::now() + DIRECT_GRACE),
+                    Err(e) if !direct.is_empty() => debug!("relay failed, waiting for the direct attempts: {e:#}"),
+                    Err(_) => {}
+                }
+                *relayed = Some(r);
+            }
+            _ = tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)), if deadline.is_some() => {
+                return relayed.take().expect("relay ready").map(|c| (c, Path::Relay));
+            }
+        }
+        // All direct attempts failed and the relay has answered: no point waiting.
+        if direct.is_empty() && relayed.is_some() {
+            return relayed.take().expect("relay ready").map(|c| (c, Path::Relay));
+        }
+    }
 }
 
 /// Does the certificate use this Ed25519 public key?
@@ -664,6 +713,83 @@ mod tests {
         assert!(reachable(v4, true));
     }
 
+    /// Runs [`choose`] with direct attempts and a relay that end after the given
+    /// times (`Ok(n)`: connection `n`; `Err`: failure); returns the choice and
+    /// how long it took.
+    async fn race(
+        direct: &[(u64, Result<u32, &'static str>)],
+        relay: (u64, Result<u32, &'static str>),
+    ) -> (Result<(u32, Path), String>, Duration) {
+        let mut set = tokio::task::JoinSet::new();
+        for (i, (ms, r)) in direct.iter().cloned().enumerate() {
+            let peer = SocketAddr::from(([192, 0, 2, i as u8 + 1], 1));
+            set.spawn(async move {
+                tokio::time::sleep(Duration::from_millis(ms)).await;
+                r.map_err(|e| (peer, e))
+            });
+        }
+        let (ms, r) = relay;
+        let mut relay = Box::pin(async move {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            r.map_err(|e| anyhow::anyhow!(e))
+        });
+        let mut relayed = None;
+        let start = std::time::Instant::now();
+        let got = choose(&mut set, &mut relay, &mut relayed).await.map_err(|e| e.to_string());
+        (got, start.elapsed())
+    }
+
+    #[tokio::test]
+    async fn choose_waits_for_direct_attempts_when_the_relay_fails() {
+        // Review NET-15: the relay refuses at once, the direct path needs 2.5 s
+        // (a lost first Initial on a lossy link): direct (before: the relay's
+        // error 1.5 s after it).
+        let (got, took) = race(&[(2500, Ok(7))], (50, Err("refused"))).await;
+        assert_eq!(got.unwrap(), (7, Path::Direct));
+        assert!(took >= Duration::from_millis(2400), "{took:?}");
+        // The relay fails and so do the direct attempts: the relay's error, once
+        // the last direct attempt has failed.
+        let (got, took) = race(&[(300, Err("timeout")), (600, Err("timeout"))], (50, Err("refused"))).await;
+        assert_eq!(got.unwrap_err(), "refused");
+        assert!(took >= Duration::from_millis(550) && took < Duration::from_millis(1400), "{took:?}");
+        // No direct attempt at all: the relay's error at once.
+        let (got, took) = race(&[], (50, Err("refused"))).await;
+        assert_eq!(got.unwrap_err(), "refused");
+        assert!(took < Duration::from_millis(1000), "{took:?}");
+    }
+
+    #[tokio::test]
+    async fn choose_prefers_direct_within_the_grace_time() {
+        // Unchanged: a direct connection within DIRECT_GRACE of the relay wins.
+        let (got, _) = race(&[(500, Ok(1))], (50, Ok(2))).await;
+        assert_eq!(got.unwrap(), (1, Path::Direct));
+        // Later than that: the relay, DIRECT_GRACE after it was ready.
+        let (got, took) = race(&[(4000, Ok(1))], (50, Ok(2))).await;
+        assert_eq!(got.unwrap(), (2, Path::Relay));
+        assert!(took >= Duration::from_millis(1500) && took < Duration::from_millis(2500), "{took:?}");
+        // Direct attempts that fail: the relay as soon as they have.
+        let (got, took) = race(&[(300, Err("timeout"))], (50, Ok(2))).await;
+        assert_eq!(got.unwrap(), (2, Path::Relay));
+        assert!(took < Duration::from_millis(1000), "{took:?}");
+    }
+
+    #[test]
+    fn punch_packets_do_not_carry_the_token() {
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        punch(&socket, peer.local_addr().unwrap());
+        let mut buf = [0u8; 64];
+        for _ in 0..3 {
+            let (n, from) = peer.recv_from(&mut buf).unwrap();
+            assert_eq!(from, socket.local_addr().unwrap());
+            // Same length and magic as before review NET-2, no token after it.
+            assert_eq!(n, 20);
+            assert_eq!(buf[..4], [0x00, b'N', b'X', b'P']);
+            assert_eq!(buf[4..20], [0; 16]);
+        }
+    }
+
     #[test]
     fn announce_sets_the_role_flag() {
         let route = Route {
@@ -826,7 +952,7 @@ mod characterisation {
         push_addr(&mut tail, local);
         let (relay, handle) = fake_relay(vec![bound(&token, 0, &[]), bound(&token, 1, &tail)]);
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let candidates = bind_relay(&socket, &route(relay), &[]).unwrap();
+        let candidates = bind_relay(&socket, &route(relay), &[], &AtomicBool::new(false)).unwrap();
         assert_eq!(candidates, Candidates { reflexive: Some(peer), locals: vec![local] });
         let binds = handle.join().unwrap();
         // The first answer ("bound, alone") is noted; the next round's bind gets "both".
@@ -851,7 +977,7 @@ mod characterisation {
         push_addr(&mut fake, "203.0.113.66:1".parse().unwrap());
         impostor.send_to(&bound(&token, 1, &fake), me).unwrap();
         // The impostor's answer is queued first; the relay's comes after.
-        let candidates = bind_relay(&socket, &route(relay), &[]).unwrap();
+        let candidates = bind_relay(&socket, &route(relay), &[], &AtomicBool::new(false)).unwrap();
         assert_eq!(candidates, Candidates::default(), "the relay's empty answer, not the impostor's");
         handle.join().unwrap();
     }
@@ -862,7 +988,9 @@ mod characterisation {
         let silent = UdpSocket::bind("127.0.0.1:0").unwrap();
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         let start = std::time::Instant::now();
-        let err = bind_relay(&socket, &route(silent.local_addr().unwrap()), &[]).unwrap_err().to_string();
+        let err = bind_relay(&socket, &route(silent.local_addr().unwrap()), &[], &AtomicBool::new(false))
+            .unwrap_err()
+            .to_string();
         let took = start.elapsed();
         assert_eq!(err, format!("the relay {} does not answer", silent.local_addr().unwrap()));
         assert!(took >= Duration::from_secs(14) && took < Duration::from_secs(30), "{took:?}");
@@ -876,12 +1004,36 @@ mod characterisation {
         assert_eq!(n, 60);
     }
 
+    #[tokio::test]
+    async fn a_dropped_session_socket_stops_binding() {
+        // Review NET-14: a relay that never answers, and a session given up after
+        // 600 ms. The blocking task used to bind on for ~15 s (60 binds).
+        let silent = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let r = route(silent.local_addr().unwrap());
+        assert!(tokio::time::timeout(Duration::from_millis(600), session_socket(&r)).await.is_err());
+        // One bind may still be on its way when the flag is set.
+        std::thread::sleep(Duration::from_millis(400));
+        silent.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let mut buf = [0u8; 256];
+        let mut before = 0;
+        while silent.recv_from(&mut buf).is_ok() {
+            before += 1;
+        }
+        assert!((2..=5).contains(&before), "{before} binds in the first second");
+        std::thread::sleep(Duration::from_millis(1000));
+        let mut after = 0;
+        while silent.recv_from(&mut buf).is_ok() {
+            after += 1;
+        }
+        assert_eq!(after, 0, "binds after the session was dropped");
+    }
+
     #[test]
     fn bind_relay_acked_but_alone() {
         let token = [9u8; 16];
         let (relay, _handle) = fake_relay(vec![bound(&token, 0, &[])]);
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let err = bind_relay(&socket, &route(relay), &[]).unwrap_err().to_string();
+        let err = bind_relay(&socket, &route(relay), &[], &AtomicBool::new(false)).unwrap_err().to_string();
         assert_eq!(err, "the other device did not bind to the relay");
     }
 

@@ -458,16 +458,21 @@ async fn open_connection(
         }
         Target::Server { server, server_name, server_key, transport, server_ws, device_id, identity } => {
             let identity_path = identity.clone();
-            let identity = Identity::load_or_create_within(&identity, Some(std::time::Duration::from_secs(20)))
-                .map_err(|e| match e.downcast_ref::<nuvira_transport::identity::KeyringLocked>() {
-                    Some(locked) => {
-                        tracing::warn!("{locked}");
-                        // The Keychain on macOS; KWallet or GNOME Keyring on Linux.
-                        let key = if cfg!(target_os = "macos") { "viewer.keyring_locked_mac" } else { "viewer.keyring_locked" };
-                        anyhow::anyhow!(nuvira_i18n::t(key))
-                    }
-                    None => e,
-                })?;
+            // On a blocking thread: it may wait up to 20 s for a locked keyring
+            // (review NET-14).
+            let identity = tokio::task::spawn_blocking(move || {
+                Identity::load_or_create_within(&identity, Some(std::time::Duration::from_secs(20)))
+            })
+            .await?
+            .map_err(|e| match e.downcast_ref::<nuvira_transport::identity::KeyringLocked>() {
+                Some(locked) => {
+                    tracing::warn!("{locked}");
+                    // The Keychain on macOS; KWallet or GNOME Keyring on Linux.
+                    let key = if cfg!(target_os = "macos") { "viewer.keyring_locked_mac" } else { "viewer.keyring_locked" };
+                    anyhow::anyhow!(nuvira_i18n::t(key))
+                }
+                None => e,
+            })?;
             let expected = server_key.or_else(|| signal::known_server::get(&server_name));
             let name = nuvira_transport::device_name();
             // The viewer receives no connections: several session windows can coexist.

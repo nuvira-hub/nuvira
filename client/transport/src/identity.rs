@@ -36,6 +36,20 @@ impl std::fmt::Display for KeyringLocked {
 
 impl std::error::Error for KeyringLocked {}
 
+/// How long a DPAPI or systemd-creds key that the system cannot open now is
+/// waited for before it is set aside and a new one made, as for a key that will
+/// never open (review NET-8). Their passing errors are told from the permanent
+/// ones by error codes and by whether the program ran at all; should a permanent
+/// one be taken for a passing one, the device would otherwise stay offline
+/// without a word, which is worse than a new ID. The keyrings (Keychain, Secret
+/// Service) are waited for without end, as before: a person can open them.
+const GIVE_UP_WAITING: Duration = Duration::from_secs(5 * 60);
+
+/// Whether a key the system cannot open now is set aside after `waited`.
+fn give_up_waiting(protection: Option<Protection>, waited: Duration) -> bool {
+    matches!(protection, Some(Protection::Dpapi | Protection::SystemdCreds)) && waited >= GIVE_UP_WAITING
+}
+
 impl Identity {
     /// Reads the key from `path` or creates it (with its folders) if missing.
     /// A plain file is protected in place when the system can. While the system
@@ -64,6 +78,12 @@ impl Identity {
                         ))
                         .into());
                     }
+                    if give_up_waiting(keystore::protection_of(path), started.elapsed()) {
+                        let e =
+                            e.context(format!("still not open after {} min", GIVE_UP_WAITING.as_secs() / 60));
+                        set_aside(path, &e)?;
+                        break (KeyPair::generate_for(&PKCS_ED25519)?.serialize_der(), None);
+                    }
                     if !waited {
                         tracing::warn!(
                             "device key {}: waiting for the system to open it: {e:#}",
@@ -74,26 +94,7 @@ impl Identity {
                     std::thread::sleep(Duration::from_secs(5));
                 }
                 Err(ReadError::Unreadable(e)) => {
-                    // Another account's key (root opening a person's, or the
-                    // other way round) is not this one's to replace.
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::MetadataExt;
-                        // SAFETY: geteuid cannot fail.
-                        let me = unsafe { libc::geteuid() };
-                        if let Ok(meta) = std::fs::metadata(path)
-                            && meta.uid() != me
-                        {
-                            anyhow::bail!("device key {} belongs to another account and {e:#}", path.display());
-                        }
-                    }
-                    let aside = path.with_extension("unreadable");
-                    tracing::error!(
-                        "device key {} {e:#}: kept as {} and a new one made (new ID)",
-                        path.display(),
-                        aside.display()
-                    );
-                    std::fs::rename(path, &aside).with_context(|| format!("moving {}", path.display()))?;
+                    set_aside(path, &e)?;
                     break (KeyPair::generate_for(&PKCS_ED25519)?.serialize_der(), None);
                 }
                 Err(ReadError::Io(e)) => {
@@ -174,6 +175,31 @@ impl Identity {
     pub fn tls_cert(&self) -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
         (vec![self.cert.clone()], PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(self.key.serialize_der())))
     }
+}
+
+/// Moves a key file that will not open here to `*.unreadable`, so that a new key
+/// (a new ID) is made in its place; refused for another account's key.
+fn set_aside(path: &Path, e: &anyhow::Error) -> Result<()> {
+    // Another account's key (root opening a person's, or the other way round) is
+    // not this one's to replace.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid cannot fail.
+        let me = unsafe { libc::geteuid() };
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.uid() != me
+        {
+            anyhow::bail!("device key {} belongs to another account and {e:#}", path.display());
+        }
+    }
+    let aside = path.with_extension("unreadable");
+    tracing::error!(
+        "device key {} {e:#}: kept as {} and a new one made (new ID)",
+        path.display(),
+        aside.display()
+    );
+    std::fs::rename(path, &aside).with_context(|| format!("moving {}", path.display()))
 }
 
 /// The public key in a key file, if this account can open it now (no waiting).
@@ -261,6 +287,19 @@ mod tests {
         import(&handed, &imported).unwrap();
         assert_eq!(public_key_of(&imported), Some(*a.public_key()));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn only_dpapi_and_systemd_creds_give_up_waiting() {
+        let long = GIVE_UP_WAITING + Duration::from_secs(1);
+        for p in [Protection::Dpapi, Protection::SystemdCreds] {
+            assert!(!give_up_waiting(Some(p), Duration::from_secs(60)), "{p:?}");
+            assert!(give_up_waiting(Some(p), GIVE_UP_WAITING), "{p:?}");
+        }
+        for p in [Protection::Keychain, Protection::SecretService, Protection::File, Protection::Handed] {
+            assert!(!give_up_waiting(Some(p), long), "{p:?}");
+        }
+        assert!(!give_up_waiting(None, long));
     }
 
     #[test]

@@ -47,6 +47,8 @@ The agent prints its certificate fingerprint. On the controlling PC:
 target\release\nuvira-viewer.exe 192.168.1.20 --fingerprint <fingerprint>
 ```
 
+Without `--fingerprint` the viewer accepts any certificate (whoever answers on that address gets the password) and logs a warning with the fingerprint it saw (since the review's lot 19, NET-17): compare it with the one the agent printed and pass it with `--fingerprint` from then on.
+
 The window title shows fps, capture→display latency, RTT, bandwidth and encoding and decoding times. The default port is **UDP 21500** (it must be opened in the agent's Windows firewall).
 
 > This direct LAN mode has no authentication besides the fingerprint and one session at a time: trusted networks only. With a server see [13-phase1-network.md](13-phase1-network.md).

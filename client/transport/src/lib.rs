@@ -254,11 +254,11 @@ pub fn server_config() -> Result<(ServerConfig, Fingerprint)> {
     Ok((config, fingerprint))
 }
 
-/// Viewer connection to an agent. Without an expected fingerprint any certificate is accepted.
+/// Viewer connection to an agent. Without an expected fingerprint any certificate
+/// is accepted (LAN tests): the fingerprint seen is then logged, so that it can be
+/// compared with the one the agent prints and given with `--fingerprint` (review
+/// NET-17).
 pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<Connection> {
-    if expected.is_none() {
-        warn!("agent fingerprint not given: connection NOT verified (LAN tests only)");
-    }
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .dangerous()
@@ -274,7 +274,19 @@ pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<
     endpoint.set_default_client_config(config);
     let conn =
         endpoint.connect(addr, "nuvira-agent")?.await.with_context(|| format!("connecting to {addr}"))?;
+    if expected.is_none() {
+        let seen = peer_fingerprint(&conn).map(|fp| fingerprint_hex(&fp)).unwrap_or_else(|| "unknown".into());
+        warn!(
+            "agent fingerprint not given: connection NOT verified (LAN tests only); {addr} has the certificate fingerprint {seen}: compare it with the agent's and pass it with --fingerprint"
+        );
+    }
     Ok(conn)
+}
+
+/// SHA-256 fingerprint of the certificate the other side of `conn` presented.
+pub fn peer_fingerprint(conn: &Connection) -> Option<Fingerprint> {
+    let certs = conn.peer_identity()?.downcast::<Vec<CertificateDer<'static>>>().ok()?;
+    Some(Sha256::digest(certs.first()?).into())
 }
 
 /// Checks the agent's certificate by comparing its SHA-256 fingerprint.
@@ -383,7 +395,10 @@ impl FramedRecv {
         self.decoder.set_limit(limit);
     }
 
-    /// Next message; `None` when the other side closes the stream.
+    /// Next message; `None` when the other side closes the stream after a whole
+    /// message. A stream that ends inside a message is an error, not a clean end
+    /// (review NET-4): the control stream and the terminal would otherwise take a
+    /// peer cut off mid-message for one that finished.
     pub async fn recv<M: Message + Default>(&mut self) -> Result<Option<M>> {
         loop {
             if let Some(msg) = self.decoder.next_message()? {
@@ -391,7 +406,8 @@ impl FramedRecv {
             }
             match self.stream.read(&mut self.buf).await? {
                 Some(n) => self.decoder.push(&self.buf[..n]),
-                None => return Ok(None),
+                None if self.decoder.is_empty() => return Ok(None),
+                None => bail!("stream ended inside a message"),
             }
         }
     }
@@ -412,21 +428,29 @@ pub async fn recv_one_with_limit<M: Message + Default>(
     stream: &mut RecvStream,
     limit: usize,
 ) -> Result<Option<M>> {
-    let mut len = 0usize;
-    for i in 0..10 {
+    // The length prefix, one byte at a time so that nothing after the message is
+    // read, then parsed by prost like the framing `Decoder` does (review NET-5:
+    // ten continuation bytes, or a 10th byte above the 64th bit, used to pass as
+    // a short length here and are an error there).
+    let mut prefix = [0u8; 10];
+    let mut n = 0;
+    loop {
         let mut byte = [0u8; 1];
         match stream.read(&mut byte).await? {
             Some(1) => {}
-            _ if i == 0 => return Ok(None),
-            _ => anyhow::bail!("stream ended inside a message"),
+            _ if n == 0 => return Ok(None),
+            _ => bail!("stream ended inside a message"),
         }
-        len |= ((byte[0] & 0x7f) as usize) << (7 * i);
-        if byte[0] & 0x80 == 0 {
+        prefix[n] = byte[0];
+        n += 1;
+        if byte[0] & 0x80 == 0 || n == prefix.len() {
             break;
         }
     }
-    anyhow::ensure!(len <= limit, "message too large: {len}");
-    let mut body = vec![0u8; len];
+    let len = prost::encoding::decode_varint(&mut &prefix[..n])
+        .map_err(nuvira_proto::framing::FrameError::Decode)?;
+    anyhow::ensure!(len <= limit as u64, "message too large: {len}");
+    let mut body = vec![0u8; len as usize];
     stream.read_exact(&mut body).await?;
     Ok(Some(M::decode(body.as_slice())?))
 }
@@ -464,6 +488,25 @@ pub async fn read_stream(rx: &mut FramedRecv, header: &FileChunk, limit: u64) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review NET-17: without `--fingerprint` the fingerprint seen is the agent's,
+    /// so the one logged can be pinned.
+    #[tokio::test]
+    async fn unverified_connection_reports_the_agent_fingerprint() {
+        let (server, fp) = server_endpoint("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = server.local_addr().unwrap();
+        let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
+        let conn = connect(addr, None).await.unwrap();
+        assert_eq!(peer_fingerprint(&conn), Some(fp));
+        let _agent = accept.await.unwrap();
+        // The pinned connection sees the same.
+        let (server, fp2) = server_endpoint("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = server.local_addr().unwrap();
+        let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
+        let conn = connect(addr, Some(fp2)).await.unwrap();
+        assert_eq!(peer_fingerprint(&conn), Some(fp2));
+        let _agent = accept.await.unwrap();
+    }
 
     #[test]
     fn resolve_adds_default_port() {

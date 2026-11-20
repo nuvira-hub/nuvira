@@ -486,7 +486,15 @@ pub async fn serve_via_server(
     // Screens left at a session's resolution by a killed agent.
     recover_screens(opts.identity_path.parent().unwrap_or(&nuvira_transport::identity::data_dir()));
     let server = nuvira_transport::resolve_addr(&opts.server_name, nuvira_transport::signal::DEFAULT_PORT)?;
-    let identity = Arc::new(nuvira_transport::identity::Identity::load_or_create(&opts.identity_path)?);
+    // On a blocking thread: it waits while the system keeps the key locked (a
+    // keyring not opened yet at boot), which must not hold a runtime worker
+    // (review NET-14).
+    let identity_path = opts.identity_path.clone();
+    let identity = tokio::task::spawn_blocking(move || {
+        nuvira_transport::identity::Identity::load_or_create(&identity_path)
+    })
+    .await??;
+    let identity = Arc::new(identity);
     let permissions = Permissions::load();
     let ctx = Arc::new(SessionContext {
         config,
