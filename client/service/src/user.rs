@@ -110,6 +110,7 @@ pub fn uninstall() -> Result<()> {
         bail!("@install.managed");
     }
     remove_own()?;
+    forget_imported();
     if let Err(e) = crate::gnome::uninstall_user() {
         warn!("GNOME extension for the lock screen not removed: {e:#}");
     }
@@ -175,11 +176,105 @@ pub fn start() -> Result<()> {
     let present: Vec<&str> = SESSION_VARS.iter().copied().filter(|v| std::env::var_os(v).is_some()).collect();
     // Without names systemctl would import the whole environment.
     if !present.is_empty() {
+        // The person's own installation notes what it adds, to take it away
+        // when it is removed (the installation for everyone stays).
+        let note = !crate::managed::installed();
+        let before = if note { manager_environment() } else { None };
         let mut args = vec!["import-environment"];
         args.extend(&present);
         systemctl(&args)?;
+        if let Some(before) = before {
+            note_imported(&before, &present);
+        }
     }
     systemctl(&["restart", UNIT])
+}
+
+/// The variables the agent's `import-environment` put into the person's
+/// systemd (the manager's environment, which every user unit gets): one
+/// `NAME=value` per line. Only those the desktop had not set already to the
+/// same value, so that removing them later does not take away the desktop's own.
+fn imported_path() -> PathBuf {
+    nuvira_transport::identity::data_dir().join("imported-environment")
+}
+
+/// The environment of the person's systemd manager.
+fn manager_environment() -> Option<Vec<(String, String)>> {
+    let out = Command::new("systemctl").args(["--user", "show-environment"]).output().ok()?;
+    out.status.success().then(|| parse_environment(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// `NAME=value` lines (values of `show-environment` with special characters
+/// come quoted: compared as printed, which is what a later comparison sees too).
+fn parse_environment(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect()
+}
+
+/// After an import: notes the variables that were not in the manager with the
+/// same value before, plus those already noted (still ours), with the value now.
+fn note_imported(before: &[(String, String)], present: &[&str]) {
+    let Some(after) = manager_environment() else { return };
+    let noted = std::fs::read_to_string(imported_path()).map(|t| parse_environment(&t)).unwrap_or_default();
+    let ours = imported_names(before, &after, &noted, present);
+    let text: String = ours.iter().map(|(name, value)| format!("{name}={value}\n")).collect();
+    let path = imported_path();
+    let saved = if text.is_empty() {
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+            _ => Ok(()),
+        }
+    } else {
+        crate::unix_shared::write_private(&path, &text)
+    };
+    if let Err(e) = saved {
+        warn!("variables given to systemd not noted ({}): {e:#}", path.display());
+    }
+}
+
+/// Which of `present` are the agent's own in the manager after the import.
+fn imported_names(
+    before: &[(String, String)],
+    after: &[(String, String)],
+    noted: &[(String, String)],
+    present: &[&str],
+) -> Vec<(String, String)> {
+    let get =
+        |list: &[(String, String)], name: &str| list.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+    present
+        .iter()
+        .filter_map(|name| {
+            let now = get(after, name)?;
+            let ours = get(before, name).as_ref() != Some(&now) || get(noted, name).is_some();
+            ours.then(|| (name.to_string(), now))
+        })
+        .collect()
+}
+
+/// At uninstall: takes out of the person's systemd the variables this
+/// installation put there and that still have the value it gave them (P8).
+fn forget_imported() {
+    let path = imported_path();
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    let noted = parse_environment(&text);
+    let current = manager_environment().unwrap_or_default();
+    let names: Vec<&str> = noted
+        .iter()
+        .filter(|(name, value)| current.iter().any(|(n, v)| n == name && v == value))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    if !names.is_empty() {
+        let mut args = vec!["unset-environment"];
+        args.extend(&names);
+        if let Err(e) = systemctl(&args) {
+            warn!("variables given to systemd not taken away: {e:#}");
+            return;
+        }
+        info!(names = names.join(" "), "variables of the desktop session taken out of systemd");
+    }
+    let _ = std::fs::remove_file(&path);
 }
 
 pub fn service_state() -> Result<ServiceState> {
@@ -192,4 +287,33 @@ pub fn service_state() -> Result<ServiceState> {
         "activating" | "deactivating" | "reloading" => ServiceState::Changing,
         _ => ServiceState::Stopped,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env(text: &str) -> Vec<(String, String)> {
+        parse_environment(text)
+    }
+
+    /// P8: only what the import added or changed is the agent's; the desktop's
+    /// own values (already there, identical) are not.
+    #[test]
+    fn imported_variables_are_only_the_added_ones() {
+        let before = env("XDG_RUNTIME_DIR=/run/user/1000\nDISPLAY=:1\nPATH=/usr/bin\n");
+        let after =
+            env("XDG_RUNTIME_DIR=/run/user/1000\nDISPLAY=:0\nWAYLAND_DISPLAY=wayland-0\nPATH=/usr/bin\n");
+        let present = ["XDG_RUNTIME_DIR", "DISPLAY", "WAYLAND_DISPLAY"];
+        assert_eq!(
+            imported_names(&before, &after, &[], &present),
+            env("DISPLAY=:0\nWAYLAND_DISPLAY=wayland-0\n")
+        );
+        // Noted at an earlier login: still ours even if the same value now.
+        let noted = env("XDG_RUNTIME_DIR=/run/user/1000\n");
+        assert_eq!(imported_names(&after, &after, &noted, &present), env("XDG_RUNTIME_DIR=/run/user/1000\n"));
+        // Not in the manager after the import (refused): nothing.
+        assert_eq!(imported_names(&before, &[], &noted, &present), vec![]);
+        assert_eq!(env("A=b=c\nnot a line\n"), vec![("A".to_string(), "b=c".to_string())]);
+    }
 }
