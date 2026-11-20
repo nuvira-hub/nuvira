@@ -13,7 +13,8 @@
 //!   keys by scan code (letters follow the layout, Shift applies, arrows are
 //!   extended), text by `KEYEVENTF_UNICODE` (surrogate pairs as two WM_CHARs,
 //!   "\r\n" one Enter, "\t" Tab), `release_all` lets go of what is held, a key
-//!   released without being pressed is still sent up.
+//!   or button released without being pressed sends nothing (VWR-9; it was sent
+//!   up before: P6).
 //! - X11 (XTest): the same moves; wheel notches as buttons 4/5 (up/down) and
 //!   6/7; keys by evdev code + 8; characters through spare key codes whose
 //!   symbol is the character; a key released without being pressed sends nothing.
@@ -439,13 +440,23 @@ mod win {
             got.iter().filter_map(|g| if let Got::Char(c) = g { Some(*c) } else { None }).collect();
         assert!(units.contains(&0xD83D) && units.contains(&0xDE00), "the emoji as a surrogate pair");
 
-        // A key released without being pressed is still sent (Windows).
+        // A key or button released without being pressed sends nothing (VWR-9,
+        // was P6: Windows sent the key up); a pressed one is still released.
         assert!(s.window.focused());
         s.inj.inject(&key("KeyZ", false)).unwrap();
+        s.inj.inject(&btn(Button::Right, false)).unwrap();
         settle();
         let got = take();
         report(&format!("release without press: {got:?}"));
-        assert_eq!(got, vec![Got::KeyUp(b'Z' as u16)]);
+        assert_eq!(got, Vec::<Got>::new(), "no release for KeyZ and the right button, never pressed");
+        s.inj.inject(&key("KeyZ", true)).unwrap();
+        s.inj.inject(&key("KeyZ", false)).unwrap();
+        s.inj.inject(&key("KeyZ", false)).unwrap();
+        settle();
+        let got = take();
+        report(&format!("press, release, release again: {got:?}"));
+        let ups = got.iter().filter(|g| **g == Got::KeyUp(b'Z' as u16)).count();
+        assert_eq!(ups, 1, "one release for one press: {got:?}");
     }
 
     #[test]
