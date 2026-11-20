@@ -290,51 +290,15 @@ pub struct FrameSlot {
     frame: Mutex<Option<Box<DecodedFrame>>>,
     notified: AtomicBool,
     dropped: AtomicU64,
-    /// A picture no longer needed (the one the window stopped showing, or one overtaken),
-    /// whose planes the decode loop fills again instead of allocating new ones (VWR-5).
-    spare: Mutex<Option<YuvFrame>>,
 }
 
 impl FrameSlot {
     /// Stores a frame; `true` if the window must be notified.
     fn put(&self, frame: Box<DecodedFrame>) -> bool {
-        let overtaken = self.frame.lock().expect("slot").replace(frame);
-        if let Some(old) = overtaken {
+        if self.frame.lock().expect("slot").replace(frame).is_some() {
             self.dropped.fetch_add(1, Ordering::Relaxed);
-            self.recycle(old.yuv);
         }
         !self.notified.swap(true, Ordering::AcqRel)
-    }
-
-    /// Gives back a picture the window no longer needs: its planes are reused for a
-    /// later frame (one is kept; GPU surfaces are let go at once).
-    pub fn recycle(&self, yuv: YuvFrame) {
-        #[cfg(target_os = "macos")]
-        let yuv = YuvFrame { surface: None, ..yuv };
-        #[cfg(windows)]
-        let yuv = YuvFrame { shared: None, ..yuv };
-        if yuv.y.capacity() > 0 {
-            *self.spare.lock().expect("slot") = Some(yuv);
-        }
-    }
-
-    /// A copy of `yuv` in the spare picture's planes (a new picture when there is none).
-    fn copy(&self, yuv: &YuvFrame) -> YuvFrame {
-        let Some(mut out) = self.spare.lock().expect("slot").take() else { return yuv.clone() };
-        out.width = yuv.width;
-        out.height = yuv.height;
-        out.y.clone_from(&yuv.y);
-        out.u.clone_from(&yuv.u);
-        out.v.clone_from(&yuv.v);
-        #[cfg(target_os = "macos")]
-        {
-            out.surface = yuv.surface.clone();
-        }
-        #[cfg(windows)]
-        {
-            out.shared = yuv.shared.clone();
-        }
-        out
     }
 
     pub fn take(&self) -> Option<Box<DecodedFrame>> {
@@ -2012,7 +1976,7 @@ fn decode_loop(
             Ok(Some(yuv)) => {
                 waiting_key = false;
                 let decoded = DecodedFrame {
-                    yuv: slot.copy(yuv),
+                    yuv: yuv.clone(),
                     capture_us: frame.capture_us,
                     encode_us: frame.encode_us,
                     // Older agents: estimated from capture and encoding times.
@@ -2072,44 +2036,4 @@ fn cursor_png(data: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
     }
     buf.truncate(frame.buffer_size());
     Some(buf)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn picture(width: u32, height: u32, value: u8) -> YuvFrame {
-        let (w, h) = (width as usize, height as usize);
-        YuvFrame {
-            width,
-            height,
-            y: vec![value; w * h],
-            u: vec![value; w * h / 4],
-            v: vec![value; w * h / 4],
-            ..YuvFrame::default()
-        }
-    }
-
-    #[test]
-    fn frame_slot_reuses_the_planes_it_is_given_back() {
-        let slot = FrameSlot::default();
-        // No spare yet: a plain copy.
-        let first = slot.copy(&picture(64, 32, 1));
-        assert_eq!((first.width, first.y[0], first.u.len()), (64, 1, 512));
-        // The picture the window stops showing comes back and is filled again.
-        let planes = first.y.as_ptr();
-        slot.recycle(first);
-        let second = slot.copy(&picture(64, 32, 2));
-        assert_eq!(second.y.as_ptr(), planes);
-        assert_eq!((second.y.len(), second.y[0], second.v[0]), (64 * 32, 2, 2));
-        // Another size: the same bytes as a clone.
-        slot.recycle(second);
-        let source = picture(16, 8, 3);
-        let third = slot.copy(&source);
-        assert_eq!((third.width, third.height), (16, 8));
-        assert_eq!((&third.y, &third.u, &third.v), (&source.y, &source.u, &source.v));
-        // An empty picture is not kept.
-        slot.recycle(YuvFrame::default());
-        assert!(slot.spare.lock().unwrap().is_none());
-    }
 }
