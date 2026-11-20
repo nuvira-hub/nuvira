@@ -494,11 +494,25 @@ fn timeval(t: libc::timeval) -> Duration {
 /// Detects reps during which other processes used the CPU (plan 6.1): whole-machine
 /// CPU minus this process's, in cores. Threshold from `NUVIRA_BENCH_NOISE_CORES`
 /// (default 0.10 of one core; `off` disables the guard).
+///
+/// macOS (Apple silicon): only the performance cores are watched, read directly from
+/// the processors' tick counters ([`maccpu`]); see [`NoiseGuard::end`] for why.
 pub struct NoiseGuard {
     sys: Option<sysinfo::System>,
     threshold: f64,
-    /// Start: time, this process's CPU, all processors' idle time (Windows).
-    start: Option<(Instant, Duration, Option<Duration>)>,
+    /// Start of the observed interval.
+    start: Option<GuardStart>,
+}
+
+struct GuardStart {
+    at: Instant,
+    /// This process's CPU time.
+    own: Duration,
+    /// All processors' idle time (Windows).
+    idle: Option<Duration>,
+    /// Busy and total ticks per processor (macOS).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    ticks: Option<Vec<(u64, u64)>>,
 }
 
 impl NoiseGuard {
@@ -516,24 +530,52 @@ impl NoiseGuard {
     /// Start of an observed interval.
     pub fn begin(&mut self) {
         if let Some(sys) = &mut self.sys {
-            sys.refresh_cpu_usage();
-            self.start = Some((Instant::now(), cpu_time_process(), idle_time()));
+            #[cfg(target_os = "macos")]
+            let ticks = maccpu::ticks();
+            #[cfg(not(target_os = "macos"))]
+            let ticks = None;
+            if ticks.is_none() {
+                sys.refresh_cpu_usage();
+            }
+            self.start =
+                Some(GuardStart { at: Instant::now(), own: cpu_time_process(), idle: idle_time(), ticks });
         }
     }
 
     /// End of the interval: cores used by other processes, if measured.
     pub fn end(&mut self) -> Option<f64> {
         let sys = self.sys.as_mut()?;
-        let (t0, c0, i0) = self.start.take()?;
-        let wall = t0.elapsed().as_secs_f64();
+        let st = self.start.take()?;
+        let wall = st.at.elapsed().as_secs_f64();
         // Shorter intervals than this give too coarse a reading (Windows counters
-        // advance in 15.6 ms ticks).
+        // advance in 15.6 ms ticks, macOS's processor ticks every 10 ms).
         if wall < 0.05 {
             return None;
         }
+        let own = (cpu_time_process() - st.own).as_secs_f64() / wall;
+        // macOS: the processors' own tick counters, read at both ends of the rep.
+        // sysinfo is not used there: it ignores a CPU refresh less than 200 ms after
+        // the previous one (its MINIMUM_CPU_UPDATE_INTERVAL) and returns the old
+        // value, so the reading of a rep could cover another interval (the previous
+        // rep, or the gap between reps) while `own` covered this rep.
+        // On Apple silicon only the performance cluster is counted: macOS keeps
+        // background work (Spotlight, media analysis, the Neural Engine compiler:
+        // several cores on a freshly installed Mac; 0.1-0.2 core of daemons at any
+        // time) on the efficiency cores, where it does not compete with the bench's
+        // default-priority threads, which run on the performance cores. Counted over
+        // all cores it put nearly every micro rep above the threshold (Phase 1 Mac
+        // baseline: medians 0.14-0.47 core on a machine left alone). A process that
+        // needs more cores than the performance cluster has spills over to the
+        // efficiency cores: then the whole machine counts again.
+        #[cfg(target_os = "macos")]
+        if let (Some(t0), Some(t1)) = (&st.ticks, maccpu::ticks())
+            && let Some(other) = maccpu::other_cores(t0, &t1, own)
+        {
+            return Some(other);
+        }
         sys.refresh_cpu_usage();
         let n = sys.cpus().len() as f64;
-        let all = match (i0, idle_time()) {
+        let all = match (st.idle, idle_time()) {
             // Windows: busy = processors - idle, from the idle threads' cycle times
             // (precise). `% Idle Time` (sysinfo) is sampled at the 15.6 ms clock tick
             // per processor: on a 200 ms rep that is +-0.08 core per processor and
@@ -541,12 +583,116 @@ impl NoiseGuard {
             (Some(a), Some(b)) => n - b.saturating_sub(a).as_secs_f64() / wall,
             _ => sys.global_cpu_usage() as f64 / 100.0 * n,
         };
-        let own = (cpu_time_process() - c0).as_secs_f64() / wall;
         Some((all - own).max(0.0))
     }
 
     pub fn is_noisy(&self, other_cores: Option<f64>) -> bool {
         other_cores.is_some_and(|c| c > self.threshold)
+    }
+}
+
+/// macOS processor load from `host_processor_info(PROCESSOR_CPU_LOAD_INFO)`: busy
+/// (user + system + nice) and total ticks per logical processor, counted at the
+/// statistics clock (100 Hz).
+#[cfg(target_os = "macos")]
+pub mod maccpu {
+    use std::ops::Range;
+
+    /// Busy and total ticks per logical processor, in logical processor order.
+    pub fn ticks() -> Option<Vec<(u64, u64)>> {
+        let mut n: libc::natural_t = 0;
+        let mut info: libc::processor_info_array_t = std::ptr::null_mut();
+        let mut count: libc::mach_msg_type_number_t = 0;
+        // SAFETY: out pointers; on success `info` is a kernel-allocated array of
+        // `count` integers (CPU_STATE_MAX per processor), freed below.
+        #[allow(deprecated)]
+        let r = unsafe {
+            libc::host_processor_info(
+                libc::mach_host_self(),
+                libc::PROCESSOR_CPU_LOAD_INFO,
+                &mut n,
+                &mut info,
+                &mut count,
+            )
+        };
+        if r != libc::KERN_SUCCESS || info.is_null() {
+            return None;
+        }
+        let per = libc::CPU_STATE_MAX as usize;
+        // SAFETY: `count` integers at `info`.
+        let all = unsafe { std::slice::from_raw_parts(info, count as usize) };
+        let out = (count as usize >= n as usize * per && n > 0).then(|| {
+            all.chunks_exact(per)
+                .take(n as usize)
+                .map(|c| {
+                    let t = |i: libc::c_int| c[i as usize] as u32 as u64;
+                    let busy = t(libc::CPU_STATE_USER) + t(libc::CPU_STATE_SYSTEM) + t(libc::CPU_STATE_NICE);
+                    (busy, busy + t(libc::CPU_STATE_IDLE))
+                })
+                .collect()
+        });
+        // SAFETY: the array was allocated by the kernel in this task.
+        #[allow(deprecated)]
+        unsafe {
+            libc::vm_deallocate(
+                libc::mach_task_self(),
+                info as libc::vm_address_t,
+                count as libc::vm_size_t * std::mem::size_of::<libc::integer_t>() as libc::vm_size_t,
+            );
+        }
+        out
+    }
+
+    /// Logical processors of the performance cluster on Apple silicon: the last
+    /// `hw.perflevel0.logicalcpu` of them (the efficiency cores are numbered first:
+    /// `ioreg -p IODeviceTree -n cpus` gives cluster-type "E" for cpu0..3 on an M1).
+    /// None on a Mac with one kind of core (Intel).
+    pub fn performance_cores(total: usize) -> Option<Range<usize>> {
+        let levels = sysctl_u32(c"hw.nperflevels")?;
+        let p = sysctl_u32(c"hw.perflevel0.logicalcpu")? as usize;
+        (levels >= 2 && p > 0 && p < total).then(|| total - p..total)
+    }
+
+    fn sysctl_u32(name: &std::ffi::CStr) -> Option<u32> {
+        let mut v: u32 = 0;
+        let mut len = std::mem::size_of::<u32>();
+        // SAFETY: a u32 out value and its length.
+        let r = unsafe {
+            libc::sysctlbyname(name.as_ptr(), (&mut v as *mut u32).cast(), &mut len, std::ptr::null_mut(), 0)
+        };
+        (r == 0 && len == std::mem::size_of::<u32>()).then_some(v)
+    }
+
+    /// Cores used by other processes between two readings, given this process's
+    /// own use (cores) over the same interval: on Apple silicon the performance
+    /// cluster only, unless `own` does not fit in it (then all processors).
+    pub fn other_cores(t0: &[(u64, u64)], t1: &[(u64, u64)], own: f64) -> Option<f64> {
+        other_cores_in(t0, t1, own, performance_cores(t0.len()))
+    }
+
+    pub(crate) fn other_cores_in(
+        t0: &[(u64, u64)],
+        t1: &[(u64, u64)],
+        own: f64,
+        perf: Option<Range<usize>>,
+    ) -> Option<f64> {
+        if t0.len() != t1.len() || t0.is_empty() {
+            return None;
+        }
+        let busy = |r: Range<usize>| -> f64 {
+            r.map(|i| {
+                let (b, t) = (t1[i].0.saturating_sub(t0[i].0), t1[i].1.saturating_sub(t0[i].1));
+                if t == 0 { 0.0 } else { b as f64 / t as f64 }
+            })
+            .sum()
+        };
+        let range = match perf {
+            // Half a core of margin: the process's threads are not pinned and some of
+            // `own` may run on the efficiency cores.
+            Some(p) if own <= p.len() as f64 - 0.5 => p,
+            _ => 0..t0.len(),
+        };
+        Some((busy(range) - own).max(0.0))
     }
 }
 
@@ -881,6 +1027,34 @@ mod tests {
         std::thread::sleep(Duration::from_millis(120));
         let other = g.end();
         assert!(other.is_some_and(|c| c >= 0.0 && c.is_finite()), "{other:?}");
+    }
+
+    /// macOS: background load on the efficiency cores is not "other" while the
+    /// process fits in the performance cluster; it is once the process spills over.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_guard_counts_the_performance_cluster() {
+        use super::maccpu::other_cores_in;
+        // 4 E (0..4) + 4 P (4..8), 20 ticks: E cores fully busy, P cores: one at
+        // 100 % (our thread), one at 25 %.
+        let t0 = vec![(0, 0); 8];
+        let t1 = vec![(20, 20), (20, 20), (20, 20), (20, 20), (20, 20), (5, 20), (0, 20), (0, 20)];
+        let p = Some(4..8);
+        let other = other_cores_in(&t0, &t1, 1.0, p.clone()).unwrap();
+        assert!((other - 0.25).abs() < 1e-9, "{other}");
+        // A process using 4 cores: all processors (5.25 busy - 4 own).
+        let other = other_cores_in(&t0, &t1, 4.0, p).unwrap();
+        assert!((other - 1.25).abs() < 1e-9, "{other}");
+        // One kind of core: all processors.
+        let other = other_cores_in(&t0, &t1, 1.0, None).unwrap();
+        assert!((other - 4.25).abs() < 1e-9, "{other}");
+        assert!(other_cores_in(&t0, &t1[..4], 1.0, None).is_none());
+        // The real counters move and the cluster is found on Apple silicon.
+        let a = super::maccpu::ticks().expect("host_processor_info");
+        assert_eq!(a.len(), std::thread::available_parallelism().unwrap().get());
+        if cfg!(target_arch = "aarch64") {
+            assert!(super::maccpu::performance_cores(a.len()).is_some());
+        }
     }
 
     #[test]
