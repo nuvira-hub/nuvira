@@ -221,18 +221,23 @@ impl Receiver {
             return Ok(None);
         }
         let partial = self.frames.remove(&seq).expect("present");
+        self.last = seq;
+        self.frames.retain(|&s, _| s > seq);
+        // `frame_len` comes from the peer: never more than the data shards received
+        // hold, so that nothing larger than them is reserved (review NET-6: up to 4 GiB
+        // before). Such a frame is dropped, and the viewer counts it as lost.
+        let len = partial.blocks.iter().flatten().map(|b| b.data).sum::<usize>() * partial.shard_len;
+        ensure!(partial.frame_len <= len, "video frame longer than its shards");
         if partial.blocks.iter().flatten().any(|b| b.repaired) {
             self.rebuilt += 1;
         }
-        let mut frame = Vec::with_capacity(partial.frame_len + partial.shard_len);
+        let mut frame = Vec::with_capacity(len);
         for block in partial.blocks.into_iter().flatten() {
             for shard in block.done.into_iter().flatten() {
                 frame.extend_from_slice(&shard);
             }
         }
         frame.truncate(partial.frame_len);
-        self.last = seq;
-        self.frames.retain(|&s, _| s > seq);
         Ok(Some((seq, frame)))
     }
 

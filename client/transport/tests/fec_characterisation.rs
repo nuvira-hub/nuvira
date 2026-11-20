@@ -128,22 +128,52 @@ fn characterises_bug_seq_zero_is_never_delivered() {
 }
 
 #[test]
-fn characterises_bug_frame_len_is_not_checked_against_the_shards() {
-    // KNOWN BUG (Phase 2, lead fec.rs:180): `frame_len` comes from the packet and is
-    // only used for `Vec::with_capacity` and `truncate`. A frame_len larger than the
-    // data is accepted and the frame returned is shorter than announced; the
-    // capacity is reserved as announced (up to 4 GiB + 64 KiB per frame).
-    // Expected after fix: frame_len <= data * shard_len (and > (data - 1) * shard_len)
-    // checked, the shard refused otherwise.
+fn frame_len_larger_than_the_shards_is_refused() {
+    // Fixed in review lot 18 (NET-6, K2): `frame_len` comes from the packet; a frame
+    // that announces more bytes than its data shards hold is dropped when it completes,
+    // before anything is reserved (before: accepted, returned shorter than announced,
+    // with the announced capacity reserved, up to 4 GiB + 64 KiB per frame).
     let mut rx = Receiver::default();
-    let got = rx.push(&shard(5, 0, 1, 0, 1, 1, 1_000_000, 4, &[1, 2, 3, 4])).unwrap();
-    assert_eq!(got, Some((5, vec![1, 2, 3, 4])));
+    let err = rx.push(&shard(5, 0, 1, 0, 1, 1, 1_000_000, 4, &[1, 2, 3, 4])).unwrap_err().to_string();
+    assert_eq!(err, "video frame longer than its shards");
+    // The rest of that frame is late now, the next frame comes through.
+    assert_eq!(rx.push(&shard(5, 0, 1, 1, 1, 1, 1_000_000, 4, &[1, 2, 3, 4])).unwrap(), None);
+    // As many bytes as the shards hold: accepted.
+    let got = rx.push(&shard(6, 0, 1, 0, 1, 1, 4, 4, &[1, 2, 3, 4])).unwrap();
+    assert_eq!(got, Some((6, vec![1, 2, 3, 4])));
     // A frame_len smaller than the data truncates.
-    let got = rx.push(&shard(6, 0, 1, 0, 1, 1, 2, 4, &[1, 2, 3, 4])).unwrap();
-    assert_eq!(got, Some((6, vec![1, 2])));
+    let got = rx.push(&shard(7, 0, 1, 0, 1, 1, 2, 4, &[1, 2, 3, 4])).unwrap();
+    assert_eq!(got, Some((7, vec![1, 2])));
     // frame_len 0: an empty frame.
-    let got = rx.push(&shard(7, 0, 1, 0, 1, 1, 0, 4, &[1, 2, 3, 4])).unwrap();
-    assert_eq!(got, Some((7, vec![])));
+    let got = rx.push(&shard(8, 0, 1, 0, 1, 1, 0, 4, &[1, 2, 3, 4])).unwrap();
+    assert_eq!(got, Some((8, vec![])));
+    // Two blocks: the bound is the sum of their data shards (3 + 2) x shard_len.
+    let mut rx = Receiver::default();
+    for (block, index, data) in [(0u8, 0u8, 3u8), (0, 1, 3), (0, 2, 3), (1, 0, 2), (1, 1, 2)] {
+        let r = rx.push(&shard(9, block, 2, index, data, 1, 21, 4, &[7; 4]));
+        if (block, index) == (1, 1) {
+            assert_eq!(r.unwrap_err().to_string(), "video frame longer than its shards");
+        } else {
+            assert_eq!(r.unwrap(), None);
+        }
+    }
+    let mut rx = Receiver::default();
+    let got = push_all(&mut rx, &[0u8, 1, 2].map(|i| shard(9, 0, 2, i, 3, 1, 20, 4, &[7; 4])).to_vec());
+    assert!(got.is_empty());
+    let got = push_all(&mut rx, &[0u8, 1].map(|i| shard(9, 1, 2, i, 2, 1, 20, 4, &[7; 4])).to_vec());
+    assert_eq!(got, vec![(9, vec![7; 20])]);
+}
+
+#[test]
+fn frame_len_u32_max_with_one_data_shard_reserves_nothing_large() {
+    // Review NET-6: the largest frame_len a peer can announce, with one data shard of
+    // 16 bytes. Refused, nothing reserved (before: Vec::with_capacity(4 GiB + 16),
+    // which aborts the viewer where the allocation fails).
+    let mut rx = Receiver::default();
+    let err = rx.push(&shard(1, 0, 1, 0, 1, 1, u32::MAX, 16, &[0; 16])).unwrap_err().to_string();
+    assert_eq!(err, "video frame longer than its shards");
+    let got = push_all(&mut rx, &encode(2, &frame(100, 0), 1200, 0.2).unwrap());
+    assert_eq!(got, vec![(2, frame(100, 0))]);
 }
 
 #[test]
@@ -371,18 +401,14 @@ proptest! {
         }
     }
 
-    /// Arbitrary datagrams never panic (seq kept away from the overflow above).
+    /// Arbitrary datagrams never panic (seq kept away from the overflow above; any
+    /// frame_len since NET-6).
     #[test]
     fn arbitrary_datagrams_never_panic(packets in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..80), 0..64)) {
         let mut rx = Receiver::default();
         for mut p in packets {
             if p.len() > 8 {
                 p[8] &= 0x7f;
-                // A small frame_len, so that the capacity reserved stays small.
-                if p.len() > 17 {
-                    p[16] = 0;
-                    p[17] = 0;
-                }
             }
             let _ = rx.push(&p);
             let _ = rx.take_loss();
