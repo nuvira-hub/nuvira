@@ -164,6 +164,10 @@ pub struct Receiver {
     /// taken off; a frame still listed when it closes (two behind the newest, as for
     /// the loss) counts as rebuilt (review NET-6, K4).
     repaired: BTreeMap<u64, Vec<(u8, u8)>>,
+    /// The codec of the last block rebuilt, kept for the next one with the same
+    /// `(data, parity)` (the sender's blocks mostly repeat them). Only one: a peer picks
+    /// both freely, and each codec keeps a cache of decode matrices (review NET-9).
+    codec: Option<((usize, usize), ReedSolomon)>,
 }
 
 impl Receiver {
@@ -231,9 +235,13 @@ impl Receiver {
             return Ok(None);
         }
         state.rebuilt = (0..data).filter(|&i| state.shards[i].is_none()).map(|i| i as u8).collect();
-        ReedSolomon::new(data, parity)?
-            .reconstruct_data(&mut state.shards)
-            .context("rebuilding a video block")?;
+        let codec = match self.codec.take() {
+            Some((key, codec)) if key == (data, parity) => codec,
+            _ => ReedSolomon::new(data, parity)?,
+        };
+        let rebuilt = codec.reconstruct_data(&mut state.shards).context("rebuilding a video block");
+        self.codec = Some(((data, parity), codec));
+        rebuilt?;
         state.done = Some(state.shards.drain(..data).map(|s| s.expect("rebuilt")).collect());
         state.shards.clear();
 
