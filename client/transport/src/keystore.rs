@@ -281,6 +281,22 @@ fn random_key() -> Result<[u8; 32]> {
     Ok(key)
 }
 
+/// `CryptUnprotectData` errors that mean the blob will never open for this
+/// account (review NET-8; measured on Windows 11 in Phase 4):
+/// `NTE_BAD_KEY_STATE` (a master key this account does not have: another account
+/// or computer), `NTE_BAD_DATA` and `ERROR_INVALID_DATA` (damaged or not a DPAPI
+/// blob) and `E_INVALIDARG` (a truncated blob). Any other error (the DPAPI or
+/// RPC service not reachable yet, a profile not loaded, out of memory) may pass:
+/// the key is waited for instead of being replaced by a new one.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn dpapi_error_is_permanent(hresult: u32) -> bool {
+    const NTE_BAD_KEY_STATE: u32 = 0x8009_000B;
+    const NTE_BAD_DATA: u32 = 0x8009_0005;
+    const ERROR_INVALID_DATA: u32 = 0x8007_000D;
+    const E_INVALIDARG: u32 = 0x8007_0057;
+    matches!(hresult, NTE_BAD_KEY_STATE | NTE_BAD_DATA | ERROR_INVALID_DATA | E_INVALIDARG)
+}
+
 #[cfg(windows)]
 mod sys {
     //! DPAPI with the account running (a person, or SYSTEM for the service and
@@ -327,7 +343,14 @@ mod sys {
         unsafe {
             CryptUnprotectData(&input, None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut output)
                 .map_err(|e| {
-                    ReadError::Unreadable(anyhow!("CryptUnprotectData (another account or computer?): {e}"))
+                    let code = e.code().0 as u32;
+                    if super::dpapi_error_is_permanent(code) {
+                        ReadError::Unreadable(anyhow!(
+                            "CryptUnprotectData (another account or computer?): {e}"
+                        ))
+                    } else {
+                        ReadError::Unavailable(anyhow!("CryptUnprotectData: {e}"))
+                    }
                 })?;
             let der = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
             LocalFree(Some(HLOCAL(output.pbData.cast())));
@@ -441,11 +464,12 @@ mod sys {
     //! would stay locked after a restart, and the agent with it); otherwise the
     //! file.
 
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
 
     use super::{Protection, ReadError};
-    use anyhow::{Context, Result, anyhow, bail};
+    use anyhow::{Context, Result, anyhow};
 
     const CREDENTIAL: &str = "nuvira-key";
 
@@ -473,25 +497,65 @@ mod sys {
             .is_ok_and(|s| s.success())
     }
 
-    fn creds(args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
+    /// How long `systemd-creds` may take (a TPM answers in well under a second).
+    const CREDS_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Runs `systemd-creds`. The error says whether it ran and refused
+    /// ([`ReadError::Unreadable`]: its messages are not a stable API, so any
+    /// refusal counts as one) or could not run or answer now
+    /// ([`ReadError::Unavailable`]: missing during an upgrade, or hung at early
+    /// boot), review NET-8.
+    fn creds(args: &[&str], input: &[u8]) -> Result<Vec<u8>, ReadError> {
+        let later =
+            |e: anyhow::Error| ReadError::Unavailable(e.context(format!("systemd-creds {}", args[0])));
         let mut child = Command::new("systemd-creds")
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .context("systemd-creds")?;
-        child.stdin.take().context("stdin")?.write_all(input)?;
-        let out = child.wait_with_output()?;
-        if !out.status.success() {
-            bail!("systemd-creds {}: {}", args[0], String::from_utf8_lossy(&out.stderr).trim());
+            .map_err(|e| later(e.into()))?;
+        // The key and the messages are a few kilobytes: they fit in the pipes,
+        // so the child never waits for its output to be read.
+        let written = child.stdin.take().context("stdin").and_then(|mut i| Ok(i.write_all(input)?));
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if started.elapsed() < CREDS_TIMEOUT => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(later(anyhow!("no answer in {} s", CREDS_TIMEOUT.as_secs())));
+                }
+                Err(e) => return Err(later(e.into())),
+            }
+        };
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        if let Some(mut stdout) = child.stdout.take() {
+            stdout.read_to_end(&mut out).map_err(|e| later(e.into()))?;
         }
-        Ok(out.stdout)
+        if let Some(mut stderr) = child.stderr.take() {
+            let _ = stderr.read_to_end(&mut err);
+        }
+        if !status.success() {
+            return Err(ReadError::Unreadable(anyhow!(
+                "systemd-creds {}: {}",
+                args[0],
+                String::from_utf8_lossy(&err).trim()
+            )));
+        }
+        written.map_err(later)?;
+        Ok(out)
     }
 
     pub fn creds_encrypt(der: &[u8]) -> Result<Vec<u8>> {
         let name = format!("--name={CREDENTIAL}");
         creds(&["encrypt", &name, "--with-key=auto", "--tpm2-pcrs=", "-", "-"], der)
+            .map_err(|e| anyhow!("{e}"))
     }
 
     pub fn creds_decrypt(blob: &[u8]) -> Result<Vec<u8>, ReadError> {
@@ -499,7 +563,7 @@ mod sys {
             return Err(ReadError::Unreadable(anyhow!("a key of root's")));
         }
         let name = format!("--name={CREDENTIAL}");
-        creds(&["decrypt", &name, "-", "-"], blob).map_err(ReadError::Unreadable)
+        creds(&["decrypt", &name, "-", "-"], blob)
     }
 
     pub fn wrapping_key(_: Protection, create: bool) -> Result<Option<[u8; 32]>, ReadError> {
@@ -808,6 +872,51 @@ mod tests {
     fn garbage_is_unreadable() {
         assert!(matches!(decode(b"hello"), Err(ReadError::Unreadable(_))));
         assert!(matches!(decode(b"NVK1Z"), Err(ReadError::Unreadable(_))));
+    }
+
+    #[test]
+    fn dpapi_errors_that_never_pass() {
+        // Review NET-8: these set the key aside (new ID); anything else waits.
+        for code in [0x8009_000Bu32, 0x8009_0005, 0x8007_000D, 0x8007_0057] {
+            assert!(dpapi_error_is_permanent(code), "{code:#x}");
+        }
+        // RPC server unavailable, call failed, file / path not found (a profile
+        // not loaded yet), out of memory, access denied.
+        for code in [0x8007_06BAu32, 0x8007_06BE, 0x8007_0002, 0x8007_0003, 0x8007_000E, 0x8007_0005] {
+            assert!(!dpapi_error_is_permanent(code), "{code:#x}");
+        }
+    }
+
+    /// Blobs that will never open here are `Unreadable` at once: the codes
+    /// Windows really gives (Phase 4 E2), not just the mapping.
+    #[cfg(windows)]
+    #[test]
+    fn damaged_dpapi_blobs_are_unreadable() {
+        let data = seal(Protection::Dpapi, &[0x30, 5, 5]).unwrap();
+        let header = MAGIC.len() + 1;
+        // DPAPI blob: version (4), provider GUID (16), master key version (4),
+        // master key GUID (16): another GUID is a master key this account lacks.
+        let mut other_master_key = data.clone();
+        other_master_key[header + 24] ^= 0x55;
+        let mut damaged = data.clone();
+        let last = damaged.len() - 30;
+        damaged[last] ^= 0x55;
+        let truncated = data[..data.len() - 40].to_vec();
+        let short = data[..header + 30].to_vec();
+        let mut random = data[..header].to_vec();
+        random.extend((0..200u32).map(|i| (i * 37 % 251) as u8));
+        for (what, blob) in [
+            ("master key", other_master_key),
+            ("damaged", damaged),
+            ("truncated", truncated),
+            ("short", short),
+            ("random", random),
+        ] {
+            match decode(&blob) {
+                Err(ReadError::Unreadable(e)) => eprintln!("{what}: {e:#}"),
+                other => panic!("{what}: {other:?}"),
+            }
+        }
     }
 
     #[cfg(windows)]
