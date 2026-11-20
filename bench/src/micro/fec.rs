@@ -1,9 +1,10 @@
 //! B-MICRO-12 FEC encode, B-MICRO-13 FEC receive and rebuild
 //! (`nuvira_transport::fec`, datagrams of 1,200 bytes as the agent sends them).
 //!
-//! 12: one `fec::Encoder` kept over the iterations, as the agent's video sender keeps
-//! one for its session (review NET-9: before, `fec::encode` built its Reed-Solomon
-//! codecs for every block); the `shards` checksum is the same as `fec::encode`'s.
+//! 12: one [`FecSender`] kept over the iterations, as the agent's video sender keeps its
+//! encoder for the session: `fec::Encoder` with the feature `api-fec-encoder` (review
+//! lot 18, NET-9: its codecs are kept), else `fec::encode` (the baseline's API, which
+//! builds the Reed-Solomon codecs for every block). Same `shards` checksum either way.
 //!
 //! 13: a sequence of [`SEQ_FRAMES`] frames of 12 data shards each, ratio 0.25 (3
 //! parity shards), with a seeded loss pattern (random 0/1/5/10%, or Gilbert-Elliott
@@ -62,6 +63,28 @@ pub fn register(reg: &mut Registry) {
     }
 }
 
+/// The agent's FEC sender as each side has it (plan 8.4, bench/README "API changes").
+#[derive(Default)]
+pub struct FecSender {
+    #[cfg(feature = "api-fec-encoder")]
+    encoder: fec::Encoder,
+}
+
+impl FecSender {
+    pub fn encode(
+        &mut self,
+        seq: u64,
+        frame: &[u8],
+        max_datagram: usize,
+        ratio: f64,
+    ) -> Result<Vec<Vec<u8>>> {
+        #[cfg(feature = "api-fec-encoder")]
+        return self.encoder.encode(seq, frame, max_datagram, ratio);
+        #[cfg(not(feature = "api-fec-encoder"))]
+        fec::encode(seq, frame, max_datagram, ratio)
+    }
+}
+
 fn frame_data(seed: u64, len: usize) -> Vec<u8> {
     Xoshiro256::new(FEC_SEED ^ seed).bytes(len)
 }
@@ -70,7 +93,7 @@ fn run_encode(ctx: &mut RunCtx, mut r: CaseResult, size: usize, ratio: f64) -> R
     let frame = frame_data(size as u64, size);
     let mut seq = 0u64;
     let mut err = None;
-    let mut encoder = fec::Encoder::default();
+    let mut encoder = FecSender::default();
     let reps = super::sampler(ctx).run(|| {
         seq += 1;
         match encoder.encode(seq, &frame, MAX_DATAGRAM, ratio) {

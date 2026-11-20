@@ -423,7 +423,7 @@ fn one_run(
                     let _ = tx.finish();
                 }
                 Mode::Datagrams => {
-                    let mut fec = nuvira_transport::fec::Encoder::default();
+                    let mut fec = crate::micro::fec::FecSender::default();
                     while let Some(f) = frames_rx.recv().await {
                         let max = conn.max_datagram_size().context("datagrams not available")?;
                         let bytes = prost::Message::encode_to_vec(&f);
