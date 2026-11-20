@@ -4,11 +4,13 @@
 //! clipboard and send it to the other side, which writes it to its own. Received
 //! content is not sent back (no ping-pong).
 //!
-//! On Windows a change is detected from the clipboard sequence number, without
-//! reading it; elsewhere the content is compared, and a new copy of the same
-//! files is told from the pasteboard's change count (macOS) or the CLIPBOARD
-//! owner changing (X11, XFixes). Images travel as PNG (a 1080p
-//! screenshot is typically 0.2–2 MB instead of 8 MB of pixels).
+//! A change is detected without reading the clipboard from the clipboard
+//! sequence number (Windows), the pasteboard's change count (macOS) or the
+//! CLIPBOARD owner changing (X11, XFixes): only then is the content read and
+//! compared. On Wayland, and on X11 without XFixes, the content is read and
+//! compared at every check. A new copy of the same files is told from the
+//! same counters. Images travel as PNG (a 1080p screenshot is typically
+//! 0.2–2 MB instead of 8 MB of pixels).
 //!
 //! Files and folders: the list goes to the other side, which offers them on its
 //! clipboard; their contents travel only when they are pasted there (`share`).
@@ -126,7 +128,9 @@ impl Clipboard {
         let seq = self.seq.now();
         let copied_again = seq != self.last_seq;
         self.last_seq = seq;
-        if cfg!(windows) && !copied_again {
+        // Nothing copied since the last check: no read (a 1080p image costs
+        // ~18 ms of X transfer, PNG decode and hash at every check: VWR-6).
+        if !copied_again && self.seq.tells_every_copy() {
             return None;
         }
         if copied_again {
@@ -398,6 +402,10 @@ pub fn spawn_sync_with(
 struct Sequence {
     #[cfg(target_os = "linux")]
     x11: Option<(x11rb::rust_connection::RustConnection, u32)>,
+    /// Linux: an X11 session (no `WAYLAND_DISPLAY`), where arboard reads the
+    /// same X selection whose owner changes are counted.
+    #[cfg(target_os = "linux")]
+    x11_session: bool,
 }
 
 impl Sequence {
@@ -405,6 +413,24 @@ impl Sequence {
         Self {
             #[cfg(target_os = "linux")]
             x11: x11_owner_changes().inspect_err(|e| debug!("clipboard owner changes not watched: {e:#}")).ok(),
+            #[cfg(target_os = "linux")]
+            x11_session: std::env::var_os("WAYLAND_DISPLAY").is_none(),
+        }
+    }
+
+    /// Whether every copy changes [`Sequence::now`], so that an unchanged
+    /// number means an unchanged clipboard. Windows and macOS: always. Linux:
+    /// in an X11 session while XFixes is watched. Not on Wayland: arboard
+    /// reads the Wayland clipboard there, while the count watches Xwayland's
+    /// selection, which a native Wayland client's copy may not reach.
+    fn tells_every_copy(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            self.x11_session && self.x11.is_some()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            cfg!(any(windows, target_os = "macos"))
         }
     }
 
@@ -431,12 +457,19 @@ impl Sequence {
     fn now(&mut self) -> u32 {
         use x11rb::connection::Connection;
         let Some((conn, count)) = self.x11.as_mut() else { return 0 };
-        while let Ok(Some(event)) = conn.poll_for_event() {
-            if let x11rb::protocol::Event::XfixesSelectionNotify(_) = event {
-                *count = count.wrapping_add(1);
+        loop {
+            match conn.poll_for_event() {
+                Ok(Some(x11rb::protocol::Event::XfixesSelectionNotify(_))) => *count = count.wrapping_add(1),
+                Ok(Some(_)) => {}
+                Ok(None) => return *count,
+                Err(e) => {
+                    // Copies are no longer seen: back to reading the clipboard at every check.
+                    debug!("clipboard owner changes no longer watched: {e}");
+                    self.x11 = None;
+                    return 0;
+                }
             }
         }
-        *count
     }
 }
 
