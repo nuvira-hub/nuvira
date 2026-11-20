@@ -40,19 +40,36 @@ impl Policy {
         *self == Self::default()
     }
 
-    /// Empty values count as not set; a password that is not a hash is ignored.
+    /// Empty values count as not set; a password that is not a usable hash (a
+    /// password in clear text, a hash cut short or with other parameters) is
+    /// ignored, and said once in the log.
     fn cleaned(self) -> Self {
         let set = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
         Self {
             server: set(self.server),
             server_key: set(self.server_key),
-            password_hash: set(self.password_hash).filter(|h| nuvira_secret::is_hash(h)),
+            password_hash: set(self.password_hash).filter(|h| usable_hash(h)),
             profile: set(self.profile),
             keyboard: set(self.keyboard)
                 .map(|k| k.to_ascii_lowercase())
                 .filter(|k| matches!(k.as_str(), "iso" | "ansi")),
         }
     }
+}
+
+/// A policy's password hash [`nuvira_secret::verify`] can match. Not one: a
+/// warning, once per program run (the policies are read often).
+fn usable_hash(hash: &str) -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    let usable = nuvira_secret::is_valid_hash(hash);
+    if !usable && !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            "the policy's password hash is ignored: it is not a hash made by \
+             `nuvira service password-hash` (a password in clear text, or a hash cut short?)"
+        );
+    }
+    usable
 }
 
 /// The policies in place.
@@ -239,5 +256,18 @@ mod tests {
         assert!(p.cleaned().is_empty());
         let p = Policy { server: Some(" nuvira.example.com ".into()), ..Default::default() };
         assert_eq!(p.cleaned().server.as_deref(), Some("nuvira.example.com"));
+    }
+
+    /// APP-7: only a hash `verify` can match is taken from the policies.
+    #[test]
+    fn only_usable_hashes() {
+        let with =
+            |h: &str| Policy { password_hash: Some(h.into()), ..Default::default() }.cleaned().password_hash;
+        let good = nuvira_secret::hash("long enough");
+        assert_eq!(with(&format!(" {good} ")).as_deref(), Some(good.as_str()));
+        // Cut short in a copy and paste, or with one iteration.
+        assert_eq!(with(&good[..good.len() - 2]), None);
+        assert_eq!(with("pbkdf2-sha256$1$0707070707070707070707070707070707$00"), None);
+        assert_eq!(with("long enough"), None);
     }
 }

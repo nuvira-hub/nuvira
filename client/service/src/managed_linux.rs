@@ -131,7 +131,7 @@ pub fn deploy(opts: DeployOptions) -> Result<Option<String>> {
     let policy = crate::policy::read();
     let mut generated = None;
     let hash = match (given(opts.password_hash), given(opts.password)) {
-        (Some(hash), _) if nuvira_secret::is_hash(&hash) => Some(hash),
+        (Some(hash), _) if nuvira_secret::is_valid_hash(&hash) => Some(hash),
         (Some(_), _) => anyhow::bail!("--password-hash is not a hash made by `nuvira service password-hash`"),
         (None, Some(password)) if password.chars().count() < 8 => {
             anyhow::bail!("the password must have at least 8 characters")

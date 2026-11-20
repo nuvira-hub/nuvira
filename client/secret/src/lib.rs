@@ -27,26 +27,58 @@ pub fn hash(password: &str) -> String {
     format!("pbkdf2-sha256${ITERATIONS}${}${}", hex(&salt), hex(&out))
 }
 
-/// `password` matches the stored `hash` (constant-time comparison). A malformed hash
-/// matches nothing.
-pub fn verify(password: &str, hash: &str) -> bool {
+/// The iterations a stored hash may ask for: every hash made by [`hash`] has
+/// [`ITERATIONS`]; fewer would make a copied hash cheap to attack, more would
+/// make each check take seconds (a typo with a few more digits, minutes).
+const ITERATIONS_ACCEPTED: std::ops::RangeInclusive<u32> = 100_000..=10_000_000;
+/// The shortest salt accepted (16 bytes in every hash made by [`hash`]).
+const SALT_MIN: usize = 16;
+/// The length of the derived key: 32 bytes, as made by [`hash`]. A shorter one
+/// (a hash cut in a copy and paste) would match many passwords.
+const OUTPUT_LEN: usize = 32;
+
+/// The parameters of a stored hash, if it is well formed and within the ranges.
+fn parse(hash: &str) -> Option<(NonZeroU32, Vec<u8>, Vec<u8>)> {
     let mut parts = hash.split('$');
     let (Some("pbkdf2-sha256"), Some(iterations), Some(salt), Some(expected), None) =
         (parts.next(), parts.next(), parts.next(), parts.next(), parts.next())
     else {
-        return false;
+        return None;
     };
-    let (Some(iterations), Some(salt), Some(expected)) =
-        (iterations.parse().ok().and_then(NonZeroU32::new), unhex(salt), unhex(expected))
-    else {
+    // Digits only: no sign, no spaces.
+    if iterations.is_empty() || !iterations.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let iterations: u32 = iterations.parse().ok().filter(|n| ITERATIONS_ACCEPTED.contains(n))?;
+    let (salt, expected) = (unhex(salt)?, unhex(expected)?);
+    if salt.len() < SALT_MIN || expected.len() != OUTPUT_LEN {
+        return None;
+    }
+    Some((NonZeroU32::new(iterations)?, salt, expected))
+}
+
+/// `password` matches the stored `hash` (constant-time comparison). A malformed
+/// hash, or one with parameters outside the accepted ranges (iterations
+/// 100,000 to 10,000,000, salt of at least 16 bytes, 32 bytes of output),
+/// matches nothing.
+pub fn verify(password: &str, hash: &str) -> bool {
+    let Some((iterations, salt, expected)) = parse(hash) else {
         return false;
     };
     pbkdf2::verify(ALGORITHM, iterations, &salt, password.as_bytes(), &expected).is_ok()
 }
 
-/// The text is a stored hash (and not a password in clear text).
+/// The text is a stored hash (and not a password in clear text): only the
+/// prefix, so that a malformed hash is never taken for a password.
 pub fn is_hash(text: &str) -> bool {
     text.starts_with("pbkdf2-sha256$")
+}
+
+/// The text is a hash [`verify`] can match: well formed, with parameters in the
+/// accepted ranges. What a policy or `deploy --password-hash` gives is checked
+/// with this.
+pub fn is_valid_hash(text: &str) -> bool {
+    parse(text).is_some()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -191,6 +223,8 @@ mod tests {
         assert_ne!(stored, hash("kgtmrejq"));
         for broken in ["", "kgtmrejq", "pbkdf2-sha256$0$00$00", "pbkdf2-sha256$1$zz$00", "md5$1$00$00"] {
             assert!(!verify("kgtmrejq", broken), "{broken}");
+            assert!(!is_valid_hash(broken), "{broken}");
         }
+        assert!(is_valid_hash(&stored));
     }
 }
