@@ -416,21 +416,29 @@ pub async fn recv_one_with_limit<M: Message + Default>(
     stream: &mut RecvStream,
     limit: usize,
 ) -> Result<Option<M>> {
-    let mut len = 0usize;
-    for i in 0..10 {
+    // The length prefix, one byte at a time so that nothing after the message is
+    // read, then parsed by prost like the framing `Decoder` does (review NET-5:
+    // ten continuation bytes, or a 10th byte above the 64th bit, used to pass as
+    // a short length here and are an error there).
+    let mut prefix = [0u8; 10];
+    let mut n = 0;
+    loop {
         let mut byte = [0u8; 1];
         match stream.read(&mut byte).await? {
             Some(1) => {}
-            _ if i == 0 => return Ok(None),
-            _ => anyhow::bail!("stream ended inside a message"),
+            _ if n == 0 => return Ok(None),
+            _ => bail!("stream ended inside a message"),
         }
-        len |= ((byte[0] & 0x7f) as usize) << (7 * i);
-        if byte[0] & 0x80 == 0 {
+        prefix[n] = byte[0];
+        n += 1;
+        if byte[0] & 0x80 == 0 || n == prefix.len() {
             break;
         }
     }
-    anyhow::ensure!(len <= limit, "message too large: {len}");
-    let mut body = vec![0u8; len];
+    let len = prost::encoding::decode_varint(&mut &prefix[..n])
+        .map_err(nuvira_proto::framing::FrameError::Decode)?;
+    anyhow::ensure!(len <= limit as u64, "message too large: {len}");
+    let mut body = vec![0u8; len as usize];
     stream.read_exact(&mut body).await?;
     Ok(Some(M::decode(body.as_slice())?))
 }

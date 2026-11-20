@@ -111,31 +111,36 @@ async fn framed_recv_limit_can_be_raised() {
 }
 
 #[tokio::test]
-async fn characterises_bug_recv_one_accepts_varints_the_decoder_refuses() {
-    // KNOWN BUG (Phase 2, lead transport/src/lib.rs:336-349): `recv_one` reads at
-    // most 10 length bytes and never checks the 10th: ten bytes with the
-    // continuation bit give length 0 (the 11th byte is left on the stream), and the
-    // bits of the 10th byte above the 64th are shifted out (0x02 << 63 = 0).
-    // `framing::Decoder` refuses both. Expected after fix: the same varint rules
-    // (and the same error) as the Decoder / prost.
+async fn recv_one_follows_the_decoder_varint_rules() {
+    // Was K5 (Phase 2): `recv_one` read at most 10 length bytes and never checked
+    // the 10th: ten bytes with the continuation bit gave length 0 (the 11th byte
+    // left on the stream), and the bits of the 10th byte above the 64th were
+    // shifted out (0x02 << 63 = 0). Fixed in review NET-5: both are refused with
+    // the error `framing::Decoder` gives on the same bytes.
     let (c, s, _e) = pair().await;
-    let mut wire = vec![0x80; 10];
-    wire.push(0xAA);
-    let mut rx = uni(&c, &s, &wire).await;
-    assert_eq!(recv_one::<Ping>(&mut rx).await.unwrap(), Some(Ping::default()));
-    assert_eq!(rx.read_to_end(10).await.unwrap(), [0xAA]);
-
-    let mut wire = vec![0x80; 9];
-    wire.push(0x02);
-    let mut rx = uni(&c, &s, &wire).await;
-    assert_eq!(recv_one::<Ping>(&mut rx).await.unwrap(), Some(Ping::default()));
-
-    // The Decoder on the same bytes: errors.
-    for bytes in [vec![0x80u8; 10], [vec![0x80u8; 9], vec![0x02]].concat()] {
+    for bytes in [[vec![0x80u8; 10], vec![0xAA]].concat(), [vec![0x80u8; 9], vec![0x02]].concat()] {
         let mut dec = nuvira_proto::framing::Decoder::default();
         dec.push(&bytes);
-        assert!(dec.next_message::<Ping>().is_err());
+        let decoder_err = dec.next_message::<Ping>().unwrap_err().to_string();
+        let mut rx = uni(&c, &s, &bytes).await;
+        let err = recv_one::<Ping>(&mut rx).await.unwrap_err().to_string();
+        assert_eq!(err, decoder_err, "{bytes:x?}");
     }
+    // The longest valid prefix (10 bytes, u64::MAX) is a length, refused by the limit.
+    let mut rx = uni(&c, &s, &varint(u64::MAX)).await;
+    let err = recv_one::<Ping>(&mut rx).await.unwrap_err().to_string();
+    assert_eq!(err, format!("message too large: {}", u64::MAX));
+    // A non-minimal but valid prefix (0x82 0x00 = 2) still reads as the Decoder reads it.
+    let mut wire = vec![0x82, 0x00];
+    wire.extend(Ping { sent_us: 7 }.encode_to_vec());
+    assert_eq!(wire.len(), 4);
+    let mut dec = nuvira_proto::framing::Decoder::default();
+    dec.push(&wire);
+    assert_eq!(dec.next_message::<Ping>().unwrap(), Some(Ping { sent_us: 7 }));
+    wire.extend_from_slice(b"rest");
+    let mut rx = uni(&c, &s, &wire).await;
+    assert_eq!(recv_one::<Ping>(&mut rx).await.unwrap(), Some(Ping { sent_us: 7 }));
+    assert_eq!(rx.read_to_end(10).await.unwrap(), b"rest");
 }
 
 #[tokio::test]
