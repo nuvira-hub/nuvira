@@ -125,8 +125,8 @@ pub fn run() -> Result<()> {
             let _ = std::fs::remove_file(entry.path());
         }
     }
-    if !file.exists() {
-        rt.block_on(nuvira_update::download(&base, &manifest, &file))?;
+    // A file already there is installed only if it is this version's package (APP-8).
+    if rt.block_on(nuvira_update::download_unless_cached(&base, &manifest, &file))? {
         println!("downloaded and checked");
     }
     if let Some(home) = homes.iter().find(|h| user_flag(&h.join(".config/nuvira/busy"))) {

@@ -73,9 +73,7 @@ fn check_and_apply(stop: &AtomicBool) -> Result<()> {
     // Anti-Ransomware Tool takes single files only) can be told once for every version.
     let program = dir.join(UPDATE_EXE);
     clean(&dir, &program);
-    if !nuvira_update::file_matches(&program, &manifest) {
-        let _ = std::fs::remove_file(&program);
-        rt.block_on(nuvira_update::download(&base, &manifest, &program))?;
+    if rt.block_on(nuvira_update::download_unless_cached(&base, &manifest, &program))? {
         info!("version {} downloaded and checked", manifest.version);
     }
 

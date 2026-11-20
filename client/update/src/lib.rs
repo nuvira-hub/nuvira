@@ -252,6 +252,20 @@ pub async fn download(base: &str, manifest: &Manifest, dest: &Path) -> Result<()
     result
 }
 
+/// Downloads the program of `manifest` to `dest` unless `dest` already is that
+/// program ([`file_matches`]): whatever else is there under the same name (a file
+/// of an earlier attempt, another build of the same version, a file put there by
+/// someone who can write the folder) is deleted and downloaded again, never
+/// installed as it is. True when it was downloaded.
+pub async fn download_unless_cached(base: &str, manifest: &Manifest, dest: &Path) -> Result<bool> {
+    if file_matches(dest, manifest) {
+        return Ok(false);
+    }
+    let _ = tokio::fs::remove_file(dest).await;
+    download(base, manifest, dest).await?;
+    Ok(true)
+}
+
 /// Minimal HTTP/1.1 GET (http and https). `Ok(None)` for 404. The body goes to
 /// `sink` (written and hashed) if given, otherwise it is returned. At most `limit` bytes.
 async fn get(
@@ -546,6 +560,14 @@ mod tests {
             wrong_size.size += 1;
             assert!(download(&base, &wrong_size, &dest).await.is_err());
             assert!(!dest.exists() && !dest.with_extension("part").exists());
+
+            // APP-8: a cached file with the right name and other content is
+            // downloaded again; the right program is used as it is.
+            std::fs::write(&dest, b"the old program").expect("write");
+            assert!(download_unless_cached(&base, &good, &dest).await.expect("download"));
+            assert_eq!(std::fs::read(&dest).expect("read"), program);
+            assert!(!download_unless_cached(&base, &good, &dest).await.expect("cached"));
+            assert_eq!(std::fs::read(&dest).expect("read"), program);
             let _ = std::fs::remove_dir_all(&dir);
         });
     }

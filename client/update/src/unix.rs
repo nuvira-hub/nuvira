@@ -422,8 +422,8 @@ fn check_and_apply(
     info!("version {} available (this is {})", manifest.version, crate::CURRENT);
     std::fs::create_dir_all(cache)?;
     let file = cache.join(format!("nuvira-{}{}", manifest.version, crate::extension(channel)));
-    if !file.exists() {
-        rt.block_on(crate::download(base, &manifest, &file))?;
+    // A file already there is installed only if it is this version's program (APP-8).
+    if rt.block_on(crate::download_unless_cached(base, &manifest, &file))? {
         info!("version {} downloaded and checked", manifest.version);
     }
     // Not in the middle of someone's work.
