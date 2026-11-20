@@ -14,6 +14,8 @@ const reportWindow = 48 * time.Hour
 type routed struct {
 	agentID  string
 	accepted time.Time
+	// The session's relay token: the report ends the relay session (SRV-13).
+	relayToken [16]byte
 }
 
 // event passes a step of a session to the modules that want it (session log).
@@ -39,6 +41,12 @@ func (s *Server) report(agent *client, r *pb.SessionReport) {
 	if !ok {
 		s.log.Debug("session report not expected", "session", r.GetSessionId(), "from", agent.device.ID)
 		return
+	}
+	// The session is over: its relay links go (after a short grace) instead of
+	// staying for the idle timeout, where they would catch the datagrams of a
+	// new socket that gets one of the old addresses (K39).
+	if s.relay != nil {
+		s.relay.Forget(rt.relayToken)
 	}
 	s.log.Info("session ended", "session", r.SessionId, "duration_s", r.DurationS, "direct", r.Direct,
 		"access", r.Access, "files_in", r.FilesIn, "files_out", r.FilesOut, "error", r.Error)

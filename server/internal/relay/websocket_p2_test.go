@@ -105,8 +105,8 @@ func TestWebSocketDatagrams(t *testing.T) {
 	}
 }
 
-// A message over wsMaxMessage (2048) ends the connection (read limit); one of
-// exactly 2048 bytes is delivered.
+// A message over wsMaxMessage (the largest UDP payload, as over UDP: SRV-11)
+// ends the connection (read limit); one of exactly wsMaxMessage bytes is delivered.
 func TestWebSocketMessageLimit(t *testing.T) {
 	_, srv, got := newWSServer(t)
 	ws := dialWS(t, srv, nil)
@@ -121,7 +121,7 @@ func TestWebSocketMessageLimit(t *testing.T) {
 			t.Fatalf("%d bytes", len(p.data))
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("2048-byte message not delivered")
+		t.Fatal("message of wsMaxMessage bytes not delivered")
 	}
 	_ = ws.Write(ctx, websocket.MessageBinary, bytes.Repeat([]byte{0x40}, wsMaxMessage+1))
 	_, _, err := ws.Read(ctx)

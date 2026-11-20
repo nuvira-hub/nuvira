@@ -51,8 +51,9 @@ func (a wsAddr) String() string  { return string(a) }
 // Outgoing datagrams queued per connection: beyond this they are dropped (QUIC retransmits).
 const wsOutQueue = 1024
 
-// Maximum size of a datagram (QUIC uses at most ~1500 bytes).
-const wsMaxMessage = 2048
+// Maximum size of a datagram: the largest UDP payload, as over UDP (QUIC uses
+// at most ~1500 bytes today). A larger message ends the connection.
+const wsMaxMessage = maxDatagram
 
 // WebSocket connections open at once per address: each browser tab of the web
 // client keeps one for the server and one per session, so an office of
