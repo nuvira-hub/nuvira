@@ -133,6 +133,11 @@ pub fn bgra_to_nv12(image: &BgraImage, out: &mut [u8], pitch: usize, height_alig
 /// Scales `image` down to `width`x`height` (clamped to the image size), each output
 /// pixel being the average of the source pixels it covers: text stays readable
 /// instead of losing strokes as with point sampling. `out` gets packed rows.
+///
+/// Separable: the source rows of an output row are first added column by column into
+/// a `u32` row (a straight loop the compiler vectorises), then each output pixel adds
+/// its columns of that row once. Same integer sums, count and rounding as adding the
+/// whole box pixel by pixel, so the same bytes.
 pub fn scale_bgra(image: &BgraImage, width: usize, height: usize, out: &mut Vec<u8>) {
     let (sw, sh) = (image.width as usize, image.height as usize);
     let (width, height) = (width.min(sw), height.min(sh));
@@ -147,23 +152,29 @@ pub fn scale_bgra(image: &BgraImage, width: usize, height: usize, out: &mut Vec<
         for (job, chunk) in out.chunks_mut(width * 4 * rows_per_job).enumerate() {
             let cols = &cols;
             s.spawn(move || {
-                let mut sums = vec![[0u32; 4]; width];
+                let mut column_sums = vec![0u32; sw * 4];
                 for (i, row) in chunk.chunks_mut(width * 4).enumerate() {
                     let y = job * rows_per_job + i;
                     let (y0, y1) = (y * sh / height, (y + 1) * sh / height);
-                    sums.fill([0; 4]);
-                    for sy in y0..y1 {
+                    let first = &image.data[y0 * image.stride..][..sw * 4];
+                    for (sum, &v) in column_sums.iter_mut().zip(first) {
+                        *sum = v as u32;
+                    }
+                    for sy in y0 + 1..y1 {
                         let src = &image.data[sy * image.stride..][..sw * 4];
-                        for (x, sum) in sums.iter_mut().enumerate() {
-                            for px in src[cols[x] * 4..cols[x + 1] * 4].as_chunks::<4>().0 {
-                                for c in 0..4 {
-                                    sum[c] += px[c] as u32;
-                                }
-                            }
+                        for (sum, &v) in column_sums.iter_mut().zip(src) {
+                            *sum += v as u32;
                         }
                     }
-                    for (x, (sum, dst)) in sums.iter().zip(row.as_chunks_mut::<4>().0).enumerate() {
-                        let n = ((cols[x + 1] - cols[x]) * (y1 - y0)) as u32;
+                    for (x, dst) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                        let (c0, c1) = (cols[x], cols[x + 1]);
+                        let mut sum = [0u32; 4];
+                        for px in column_sums[c0 * 4..c1 * 4].as_chunks::<4>().0 {
+                            for c in 0..4 {
+                                sum[c] += px[c];
+                            }
+                        }
+                        let n = ((c1 - c0) * (y1 - y0)) as u32;
                         for c in 0..4 {
                             dst[c] = ((sum[c] + n / 2) / n) as u8;
                         }
@@ -192,6 +203,81 @@ mod tests {
         // Never enlarged.
         scale_bgra(&img, 8, 4, &mut out);
         assert_eq!(out.len(), 4 * 2 * 4);
+    }
+
+    /// The box average as it was written before the separable version (VID-8): every
+    /// source pixel of the box added one by one. The reference of `scale_matches_reference`.
+    fn scale_bgra_reference(image: &BgraImage, width: usize, height: usize) -> Vec<u8> {
+        let (sw, sh) = (image.width as usize, image.height as usize);
+        let (width, height) = (width.min(sw), height.min(sh));
+        let mut out = vec![0u8; width * height * 4];
+        if width == 0 || height == 0 {
+            return out;
+        }
+        let cols: Vec<usize> = (0..=width).map(|x| x * sw / width).collect();
+        for (y, row) in out.chunks_mut(width * 4).enumerate() {
+            let (y0, y1) = (y * sh / height, (y + 1) * sh / height);
+            let mut sums = vec![[0u32; 4]; width];
+            for sy in y0..y1 {
+                let src = &image.data[sy * image.stride..][..sw * 4];
+                for (x, sum) in sums.iter_mut().enumerate() {
+                    for px in src[cols[x] * 4..cols[x + 1] * 4].as_chunks::<4>().0 {
+                        for c in 0..4 {
+                            sum[c] += px[c] as u32;
+                        }
+                    }
+                }
+            }
+            for (x, (sum, dst)) in sums.iter().zip(row.as_chunks_mut::<4>().0).enumerate() {
+                let n = ((cols[x + 1] - cols[x]) * (y1 - y0)) as u32;
+                for c in 0..4 {
+                    dst[c] = ((sum[c] + n / 2) / n) as u8;
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn scale_matches_reference() {
+        // Random pixels (xorshift, fixed seed), padded rows, odd sizes and every kind of
+        // ratio: identity, exact 2:1 and 3:1, fractional, one output row/column.
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let sizes = [(1, 1), (2, 2), (7, 5), (64, 36), (97, 61), (320, 180), (643, 419)];
+        let mut cases = 0;
+        for &(sw, sh) in &sizes {
+            let stride = sw * 4 + (next() % 3) as usize * 4;
+            let data: Vec<u8> = (0..stride * sh).map(|_| next() as u8).collect();
+            let img = BgraImage { width: sw as u32, height: sh as u32, stride, data: &data };
+            let mut targets = vec![(sw, sh), (sw / 2, sh / 2), (sw / 3, sh / 3), (1, 1), (sw, 1), (1, sh)];
+            for _ in 0..6 {
+                targets.push((1 + next() as usize % sw, 1 + next() as usize % sh));
+            }
+            targets.push((sw + 5, sh + 3));
+            for (dw, dh) in targets {
+                let mut out = Vec::new();
+                scale_bgra(&img, dw, dh, &mut out);
+                assert_eq!(out, scale_bgra_reference(&img, dw, dh), "{sw}x{sh} -> {dw}x{dh}");
+                cases += 1;
+            }
+        }
+        // Large ratios as the agent meets them (4K and 1440p screens, small windows).
+        for (sw, sh, dw, dh) in [(3840, 2160, 1920, 1080), (2560, 1440, 1920, 1080), (3840, 2160, 1366, 768)]
+        {
+            let data: Vec<u8> = (0..sw * sh * 4).map(|_| next() as u8).collect();
+            let img = BgraImage { width: sw as u32, height: sh as u32, stride: sw * 4, data: &data };
+            let mut out = Vec::new();
+            scale_bgra(&img, dw, dh, &mut out);
+            assert_eq!(out, scale_bgra_reference(&img, dw, dh), "{sw}x{sh} -> {dw}x{dh}");
+            cases += 1;
+        }
+        assert!(cases > 90);
     }
 
     fn solid(w: u32, h: u32, bgra: [u8; 4]) -> Vec<u8> {
