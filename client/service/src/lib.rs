@@ -39,6 +39,8 @@ pub mod signin;
 pub mod system;
 #[cfg(unix)]
 mod unix_shared;
+#[cfg(any(unix, test))]
+mod unix_args;
 #[cfg(target_os = "linux")]
 pub mod user;
 /// Unattended access installed for the whole computer by an administrator.
@@ -314,22 +316,18 @@ fn safe_boot_once() {
 /// the autostart entry) and `uninstall`; the app's settings install it too.
 #[cfg(unix)]
 pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<()> {
+    use unix_args::{Options, password_file};
     let args: Vec<String> = args.into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
-    let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let options =
+        |values: &[&str], flags: &[&str]| Options::parse(args.get(2..).unwrap_or_default(), values, flags);
     match args.get(1).map(String::as_str) {
         // For scripts: the same as "Install" in the app's settings.
         Some("install") => {
-            let password = match value("--password-file") {
-                Some(file) => {
-                    let text = std::fs::read_to_string(&file)?;
-                    let _ = std::fs::remove_file(&file);
-                    Some(text.trim().to_string())
-                }
-                None => None,
-            };
+            let o = options(&["server", "server-key", "password-file"], &[])?;
+            let password = o.value("password-file").map(|file| password_file(&file)).transpose()?;
             let opts = user::InstallOptions {
-                server: value("--server").unwrap_or_default(),
-                server_key: value("--server-key"),
+                server: o.value("server").unwrap_or_default(),
+                server_key: o.value("server-key"),
                 password,
             };
             user::ask_screen_permission()?;
@@ -340,32 +338,35 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         }
         Some("start") => user::start(),
         // As root: the installation for the whole computer (organisations).
-        Some("deploy") if args.iter().any(|a| a == "--remove") => {
-            #[cfg(target_os = "macos")]
-            const KEPT: &str = "/Library/Application Support/NuviraHub";
-            #[cfg(not(target_os = "macos"))]
-            const KEPT: &str = "/var/lib/nuvira";
-            managed::remove().map(|()| println!("NuviraHub removed (the computer keeps its ID and settings in {KEPT})"))
-        }
         Some("deploy") => {
-            let password = match value("--password-file") {
-                Some(file) => {
-                    let text = std::fs::read_to_string(&file)?;
-                    let _ = std::fs::remove_file(&file);
-                    Some(text.trim().to_string())
+            let o =
+                options(&["server", "server-key", "password-file", "password-hash", "profile"], &["remove"])?;
+            if o.flag("remove") {
+                if !o.only("remove") {
+                    anyhow::bail!("deploy --remove takes no other option");
                 }
-                None => None,
-            };
+                #[cfg(target_os = "macos")]
+                const KEPT: &str = "/Library/Application Support/NuviraHub";
+                #[cfg(not(target_os = "macos"))]
+                const KEPT: &str = "/var/lib/nuvira";
+                return managed::remove().map(|()| {
+                    println!("NuviraHub removed (the computer keeps its ID and settings in {KEPT})")
+                });
+            }
+            let password = o.value("password-file").map(|file| password_file(&file)).transpose()?;
             let opts = managed::DeployOptions {
-                server: value("--server"),
-                server_key: value("--server-key"),
+                server: o.value("server"),
+                server_key: o.value("server-key"),
                 password,
-                password_hash: value("--password-hash"),
-                profile: value("--profile"),
+                password_hash: o.value("password-hash"),
+                profile: o.value("profile"),
             };
-            let generated = managed::deploy(opts)?;
+            let deployed = managed::deploy(opts)?;
             println!("NuviraHub installed for the whole computer");
-            if let Some(generated) = generated {
+            // Without --server, a policy or an earlier installation it is the
+            // public one: said, so that a script's mistake shows.
+            println!("server: {}", server_shown(&deployed.server));
+            if let Some(generated) = deployed.generated {
                 println!("permanent password: {generated}");
             }
             Ok(())
@@ -381,12 +382,15 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
         Some("portal") => user::portal(),
         Some("uninstall") => user::uninstall(),
         // As root (the packages, the app through the administrator prompt).
-        Some("printer") if args.iter().any(|a| a == "--remove") => {
-            cups::uninstall().map(|()| println!("NuviraHub printer removed"))
+        Some("printer") => {
+            if options(&[], &["remove"])?.flag("remove") {
+                cups::uninstall().map(|()| println!("NuviraHub printer removed"))
+            } else {
+                cups::install().map(|done| println!("{done}"))
+            }
         }
-        Some("printer") => cups::install().map(|done| println!("{done}")),
         // As root, through the administrator prompt of the app: printer and sign-in screen.
-        Some("system") => system::command(&args),
+        Some("system") => system::command(&options(&["user-data", "server", "server-key"], &["remove"])?),
         // launchd's daemon of the virtual HID keyboard (macOS lock screen).
         #[cfg(target_os = "macos")]
         Some("hid-run") => hid::run(),
@@ -400,6 +404,16 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result
              as root, for the whole computer: nuvira service deploy [--server HOST] [--server-key FP] [--password-hash HASH | --password-file FILE] [--profile CODE] | deploy --remove\n\
              nuvira service password-hash   (the hash of a password, for /etc/nuvira/policy.json)"
         ),
+    }
+}
+
+/// The server for a person reading the output: the public one by name.
+#[cfg(unix)]
+fn server_shown(server: &str) -> String {
+    if server.is_empty() {
+        format!("{} (NuviraHub's public server)", nuvira_transport::signal::server_or_public(server))
+    } else {
+        server.to_string()
     }
 }
 

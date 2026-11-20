@@ -22,6 +22,15 @@ pub struct InstallOptions {
     pub password: Option<String>,
 }
 
+/// What `nuvira service deploy` did.
+#[derive(Debug)]
+pub struct Deployed {
+    /// The permanent password, when one was made: shown once.
+    pub generated: Option<String>,
+    /// The server the computer was installed with (empty: the public one).
+    pub server: String,
+}
+
 pub(crate) fn home() -> Result<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from).context("HOME not set")
 }

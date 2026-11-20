@@ -194,14 +194,13 @@ fn last_line(output: &std::process::Output) -> String {
 }
 
 /// `nuvira service system ...` (as root).
-pub fn command(args: &[String]) -> Result<()> {
-    let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
-    if args.iter().any(|a| a == "--remove") {
+pub(crate) fn command(options: &crate::unix_args::Options) -> Result<()> {
+    if options.flag("remove") {
         return uninstall().map(|()| println!("system part of unattended access removed"));
     }
-    let user_data = value("--user-data").context("--user-data is needed")?;
-    let server = value("--server").unwrap_or_default();
-    let result = install(Path::new(&user_data), &server, value("--server-key").as_deref());
+    let user_data = options.value("user-data").context("--user-data is needed")?;
+    let server = options.value("server").unwrap_or_default();
+    let result = install(Path::new(&user_data), &server, options.value("server-key").as_deref());
     if let Err(e) = &result {
         warn!("{e:#}");
     }

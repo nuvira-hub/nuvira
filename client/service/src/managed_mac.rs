@@ -88,6 +88,8 @@ struct SessionAgent {
     keyboard: Option<String>,
 }
 
+pub use crate::unix_shared::Deployed;
+
 #[derive(Debug, Default)]
 pub struct DeployOptions {
     pub server: Option<String>,
@@ -192,7 +194,7 @@ fn agent_definition(exe: &Path) -> String {
 /// `nuvira service deploy` (as root; the `.pkg` runs it): installs or updates.
 /// What is not given is kept (also from the person's own installation, whose ID
 /// the Mac takes over), or made the first time; the policies win over everything.
-pub fn deploy(opts: DeployOptions) -> Result<Option<String>> {
+pub fn deploy(opts: DeployOptions) -> Result<Deployed> {
     signin::ensure_root()?;
     let exe = std::env::current_exe().context("program path")?;
     check_program(&exe)?;
@@ -258,7 +260,7 @@ pub fn deploy(opts: DeployOptions) -> Result<Option<String>> {
     let _ = launchctl(&["bootout", &format!("system/{DAEMON_LABEL}")]);
     bootstrap("system", &daemon_plist())?;
     info!(server = settings.server, "installed for the whole Mac");
-    Ok(generated)
+    Ok(Deployed { generated, server: settings.server })
 }
 
 /// `nuvira service deploy --remove` (as root): the Mac keeps its ID, password and
