@@ -229,6 +229,43 @@ pub fn bgra_to_nv12(image: &BgraImage, out: &mut [u8], pitch: usize, height_alig
     });
 }
 
+/// A column-sum row of [`scale_bgra`] (one per job), taken from a small store and given
+/// back when the job ends: the rows are made once, not at every frame (a 4K row is 60 KiB).
+struct ColumnSums(Vec<u32>);
+
+static COLUMN_SUMS: std::sync::Mutex<Vec<Vec<u32>>> = std::sync::Mutex::new(Vec::new());
+
+impl ColumnSums {
+    fn take(len: usize) -> Self {
+        let mut row = COLUMN_SUMS.lock().unwrap_or_else(|e| e.into_inner()).pop().unwrap_or_default();
+        row.resize(len, 0);
+        Self(row)
+    }
+}
+
+impl Drop for ColumnSums {
+    fn drop(&mut self) {
+        let mut store = COLUMN_SUMS.lock().unwrap_or_else(|e| e.into_inner());
+        // At most one row per job of two callers at once.
+        if store.len() < 2 * threads() {
+            store.push(std::mem::take(&mut self.0));
+        }
+    }
+}
+
+impl std::ops::Deref for ColumnSums {
+    type Target = [u32];
+    fn deref(&self) -> &[u32] {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ColumnSums {
+    fn deref_mut(&mut self) -> &mut [u32] {
+        &mut self.0
+    }
+}
+
 /// Scales `image` down to `width`x`height` (clamped to the image size), each output
 /// pixel being the average of the source pixels it covers: text stays readable
 /// instead of losing strokes as with point sampling. `out` gets packed rows.
@@ -249,7 +286,7 @@ pub fn scale_bgra(image: &BgraImage, width: usize, height: usize, out: &mut Vec<
     let rows_per_job = height.div_ceil(threads());
     let cols = &cols;
     pool::each(out.chunks_mut(width * 4 * rows_per_job), |job, chunk| {
-        let mut column_sums = vec![0u32; sw * 4];
+        let mut column_sums = ColumnSums::take(sw * 4);
         for (i, row) in chunk.chunks_mut(width * 4).enumerate() {
             let y = job * rows_per_job + i;
             let (y0, y1) = (y * sh / height, (y + 1) * sh / height);
