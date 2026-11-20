@@ -58,6 +58,12 @@ impl Decoder {
         self.buf.extend_from_slice(data);
     }
 
+    /// No bytes held: every byte pushed has been returned as a message. Bytes
+    /// left when the stream ends are a message cut short (review NET-4).
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
     /// Next complete message, if it has fully arrived.
     pub fn next_message<M: Message + Default>(&mut self) -> Result<Option<M>, FrameError> {
         let mut peek = &self.buf[..];
@@ -103,6 +109,21 @@ mod tests {
         assert_eq!(ping, Some(a));
         assert_eq!(dec.next_message::<VideoFrame>().unwrap(), Some(b));
         assert_eq!(dec.next_message::<VideoFrame>().unwrap(), None);
+        assert!(dec.is_empty());
+    }
+
+    #[test]
+    fn is_empty_only_between_messages() {
+        let wire = encode(&Ping { sent_us: 300 });
+        let mut dec = Decoder::default();
+        assert!(dec.is_empty());
+        dec.push(&wire[..1]);
+        assert!(!dec.is_empty());
+        assert_eq!(dec.next_message::<Ping>().unwrap(), None);
+        assert!(!dec.is_empty());
+        dec.push(&wire[1..]);
+        assert_eq!(dec.next_message::<Ping>().unwrap(), Some(Ping { sent_us: 300 }));
+        assert!(dec.is_empty());
     }
 
     #[test]

@@ -383,7 +383,10 @@ impl FramedRecv {
         self.decoder.set_limit(limit);
     }
 
-    /// Next message; `None` when the other side closes the stream.
+    /// Next message; `None` when the other side closes the stream after a whole
+    /// message. A stream that ends inside a message is an error, not a clean end
+    /// (review NET-4): the control stream and the terminal would otherwise take a
+    /// peer cut off mid-message for one that finished.
     pub async fn recv<M: Message + Default>(&mut self) -> Result<Option<M>> {
         loop {
             if let Some(msg) = self.decoder.next_message()? {
@@ -391,7 +394,8 @@ impl FramedRecv {
             }
             match self.stream.read(&mut self.buf).await? {
                 Some(n) => self.decoder.push(&self.buf[..n]),
-                None => return Ok(None),
+                None if self.decoder.is_empty() => return Ok(None),
+                None => bail!("stream ended inside a message"),
             }
         }
     }

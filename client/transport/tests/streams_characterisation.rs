@@ -139,18 +139,26 @@ async fn characterises_bug_recv_one_accepts_varints_the_decoder_refuses() {
 }
 
 #[tokio::test]
-async fn characterises_framed_recv_drops_a_truncated_last_message() {
-    // KNOWN BUG (Phase 2): `FramedRecv::recv` returns `Ok(None)` (a clean end) when
-    // the stream ends inside a message: the partial message is dropped without an
-    // error. Callers that count bytes (read_stream, files) notice it from the size;
-    // others do not. Expected after fix: an error ("stream ended inside a message").
+async fn framed_recv_refuses_a_truncated_last_message() {
+    // Was K6 (Phase 2): `FramedRecv::recv` returned `Ok(None)`, a clean end, when
+    // the stream ended inside a message. Fixed in review NET-4: an error, as
+    // `recv_one` gives.
     let (c, s, _e) = pair().await;
     let mut wire = framed(&Ping { sent_us: 1 });
     wire.extend_from_slice(&framed(&Ping { sent_us: 2 })[..2]);
     let mut rx = FramedRecv::new(uni(&c, &s, &wire).await);
     assert_eq!(rx.recv::<Ping>().await.unwrap(), Some(Ping { sent_us: 1 }));
+    let err = rx.recv::<Ping>().await.unwrap_err().to_string();
+    assert_eq!(err, "stream ended inside a message");
+    // Inside the length prefix too.
+    let mut rx = FramedRecv::new(uni(&c, &s, &[0x80]).await);
+    let err = rx.recv::<Ping>().await.unwrap_err().to_string();
+    assert_eq!(err, "stream ended inside a message");
+    // A clean end after whole messages is still `None`.
+    let mut rx = FramedRecv::new(uni(&c, &s, &framed(&Ping { sent_us: 3 })).await);
+    assert_eq!(rx.recv::<Ping>().await.unwrap(), Some(Ping { sent_us: 3 }));
     assert_eq!(rx.recv::<Ping>().await.unwrap(), None);
-    // A length above the limit is an error, though.
+    // A length above the limit is an error, as before.
     let mut rx = FramedRecv::new(uni(&c, &s, &varint(MAX_MESSAGE_LEN as u64 + 1)).await);
     assert!(rx.recv::<Ping>().await.is_err());
 }
