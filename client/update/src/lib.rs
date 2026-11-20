@@ -96,6 +96,8 @@ pub fn platform() -> &'static str {
     if cfg!(all(windows, target_arch = "x86_64")) {
         "windows-x64"
     } else if cfg!(all(windows, target_arch = "aarch64")) {
+        // No native ARM build is published yet: an ARM PC runs the x64 build
+        // (emulated), which asks for "windows-x64". Kept for a future native build.
         "windows-arm64"
     } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         "linux-x64"
