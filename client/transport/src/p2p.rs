@@ -458,7 +458,8 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     let (mut endpoint, peers) = session_endpoint(route, None).await?;
     endpoint.set_default_client_config(config);
 
-    let mut relay = Box::pin(endpoint.connect(route.relay, "nuvira-device")?);
+    let connecting = endpoint.connect(route.relay, "nuvira-device")?;
+    let mut relay = Box::pin(async move { connecting.await.context("connecting through the relay") });
     // NUVIRA_FORCE_RELAY=1: relay only, to measure its cost in tests.
     let force_relay = std::env::var_os("NUVIRA_FORCE_RELAY").is_some();
     // Direct attempts towards all the other side's addresses, in parallel.
@@ -478,31 +479,8 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
         }
     }
 
-    // The first direct connection wins; the relay is used only if no direct one
-    // succeeds within DIRECT_GRACE of the relay being ready.
     let mut relayed: Option<Result<Connection>> = None;
-    let mut deadline = None;
-    let chosen = loop {
-        tokio::select! {
-            Some(r) = direct.join_next(), if !direct.is_empty() => match r {
-                Ok(Ok(conn)) => break (conn, Path::Direct),
-                Ok(Err((peer, e))) => debug!(%peer, "direct path failed: {e}"),
-                Err(e) => debug!("direct attempt interrupted: {e}"),
-            },
-            r = &mut relay, if relayed.is_none() => {
-                relayed = Some(r.context("connecting through the relay"));
-                deadline = Some(tokio::time::Instant::now() + DIRECT_GRACE);
-            }
-            _ = tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)), if deadline.is_some() => {
-                break (relayed.take().expect("relay ready")?, Path::Relay);
-            }
-        }
-        // All direct attempts failed and the relay is ready: no point waiting.
-        if direct.is_empty() && relayed.is_some() {
-            break (relayed.take().expect("relay ready")?, Path::Relay);
-        }
-    };
-    let (conn, path) = chosen;
+    let (conn, path) = choose(&mut direct, &mut relay, &mut relayed).await?;
     // The other attempts are closed: the agent uses the connection the session opens on.
     direct.abort_all();
     match relayed {
@@ -519,6 +497,43 @@ pub async fn viewer_connect(identity: &Identity, route: &Route) -> Result<(Conne
     }
     debug!(?path, remote = %canonical(conn.remote_address()), "connected");
     Ok((conn, path))
+}
+
+/// The first direct connection wins; the relay is used only if no direct one
+/// succeeds within [`DIRECT_GRACE`] of the relay being ready. A relay that fails
+/// does not end the attempt while direct attempts still run (review NET-15: it
+/// used to, 1.5 s later): its error is returned once they have all failed.
+/// `relayed` keeps the relay's result, if it came, for the caller to close.
+async fn choose<C: Send + 'static, E: std::fmt::Display + Send + 'static>(
+    direct: &mut tokio::task::JoinSet<Result<C, (SocketAddr, E)>>,
+    relay: &mut (impl Future<Output = Result<C>> + Unpin),
+    relayed: &mut Option<Result<C>>,
+) -> Result<(C, Path)> {
+    let mut deadline = None;
+    loop {
+        tokio::select! {
+            Some(r) = direct.join_next(), if !direct.is_empty() => match r {
+                Ok(Ok(conn)) => return Ok((conn, Path::Direct)),
+                Ok(Err((peer, e))) => debug!(%peer, "direct path failed: {e}"),
+                Err(e) => debug!("direct attempt interrupted: {e}"),
+            },
+            r = &mut *relay, if relayed.is_none() => {
+                match &r {
+                    Ok(_) => deadline = Some(tokio::time::Instant::now() + DIRECT_GRACE),
+                    Err(e) if !direct.is_empty() => debug!("relay failed, waiting for the direct attempts: {e:#}"),
+                    Err(_) => {}
+                }
+                *relayed = Some(r);
+            }
+            _ = tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)), if deadline.is_some() => {
+                return relayed.take().expect("relay ready").map(|c| (c, Path::Relay));
+            }
+        }
+        // All direct attempts failed and the relay has answered: no point waiting.
+        if direct.is_empty() && relayed.is_some() {
+            return relayed.take().expect("relay ready").map(|c| (c, Path::Relay));
+        }
+    }
 }
 
 /// Does the certificate use this Ed25519 public key?
@@ -696,6 +711,66 @@ mod tests {
         assert_eq!(for_socket(v6, true), v6);
         assert!(!reachable(v6, false));
         assert!(reachable(v4, true));
+    }
+
+    /// Runs [`choose`] with direct attempts and a relay that end after the given
+    /// times (`Ok(n)`: connection `n`; `Err`: failure); returns the choice and
+    /// how long it took.
+    async fn race(
+        direct: &[(u64, Result<u32, &'static str>)],
+        relay: (u64, Result<u32, &'static str>),
+    ) -> (Result<(u32, Path), String>, Duration) {
+        let mut set = tokio::task::JoinSet::new();
+        for (i, (ms, r)) in direct.iter().cloned().enumerate() {
+            let peer = SocketAddr::from(([192, 0, 2, i as u8 + 1], 1));
+            set.spawn(async move {
+                tokio::time::sleep(Duration::from_millis(ms)).await;
+                r.map_err(|e| (peer, e))
+            });
+        }
+        let (ms, r) = relay;
+        let mut relay = Box::pin(async move {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            r.map_err(|e| anyhow::anyhow!(e))
+        });
+        let mut relayed = None;
+        let start = std::time::Instant::now();
+        let got = choose(&mut set, &mut relay, &mut relayed).await.map_err(|e| e.to_string());
+        (got, start.elapsed())
+    }
+
+    #[tokio::test]
+    async fn choose_waits_for_direct_attempts_when_the_relay_fails() {
+        // Review NET-15: the relay refuses at once, the direct path needs 2.5 s
+        // (a lost first Initial on a lossy link): direct (before: the relay's
+        // error 1.5 s after it).
+        let (got, took) = race(&[(2500, Ok(7))], (50, Err("refused"))).await;
+        assert_eq!(got.unwrap(), (7, Path::Direct));
+        assert!(took >= Duration::from_millis(2400), "{took:?}");
+        // The relay fails and so do the direct attempts: the relay's error, once
+        // the last direct attempt has failed.
+        let (got, took) = race(&[(300, Err("timeout")), (600, Err("timeout"))], (50, Err("refused"))).await;
+        assert_eq!(got.unwrap_err(), "refused");
+        assert!(took >= Duration::from_millis(550) && took < Duration::from_millis(1400), "{took:?}");
+        // No direct attempt at all: the relay's error at once.
+        let (got, took) = race(&[], (50, Err("refused"))).await;
+        assert_eq!(got.unwrap_err(), "refused");
+        assert!(took < Duration::from_millis(1000), "{took:?}");
+    }
+
+    #[tokio::test]
+    async fn choose_prefers_direct_within_the_grace_time() {
+        // Unchanged: a direct connection within DIRECT_GRACE of the relay wins.
+        let (got, _) = race(&[(500, Ok(1))], (50, Ok(2))).await;
+        assert_eq!(got.unwrap(), (1, Path::Direct));
+        // Later than that: the relay, DIRECT_GRACE after it was ready.
+        let (got, took) = race(&[(4000, Ok(1))], (50, Ok(2))).await;
+        assert_eq!(got.unwrap(), (2, Path::Relay));
+        assert!(took >= Duration::from_millis(1500) && took < Duration::from_millis(2500), "{took:?}");
+        // Direct attempts that fail: the relay as soon as they have.
+        let (got, took) = race(&[(300, Err("timeout"))], (50, Ok(2))).await;
+        assert_eq!(got.unwrap(), (2, Path::Relay));
+        assert!(took < Duration::from_millis(1000), "{took:?}");
     }
 
     #[test]
