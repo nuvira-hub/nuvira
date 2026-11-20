@@ -221,6 +221,11 @@ fn transport_config(idle: Duration) -> Arc<TransportConfig> {
     // Limited send buffer: if the network does not keep up, sending blocks early and
     // the agent skips frames instead of queueing seconds of them (adaptive bitrate does the rest).
     t.send_window(SEND_WINDOW);
+    // Video as datagrams (opt-in, NUVIRA_VIDEO_FEC) keeps quinn's default datagram
+    // send buffer of 1 MiB, four times this brake: in front of a slow link several
+    // frames can queue at the sender (review NET-12). Not changed alone: a smaller
+    // buffer cuts the queueing delay but does not pace the shards of a keyframe, so
+    // it waits for a measured study together with datagram pacing (review VID-9).
     // BBR estimates bandwidth instead of halving the window at every loss: with random
     // losses (Wi-Fi, mobile networks) NewReno/Cubic drop well below the real capacity.
     if std::env::var_os("NUVIRA_CC_CUBIC").is_none() {
