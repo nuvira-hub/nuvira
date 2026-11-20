@@ -660,6 +660,10 @@ pub fn uninstall(remove_program: bool, from_msi: bool) -> Result<()> {
         }
         None => println!("the service is not installed"),
     }
+    // Left by an update that did not go through (the service removes it when it
+    // starts again): without the service it would keep running cmd.exe as SYSTEM
+    // for its hour, then stay in Task Scheduler for ever (APP-18).
+    remove_rescue();
     let _ =
         run(hidden("netsh")
             .raw_arg(format!("advfirewall firewall delete rule name=\"{FIREWALL_RULE}\"")));
