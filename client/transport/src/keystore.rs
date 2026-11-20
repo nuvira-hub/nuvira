@@ -282,19 +282,26 @@ fn random_key() -> Result<[u8; 32]> {
 }
 
 /// `CryptUnprotectData` errors that mean the blob will never open for this
-/// account (review NET-8; measured on Windows 11 in Phase 4):
-/// `NTE_BAD_KEY_STATE` (a master key this account does not have: another account
-/// or computer), `NTE_BAD_DATA` and `ERROR_INVALID_DATA` (damaged or not a DPAPI
-/// blob) and `E_INVALIDARG` (a truncated blob). Any other error (the DPAPI or
-/// RPC service not reachable yet, a profile not loaded, out of memory) may pass:
-/// the key is waited for instead of being replaced by a new one.
+/// account (review NET-8; measured on Windows 11, Phase 4 and lot 19 on
+/// PC-LABORATORIO): `NTE_BAD_KEY_STATE` (a person's account without the blob's
+/// master key: another account or computer), `NTE_BAD_DATA` and
+/// `ERROR_INVALID_DATA` (damaged or not a DPAPI blob) and `E_INVALIDARG` (a
+/// truncated blob). LocalSystem (the service and its agents) answers a master key
+/// it does not have with `ERROR_PATH_NOT_FOUND` (or `ERROR_FILE_NOT_FOUND`): its
+/// master keys are always on the system disk, so for it these are permanent too.
+/// Any other error (the DPAPI or RPC service not reachable yet, a person's
+/// profile not loaded, out of memory) may pass: the key is waited for instead of
+/// being replaced by a new one.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn dpapi_error_is_permanent(hresult: u32) -> bool {
+fn dpapi_error_is_permanent(hresult: u32, local_system: bool) -> bool {
     const NTE_BAD_KEY_STATE: u32 = 0x8009_000B;
     const NTE_BAD_DATA: u32 = 0x8009_0005;
     const ERROR_INVALID_DATA: u32 = 0x8007_000D;
     const E_INVALIDARG: u32 = 0x8007_0057;
+    const ERROR_FILE_NOT_FOUND: u32 = 0x8007_0002;
+    const ERROR_PATH_NOT_FOUND: u32 = 0x8007_0003;
     matches!(hresult, NTE_BAD_KEY_STATE | NTE_BAD_DATA | ERROR_INVALID_DATA | E_INVALIDARG)
+        || (local_system && matches!(hresult, ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND))
 }
 
 #[cfg(windows)]
@@ -344,7 +351,7 @@ mod sys {
             CryptUnprotectData(&input, None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut output)
                 .map_err(|e| {
                     let code = e.code().0 as u32;
-                    if super::dpapi_error_is_permanent(code) {
+                    if super::dpapi_error_is_permanent(code, running_as_system()) {
                         ReadError::Unreadable(anyhow!(
                             "CryptUnprotectData (another account or computer?): {e}"
                         ))
@@ -355,6 +362,29 @@ mod sys {
             let der = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
             LocalFree(Some(HLOCAL(output.pbData.cast())));
             Ok(der)
+        }
+    }
+
+    /// The process runs as LocalSystem.
+    fn running_as_system() -> bool {
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::Security::{
+            GetTokenInformation, IsWellKnownSid, TOKEN_QUERY, TOKEN_USER, TokenUser, WinLocalSystemSid,
+        };
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        // SAFETY: the process's own token, queried into an aligned buffer and closed.
+        unsafe {
+            let mut token = HANDLE::default();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+                return false;
+            }
+            let mut buf = [0u64; 64];
+            let mut len = 0;
+            let size = std::mem::size_of_val(&buf) as u32;
+            let ok =
+                GetTokenInformation(token, TokenUser, Some(buf.as_mut_ptr().cast()), size, &mut len).is_ok();
+            let _ = CloseHandle(token);
+            ok && IsWellKnownSid((*(buf.as_ptr() as *const TOKEN_USER)).User.Sid, WinLocalSystemSid).as_bool()
         }
     }
 
@@ -877,13 +907,20 @@ mod tests {
     #[test]
     fn dpapi_errors_that_never_pass() {
         // Review NET-8: these set the key aside (new ID); anything else waits.
-        for code in [0x8009_000Bu32, 0x8009_0005, 0x8007_000D, 0x8007_0057] {
-            assert!(dpapi_error_is_permanent(code), "{code:#x}");
+        for system in [false, true] {
+            for code in [0x8009_000Bu32, 0x8009_0005, 0x8007_000D, 0x8007_0057] {
+                assert!(dpapi_error_is_permanent(code, system), "{code:#x}");
+            }
+            // RPC server unavailable, call failed, out of memory, access denied.
+            for code in [0x8007_06BAu32, 0x8007_06BE, 0x8007_000E, 0x8007_0005] {
+                assert!(!dpapi_error_is_permanent(code, system), "{code:#x}");
+            }
         }
-        // RPC server unavailable, call failed, file / path not found (a profile
-        // not loaded yet), out of memory, access denied.
-        for code in [0x8007_06BAu32, 0x8007_06BE, 0x8007_0002, 0x8007_0003, 0x8007_000E, 0x8007_0005] {
-            assert!(!dpapi_error_is_permanent(code), "{code:#x}");
+        // File / path not found: a person's profile not loaded yet, but a master
+        // key LocalSystem does not have (its own are always there).
+        for code in [0x8007_0002u32, 0x8007_0003] {
+            assert!(!dpapi_error_is_permanent(code, false), "{code:#x}");
+            assert!(dpapi_error_is_permanent(code, true), "{code:#x}");
         }
     }
 
