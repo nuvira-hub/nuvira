@@ -934,9 +934,171 @@ pub fn sleep_until(deadline: Instant) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Fixed-memory histogram (long sessions)
+
+/// Sub-buckets per power of two: values below `2^HIST_SUB` are exact, larger ones
+/// are kept with a relative error below `2^-HIST_SUB` (0.1 %).
+const HIST_SUB: u32 = 10;
+/// Largest octave kept (2^40 µs = 12.7 days): larger values go to the last bucket.
+const HIST_MAX_SHIFT: u32 = 40 - HIST_SUB;
+const HIST_BUCKETS: usize = ((HIST_MAX_SHIFT as usize) + 2) << HIST_SUB;
+
+/// Distribution of integer values (µs) in a fixed amount of memory, HDR-style
+/// (exact below 1024, then 1024 buckets per power of two). Used where a session is
+/// too long to keep every value: a growing vector of per-frame records is what the
+/// long-session leak gate B-RES-01 measured instead of the product (VWR-1).
+/// Count, mean, min and max are exact; percentiles within 0.1 %.
+#[derive(Clone, Debug, Default)]
+pub struct UsHistogram {
+    /// Counts of the values >= 0 and of the magnitudes of the values < 0,
+    /// allocated on the first value of each sign (then fixed).
+    pos: Vec<u32>,
+    neg: Vec<u32>,
+    n: u64,
+    sum: f64,
+    min: i64,
+    max: i64,
+}
+
+fn hist_index(v: u64) -> usize {
+    if v < (1 << HIST_SUB) {
+        return v as usize;
+    }
+    let shift = (63 - v.leading_zeros()) - HIST_SUB;
+    if shift > HIST_MAX_SHIFT {
+        return HIST_BUCKETS - 1;
+    }
+    (((shift + 1) as usize) << HIST_SUB) + ((v >> shift) as usize - (1 << HIST_SUB))
+}
+
+/// The value a bucket stands for: exact, or the middle of its range.
+fn hist_value(i: usize) -> f64 {
+    let sub = 1usize << HIST_SUB;
+    if i < sub {
+        return i as f64;
+    }
+    let shift = (i >> HIST_SUB) as u32 - 1;
+    let lo = ((sub + (i & (sub - 1))) as u64) << shift;
+    lo as f64 + ((1u64 << shift) as f64 - 1.0) / 2.0
+}
+
+impl UsHistogram {
+    pub fn add(&mut self, v: i64) {
+        let (counts, mag) =
+            if v >= 0 { (&mut self.pos, v as u64) } else { (&mut self.neg, v.unsigned_abs()) };
+        if counts.is_empty() {
+            counts.resize(HIST_BUCKETS, 0);
+        }
+        let c = &mut counts[hist_index(mag)];
+        *c = c.saturating_add(1);
+        if self.n == 0 {
+            (self.min, self.max) = (v, v);
+        } else {
+            self.min = self.min.min(v);
+            self.max = self.max.max(v);
+        }
+        self.n += 1;
+        self.sum += v as f64;
+    }
+
+    pub fn len(&self) -> u64 {
+        self.n
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    /// The value of rank `k` (0-based, ascending), clamped to the exact min and max.
+    fn at_rank(&self, k: u64) -> f64 {
+        let mut seen = 0u64;
+        // Negative values: largest magnitude first.
+        for (i, &c) in self.neg.iter().enumerate().rev() {
+            seen += c as u64;
+            if c > 0 && k < seen {
+                return (-hist_value(i)).clamp(self.min as f64, self.max as f64);
+            }
+        }
+        for (i, &c) in self.pos.iter().enumerate() {
+            seen += c as u64;
+            if c > 0 && k < seen {
+                return hist_value(i).clamp(self.min as f64, self.max as f64);
+            }
+        }
+        self.max as f64
+    }
+
+    /// As [`Distribution::of`] of the values times `scale` plus `shift` (e.g. µs to ms,
+    /// a clock offset applied afterwards), with [`percentile_sorted`]'s interpolation.
+    pub fn distribution(&self, scale: f64, shift: f64) -> Distribution {
+        if self.n == 0 {
+            return Distribution::default();
+        }
+        let pct = |p: f64| {
+            let rank = (p / 100.0).clamp(0.0, 1.0) * (self.n - 1) as f64;
+            let (lo, hi) = (rank.floor() as u64, rank.ceil() as u64);
+            let (a, b) = (self.at_rank(lo), self.at_rank(hi));
+            a + (b - a) * (rank - lo as f64)
+        };
+        let f = |v: f64| v * scale + shift;
+        Distribution {
+            n: self.n as usize,
+            mean: f(self.sum / self.n as f64),
+            min: f(self.min as f64),
+            p50: f(pct(50.0)),
+            p95: f(pct(95.0)),
+            p99: f(pct(99.0)),
+            max: f(self.max as f64),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn us_histogram_matches_exact_distribution() {
+        // Latency-like values (µs), some negative, a long tail: within 0.1 % of the exact
+        // percentiles; count, mean, min, max exact.
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut vals = Vec::new();
+        let mut h = UsHistogram::default();
+        for i in 0..50_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let v = match i % 50 {
+                0 => -((x % 3000) as i64),
+                1 => (x % 4_000_000) as i64,
+                _ => 8_000 + (x % 30_000) as i64,
+            };
+            vals.push(v as f64 / 1000.0);
+            h.add(v);
+        }
+        let exact = Distribution::of(&vals);
+        let got = h.distribution(1e-3, 0.0);
+        assert_eq!(got.n, exact.n);
+        for (a, b) in [(got.mean, exact.mean), (got.min, exact.min), (got.max, exact.max)] {
+            assert!((a - b).abs() < 1e-9, "{a} vs {b}");
+        }
+        for (a, b) in [(got.p50, exact.p50), (got.p95, exact.p95), (got.p99, exact.p99)] {
+            assert!((a - b).abs() <= b.abs() * 1e-3 + 1e-3, "{a} vs {b}");
+        }
+        // Small values are exact, a shift moves everything.
+        let mut h = UsHistogram::default();
+        for v in [3, 1, 2] {
+            h.add(v);
+        }
+        let d = h.distribution(1.0, 10.0);
+        assert_eq!((d.min, d.p50, d.max, d.mean), (11.0, 12.0, 13.0, 12.0));
+        assert!(UsHistogram::default().distribution(1.0, 0.0).n == 0);
+        // Huge values land in the last bucket, max stays exact.
+        let mut h = UsHistogram::default();
+        h.add(i64::MAX);
+        assert_eq!(h.distribution(1.0, 0.0).max, i64::MAX as f64);
+    }
 
     #[test]
     fn stats_known_values() {

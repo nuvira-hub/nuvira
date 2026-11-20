@@ -59,6 +59,13 @@ pub fn register(reg: &mut Registry) {
     );
 }
 
+/// The headless viewer of a long session: no per-frame records (their 72 B per frame
+/// were the 15 MiB/h "viewer growth" of the Phase 1 baseline, VWR-1); the window is
+/// summed up in fixed memory.
+fn long_options(password: Option<String>) -> ViewerOptions {
+    ViewerOptions { password, keep_frames: false, ..Default::default() }
+}
+
 /// Session length and the part skipped for the slope.
 fn durations(tier: Tier) -> (Duration, Duration) {
     if let Some(s) = std::env::var("NUVIRA_BENCH_LONG_SECS").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
@@ -104,9 +111,7 @@ fn in_process(ctx: &mut RunCtx, r: &mut CaseResult) -> Result<()> {
     let agent = LoopbackAgent::start(&agent_rt, config, entry, &ctx.tmp.join("agent"), true)?;
     let (addr, fp, password) = (agent.addr, agent.fingerprint, agent.password.clone());
     let stats = viewer_rt.block_on(async {
-        let mut s =
-            HeadlessViewer::connect_direct(addr, Some(fp), ViewerOptions { password, ..Default::default() })
-                .await?;
+        let mut s = HeadlessViewer::connect_direct(addr, Some(fp), long_options(password)).await?;
         s.first_frame(Duration::from_secs(20)).await?;
         let start_ms = crate::resources::unix_ms();
         let st = s.run(length).await;
@@ -175,7 +180,7 @@ fn two_process(ctx: &mut RunCtx, r: &mut CaseResult) -> Result<()> {
         let viewer_rt = crate::net::viewer_runtime(2)?;
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         let stats = viewer_rt.block_on(async {
-            let mut s = HeadlessViewer::connect_direct(addr, Some(fp), ViewerOptions::default()).await?;
+            let mut s = HeadlessViewer::connect_direct(addr, Some(fp), long_options(None)).await?;
             s.first_frame(Duration::from_secs(20)).await?;
             let start_ms = crate::resources::unix_ms();
             let st = s.run(length).await;
