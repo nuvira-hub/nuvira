@@ -1,9 +1,9 @@
-//! Micro benchmarks B-MICRO-01..17 (plan section 7.1), work package WP2.
+//! Micro benchmarks B-MICRO-01..18 (plan section 7.1), work package WP2.
 //!
 //! Files: [`convert`] (01-03), [`codec_sw`] (04 and the shared encode harness),
 //! [`codec_hw`] (05), [`gpu_win`] (06-07), [`decode`] (08-10), [`proto`] (11),
 //! [`fec`] (12-13), [`crypto`] (14 password hash, 16 QUIC/TLS throughput),
-//! [`audio`] (15), [`capture`] (17).
+//! [`audio`] (15), [`capture`] (17), [`clipboard`] (18, added in Phase 6 lot 23).
 //!
 //! Every case is a [`MicroCase`]. Cases whose hardware or OS is missing are always
 //! registered (the same keys on every machine) and report `not-runnable` with the
@@ -13,6 +13,7 @@
 
 pub mod audio;
 pub mod capture;
+pub mod clipboard;
 pub mod codec_hw;
 pub mod codec_sw;
 pub mod convert;
@@ -44,6 +45,7 @@ pub fn register(reg: &mut Registry) {
     crypto::register(reg);
     audio::register(reg);
     capture::register(reg);
+    clipboard::register(reg);
 }
 
 // ---------------------------------------------------------------------------

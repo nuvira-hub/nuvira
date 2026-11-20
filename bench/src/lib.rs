@@ -7,7 +7,7 @@
 //!
 //! The other work packages each own one folder; its `mod.rs` declares the folder's
 //! files and, for case folders, provides `pub fn register(reg: &mut Registry)`:
-//! - `micro/` (WP2): B-MICRO-01..17;
+//! - `micro/` (WP2): B-MICRO-01..18;
 //! - `net/` (WP3: `mod.rs`, `netem.rs`, `headless.rs`; WP4: `server_mode.rs`) with
 //!   `pub fn cli_netem(args: &[String]) -> anyhow::Result<i32>` and
 //!   `pub fn cli_agent_host(args: &[String]) -> anyhow::Result<i32>`;

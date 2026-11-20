@@ -1,6 +1,6 @@
 # nuvira-bench
 
-Benchmark suite of NuviraHub: micro (B-MICRO-01..17), macro (B-MACRO-01..10), resources
+Benchmark suite of NuviraHub: micro (B-MICRO-01..18), macro (B-MACRO-01..10), resources
 (B-RES-02..04), long sessions (`long`: B-RES-01, and the Go relay soak B-RES-05) and Go server
 benchmarks (B-GO-01..08), with an A/B comparison script.
 
