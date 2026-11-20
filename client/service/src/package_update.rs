@@ -11,6 +11,12 @@
 //!   is in progress (a user's agent keeps `~/.config/nuvira/busy` meanwhile): the
 //!   timer tries again an hour later;
 //! - the agents restart by themselves with the new program once idle.
+//!
+//! Without a policy or an installation for the whole computer the server is the
+//! first one found in the users' units, and any user's `busy` file postpones the
+//! update: on a computer shared by people of different organisations, a policy
+//! (`/etc/nuvira/policy.json`, `"server"`) fixes the server. The users' files are
+//! read as root, so only regular files, never through a link, and only small ones.
 
 use std::path::{Path, PathBuf};
 
@@ -30,6 +36,36 @@ fn homes(passwd: &str) -> Vec<PathBuf> {
             ((1000..65534).contains(&uid) && home.starts_with('/')).then(|| PathBuf::from(home))
         })
         .collect()
+}
+
+/// The largest user file read here (a unit is a few hundred bytes).
+const USER_FILE_MAX: u64 = 64 * 1024;
+
+/// A file in a user's home folder, read as root: only if it is a regular file
+/// (not a link, a FIFO that would hang the timer, a device such as /dev/zero)
+/// of at most [`USER_FILE_MAX`] bytes.
+fn read_user_file(path: &Path) -> Option<String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    // O_NONBLOCK: opening a FIFO does not wait for a writer.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > USER_FILE_MAX {
+        return None;
+    }
+    let mut text = String::new();
+    file.take(USER_FILE_MAX).read_to_string(&mut text).ok()?;
+    Some(text)
+}
+
+/// A user's flag file is there: a regular file, not a link to something else.
+fn user_flag(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
 }
 
 /// The `--server` of a user service definition.
@@ -60,7 +96,7 @@ pub fn run() -> Result<()> {
         .or_else(|| crate::managed::state().map(|s| s.server))
         .or_else(|| {
             homes.iter().find_map(|h| {
-                let unit = std::fs::read_to_string(h.join(".config/systemd/user/nuvira-agent.service")).ok()?;
+                let unit = read_user_file(&h.join(".config/systemd/user/nuvira-agent.service"))?;
                 server_of_unit(&unit)
             })
         })
@@ -93,7 +129,7 @@ pub fn run() -> Result<()> {
         rt.block_on(nuvira_update::download(&base, &manifest, &file))?;
         println!("downloaded and checked");
     }
-    if let Some(home) = homes.iter().find(|h| h.join(".config/nuvira/busy").exists()) {
+    if let Some(home) = homes.iter().find(|h| user_flag(&h.join(".config/nuvira/busy"))) {
         println!("session in progress ({}): next time", home.display());
         return Ok(());
     }
@@ -118,5 +154,47 @@ mod tests {
         assert_eq!(server_of_unit(unit).as_deref(), Some("nuvira.example.com:21116"));
         assert_eq!(server_of_unit("ExecStart=/x agent --ipc --server \"\"\n").as_deref(), Some(""));
         assert_eq!(server_of_unit("ExecStart=/x agent --ipc\n"), None);
+    }
+
+    /// APP-19: users' files are read only when they are small regular files.
+    #[test]
+    fn user_files_only_regular_and_small() {
+        let dir = std::env::temp_dir().join(format!("nuvira-user-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let unit = dir.join("unit");
+        std::fs::write(&unit, "ExecStart=/x agent --ipc --server \"a.example\"\n").unwrap();
+        assert_eq!(read_user_file(&unit).as_deref().and_then(server_of_unit).as_deref(), Some("a.example"));
+        assert!(user_flag(&unit));
+
+        // A link (to a readable file, or to /dev/zero that never ends).
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&unit, &link).unwrap();
+        assert_eq!(read_user_file(&link), None);
+        assert!(!user_flag(&link));
+        let zero = dir.join("zero");
+        std::os::unix::fs::symlink("/dev/zero", &zero).unwrap();
+        assert_eq!(read_user_file(&zero), None);
+        assert_eq!(read_user_file(Path::new("/dev/zero")), None, "not a regular file");
+
+        // A FIFO with no writer: refused at once, not waited on.
+        let fifo = dir.join("fifo");
+        let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: a valid, NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let started = std::time::Instant::now();
+        assert_eq!(read_user_file(&fifo), None);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert!(!user_flag(&fifo));
+
+        // Too large.
+        let big = dir.join("big");
+        std::fs::write(&big, vec![b'x'; USER_FILE_MAX as usize + 1]).unwrap();
+        assert_eq!(read_user_file(&big), None);
+        // A folder, and nothing.
+        assert_eq!(read_user_file(&dir), None);
+        assert!(!user_flag(&dir));
+        assert!(!user_flag(&dir.join("missing")));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
