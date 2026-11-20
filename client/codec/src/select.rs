@@ -81,7 +81,8 @@ fn measure_with(mut encode: impl FnMut(usize) -> anyhow::Result<()>) -> anyhow::
     Ok(total.as_micros() as f64 / (FRAMES - WARMUP) as f64)
 }
 
-/// Encoding plan in automatic mode (computed only once).
+/// Encoding plan in automatic mode (computed only once per process, with the
+/// first session's settings).
 pub(crate) fn auto_plan(settings: EncoderSettings) -> EncoderPlan {
     static PLAN: OnceLock<EncoderPlan> = OnceLock::new();
     *PLAN.get_or_init(|| {

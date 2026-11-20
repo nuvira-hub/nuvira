@@ -64,7 +64,7 @@ pub fn cases() -> Vec<Case> {
             .needs(SRV)
             .group(Group::Long)
             .timeout_s(400),
-        Case::new("server/churn/characterises_bug_signalling_timeout", churn)
+        Case::new("server/churn/sixty-sessions-no-signalling-timeout", churn)
             .needs(SRV)
             .group(Group::Long)
             .timeout_s(900),
@@ -153,8 +153,8 @@ fn session(ctx: &Ctx, rig: &Rig, mode: TransportMode) -> Result<p2p::Path> {
         format!("SessionStarted {started:?} for path {path:?}")
     })?;
     ctx.note(format!("SessionEnded error: {error:?}"));
-    // The viewer's normal close is reported with its code 0 reason.
-    ensure(error.as_deref().is_none_or(|e| e.contains("(code 0)")), || format!("SessionEnded {error:?}"))?;
+    // The viewer's normal close is a normal end, not an error (K40, fixed by AGT-7).
+    ensure(error.is_none(), || format!("SessionEnded {error:?}"))?;
     Ok(path)
 }
 
@@ -1013,12 +1013,13 @@ fn idle_limit(ctx: &mut Ctx) -> Result<()> {
     Ok(())
 }
 
-/// KNOWN BUG (Phase 2, baseline B-RES-02 churn/server): in long series of
-/// sessions through the server the viewer's signalling connection sometimes
-/// times out (sessions 2, 22, 31, 44 in the baseline; 2 of 4 runs). Not
-/// deterministic: pinned are the failure mode (only "viewer signalling ... timed
-/// out", the next session works) and a bound on its rate (at most 5 of 60).
-/// Expected after fix: no failure.
+/// Sixty sessions in a row through the server: every one connects (K39, was
+/// `characterises_bug_signalling_timeout`). In the baseline the viewer's
+/// signalling connection sometimes timed out (sessions 2, 22, 31, 44; 2 of 4
+/// runs): a new socket that got the port of a recent session's relay link had
+/// its QUIC Initials forwarded to the old peer. Fixed in review lot 20
+/// (`Relay.Forget` at the session report, SRV-13 / NET-13 a), with lot 19's
+/// retry from a new socket (NET-13 b): no failure is allowed now.
 fn churn(ctx: &mut Ctx) -> Result<()> {
     let rig = Rig::start(ctx, AgentSpec::default())?;
     let viewer = rig.viewer(ctx, "viewer")?;
@@ -1047,11 +1048,7 @@ fn churn(ctx: &mut Ctx) -> Result<()> {
             }
         }
         ctx.note(format!("{} failures in {n} sessions", failures.len()));
-        ensure(
-            failures.iter().all(|(_, e)| e.contains("viewer signalling") && e.contains("timed out")),
-            || format!("other failures: {failures:?}"),
-        )?;
-        ensure(failures.len() <= 5, || format!("{} failures", failures.len()))?;
+        ensure(failures.is_empty(), || format!("{} failures: {failures:?}", failures.len()))?;
         anyhow::Ok(())
     })?;
     rig.stop();

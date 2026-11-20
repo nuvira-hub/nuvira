@@ -127,7 +127,8 @@ impl Clone for YuvFrame {
 }
 
 /// Decoders give pictures that stay on the GPU (macOS: VideoToolbox's
-/// IOSurfaces), set by a renderer that draws them as they are.
+/// IOSurfaces), set by a renderer that draws them as they are. Process-wide: one
+/// viewer window per process.
 static NATIVE_FRAMES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_native_frames(on: bool) {
@@ -213,6 +214,7 @@ pub fn encoded_size(width: u32, height: u32, (vw, vh): (u32, u32), limit: SizeLi
     (fit(width), fit(height))
 }
 
+/// Process-wide: one encoder pipeline at a time (see [`dmabuf_import_modifiers`]).
 #[cfg(target_os = "linux")]
 static DMABUF_MODIFIERS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 

@@ -40,7 +40,7 @@ use crate::{Capturer, Display, Frame, nested};
 const GPU_POOL: usize = 3;
 
 /// The screen the pointer was last seen on: another screen saying it does not have
-/// it does not hide it.
+/// it does not hide it. Process-wide: one capture pipeline at a time.
 static OWNER: AtomicUsize = AtomicUsize::new(usize::MAX);
 
 /// The pointer must be in this capturer's pictures: a viewer that does not draw
@@ -435,7 +435,9 @@ impl DxgiCapturer {
     /// GPU path: the piece of `target` under the pointer, read back, drawn on and
     /// written again (at most 256x256 pixels).
     fn draw_on_texture(&mut self, target: &ID3D11Texture2D) -> Result<()> {
-        let Some((x, y, w, h)) = cursor::bounds(self.frame.width, self.frame.height) else { return Ok(()) };
+        // One reading places and draws the pointer (VID-17).
+        let pointer = cursor::snapshot();
+        let Some((x, y, w, h)) = pointer.bounds(self.frame.width, self.frame.height) else { return Ok(()) };
         if self.piece.is_none() {
             let desc = D3D11_TEXTURE2D_DESC {
                 Width: cursor::MAX_SIDE,
@@ -469,7 +471,7 @@ impl DxgiCapturer {
             self.piece_data.extend_from_slice(src);
         }
         unsafe { self.context.Unmap(&piece, 0) };
-        cursor::draw_region(&mut self.piece_data, x as i32, y as i32, w, h, row, false);
+        pointer.draw_region(&mut self.piece_data, x as i32, y as i32, w, h, row, false);
         unsafe {
             self.context.UpdateSubresource(
                 target,

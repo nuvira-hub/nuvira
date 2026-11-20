@@ -62,8 +62,9 @@ func TestShorterIdle(t *testing.T) {
 }
 
 // Every field of pb.Policy, by name: which ones MergeLimits combines and
-// AnyLimit counts. A field added to Policy and not listed here fails the test,
-// so that it is a decision whether it is a session limit.
+// AnyLimit counts. A field added to Policy and listed in neither map fails the
+// test, so that it is a decision whether it is a session limit (SRV-20: the two
+// functions list the fields by hand).
 func TestMergeLimitsAndAnyLimitCoverPolicy(t *testing.T) {
 	limits := map[string]bool{
 		"confirm_always": true, "no_files": true, "no_clipboard": true, "no_privacy": true, "no_terminal": true,
@@ -71,6 +72,8 @@ func TestMergeLimitsAndAnyLimitCoverPolicy(t *testing.T) {
 		"no_record": true, "no_resolution": true, "no_audio": true, "lock_on_end": true, "idle_minutes": true,
 		"no_microphone": true,
 	}
+	// Fields of Policy that are deliberately not session limits (none today).
+	notLimitFields := map[string]bool{}
 	if AnyLimit(nil) || AnyLimit(&pb.Policy{}) {
 		t.Fatal("no limits")
 	}
@@ -95,6 +98,8 @@ func TestMergeLimitsAndAnyLimitCoverPolicy(t *testing.T) {
 		default:
 			if limits[name] {
 				t.Errorf("limit %s has kind %v", name, fd.Kind())
+			} else if !notLimitFields[name] {
+				t.Errorf("Policy field %s is new: list it as a limit (and merge/count it) or as not a limit", name)
 			}
 			notLimits = append(notLimits, name)
 			delete(limits, name)
@@ -109,6 +114,9 @@ func TestMergeLimitsAndAnyLimitCoverPolicy(t *testing.T) {
 		} else {
 			if carried || counted {
 				t.Errorf("%s is not a listed limit but merged %v / counted %v: update this test", name, carried, counted)
+			}
+			if !notLimitFields[name] {
+				t.Errorf("Policy field %s is new: list it as a limit (and merge/count it) or as not a limit", name)
 			}
 			notLimits = append(notLimits, name)
 		}

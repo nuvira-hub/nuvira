@@ -25,7 +25,6 @@ use x11rb::rust_connection::RustConnection;
 
 use crate::{Capturer, Display, Frame};
 
-/// The whole X screen, as one display.
 /// The monitors of the X screen (RandR 1.5), each one a screen of its own for
 /// the viewer; all of them is the whole X screen. One monitor, or no RandR: the
 /// X screen.
@@ -37,6 +36,7 @@ pub fn displays() -> Result<Vec<Display>> {
     Ok(if monitors.len() < 2 { vec![whole] } else { monitors })
 }
 
+/// The whole X screen, as one display.
 fn display(width: u32, height: u32) -> Display {
     Display { index: 0, name: "Screen".into(), left: 0, top: 0, width, height, primary: true }
 }

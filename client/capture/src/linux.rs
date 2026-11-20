@@ -119,6 +119,9 @@ struct Image {
 
 /// The DMA-BUF modifiers the compositor is offered (empty: shared memory only),
 /// and a generation that changes with them: a stream in progress negotiates again.
+/// Process-wide: one capture pipeline at a time. Not the codec's list of the same
+/// name: that one is what the encoder imports, this one what is offered now (the
+/// pipeline copies one into the other, empty for software encoding).
 static DMABUF_MODIFIERS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 static DMABUF_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 

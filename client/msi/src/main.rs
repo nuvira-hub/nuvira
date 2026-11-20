@@ -142,7 +142,8 @@ const SCHEMA: &[(&str, &str, &str)] = &[
     // No files, but RegisterProduct reads it.
     (
         "Media",
-        "`DiskId` SHORT NOT NULL, `LastSequence` SHORT NOT NULL, `DiskPrompt` CHAR(64), `Cabinet` CHAR(255),          `VolumeLabel` CHAR(32), `Source` CHAR(72)",
+        "`DiskId` SHORT NOT NULL, `LastSequence` SHORT NOT NULL, `DiskPrompt` CHAR(64), `Cabinet` CHAR(255), \
+         `VolumeLabel` CHAR(32), `Source` CHAR(72)",
         "`DiskId`",
     ),
     (

@@ -21,7 +21,7 @@ Images for `linux/amd64` and `linux/arm64`, built `FROM scratch` (only the stati
 
 The image runs as user 65532. With a bind mount owned by another user, run the container with that user (`--user UID:GID`) or give the folder to 65532.
 
-**Back up the whole `/data` folder.** Losing `cert.pem`/`key.pem` makes every client refuse the server (they pin its certificate at the first connection).
+**Back up the whole `/data` folder.** Losing `cert.pem`/`key.pem` makes every client refuse the server (they pin its certificate at the first connection). If only one of the two files is missing, the server does not start and names it: put it back from the backup (removing both makes a new certificate, which every client then has to trust again).
 
 This is the open server: signalling, relay and updates; each app keeps its own address book. Server address books, accounts and central rules are NuviraHub Pro modules, with their own image.
 

@@ -496,6 +496,7 @@ pub async fn guest_session(
         r = control_loop => r,
         r = sound => r,
     };
+    let result = crate::normal_end(result);
     if let Err(e) = &result {
         warn!("guest's session ended: {e:#}");
     }

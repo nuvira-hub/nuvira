@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io/fs"
 	"math/big"
 	"os"
@@ -22,12 +23,20 @@ import (
 	"time"
 )
 
-// LoadOrCreate reads cert.pem and key.pem from dir, creating them at first start.
+// LoadOrCreate reads cert.pem and key.pem from dir, creating them at first start
+// (both missing). Only one of them missing is an error: a new pair would change the
+// fingerprint every device has pinned.
 func LoadOrCreate(dir string) (tls.Certificate, error) {
 	certPath, keyPath := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err == nil || !errors.Is(err, fs.ErrNotExist) {
 		return cert, err
+	}
+	for _, p := range [][2]string{{certPath, keyPath}, {keyPath, certPath}} {
+		if _, err := os.Stat(p[1]); err == nil {
+			return tls.Certificate{}, fmt.Errorf("%s is missing but %s is there: put it back, or remove both "+
+				"to create a new certificate (every device will then have to trust the new fingerprint)", p[0], p[1])
+		}
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

@@ -6,9 +6,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -74,23 +77,44 @@ func TestLoadOrCreateDamaged(t *testing.T) {
 	}
 }
 
-// Characterisation: when only the key is missing, both files are made again,
-// so the fingerprint the devices pinned changes (the old cert.pem is overwritten).
-func TestLoadOrCreateMissingKeyRegenerates(t *testing.T) {
-	dir := t.TempDir()
-	first, err := LoadOrCreate(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(dir, "key.pem")); err != nil {
-		t.Fatal(err)
-	}
-	second, err := LoadOrCreate(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if Fingerprint(second) == Fingerprint(first) {
-		t.Fatal("same certificate without its key")
+// Only one of the two files missing is an error naming it, not a new certificate
+// (S18, fixed by SRV-19: devices pinned the fingerprint); both missing make a new
+// pair, as at the first start.
+func TestLoadOrCreateOneFileMissing(t *testing.T) {
+	for _, missing := range []string{"key.pem", "cert.pem"} {
+		dir := t.TempDir()
+		first, err := LoadOrCreate(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		certBefore, _ := os.ReadFile(filepath.Join(dir, "cert.pem"))
+		if err := os.Remove(filepath.Join(dir, missing)); err != nil {
+			t.Fatal(err)
+		}
+		_, err = LoadOrCreate(dir)
+		if err == nil || !strings.Contains(err.Error(), missing) {
+			t.Fatalf("%s removed: %v", missing, err)
+		}
+		// Nothing was overwritten.
+		if missing == "key.pem" {
+			if after, _ := os.ReadFile(filepath.Join(dir, "cert.pem")); string(after) != string(certBefore) {
+				t.Fatal("cert.pem rewritten")
+			}
+		}
+		if _, err := os.Stat(filepath.Join(dir, missing)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("%s created again: %v", missing, err)
+		}
+		// Both removed: a new certificate.
+		for _, name := range []string{"key.pem", "cert.pem"} {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+		second, err := LoadOrCreate(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if Fingerprint(second) == Fingerprint(first) {
+			t.Fatal("same certificate after removing both files")
+		}
 	}
 }
 

@@ -147,11 +147,29 @@ fn resolution_fitted_refused_to_others_and_put_back() {
     assert!(!resolution::restore(1, None), "nothing left to put back");
 
     // An agent killed while the screen was changed: the next start's recover.
-    resolution::fit(3, &display_back, target).expect("fit again");
+    // Not on macOS: the change is tied to the process (the system puts the mode
+    // back when it ends), so `recover` is a no-op there by design and cannot be
+    // tried in the process that made the change.
+    #[cfg(target_os = "macos")]
+    report("macOS: recover step not run (the system restores the mode when the process ends)");
+    #[cfg(not(target_os = "macos"))]
+    killed_agent_recovered(&state, &display_back, target, original);
+}
+
+/// The last step of [`resolution_fitted_refused_to_others_and_put_back`]: a change
+/// left behind (as by an agent that was killed) is put back by `recover`.
+#[cfg(not(target_os = "macos"))]
+fn killed_agent_recovered(
+    state: &std::path::Path,
+    display: &nuvira_capture::Display,
+    target: Size,
+    original: Size,
+) {
+    resolution::fit(3, display, target).expect("fit again");
     std::thread::sleep(Duration::from_secs(2));
     assert_eq!(resolution::modes(&primary()).expect("modes").1, target);
     assert!(state.exists());
-    resolution::recover(&state);
+    resolution::recover(state);
     std::thread::sleep(Duration::from_secs(2));
     let after = resolution::modes(&primary()).expect("modes").1;
     report(&format!("after recover: {after}"));

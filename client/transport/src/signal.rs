@@ -546,9 +546,14 @@ mod tests {
             .expect("refused")
             .to_string();
         let took = start.elapsed();
+        // The refusal proves the retry: without it the first handshake would end in
+        // a timeout error, never reaching the server.
         assert_eq!(err, "the server refuses the registration: test refusal");
+        // The retry waited its 3 s first. The second handshake takes one round trip
+        // on 127.0.0.1, but a heavily loaded machine has taken 5 s for it (8 s in
+        // all, lot 19 on the NUC): generous upper bound, only against a hang.
         assert!(
-            took >= UDP_HANDSHAKE_RETRY && took < UDP_HANDSHAKE_RETRY + Duration::from_secs(3),
+            took >= UDP_HANDSHAKE_RETRY && took < UDP_HANDSHAKE_RETRY + Duration::from_secs(15),
             "{took:?}"
         );
         let _ = std::fs::remove_dir_all(dir);

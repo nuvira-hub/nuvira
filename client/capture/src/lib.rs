@@ -4,7 +4,8 @@
 //! - Windows: DXGI Desktop Duplication (`windows.rs`);
 //! - macOS: ScreenCaptureKit (`macos.rs`);
 //! - Linux on Wayland: the remote desktop portal and PipeWire (`linux.rs`);
-//! - Linux on X11: `GetImage` of the root window (`x11.rs`).
+//! - Linux on X11: the root window through MIT-SHM (`ShmGetImage`), plain
+//!   `GetImage` without the extension (`x11.rs`).
 
 use std::time::Duration;
 
@@ -36,7 +37,7 @@ pub use synthetic::SyntheticCapturer;
 
 /// All the screens at once ([`AllCapturer`]): where its picture starts in the
 /// virtual desktop. Its screens publish the pointer in its coordinates and leave the
-/// drawing to it.
+/// drawing to it. Process-wide: the agent runs one capture pipeline at a time.
 static NESTED: std::sync::Mutex<Option<(i32, i32)>> = std::sync::Mutex::new(None);
 
 /// Set by [`AllCapturer`] while it lives.
@@ -156,7 +157,6 @@ pub fn open(index: Option<usize>) -> anyhow::Result<Box<dyn Capturer>> {
     }
 }
 
-/// A Wayland session (capture through the portal); otherwise X11.
 /// The windows of process `pid` are left out of the capture from now on (privacy
 /// mode on macOS: the black screens are another process). Waits a little for
 /// the running capture to apply it. Other systems: nothing to do.
@@ -189,6 +189,7 @@ pub fn lock_screen_takes_input() -> bool {
 #[cfg(target_os = "linux")]
 pub use linux::set_dmabuf_modifiers;
 
+/// A Wayland session (capture through the portal); otherwise X11.
 #[cfg(target_os = "linux")]
 pub fn wayland() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_some()
