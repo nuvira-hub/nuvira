@@ -459,6 +459,7 @@ pub async fn serve_direct(
             Ok(streams) => session(conn.clone(), streams, &config, None, None).await,
             Err(e) => Err(e),
         };
+        let result = normal_end(result);
         match &result {
             Ok(()) => info!("session with {peer} ended"),
             Err(e) => warn!("session with {peer} ended: {e:#}"),
@@ -604,6 +605,15 @@ fn closed_normally(e: &anyhow::Error) -> bool {
                 .downcast_ref::<quinn::ReadExactError>()
                 .is_some_and(|r| matches!(r, quinn::ReadExactError::ReadError(quinn::ReadError::ConnectionLost(c)) if closed(c)))
     })
+}
+
+/// A session the viewer closed on purpose ended normally: `Ok`, so it is neither
+/// logged as a warning nor reported as an error (`SessionEnded`, session report).
+fn normal_end(result: Result<()>) -> Result<()> {
+    match result {
+        Err(e) if closed_normally(&e) => Ok(()),
+        r => r,
+    }
 }
 
 /// What the report to the server says about a session, filled while it runs.
@@ -1241,6 +1251,7 @@ async fn relayed_session(
             Ok(())
         }
     };
+    let result = normal_end(result);
     // The whole endpoint is closed: including a connection left over through the relay,
     // which would otherwise keep the agent "busy" until its timeout.
     endpoint.close(0u32.into(), &close_reason(&result));
@@ -1668,10 +1679,7 @@ pub async fn serve_reverse(endpoint: quinn::Endpoint, config: AgentConfig, rever
     endpoint.close(0u32.into(), b"");
     info!("switch sides: ended");
     // The window closed by the person there is how it normally ends.
-    match result {
-        Err(e) if closed_normally(&e) => Ok(()),
-        r => r,
-    }
+    normal_end(result)
 }
 
 /// The viewer's Hello, the first message on the control stream (logged as `what`),

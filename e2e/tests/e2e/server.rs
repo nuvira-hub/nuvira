@@ -153,8 +153,8 @@ fn session(ctx: &Ctx, rig: &Rig, mode: TransportMode) -> Result<p2p::Path> {
         format!("SessionStarted {started:?} for path {path:?}")
     })?;
     ctx.note(format!("SessionEnded error: {error:?}"));
-    // The viewer's normal close is reported with its code 0 reason.
-    ensure(error.as_deref().is_none_or(|e| e.contains("(code 0)")), || format!("SessionEnded {error:?}"))?;
+    // The viewer's normal close is a normal end, not an error (K40, fixed by AGT-7).
+    ensure(error.is_none(), || format!("SessionEnded {error:?}"))?;
     Ok(path)
 }
 
