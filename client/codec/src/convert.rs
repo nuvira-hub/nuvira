@@ -147,8 +147,10 @@ impl ColumnSums {
 impl Drop for ColumnSums {
     fn drop(&mut self) {
         let mut store = COLUMN_SUMS.lock().unwrap_or_else(|e| e.into_inner());
-        // At most one row per job of two callers at once.
-        if store.len() < 2 * threads() {
+        // At most one row per job of two callers at once (`threads()` is at most 8; it is
+        // not called here: on Linux `available_parallelism` reads the cgroup files and
+        // allocates at every call).
+        if store.len() < 16 {
             store.push(std::mem::take(&mut self.0));
         }
     }
