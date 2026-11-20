@@ -10,7 +10,9 @@ use quinn::ClientConfig;
 use quinn::crypto::rustls::QuicClientConfig;
 
 use crate::identity::Identity;
-use crate::{Fingerprint, FramedRecv, FramedSend, PinnedCert, ServerTransport, provider, signal_transport_config};
+use crate::{
+    Fingerprint, FramedRecv, FramedSend, PinnedCert, ServerTransport, provider, signal_transport_config,
+};
 
 /// Signalling ALPN (must match the server's).
 const ALPN: &[u8] = b"nuvira-signal/1";
@@ -242,34 +244,193 @@ pub async fn connect(
 
 /// Fingerprints of the servers already seen (`servers.txt` in the data folder): at
 /// the first connection the fingerprint is remembered, afterwards it must not change.
+///
+/// One line per server, `server fingerprint`, with the server as it was given.
+/// Lookups compare servers by [`key`](known_server::key) (review NET-7): "NAS",
+/// "nas" and "nas:21116" are one server, also in lines written by older versions.
 pub mod known_server {
+    use std::path::{Path, PathBuf};
+
     use super::*;
 
-    fn path() -> std::path::PathBuf {
+    fn path() -> PathBuf {
         crate::identity::data_dir().join("servers.txt")
     }
 
+    /// The server compared by lookups: lower case, the default port added, an IP
+    /// address in its canonical form (`[::1]:21116`).
+    pub fn key(server: &str) -> String {
+        let server = server.trim().to_ascii_lowercase();
+        if let Ok(addr) = server.parse::<SocketAddr>() {
+            return addr.to_string();
+        }
+        if let Ok(ip) = server.parse::<std::net::IpAddr>() {
+            return SocketAddr::new(ip, DEFAULT_PORT).to_string();
+        }
+        match server.rsplit_once(':') {
+            Some((host, port)) if !host.contains(':') && port.parse::<u16>().is_ok() => server,
+            _ => format!("{server}:{DEFAULT_PORT}"),
+        }
+    }
+
     pub fn get(server: &str) -> Option<Fingerprint> {
-        let host = server.strip_suffix(&format!(":{DEFAULT_PORT}")).unwrap_or(server);
-        if host.eq_ignore_ascii_case(PUBLIC_SERVER) {
+        if key(server) == key(PUBLIC_SERVER) {
             return crate::parse_fingerprint(PUBLIC_SERVER_KEY).ok();
         }
-        let text = std::fs::read_to_string(path()).ok()?;
+        get_in(&path(), server)
+    }
+
+    fn get_in(path: &Path, server: &str) -> Option<Fingerprint> {
+        let text = std::fs::read_to_string(path).ok()?;
+        find(&text, &key(server))
+    }
+
+    /// The fingerprint of the first line for `key` (as before: a later line for the
+    /// same server never replaces it).
+    fn find(text: &str, key: &str) -> Option<Fingerprint> {
         text.lines()
             .filter_map(|l| l.split_once(' '))
-            .find(|(s, _)| *s == server)
+            .find(|(s, _)| self::key(s) == key)
             .and_then(|(_, fp)| crate::parse_fingerprint(fp).ok())
     }
 
     pub fn remember(server: &str, fp: &Fingerprint) -> Result<()> {
-        let path = path();
-        let mut text = std::fs::read_to_string(&path).unwrap_or_default();
-        text.push_str(&format!("{server} {}\n", crate::fingerprint_hex(fp)));
+        remember_in(&path(), server, fp)
+    }
+
+    /// Adds `server` unless a line for it exists (another program may have
+    /// remembered it since this one looked), through a new file renamed over the
+    /// old one: a reader never sees the file empty or half written (review NET-7;
+    /// it used to be truncated and rewritten in place). Two programs remembering
+    /// at the same moment can still lose one line: that server is then simply
+    /// remembered again at its next connection.
+    fn remember_in(path: &Path, server: &str, fp: &Fingerprint) -> Result<()> {
+        static WRITING: Mutex<()> = Mutex::new(());
+        let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        let mut text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+        };
+        if find(&text, &key(server)).is_some() {
+            return Ok(());
+        }
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&format!("{} {}\n", server.trim(), crate::fingerprint_hex(fp)));
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(&path, text)?;
-        Ok(())
+        let partial = path.with_extension(format!("txt-new-{}", std::process::id()));
+        let written = std::fs::write(&partial, &text).and_then(|()| std::fs::rename(&partial, path));
+        if written.is_err() {
+            let _ = std::fs::remove_file(&partial);
+        }
+        written.with_context(|| format!("writing {}", path.display()))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn temp_dir(name: &str) -> PathBuf {
+            let dir = std::env::temp_dir().join(format!("nuvira-known-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        }
+
+        #[test]
+        fn keys() {
+            assert_eq!(key("NAS"), "nas:21116");
+            assert_eq!(key(" nas:21116 "), "nas:21116");
+            assert_eq!(key("Nas.Example:21117"), "nas.example:21117");
+            assert_eq!(key("192.168.1.5"), "192.168.1.5:21116");
+            assert_eq!(key("192.168.1.5:21116"), "192.168.1.5:21116");
+            assert_eq!(key("::1"), "[::1]:21116");
+            assert_eq!(key("[0:0::1]:21116"), "[::1]:21116");
+            assert_eq!(key("FE80::1"), "[fe80::1]:21116");
+            assert_ne!(key("nas:21117"), key("nas"));
+        }
+
+        #[test]
+        fn one_line_per_server_and_any_spelling_finds_it() {
+            let dir = temp_dir("spelling");
+            let path = dir.join("servers.txt");
+            let (a, b) = ([1u8; 32], [2u8; 32]);
+            remember_in(&path, "NAS", &a).unwrap();
+            remember_in(&path, "nas:21116", &b).unwrap();
+            remember_in(&path, "nas", &b).unwrap();
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(text, format!("NAS {}\n", crate::fingerprint_hex(&a)));
+            for spelling in ["nas", "NAS", "nas:21116", " Nas:21116"] {
+                assert_eq!(get_in(&path, spelling), Some(a), "{spelling}");
+            }
+            assert_eq!(get_in(&path, "nas:21117"), None);
+            // Another port is another server.
+            remember_in(&path, "nas:21117", &b).unwrap();
+            assert_eq!(get_in(&path, "NAS:21117"), Some(b));
+            assert_eq!(get_in(&path, "nas"), Some(a));
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+
+        #[test]
+        fn lines_of_older_versions_stay_readable() {
+            let dir = temp_dir("old");
+            let path = dir.join("servers.txt");
+            let (a, b) = ([3u8; 32], [4u8; 32]);
+            // Older versions appended one line per spelling, and the last line may
+            // lack its newline.
+            let old = format!("Nas {}\nnas:21116 {}", crate::fingerprint_hex(&a), crate::fingerprint_hex(&b));
+            std::fs::write(&path, &old).unwrap();
+            assert_eq!(get_in(&path, "nas:21116"), Some(a));
+            remember_in(&path, "other", &b).unwrap();
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(text, format!("{old}\nother {}\n", crate::fingerprint_hex(&b)));
+            assert_eq!(get_in(&path, "OTHER:21116"), Some(b));
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+
+        #[test]
+        fn readers_never_see_the_file_empty_while_it_is_rewritten() {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            let dir = temp_dir("race");
+            let path = dir.join("servers.txt");
+            let first = [9u8; 32];
+            remember_in(&path, "first", &first).unwrap();
+            let done = Arc::new(AtomicBool::new(false));
+            let writers: Vec<_> = (0..2u8)
+                .map(|w| {
+                    let path = path.clone();
+                    std::thread::spawn(move || {
+                        for i in 0..200u32 {
+                            remember_in(&path, &format!("s{w}-{i}"), &[w; 32]).unwrap();
+                        }
+                    })
+                })
+                .collect();
+            let reader = {
+                let (path, done) = (path.clone(), done.clone());
+                std::thread::spawn(move || {
+                    let mut reads = 0u32;
+                    while !done.load(Ordering::Relaxed) || reads < 100 {
+                        assert_eq!(get_in(&path, "first"), Some(first), "read {reads}");
+                        reads += 1;
+                    }
+                    reads
+                })
+            };
+            for w in writers {
+                w.join().unwrap();
+            }
+            done.store(true, Ordering::Relaxed);
+            assert!(reader.join().unwrap() >= 100);
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(text.lines().count(), 401);
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "no temporary file left");
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
     }
 }
 
