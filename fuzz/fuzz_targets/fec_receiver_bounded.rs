@@ -1,8 +1,7 @@
-//! `fec::Receiver::push` with arbitrary datagrams whose two known issues are masked
-//! (Phase 2 findings, pinned in `client/transport/tests/fec_characterisation.rs`):
-//! `seq` is kept below 2^63 (no `seq + 64` overflow) and `frame_len` below 64 KiB
-//! (no huge `Vec::with_capacity`). Everything else is as received; the frames
-//! returned must have strictly increasing `seq`.
+//! `fec::Receiver::push` with arbitrary datagrams, `seq` kept below 2^63 and
+//! `frame_len` below 64 KiB (the masks of the two Phase 2 findings, fixed in review
+//! lot 18: `fec_receiver` covers the unmasked fields). Everything else is as
+//! received; the frames returned must have strictly increasing `seq`.
 //! Input: datagrams, each prefixed by its length (one byte).
 #![no_main]
 

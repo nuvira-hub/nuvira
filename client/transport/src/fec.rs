@@ -11,8 +11,12 @@
 //! Shard: [`HEADER`] bytes, then `shard_len` bytes of data or parity.
 //! `version u8, seq u64, block u8, blocks u8, index u8, data u8, parity u8, frame_len u32, shard_len u16`
 //! (little endian). The frame is laid out shard after shard, the last one padded.
+//!
+//! Frames are numbered from 1: seq 0 is reserved, the [`Receiver`] starts as if frame
+//! 0 had been delivered and ignores it as late. A peer may send any other seq, up to
+//! `u64::MAX`, and any header field: the receiver checks them all.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Context, Result, bail, ensure};
 use reed_solomon_erasure::galois_8::ReedSolomon;
@@ -39,47 +43,84 @@ const MIN_PARITY: usize = 2;
 /// of shards lost: 0.12 is 0.7% lost).
 const LOSSLESS_RATIO: f64 = 0.12;
 
-/// The datagrams carrying frame `seq`, each at most `max_datagram` bytes, with
-/// `ratio` parity shards per data shard (0.2 = 20% more).
-pub fn encode(seq: u64, frame: &[u8], max_datagram: usize, ratio: f64) -> Result<Vec<Vec<u8>>> {
-    ensure!(max_datagram > HEADER + 16, "datagrams too small: {max_datagram} bytes");
-    ensure!(frame.len() <= u32::MAX as usize, "frame too large");
-    let max_payload = (max_datagram - HEADER).min(u16::MAX as usize);
-    let shards = frame.len().div_ceil(max_payload).max(1);
-    let blocks = shards.div_ceil(MAX_DATA);
-    if blocks > 255 {
-        bail!("frame of {} bytes too large for the datagrams", frame.len());
+/// Reed-Solomon codecs kept by an [`Encoder`]. `ReedSolomon::new` builds and inverts
+/// the encoding matrix (about half of the time of a 500 kB frame, review NET-9); the
+/// sender's `(data, parity)` pairs repeat from frame to frame. With `data <= MAX_DATA`
+/// only the ratio makes them vary: past this many the cache starts again.
+const MAX_CODECS: usize = 64;
+
+/// [`encode`] with the Reed-Solomon codecs kept from one frame to the next: the
+/// agent's video sender owns one for its session. Same output as [`encode`].
+#[derive(Default)]
+pub struct Encoder {
+    codecs: HashMap<(usize, usize), ReedSolomon>,
+}
+
+impl Encoder {
+    fn codec(&mut self, data: usize, parity: usize) -> Result<&ReedSolomon> {
+        if self.codecs.len() >= MAX_CODECS && !self.codecs.contains_key(&(data, parity)) {
+            self.codecs.clear();
+        }
+        Ok(match self.codecs.entry((data, parity)) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => e.insert(ReedSolomon::new(data, parity)?),
+        })
     }
-    // Shards of equal size, as small as the frame allows (a small frame is not padded
-    // to a full datagram).
-    let shard_len = frame.len().div_ceil(shards).max(1);
-    let mut out = Vec::new();
-    let mut offset = 0;
-    for block in 0..blocks {
-        // Shards spread evenly over the blocks.
-        let data = shards / blocks + usize::from(block < shards % blocks);
-        let parity = parity_for(data, ratio);
-        let mut set = vec![vec![0u8; shard_len]; data + parity];
-        for shard in set.iter_mut().take(data) {
-            let end = (offset + shard_len).min(frame.len());
-            if offset < end {
-                shard[..end - offset].copy_from_slice(&frame[offset..end]);
+
+    /// The datagrams carrying frame `seq`, as [`encode`].
+    pub fn encode(
+        &mut self,
+        seq: u64,
+        frame: &[u8],
+        max_datagram: usize,
+        ratio: f64,
+    ) -> Result<Vec<Vec<u8>>> {
+        ensure!(max_datagram > HEADER + 16, "datagrams too small: {max_datagram} bytes");
+        ensure!(frame.len() <= u32::MAX as usize, "frame too large");
+        let max_payload = (max_datagram - HEADER).min(u16::MAX as usize);
+        let shards = frame.len().div_ceil(max_payload).max(1);
+        let blocks = shards.div_ceil(MAX_DATA);
+        if blocks > 255 {
+            bail!("frame of {} bytes too large for the datagrams", frame.len());
+        }
+        // Shards of equal size, as small as the frame allows (a small frame is not padded
+        // to a full datagram).
+        let shard_len = frame.len().div_ceil(shards).max(1);
+        let mut out = Vec::new();
+        let mut offset = 0;
+        for block in 0..blocks {
+            // Shards spread evenly over the blocks.
+            let data = shards / blocks + usize::from(block < shards % blocks);
+            let parity = parity_for(data, ratio);
+            let mut set = vec![vec![0u8; shard_len]; data + parity];
+            for shard in set.iter_mut().take(data) {
+                let end = (offset + shard_len).min(frame.len());
+                if offset < end {
+                    shard[..end - offset].copy_from_slice(&frame[offset..end]);
+                }
+                offset += shard_len;
             }
-            offset += shard_len;
+            self.codec(data, parity)?.encode(&mut set)?;
+            for (index, shard) in set.into_iter().enumerate() {
+                let mut packet = Vec::with_capacity(HEADER + shard_len);
+                packet.push(VERSION);
+                packet.extend_from_slice(&seq.to_le_bytes());
+                packet.extend_from_slice(&[block as u8, blocks as u8, index as u8, data as u8, parity as u8]);
+                packet.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+                packet.extend_from_slice(&(shard_len as u16).to_le_bytes());
+                packet.extend_from_slice(&shard);
+                out.push(packet);
+            }
         }
-        ReedSolomon::new(data, parity)?.encode(&mut set)?;
-        for (index, shard) in set.into_iter().enumerate() {
-            let mut packet = Vec::with_capacity(HEADER + shard_len);
-            packet.push(VERSION);
-            packet.extend_from_slice(&seq.to_le_bytes());
-            packet.extend_from_slice(&[block as u8, blocks as u8, index as u8, data as u8, parity as u8]);
-            packet.extend_from_slice(&(frame.len() as u32).to_le_bytes());
-            packet.extend_from_slice(&(shard_len as u16).to_le_bytes());
-            packet.extend_from_slice(&shard);
-            out.push(packet);
-        }
+        Ok(out)
     }
-    Ok(out)
+}
+
+/// The datagrams carrying frame `seq`, each at most `max_datagram` bytes, with
+/// `ratio` parity shards per data shard (0.2 = 20% more). Builds its codecs anew: a
+/// sender of many frames keeps an [`Encoder`] instead.
+pub fn encode(seq: u64, frame: &[u8], max_datagram: usize, ratio: f64) -> Result<Vec<Vec<u8>>> {
+    Encoder::default().encode(seq, frame, max_datagram, ratio)
 }
 
 struct Block {
@@ -89,8 +130,8 @@ struct Block {
     received: usize,
     /// The data shards, once rebuilt.
     done: Option<Vec<Vec<u8>>>,
-    /// Some of its data shards were rebuilt from parity.
-    repaired: bool,
+    /// Indices of the data shards rebuilt from parity that have not arrived since.
+    rebuilt: Vec<u8>,
 }
 
 struct Partial {
@@ -118,6 +159,15 @@ pub struct Receiver {
     shards_lost: u64,
     /// Frames completed thanks to parity (a data shard of theirs was lost).
     rebuilt: u64,
+    /// Frames returned with data shards rebuilt from parity, by seq: `(block, index)`
+    /// of those shards. A shard that arrives late after all (reordered, not lost) is
+    /// taken off; a frame still listed when it closes (two behind the newest, as for
+    /// the loss) counts as rebuilt (review NET-6, K4).
+    repaired: BTreeMap<u64, Vec<(u8, u8)>>,
+    /// The codec of the last block rebuilt, kept for the next one with the same
+    /// `(data, parity)` (the sender's blocks mostly repeat them). Only one: a peer picks
+    /// both freely, and each codec keeps a cache of decode matrices (review NET-9).
+    codec: Option<((usize, usize), ReedSolomon)>,
 }
 
 impl Receiver {
@@ -143,6 +193,12 @@ impl Receiver {
         );
         self.count(seq, block, blocks, data + parity);
         if seq <= self.last {
+            if let Some(shards) = self.repaired.get_mut(&seq) {
+                shards.retain(|&s| s != (block as u8, index as u8));
+                if shards.is_empty() {
+                    self.repaired.remove(&seq);
+                }
+            }
             return Ok(None);
         }
         let partial = self.frames.entry(seq).or_insert_with(|| Partial {
@@ -162,10 +218,15 @@ impl Receiver {
             shards: vec![None; data + parity],
             received: 0,
             done: None,
-            repaired: false,
+            rebuilt: Vec::new(),
         });
         ensure!(state.data == data && state.parity == parity, "inconsistent video block");
-        if state.done.is_some() || state.shards[index].is_some() {
+        if state.done.is_some() {
+            // A data shard rebuilt already, arriving late: it was not lost.
+            state.rebuilt.retain(|&i| usize::from(i) != index);
+            return Ok(None);
+        }
+        if state.shards[index].is_some() {
             return Ok(None);
         }
         state.shards[index] = Some(shard.to_vec());
@@ -173,10 +234,14 @@ impl Receiver {
         if state.received < data {
             return Ok(None);
         }
-        state.repaired = state.shards[..data].iter().any(Option::is_none);
-        ReedSolomon::new(data, parity)?
-            .reconstruct_data(&mut state.shards)
-            .context("rebuilding a video block")?;
+        state.rebuilt = (0..data).filter(|&i| state.shards[i].is_none()).map(|i| i as u8).collect();
+        let codec = match self.codec.take() {
+            Some((key, codec)) if key == (data, parity) => codec,
+            _ => ReedSolomon::new(data, parity)?,
+        };
+        let rebuilt = codec.reconstruct_data(&mut state.shards).context("rebuilding a video block");
+        self.codec = Some(((data, parity), codec));
+        rebuilt?;
         state.done = Some(state.shards.drain(..data).map(|s| s.expect("rebuilt")).collect());
         state.shards.clear();
 
@@ -184,18 +249,30 @@ impl Receiver {
             return Ok(None);
         }
         let partial = self.frames.remove(&seq).expect("present");
-        if partial.blocks.iter().flatten().any(|b| b.repaired) {
-            self.rebuilt += 1;
+        self.last = seq;
+        self.frames.retain(|&s, _| s > seq);
+        // `frame_len` comes from the peer: never more than the data shards received
+        // hold, so that nothing larger than them is reserved (review NET-6: up to 4 GiB
+        // before). Such a frame is dropped, and the viewer counts it as lost.
+        let len = partial.blocks.iter().flatten().map(|b| b.data).sum::<usize>() * partial.shard_len;
+        ensure!(partial.frame_len <= len, "video frame longer than its shards");
+        let rebuilt: Vec<(u8, u8)> = partial
+            .blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(n, b)| Some((n as u8, b.as_ref()?)))
+            .flat_map(|(n, b)| b.rebuilt.iter().map(move |&i| (n, i)))
+            .collect();
+        if !rebuilt.is_empty() {
+            self.repaired.insert(seq, rebuilt);
         }
-        let mut frame = Vec::with_capacity(partial.frame_len + partial.shard_len);
+        let mut frame = Vec::with_capacity(len);
         for block in partial.blocks.into_iter().flatten() {
             for shard in block.done.into_iter().flatten() {
                 frame.extend_from_slice(&shard);
             }
         }
         frame.truncate(partial.frame_len);
-        self.last = seq;
-        self.frames.retain(|&s, _| s > seq);
         Ok(Some((seq, frame)))
     }
 
@@ -205,13 +282,16 @@ impl Receiver {
         (std::mem::take(&mut self.shards), std::mem::take(&mut self.shards_lost))
     }
 
-    /// Frames completed thanks to parity since the previous call (statistics only).
+    /// Frames completed thanks to parity since the previous call (statistics only),
+    /// counted once they can get no more shards, as [`Receiver::take_loss`]: a data
+    /// shard that was only reordered behind a parity shard does not count.
     pub fn take_rebuilt(&mut self) -> u64 {
         std::mem::take(&mut self.rebuilt)
     }
 
     fn count(&mut self, seq: u64, block: usize, blocks: usize, total: usize) {
-        if seq + KEEP_BEHIND <= self.newest {
+        // Saturating: a peer may send any seq, up to u64::MAX (review NET-6).
+        if seq.saturating_add(KEEP_BEHIND) <= self.newest {
             return;
         }
         let count = self.counts.entry(seq).or_insert_with(|| Count { blocks: vec![0; blocks], got: 0 });
@@ -234,8 +314,13 @@ impl Receiver {
             self.shards += expected as u64;
             self.shards_lost += expected.saturating_sub(count.got) as u64;
         }
+        let closed: Vec<u64> = self.repaired.range(..seq.saturating_sub(1)).map(|(s, _)| *s).collect();
+        for s in closed {
+            self.repaired.remove(&s);
+            self.rebuilt += 1;
+        }
         // Memory bound when many frames are lost.
-        self.frames.retain(|&s, _| s + KEEP_BEHIND > seq);
+        self.frames.retain(|&s, _| s.saturating_add(KEEP_BEHIND) > seq);
     }
 }
 
@@ -245,6 +330,18 @@ mod tests {
 
     fn frame(len: usize) -> Vec<u8> {
         (0..len).map(|i| (i * 7 % 251) as u8).collect()
+    }
+
+    #[test]
+    fn a_kept_encoder_gives_the_same_datagrams() {
+        // Many ratios: more (data, parity) pairs than the cache keeps.
+        let mut enc = Encoder::default();
+        for i in 0..300u64 {
+            let f = frame(100 + (i as usize * 977) % 60_000);
+            let ratio = (i % 97) as f64 / 40.0;
+            assert_eq!(enc.encode(i + 1, &f, 1200, ratio).unwrap(), encode(i + 1, &f, 1200, ratio).unwrap());
+            assert!(enc.codecs.len() <= MAX_CODECS);
+        }
     }
 
     #[test]
@@ -281,13 +378,22 @@ mod tests {
             }
         }
         assert_eq!(got, Some((7, f)));
-        assert_eq!(rx.take_rebuilt(), 1);
+        // Counted once frame 7 can get no more shards (two behind the newest).
         assert_eq!(rx.take_rebuilt(), 0);
         // Only parity lost: nothing to rebuild.
         for p in &encode(8, &frame(5000), 1200, 0.25).unwrap()[..5] {
             rx.push(p).unwrap();
         }
         assert_eq!(rx.take_rebuilt(), 0);
+        for p in encode(9, &frame(10), 1200, 0.25).unwrap() {
+            rx.push(&p).unwrap();
+        }
+        assert_eq!(rx.take_rebuilt(), 1, "frame 7 closed");
+        assert_eq!(rx.take_rebuilt(), 0);
+        for p in encode(10, &frame(10), 1200, 0.25).unwrap() {
+            rx.push(&p).unwrap();
+        }
+        assert_eq!(rx.take_rebuilt(), 0, "frame 8 closed, only parity lost");
     }
 
     #[test]

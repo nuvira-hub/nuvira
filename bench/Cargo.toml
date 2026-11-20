@@ -24,6 +24,10 @@ path = "src/main.rs"
 name = "nuvira_bench"
 path = "src/lib.rs"
 
+[features]
+# Phase 6 API escape hatches (plan 8.4, README "API changes"): side B only.
+api-fec-encoder = []
+
 [dependencies]
 nuvira-proto = { path = "../client/proto" }
 nuvira-codec = { path = "../client/codec" }

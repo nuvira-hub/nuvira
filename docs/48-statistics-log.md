@@ -109,7 +109,7 @@ Viewer:
 | `freezes`, `freeze_ms` | pauses between two frames drawn longer than 200 ms (as the `--stats-file` report) |
 | `rtt_ms` | last ping round trip of the control channel; `quic.rtt_ms` is QUIC's own estimate |
 | `kbps_received` | video bytes of the frames received |
-| `fec` | with the video as datagrams: shards expected, shards lost, frames completed thanks to parity (`frames_rebuilt`), frames lost; else `null` |
+| `fec` | with the video as datagrams: shards expected, shards lost, frames completed thanks to parity (`frames_rebuilt`: a data shard really lost, counted like the shards once the frame can get no more of them, so a data shard only reordered behind a parity shard does not count), frames lost (a frame whose header announces more bytes than its shards hold is dropped and counts here); else `null` |
 
 Both sides: `cpu_ms` (CPU time of the whole process in the interval, user +
 system), `rss_mb` (resident memory, Windows working set), `threads`. On

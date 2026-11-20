@@ -2205,6 +2205,8 @@ async fn run_session(
         async move {
             // Bytes on the network and bytes of video, decaying (the last few seconds).
             let (mut wire, mut video) = (0.0f64, 0.0f64);
+            // Its Reed-Solomon codecs kept for the session (review NET-9).
+            let mut fec = nuvira_transport::fec::Encoder::default();
             while let Some(frame) = frame_rx.recv().await {
                 tracing::trace!(seq = frame.seq, bytes = frame.data.len(), "sending frame");
                 let sent = match &mut video_tx {
@@ -2221,7 +2223,7 @@ async fn run_session(
                         if frame.keyframe {
                             ratio = (ratio * 2.0).max(FEC_MAX);
                         }
-                        for packet in nuvira_transport::fec::encode(frame.seq, &bytes, max, ratio)? {
+                        for packet in fec.encode(frame.seq, &bytes, max, ratio)? {
                             sent += packet.len();
                             conn.send_datagram_wait(packet.into()).await?;
                         }

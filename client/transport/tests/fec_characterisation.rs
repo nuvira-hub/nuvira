@@ -115,11 +115,10 @@ fn malformed_shards_are_errors() {
 }
 
 #[test]
-fn characterises_bug_seq_zero_is_never_delivered() {
-    // KNOWN BUG (Phase 2): `Receiver::last` starts at 0 and shards with
-    // `seq <= last` are late, so a frame with seq 0 is never returned. The agent
-    // numbers frames from 1, so this does not show today.
-    // Expected after fix: either documented as reserved, or frame 0 delivered.
+fn seq_zero_is_reserved_and_never_delivered() {
+    // Review lot 18 (NET-6, K3): seq 0 is reserved, documented in `fec.rs`: the
+    // receiver starts as if frame 0 had been delivered, so a frame with seq 0 is late.
+    // The agent numbers frames from 1.
     let mut rx = Receiver::default();
     let got = push_all(&mut rx, &encode(0, &frame(100, 0), 1200, 0.2).unwrap());
     assert!(got.is_empty());
@@ -128,22 +127,52 @@ fn characterises_bug_seq_zero_is_never_delivered() {
 }
 
 #[test]
-fn characterises_bug_frame_len_is_not_checked_against_the_shards() {
-    // KNOWN BUG (Phase 2, lead fec.rs:180): `frame_len` comes from the packet and is
-    // only used for `Vec::with_capacity` and `truncate`. A frame_len larger than the
-    // data is accepted and the frame returned is shorter than announced; the
-    // capacity is reserved as announced (up to 4 GiB + 64 KiB per frame).
-    // Expected after fix: frame_len <= data * shard_len (and > (data - 1) * shard_len)
-    // checked, the shard refused otherwise.
+fn frame_len_larger_than_the_shards_is_refused() {
+    // Fixed in review lot 18 (NET-6, K2): `frame_len` comes from the packet; a frame
+    // that announces more bytes than its data shards hold is dropped when it completes,
+    // before anything is reserved (before: accepted, returned shorter than announced,
+    // with the announced capacity reserved, up to 4 GiB + 64 KiB per frame).
     let mut rx = Receiver::default();
-    let got = rx.push(&shard(5, 0, 1, 0, 1, 1, 1_000_000, 4, &[1, 2, 3, 4])).unwrap();
-    assert_eq!(got, Some((5, vec![1, 2, 3, 4])));
+    let err = rx.push(&shard(5, 0, 1, 0, 1, 1, 1_000_000, 4, &[1, 2, 3, 4])).unwrap_err().to_string();
+    assert_eq!(err, "video frame longer than its shards");
+    // The rest of that frame is late now, the next frame comes through.
+    assert_eq!(rx.push(&shard(5, 0, 1, 1, 1, 1, 1_000_000, 4, &[1, 2, 3, 4])).unwrap(), None);
+    // As many bytes as the shards hold: accepted.
+    let got = rx.push(&shard(6, 0, 1, 0, 1, 1, 4, 4, &[1, 2, 3, 4])).unwrap();
+    assert_eq!(got, Some((6, vec![1, 2, 3, 4])));
     // A frame_len smaller than the data truncates.
-    let got = rx.push(&shard(6, 0, 1, 0, 1, 1, 2, 4, &[1, 2, 3, 4])).unwrap();
-    assert_eq!(got, Some((6, vec![1, 2])));
+    let got = rx.push(&shard(7, 0, 1, 0, 1, 1, 2, 4, &[1, 2, 3, 4])).unwrap();
+    assert_eq!(got, Some((7, vec![1, 2])));
     // frame_len 0: an empty frame.
-    let got = rx.push(&shard(7, 0, 1, 0, 1, 1, 0, 4, &[1, 2, 3, 4])).unwrap();
-    assert_eq!(got, Some((7, vec![])));
+    let got = rx.push(&shard(8, 0, 1, 0, 1, 1, 0, 4, &[1, 2, 3, 4])).unwrap();
+    assert_eq!(got, Some((8, vec![])));
+    // Two blocks: the bound is the sum of their data shards (3 + 2) x shard_len.
+    let mut rx = Receiver::default();
+    for (block, index, data) in [(0u8, 0u8, 3u8), (0, 1, 3), (0, 2, 3), (1, 0, 2), (1, 1, 2)] {
+        let r = rx.push(&shard(9, block, 2, index, data, 1, 21, 4, &[7; 4]));
+        if (block, index) == (1, 1) {
+            assert_eq!(r.unwrap_err().to_string(), "video frame longer than its shards");
+        } else {
+            assert_eq!(r.unwrap(), None);
+        }
+    }
+    let mut rx = Receiver::default();
+    let got = push_all(&mut rx, &[0u8, 1, 2].map(|i| shard(9, 0, 2, i, 3, 1, 20, 4, &[7; 4])).to_vec());
+    assert!(got.is_empty());
+    let got = push_all(&mut rx, &[0u8, 1].map(|i| shard(9, 1, 2, i, 2, 1, 20, 4, &[7; 4])).to_vec());
+    assert_eq!(got, vec![(9, vec![7; 20])]);
+}
+
+#[test]
+fn frame_len_u32_max_with_one_data_shard_reserves_nothing_large() {
+    // Review NET-6: the largest frame_len a peer can announce, with one data shard of
+    // 16 bytes. Refused, nothing reserved (before: Vec::with_capacity(4 GiB + 16),
+    // which aborts the viewer where the allocation fails).
+    let mut rx = Receiver::default();
+    let err = rx.push(&shard(1, 0, 1, 0, 1, 1, u32::MAX, 16, &[0; 16])).unwrap_err().to_string();
+    assert_eq!(err, "video frame longer than its shards");
+    let got = push_all(&mut rx, &encode(2, &frame(100, 0), 1200, 0.2).unwrap());
+    assert_eq!(got, vec![(2, frame(100, 0))]);
 }
 
 #[test]
@@ -213,45 +242,44 @@ fn loss_is_counted_only_for_frames_two_behind_and_within_keep_behind() {
 }
 
 #[test]
-fn characterises_bug_seq_near_u64_max_overflows() {
-    // KNOWN BUG (Phase 2, lead fec.rs:200): `seq + KEEP_BEHIND` in `count` (and
-    // `s + KEEP_BEHIND` in the retain) overflow for seq > u64::MAX - 64: a panic in
-    // debug builds, a wrapping sum in release builds. The agent numbers frames from 1,
-    // so only a malicious or broken peer can send such a seq.
-    // Expected after fix: saturating arithmetic, no panic.
+fn seq_near_u64_max_does_not_overflow() {
+    // Fixed in review lot 18 (NET-6, K1): `seq + KEEP_BEHIND` in `count` and in the
+    // retain is saturating (before: a panic in debug builds, a wrapping sum in release
+    // builds for seq > u64::MAX - 64). The agent numbers frames from 1, so only a
+    // malicious or broken peer can send such a seq.
     let packets = encode(u64::MAX - 10, &frame(10, 0), 1200, 0.0).unwrap();
-    let result = std::panic::catch_unwind(|| {
-        let mut rx = Receiver::default();
-        push_all(&mut rx, &packets)
-    });
-    if cfg!(debug_assertions) {
-        assert!(result.is_err(), "debug build: overflow panic");
-    } else {
-        // Release: the sum wraps and the frame is delivered.
-        assert_eq!(result.unwrap(), vec![(u64::MAX - 10, frame(10, 0))]);
-    }
-    // Up to u64::MAX - 64 no overflow.
+    let mut rx = Receiver::default();
+    assert_eq!(push_all(&mut rx, &packets), vec![(u64::MAX - 10, frame(10, 0))]);
+    // The very last seq, then older frames: late, ignored.
+    let got = push_all(&mut rx, &encode(u64::MAX, &frame(10, 1), 1200, 0.0).unwrap());
+    assert_eq!(got, vec![(u64::MAX, frame(10, 1))]);
+    assert!(push_all(&mut rx, &encode(u64::MAX - 5, &frame(10, 0), 1200, 0.0).unwrap()).is_empty());
+    assert!(push_all(&mut rx, &encode(5, &frame(10, 0), 1200, 0.0).unwrap()).is_empty());
+    // Up to u64::MAX - 64, as before.
     let mut rx = Receiver::default();
     let got = push_all(&mut rx, &encode(u64::MAX - 64, &frame(10, 0), 1200, 0.0).unwrap());
     assert_eq!(got, vec![(u64::MAX - 64, frame(10, 0))]);
+    // An incomplete frame near the end, then a complete one: the loss is counted.
+    let mut rx = Receiver::default();
+    let p = encode(u64::MAX - 3, &frame(5000, 0), 1200, 0.25).unwrap();
+    push_all(&mut rx, &p[..3]);
+    for seq in [u64::MAX - 2, u64::MAX - 1] {
+        push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
+    }
+    assert_eq!(rx.take_loss(), (7, 4));
 }
 
 #[test]
-fn characterises_bug_fuzz_reproducer_fec_receiver_seq_overflow() {
+fn fuzz_reproducer_fec_receiver_seq_overflow() {
     // The crash cargo-fuzz found in `fuzz/fuzz_targets/fec_receiver.rs` (MSI-UBUNTU,
     // 2026-11-18, after 73 682 runs): one datagram of seq u64::MAX, "attempt to add
-    // with overflow" at fec.rs:214 (`seq + KEEP_BEHIND`). Same bug as above.
+    // with overflow" at fec.rs:214 (`seq + KEEP_BEHIND`). Fixed with K1 (review lot
+    // 18): block 0 of 81, waiting for the rest, in debug and release builds alike.
     let packet: [u8; 21] = [
         0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x51, 0x00, 0x11, 0xff, 0xff, 0xff, 0xff,
         0x3f, 0x01, 0x00, 0x10,
     ];
-    let result = std::panic::catch_unwind(|| Receiver::default().push(&packet).map(|r| r.is_some()));
-    if cfg!(debug_assertions) {
-        assert!(result.is_err(), "debug build: overflow panic");
-    } else {
-        // Release: block 0 of 81, waiting for the rest.
-        assert!(matches!(result, Ok(Ok(false))));
-    }
+    assert!(matches!(Receiver::default().push(&packet), Ok(None)));
 }
 
 #[test]
@@ -263,22 +291,52 @@ fn take_rebuilt_counts_frames_repaired_by_parity() {
         let skip = usize::from(seq % 2 == 1);
         assert_eq!(push_all(&mut rx, &packets[skip..]).len(), 1);
     }
+    // Counted when the frames close (two behind the newest, since review lot 18):
+    // frames 5 and 6 close 1-4.
+    for seq in 5..=6u64 {
+        push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
+    }
     assert_eq!(rx.take_rebuilt(), 2);
     assert_eq!(rx.take_rebuilt(), 0);
 }
 
 #[test]
-fn reordering_counts_as_rebuilt() {
-    // A parity shard first: the block is complete with it (data 1), the data shard
-    // that comes after is ignored, and the frame counts as rebuilt by parity
-    // although nothing was lost (statistics `frames_rebuilt` only).
+fn reordering_does_not_count_as_rebuilt() {
+    // Fixed in review lot 18 (NET-6, K4): a parity shard first completes the block
+    // (data 1) and the frame is returned at once; the data shard that comes after is
+    // not lost, so the frame does not count as rebuilt by parity (before: it did,
+    // statistics `frames_rebuilt` only).
     let f = frame(10, 0);
     let packets = encode(1, &f, 1200, 0.3).unwrap();
     assert_eq!(packets.len(), 3);
     let mut rx = Receiver::default();
     assert_eq!(push_all(&mut rx, [&packets[2], &packets[0], &packets[1]]), vec![(1, f)]);
+    for seq in 2..=3 {
+        push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
+    }
+    assert_eq!(rx.take_rebuilt(), 0);
+    assert_eq!(rx.take_loss(), (3, 0), "frame 1 closed, nothing lost");
+    // Lost for real: counted once the frame closes.
+    let f = frame(10, 1);
+    let packets = encode(4, &f, 1200, 0.3).unwrap();
+    assert_eq!(push_all(&mut rx, [&packets[2], &packets[1]]), vec![(4, f)]);
+    push_all(&mut rx, &encode(5, &frame(10, 0), 1200, 0.0).unwrap());
+    assert_eq!(rx.take_rebuilt(), 0, "frame 4 still open");
+    push_all(&mut rx, &encode(6, &frame(10, 0), 1200, 0.0).unwrap());
     assert_eq!(rx.take_rebuilt(), 1);
-    assert_eq!(rx.take_loss(), (0, 0));
+    // In a frame of several blocks, a late data shard of a block rebuilt before the
+    // frame is complete is not lost either.
+    let f = frame(50_000, 2);
+    let packets = encode(7, &f, 1200, 0.25).unwrap();
+    let first_parity = packets.iter().position(|p| fields(p).0 == 0 && fields(p).2 == fields(p).3).unwrap();
+    let mut order: Vec<&Vec<u8>> = packets.iter().collect();
+    let late = order.remove(0);
+    order.insert(first_parity, late);
+    assert_eq!(push_all(&mut rx, order), vec![(7, f)]);
+    for seq in 8..=9 {
+        push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
+    }
+    assert_eq!(rx.take_rebuilt(), 0);
 }
 
 /// `encode` succeeds exactly when the frame fits in 255 blocks of 32 shards.
@@ -335,14 +393,12 @@ proptest! {
         }
         let mut rx = Receiver::default();
         prop_assert_eq!(push_all(&mut rx, kept), vec![(1, f)]);
-        // A lost data shard always counts the frame as rebuilt; with the shards out of
-        // order a parity shard arriving before a data shard counts too (see
-        // `reordering_counts_as_rebuilt`).
-        let rebuilt = rx.take_rebuilt();
-        prop_assert!(rebuilt <= 1);
-        if data_lost {
-            prop_assert_eq!(rebuilt, 1);
+        // Two more frames close frame 1. It counts as rebuilt exactly when a data
+        // shard was lost, whatever the order (`reordering_does_not_count_as_rebuilt`).
+        for seq in 2..=3 {
+            push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
         }
+        prop_assert_eq!(rx.take_rebuilt(), u64::from(data_lost));
     }
 
     /// Whatever the interleaving, duplicates and losses of several frames, the frames
@@ -371,19 +427,11 @@ proptest! {
         }
     }
 
-    /// Arbitrary datagrams never panic (seq kept away from the overflow above).
+    /// Arbitrary datagrams never panic (any seq and frame_len since NET-6).
     #[test]
     fn arbitrary_datagrams_never_panic(packets in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..80), 0..64)) {
         let mut rx = Receiver::default();
-        for mut p in packets {
-            if p.len() > 8 {
-                p[8] &= 0x7f;
-                // A small frame_len, so that the capacity reserved stays small.
-                if p.len() > 17 {
-                    p[16] = 0;
-                    p[17] = 0;
-                }
-            }
+        for p in packets {
             let _ = rx.push(&p);
             let _ = rx.take_loss();
         }

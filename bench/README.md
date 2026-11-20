@@ -76,4 +76,8 @@ The run metadata records the power state: `run.machine.power.plan` (governor or 
 ## API changes
 
 Cargo features `api-<name>` for Phase 6 batches that change an API of plan section 4.1
-(plan 8.4). None so far.
+(plan 8.4). Build side B with them: `bench-compare.sh --features <list>`.
+
+| Feature | Lot | Switches |
+|---|---|---|
+| `api-fec-encoder` | 18 (net-fec, NET-9) | B-MICRO-12 and the composed datagram sender of B-MACRO keep a `fec::Encoder` (codecs kept from frame to frame, as the agent does since lot 18) instead of calling `fec::encode` per frame. Same datagrams. |
