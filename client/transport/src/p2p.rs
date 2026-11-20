@@ -15,6 +15,7 @@
 
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -151,7 +152,13 @@ async fn bind_relay_ws(socket: &crate::ws::WsSocket, route: &Route) -> Result<()
     bail!("the other device did not bind to the relay")
 }
 
-fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Result<Candidates> {
+/// `cancel` stops it between two binds (the session it was for is gone).
+fn bind_relay(
+    socket: &UdpSocket,
+    route: &Route,
+    locals: &[SocketAddr],
+    cancel: &AtomicBool,
+) -> Result<Candidates> {
     let bind = bind_message(route, locals);
     let ipv6_socket = socket.local_addr()?.is_ipv6();
     let relay = for_socket(route.relay, ipv6_socket);
@@ -170,6 +177,9 @@ fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Resul
     let mut acked = false;
     // ~15 s: the other side may arrive a few seconds later.
     for _ in 0..60 {
+        if cancel.load(Ordering::Relaxed) {
+            bail!("binding to the relay stopped: the session is gone");
+        }
         if let Some((to, msg)) = &announce {
             // Errors ignored: the other family may have no route at all.
             let _ = socket.send_to(msg, *to);
@@ -367,14 +377,27 @@ async fn session_endpoint(
     }
 }
 
+/// Sets the flag when dropped: with the future of [`session_socket`] (a viewer
+/// window closed, an agent session cancelled), so that its blocking task stops
+/// binding to the relay within ~250 ms instead of ~15 s (review NET-14).
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
     let socket = session_udp(route.relay)?;
     let route = route.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _cancel_on_drop = CancelOnDrop(cancel.clone());
     tokio::task::spawn_blocking(move || {
         let local = socket.local_addr()?;
         let locals = local_candidates(route.relay, route.relay_alt, local.port(), local.is_ipv6());
         debug!(?locals, "this side's addresses");
-        let candidates = bind_relay(&socket, &route, &locals)?;
+        let candidates = bind_relay(&socket, &route, &locals, &cancel)?;
         debug!(?candidates, "addresses of the other side");
         let relays = [Some(route.relay), route.relay_alt];
         // Only families this PC has a route for (an IPv4-only network has no IPv6
@@ -854,7 +877,7 @@ mod characterisation {
         push_addr(&mut tail, local);
         let (relay, handle) = fake_relay(vec![bound(&token, 0, &[]), bound(&token, 1, &tail)]);
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let candidates = bind_relay(&socket, &route(relay), &[]).unwrap();
+        let candidates = bind_relay(&socket, &route(relay), &[], &AtomicBool::new(false)).unwrap();
         assert_eq!(candidates, Candidates { reflexive: Some(peer), locals: vec![local] });
         let binds = handle.join().unwrap();
         // The first answer ("bound, alone") is noted; the next round's bind gets "both".
@@ -879,7 +902,7 @@ mod characterisation {
         push_addr(&mut fake, "203.0.113.66:1".parse().unwrap());
         impostor.send_to(&bound(&token, 1, &fake), me).unwrap();
         // The impostor's answer is queued first; the relay's comes after.
-        let candidates = bind_relay(&socket, &route(relay), &[]).unwrap();
+        let candidates = bind_relay(&socket, &route(relay), &[], &AtomicBool::new(false)).unwrap();
         assert_eq!(candidates, Candidates::default(), "the relay's empty answer, not the impostor's");
         handle.join().unwrap();
     }
@@ -890,7 +913,9 @@ mod characterisation {
         let silent = UdpSocket::bind("127.0.0.1:0").unwrap();
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
         let start = std::time::Instant::now();
-        let err = bind_relay(&socket, &route(silent.local_addr().unwrap()), &[]).unwrap_err().to_string();
+        let err = bind_relay(&socket, &route(silent.local_addr().unwrap()), &[], &AtomicBool::new(false))
+            .unwrap_err()
+            .to_string();
         let took = start.elapsed();
         assert_eq!(err, format!("the relay {} does not answer", silent.local_addr().unwrap()));
         assert!(took >= Duration::from_secs(14) && took < Duration::from_secs(30), "{took:?}");
@@ -904,12 +929,36 @@ mod characterisation {
         assert_eq!(n, 60);
     }
 
+    #[tokio::test]
+    async fn a_dropped_session_socket_stops_binding() {
+        // Review NET-14: a relay that never answers, and a session given up after
+        // 600 ms. The blocking task used to bind on for ~15 s (60 binds).
+        let silent = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let r = route(silent.local_addr().unwrap());
+        assert!(tokio::time::timeout(Duration::from_millis(600), session_socket(&r)).await.is_err());
+        // One bind may still be on its way when the flag is set.
+        std::thread::sleep(Duration::from_millis(400));
+        silent.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let mut buf = [0u8; 256];
+        let mut before = 0;
+        while silent.recv_from(&mut buf).is_ok() {
+            before += 1;
+        }
+        assert!((2..=5).contains(&before), "{before} binds in the first second");
+        std::thread::sleep(Duration::from_millis(1000));
+        let mut after = 0;
+        while silent.recv_from(&mut buf).is_ok() {
+            after += 1;
+        }
+        assert_eq!(after, 0, "binds after the session was dropped");
+    }
+
     #[test]
     fn bind_relay_acked_but_alone() {
         let token = [9u8; 16];
         let (relay, _handle) = fake_relay(vec![bound(&token, 0, &[])]);
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let err = bind_relay(&socket, &route(relay), &[]).unwrap_err().to_string();
+        let err = bind_relay(&socket, &route(relay), &[], &AtomicBool::new(false)).unwrap_err().to_string();
         assert_eq!(err, "the other device did not bind to the relay");
     }
 
