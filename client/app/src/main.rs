@@ -2225,7 +2225,7 @@ fn start_update_checks(app: &AppHandle) {
             let settings = load_settings();
             if !installed {
                 let server = nuvira_transport::signal::server_or_public(&settings.server);
-                let base = nuvira_update::base_url(server, None, nuvira_update::DEFAULT_PORT);
+                let base = nuvira_update::update_base(server, None);
                 match nuvira_update::check(&base, &nuvira_update::PUBLIC_KEYS).await {
                     Ok(found) => {
                         let version = found.map(|m| m.version);
@@ -2247,7 +2247,7 @@ fn start_update_checks(app: &AppHandle) {
 async fn apply_update(app: AppHandle) -> Result<(), String> {
     let settings = load_settings();
     let server = nuvira_transport::signal::server_or_public(&settings.server);
-    let base = nuvira_update::base_url(server, None, nuvira_update::DEFAULT_PORT);
+    let base = nuvira_update::update_base(server, None);
     let error = |e: anyhow::Error| tf("update.failed", &[("e", &format!("{e:#}"))]);
     let manifest = nuvira_update::check(&base, &nuvira_update::PUBLIC_KEYS)
         .await

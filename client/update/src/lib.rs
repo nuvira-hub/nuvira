@@ -50,6 +50,14 @@ pub const PUBLIC_KEYS: [[u8; 32]; 2] = [
 /// Port of nuvira-server when the address has none.
 pub const DEFAULT_PORT: u16 = 21116;
 
+/// Host of NuviraHub's public server (`nuvira_transport::signal::PUBLIC_SERVER`).
+pub const PUBLIC_HOST: &str = "connect.nuvirahub.dev";
+
+/// The public server's updates over HTTPS (Caddy in front of the hub on the VPS,
+/// review APP-1). The plain `http://connect.nuvirahub.dev:21116/nuvira/update` stays
+/// for the programs installed before; this one never falls back to it.
+pub const PUBLIC_UPDATES: &str = "https://connect.nuvirahub.dev/nuvira/update";
+
 /// Version of this program.
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
@@ -194,6 +202,20 @@ pub fn base_url(server: &str, server_ws: Option<&str>, default_port: u16) -> Str
     } else {
         format!("http://{server}:{default_port}/nuvira/update")
     }
+}
+
+/// Base URL of the updates of a device on `server` (host[:port], the public server
+/// already filled in for an empty setting): the published `server_ws` if set, the
+/// HTTPS address for NuviraHub's public server, otherwise [`base_url`]. Only for
+/// updates: `base_url` also builds the server's other addresses (invitations).
+pub fn update_base(server: &str, server_ws: Option<&str>) -> String {
+    let server = server.trim();
+    let public = server.eq_ignore_ascii_case(PUBLIC_HOST)
+        || server.eq_ignore_ascii_case(&format!("{PUBLIC_HOST}:{DEFAULT_PORT}"));
+    if server_ws.is_none() && public {
+        return PUBLIC_UPDATES.to_string();
+    }
+    base_url(server, server_ws, DEFAULT_PORT)
 }
 
 /// The version offered by the server, if newer than this program and correctly
@@ -526,6 +548,27 @@ mod tests {
         assert_eq!(
             base_url("x", Some("wss://nuvira.example.com/nuvira"), 21116),
             "https://nuvira.example.com/nuvira/update"
+        );
+    }
+
+    /// APP-1: the public server's updates over HTTPS, without a port; any other
+    /// server, or a published WebSocket address, as before. base_url itself is
+    /// unchanged for the public server (it also builds the invitation addresses).
+    #[test]
+    fn update_urls() {
+        for public in ["connect.nuvirahub.dev", "CONNECT.nuvirahub.dev", "connect.nuvirahub.dev:21116"] {
+            assert_eq!(update_base(public, None), "https://connect.nuvirahub.dev/nuvira/update", "{public}");
+        }
+        assert_eq!(update_base("connect.nuvirahub.dev:21117", None), "http://connect.nuvirahub.dev:21117/nuvira/update");
+        assert_eq!(update_base("alexbn.ddns.net", None), "http://alexbn.ddns.net:21116/nuvira/update");
+        assert_eq!(update_base("10.0.0.5:21117", None), "http://10.0.0.5:21117/nuvira/update");
+        assert_eq!(
+            update_base("connect.nuvirahub.dev", Some("wss://nuvira.example.com/nuvira")),
+            "https://nuvira.example.com/nuvira/update"
+        );
+        assert_eq!(
+            base_url("connect.nuvirahub.dev", None, DEFAULT_PORT),
+            "http://connect.nuvirahub.dev:21116/nuvira/update"
         );
     }
 

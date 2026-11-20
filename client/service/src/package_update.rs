@@ -102,7 +102,7 @@ pub fn run() -> Result<()> {
         })
         .unwrap_or_default();
     let server = nuvira_transport::signal::server_or_public(&server).to_string();
-    let base = nuvira_update::base_url(&server, None, nuvira_update::DEFAULT_PORT);
+    let base = nuvira_update::update_base(&server, None);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let Some(manifest) =
         rt.block_on(nuvira_update::check_channel(&base, &nuvira_update::PUBLIC_KEYS, kind.channel()))?

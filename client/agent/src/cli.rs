@@ -273,11 +273,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         let busy_file = match (ipc, busy_file) {
             (true, None) => {
                 let data = nuvira_transport::identity::data_dir();
-                let base = nuvira_update::base_url(
-                    &opts.server_name,
-                    opts.server_ws.as_deref(),
-                    nuvira_update::DEFAULT_PORT,
-                );
+                let base = nuvira_update::update_base(&opts.server_name, opts.server_ws.as_deref());
                 nuvira_update::unix::spawn_agent_updates(base, data.join("busy"), data.join("update"));
                 Some(data.join("busy"))
             }

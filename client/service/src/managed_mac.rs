@@ -504,7 +504,7 @@ const UPDATE_CACHE: &str = "/Library/Caches/NuviraHub/update";
 /// the installation's server, never during someone's session.
 fn spawn_updates(settings: &Settings) {
     let server = nuvira_transport::signal::server_or_public(&settings.server).to_string();
-    let base = nuvira_update::base_url(&server, None, nuvira_update::DEFAULT_PORT);
+    let base = nuvira_update::update_base(&server, None);
     // The agent of the person in front keeps `busy` in their data folder during a session.
     let busy = Box::new(|| {
         std::fs::read_dir("/Users").into_iter().flatten().flatten().any(|home| {

@@ -598,6 +598,17 @@ pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSende
 mod tests {
     use super::*;
 
+    /// The update crate's public host is the public server (APP-1: its updates
+    /// go over HTTPS).
+    #[test]
+    fn public_update_host_is_the_public_server() {
+        assert_eq!(nuvira_update::PUBLIC_HOST, nuvira_transport::signal::PUBLIC_SERVER);
+        assert_eq!(
+            nuvira_update::update_base(nuvira_transport::signal::server_or_public(""), None),
+            nuvira_update::PUBLIC_UPDATES
+        );
+    }
+
     #[test]
     fn messages_round_trip() {
         let msg =
