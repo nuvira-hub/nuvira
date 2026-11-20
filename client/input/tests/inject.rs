@@ -13,7 +13,8 @@
 //!   keys by scan code (letters follow the layout, Shift applies, arrows are
 //!   extended), text by `KEYEVENTF_UNICODE` (surrogate pairs as two WM_CHARs,
 //!   "\r\n" one Enter, "\t" Tab), `release_all` lets go of what is held, a key
-//!   released without being pressed is still sent up.
+//!   or button released without being pressed sends nothing (VWR-9; it was sent
+//!   up before: P6).
 //! - X11 (XTest): the same moves; wheel notches as buttons 4/5 (up/down) and
 //!   6/7; keys by evdev code + 8; characters through spare key codes whose
 //!   symbol is the character; a key released without being pressed sends nothing.
@@ -330,6 +331,28 @@ mod win {
         move_and_check(&mut s.inj, half, 1.0, 1.0);
         move_and_check(&mut s.inj, half, 0.5, 0.5);
         report(&format!("moves ok on {screen:?} and {half:?}"));
+
+        // A move to a non-finite position is dropped: the pointer stays (VWR-7;
+        // before, NaN went to the virtual desktop's top-left corner).
+        s.inj.set_screen(screen);
+        for (x, y) in [(f32::NAN, f32::NAN), (f32::NAN, 0.25), (0.25, f32::INFINITY)] {
+            let mut moved = None;
+            for _ in 0..3 {
+                move_and_check(&mut s.inj, screen, 0.5, 0.5);
+                let before = cursor();
+                s.inj.inject(&mv(x, y)).unwrap();
+                std::thread::sleep(Duration::from_millis(80));
+                let after = cursor();
+                report(&format!("move ({x}, {y}): pointer {before:?} -> {after:?}"));
+                // The jiggler may move it by a pixel meanwhile: tried again then.
+                if (after.0 - before.0).abs() <= 1 && (after.1 - before.1).abs() <= 1 {
+                    moved = None;
+                    break;
+                }
+                moved = Some((before, after));
+            }
+            assert_eq!(moved, None, "move ({x}, {y}) moved the pointer");
+        }
     }
 
     #[test]
@@ -439,13 +462,23 @@ mod win {
             got.iter().filter_map(|g| if let Got::Char(c) = g { Some(*c) } else { None }).collect();
         assert!(units.contains(&0xD83D) && units.contains(&0xDE00), "the emoji as a surrogate pair");
 
-        // A key released without being pressed is still sent (Windows).
+        // A key or button released without being pressed sends nothing (VWR-9,
+        // was P6: Windows sent the key up); a pressed one is still released.
         assert!(s.window.focused());
         s.inj.inject(&key("KeyZ", false)).unwrap();
+        s.inj.inject(&btn(Button::Right, false)).unwrap();
         settle();
         let got = take();
         report(&format!("release without press: {got:?}"));
-        assert_eq!(got, vec![Got::KeyUp(b'Z' as u16)]);
+        assert_eq!(got, Vec::<Got>::new(), "no release for KeyZ and the right button, never pressed");
+        s.inj.inject(&key("KeyZ", true)).unwrap();
+        s.inj.inject(&key("KeyZ", false)).unwrap();
+        s.inj.inject(&key("KeyZ", false)).unwrap();
+        settle();
+        let got = take();
+        report(&format!("press, release, release again: {got:?}"));
+        let ups = got.iter().filter(|g| **g == Got::KeyUp(b'Z' as u16)).count();
+        assert_eq!(ups, 1, "one release for one press: {got:?}");
     }
 
     #[test]
@@ -750,6 +783,40 @@ mod linux {
             // and KWin a pixel off where the point fell on a half).
             assert_eq!(got, want, "move ({x}, {y})");
         }
+
+        // A move to a non-finite position is dropped: the pointer stays (VWR-7;
+        // before, X11 put NaN on the screen's top-left corner and Wayland passed
+        // it to the compositor). Under Xwayland the pointer's position is known
+        // only over Xwayland's windows, so a wheel notch tells whether the
+        // pointer is still over the test window: it gets the notch only then.
+        let start = (0.4, 0.4);
+        let notch = |s: &mut Setup| -> bool {
+            s.window.drain();
+            s.inj.inject(&wheel(0, -120)).unwrap();
+            let got = s.window.collect(Duration::from_millis(400));
+            got.iter().any(|g| matches!(g, Got::Button(4 | 5, true)))
+        };
+        for (x, y) in [(f32::NAN, f32::NAN), (f32::NAN, 0.6), (0.6, f32::INFINITY)] {
+            s.inj.inject(&mv(start.0, start.1)).unwrap();
+            std::thread::sleep(Duration::from_millis(150));
+            let before = s.window.pointer();
+            assert_eq!(before, expected(screen, start.0, start.1), "move to the start point");
+            s.inj.inject(&mv(x, y)).unwrap();
+            // Time for the compositor to apply a move, had one been sent.
+            std::thread::sleep(Duration::from_millis(300));
+            let after = s.window.pointer();
+            let over = notch(&mut s);
+            report(&format!(
+                "move ({x}, {y}): pointer {before:?} -> {after:?}, still over the window {over}"
+            ));
+            assert_eq!((after, over), (before, true), "move ({x}, {y}) moved the pointer");
+        }
+        // The check can see a move away: off the window the notch does not reach it.
+        s.inj.inject(&mv(0.95, 0.95)).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let over = notch(&mut s);
+        report(&format!("move (0.95, 0.95): still over the window {over}"));
+        assert!(!over, "a wheel notch off the test window does not reach it");
     }
 
     #[test]

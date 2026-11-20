@@ -12,7 +12,7 @@ native() {
 }
 
 # module -> benchmark IDs (bench-plan.md section 7); Phase 6 batches rerun by module.
-BENCH_MODULES="convert codec proto fec transport secret audio capture agent viewer input files relay signal store server"
+BENCH_MODULES="convert codec proto fec transport secret audio capture clipboard agent viewer input files relay signal store server"
 module_ids() {
     case "$1" in
         convert)   echo "B-MICRO-01 B-MICRO-02 B-MICRO-03 B-MICRO-07" ;;
@@ -23,6 +23,7 @@ module_ids() {
         secret)    echo "B-MICRO-14" ;;
         audio)     echo "B-MICRO-15" ;;
         capture)   echo "B-MICRO-17 B-MACRO-03 B-MACRO-08" ;;
+        clipboard) echo "B-MICRO-18" ;;
         agent)     echo "B-MACRO-03 B-MACRO-04 B-MACRO-05 B-MACRO-06 B-MACRO-07 B-MACRO-08 B-MACRO-09 B-MACRO-10 B-RES-01 B-RES-02 B-RES-03 B-RES-04" ;;
         viewer)    echo "B-MICRO-10 B-MACRO-09" ;;
         input)     echo "B-MACRO-08" ;;

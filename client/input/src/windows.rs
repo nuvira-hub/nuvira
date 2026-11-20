@@ -89,7 +89,11 @@ impl SendInputInjector {
             (Button::Forward, false) => (MOUSEEVENTF_XUP, XBUTTON2 as i32),
             (Button::Unspecified, _) => return,
         };
-        self.track(Held::Button(button as i32), down);
+        // A release of a button this injector did not press is left out: it
+        // would let go of a button held at this computer.
+        if !self.track(Held::Button(button as i32), down) && !down {
+            return;
+        }
         self.mouse(flags, 0, 0, data);
     }
 
@@ -111,7 +115,11 @@ impl SendInputInjector {
             let ext = if vk == VK_NUMLOCK { KEYEVENTF_EXTENDEDKEY } else { KEYBD_EVENT_FLAGS(0) };
             keyboard(vk, 0, ext | up)
         };
-        self.track(Held::Key(code.to_string()), down);
+        // A release of a key this injector did not press is left out (as on
+        // X11 and Wayland): it would let go of a key held at this computer.
+        if !self.track(Held::Key(code.to_string()), down) && !down {
+            return;
+        }
         send(input);
     }
 
@@ -135,12 +143,10 @@ impl SendInputInjector {
         }
     }
 
-    fn track(&mut self, held: Held, down: bool) {
-        if down {
-            self.held.insert(held);
-        } else {
-            self.held.remove(&held);
-        }
+    /// Records a press or release; whether the state changed (a release of
+    /// something not held does not change it).
+    fn track(&mut self, held: Held, down: bool) -> bool {
+        if down { self.held.insert(held) } else { self.held.remove(&held) }
     }
 }
 
@@ -225,12 +231,15 @@ impl InputInjector for SendInputInjector {
     }
 
     fn release_all(&mut self) {
-        for held in std::mem::take(&mut self.held) {
+        // Released while still recorded as held, so that each release is sent.
+        let held: Vec<Held> = self.held.iter().cloned().collect();
+        for held in held {
             match held {
                 Held::Key(code) => self.key(&code, false),
                 Held::Button(b) => self.button(Button::try_from(b).unwrap_or_default(), false),
             }
         }
+        self.held.clear();
     }
 }
 

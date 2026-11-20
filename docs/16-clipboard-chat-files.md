@@ -8,7 +8,7 @@ Last part of phase 2 (Windows MVP).
 
 During the session text and images copied on one of the two PCs can be pasted on the other, in both directions and with no commands.
 
-- `client/clipboard` (`nuvira-clipboard`, arboard library): one thread per side checks the clipboard every 400 ms. On Windows it detects a change from the sequence number (`GetClipboardSequenceNumber`) without reading the clipboard; elsewhere it compares the text.
+- `client/clipboard` (`nuvira-clipboard`, arboard library): one thread per side checks the clipboard every 400 ms. It reads the clipboard only when a counter says something was copied: the sequence number on Windows (`GetClipboardSequenceNumber`), the pasteboard's `changeCount` on macOS, the CLIPBOARD owner changes (XFixes) in an X11 session; then it compares the content with the last one (the same text copied again is not sent again). On Wayland, and on X11 without XFixes, it still reads and compares the content at every check (Wayland: a native Wayland program's copy is not guaranteed to change Xwayland's selection, which is what the counter watches). Before 2026-11-20 (review lot 23, VWR-6) Linux and macOS read the whole clipboard at every check: with a 1080p image in it about 15 ms (11 ms of CPU) every 400 ms for the whole session, on whichever side had it.
 - New text travels on the control channel (`ControlMessage.clipboard`, at most 1 MB) and the other side writes it to its clipboard. Received text is not sent back.
 - Only what is copied during the session counts: content already present at start-up is not sent.
 - The agent shares it only if it can control the PC (not with `--view-only`). As SYSTEM, in the user's session, it uses the user's clipboard (it belongs to the `winsta0` window station).
