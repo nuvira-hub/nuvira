@@ -702,7 +702,7 @@ fn remove_program_dir() {
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     let command =
         format!("/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{}\"", config::program_dir().display());
-    let spawn = |flags| Command::new("cmd").raw_arg(&command).creation_flags(flags).spawn();
+    let spawn = |flags| Command::new(system32("cmd")).raw_arg(&command).creation_flags(flags).spawn();
     if spawn(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB).is_err() {
         let _ = spawn(CREATE_NO_WINDOW);
     }
@@ -839,12 +839,30 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// A program of System32 (`name` without `.exe`), by its full path. Windows looks a
+/// bare name up first in the folder of this program, and the copy the app starts as
+/// administrator may be the one downloaded into the user's Downloads: a `reg.exe`
+/// put there would run elevated (APP-3).
+fn system32(name: &str) -> std::path::PathBuf {
+    use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
+    let mut buffer = [0u16; 260];
+    // SAFETY: the buffer is valid for its length; the result is the length written.
+    let n = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+    let dir = if n > 0 && n < buffer.len() {
+        std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..n]))
+    } else {
+        std::path::PathBuf::from(r"C:\Windows\System32")
+    };
+    dir.join(format!("{name}.exe"))
+}
+
 /// A system tool (icacls, netsh, reg, schtasks, msiexec) started with no console
 /// window: from the app's "Save" or an update this process has no console of its
 /// own, and every tool would otherwise flash a window of its own on the screen.
+/// Always the one of System32 ([`system32`]).
 fn hidden(program: &str) -> Command {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let mut command = Command::new(program);
+    let mut command = Command::new(system32(program));
     command.creation_flags(CREATE_NO_WINDOW);
     command
 }
@@ -871,5 +889,27 @@ mod tests {
         assert_eq!(utc_iso(at(0)), "1970-01-01T00:00:00Z");
         assert_eq!(utc_iso(at(1_793_488_200)), "2026-10-31T23:10:00Z");
         assert_eq!(utc_iso(at(951_782_400)), "2000-02-29T00:00:00Z");
+    }
+
+    /// APP-3: the system tools are System32's, never a copy next to this program.
+    /// A copy of this test program is put there as `reg.exe`: run with "/?" it
+    /// would print libtest's "running 0 tests" instead of reg's help.
+    #[test]
+    fn system_tools_never_from_the_program_folder() {
+        let program = hidden("reg").get_program().to_owned();
+        let path = Path::new(&program);
+        assert!(path.is_absolute() && path.is_file(), "{}", path.display());
+        let folder = path.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_lowercase());
+        assert_eq!(folder.as_deref(), Some("system32"), "{}", path.display());
+        assert!(system32("cmd").is_file());
+
+        let exe = std::env::current_exe().expect("exe");
+        let planted = exe.with_file_name("reg.exe");
+        std::fs::copy(&exe, &planted).expect("plant");
+        let output = hidden("reg").arg("/?").output();
+        let _ = std::fs::remove_file(&planted);
+        let text = String::from_utf8_lossy(&output.expect("reg").stdout).to_string();
+        assert!(!text.contains("running 0 tests"), "the copy next to the program ran: {text}");
+        assert!(text.contains("REG"), "{text}");
     }
 }
