@@ -176,20 +176,29 @@ impl Drop for TraceTime {
     }
 }
 
-/// Graphics APIs tried in turn: the native one of each system, then OpenGL where it
-/// exists. One at a time, because enumerating a backend loads its drivers: the Intel
-/// OpenGL driver (ig9icd64.dll) sometimes crashes when the process exits, so it is
-/// loaded only on cards without DirectX 12. On Windows Vulkan is excluded: some Intel
-/// drivers crash already at enumeration. `WGPU_BACKEND` (e.g. `vulkan`, `gl`) still
-/// allows forcing one.
-fn native_backends() -> &'static [wgpu::Backends] {
+/// Graphics APIs tried in turn: the native one of each system, then OpenGL only when
+/// the GPU renderer is forced (`NUVIRA_RENDERER=gpu`). A renderer reached through
+/// OpenGL is refused in favour of the CPU one in every other case, so building it would
+/// only cost time (about 4.3 s on an Intel HD Graphics 2500, mostly in tearing it down)
+/// and load the Intel OpenGL driver (ig9icd64.dll), which sometimes crashes when the
+/// process exits. One at a time, because enumerating a backend loads its drivers. On
+/// Windows Vulkan is excluded: some Intel drivers crash already at enumeration.
+/// `WGPU_BACKEND` (e.g. `vulkan`, `gl`) still allows forcing one.
+fn native_backends(gl: bool) -> &'static [wgpu::Backends] {
     if cfg!(windows) {
-        &[wgpu::Backends::DX12, wgpu::Backends::GL]
+        if gl { &[wgpu::Backends::DX12, wgpu::Backends::GL] } else { &[wgpu::Backends::DX12] }
     } else if cfg!(target_os = "macos") {
         &[wgpu::Backends::METAL]
-    } else {
+    } else if gl {
         &[wgpu::Backends::VULKAN, wgpu::Backends::GL]
+    } else {
+        &[wgpu::Backends::VULKAN]
     }
+}
+
+/// Whether `NUVIRA_RENDERER=gpu` forces the GPU renderer, OpenGL included.
+fn gpu_forced() -> bool {
+    std::env::var("NUVIRA_RENDERER").ok().as_deref() == Some("gpu")
 }
 
 /// Where the `fw`x`fh` image goes in the `sw`x`sh` window.
@@ -276,7 +285,7 @@ impl GpuRenderer {
         let attempts = if std::env::var_os("WGPU_BACKEND").is_some() {
             &[from_env.backends][..]
         } else {
-            native_backends()
+            native_backends(gpu_forced())
         };
         let mut found = None;
         for &backends in attempts {
@@ -298,7 +307,7 @@ impl GpuRenderer {
             })) {
                 // Windows' software rasterizer (WARP) answers for DX12 on cards whose driver
                 // lacks it: ~670 ms per 1080p frame on an Intel HD Graphics, against ~6 ms for
-                // the CPU renderer reached through the OpenGL attempt.
+                // the CPU renderer that `Renderer::new` falls back to.
                 Ok(adapter)
                     if adapter.get_info().device_type == wgpu::DeviceType::Cpu
                         && std::env::var_os("WGPU_BACKEND").is_none() =>
