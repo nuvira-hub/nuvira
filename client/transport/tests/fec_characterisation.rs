@@ -291,22 +291,52 @@ fn take_rebuilt_counts_frames_repaired_by_parity() {
         let skip = usize::from(seq % 2 == 1);
         assert_eq!(push_all(&mut rx, &packets[skip..]).len(), 1);
     }
+    // Counted when the frames close (two behind the newest, since review lot 18):
+    // frames 5 and 6 close 1-4.
+    for seq in 5..=6u64 {
+        push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
+    }
     assert_eq!(rx.take_rebuilt(), 2);
     assert_eq!(rx.take_rebuilt(), 0);
 }
 
 #[test]
-fn reordering_counts_as_rebuilt() {
-    // A parity shard first: the block is complete with it (data 1), the data shard
-    // that comes after is ignored, and the frame counts as rebuilt by parity
-    // although nothing was lost (statistics `frames_rebuilt` only).
+fn reordering_does_not_count_as_rebuilt() {
+    // Fixed in review lot 18 (NET-6, K4): a parity shard first completes the block
+    // (data 1) and the frame is returned at once; the data shard that comes after is
+    // not lost, so the frame does not count as rebuilt by parity (before: it did,
+    // statistics `frames_rebuilt` only).
     let f = frame(10, 0);
     let packets = encode(1, &f, 1200, 0.3).unwrap();
     assert_eq!(packets.len(), 3);
     let mut rx = Receiver::default();
     assert_eq!(push_all(&mut rx, [&packets[2], &packets[0], &packets[1]]), vec![(1, f)]);
+    for seq in 2..=3 {
+        push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
+    }
+    assert_eq!(rx.take_rebuilt(), 0);
+    assert_eq!(rx.take_loss(), (3, 0), "frame 1 closed, nothing lost");
+    // Lost for real: counted once the frame closes.
+    let f = frame(10, 1);
+    let packets = encode(4, &f, 1200, 0.3).unwrap();
+    assert_eq!(push_all(&mut rx, [&packets[2], &packets[1]]), vec![(4, f)]);
+    push_all(&mut rx, &encode(5, &frame(10, 0), 1200, 0.0).unwrap());
+    assert_eq!(rx.take_rebuilt(), 0, "frame 4 still open");
+    push_all(&mut rx, &encode(6, &frame(10, 0), 1200, 0.0).unwrap());
     assert_eq!(rx.take_rebuilt(), 1);
-    assert_eq!(rx.take_loss(), (0, 0));
+    // In a frame of several blocks, a late data shard of a block rebuilt before the
+    // frame is complete is not lost either.
+    let f = frame(50_000, 2);
+    let packets = encode(7, &f, 1200, 0.25).unwrap();
+    let first_parity = packets.iter().position(|p| fields(p).0 == 0 && fields(p).2 == fields(p).3).unwrap();
+    let mut order: Vec<&Vec<u8>> = packets.iter().collect();
+    let late = order.remove(0);
+    order.insert(first_parity, late);
+    assert_eq!(push_all(&mut rx, order), vec![(7, f)]);
+    for seq in 8..=9 {
+        push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
+    }
+    assert_eq!(rx.take_rebuilt(), 0);
 }
 
 /// `encode` succeeds exactly when the frame fits in 255 blocks of 32 shards.
@@ -363,14 +393,12 @@ proptest! {
         }
         let mut rx = Receiver::default();
         prop_assert_eq!(push_all(&mut rx, kept), vec![(1, f)]);
-        // A lost data shard always counts the frame as rebuilt; with the shards out of
-        // order a parity shard arriving before a data shard counts too (see
-        // `reordering_counts_as_rebuilt`).
-        let rebuilt = rx.take_rebuilt();
-        prop_assert!(rebuilt <= 1);
-        if data_lost {
-            prop_assert_eq!(rebuilt, 1);
+        // Two more frames close frame 1. It counts as rebuilt exactly when a data
+        // shard was lost, whatever the order (`reordering_does_not_count_as_rebuilt`).
+        for seq in 2..=3 {
+            push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
         }
+        prop_assert_eq!(rx.take_rebuilt(), u64::from(data_lost));
     }
 
     /// Whatever the interleaving, duplicates and losses of several frames, the frames

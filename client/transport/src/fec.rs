@@ -130,8 +130,8 @@ struct Block {
     received: usize,
     /// The data shards, once rebuilt.
     done: Option<Vec<Vec<u8>>>,
-    /// Some of its data shards were rebuilt from parity.
-    repaired: bool,
+    /// Indices of the data shards rebuilt from parity that have not arrived since.
+    rebuilt: Vec<u8>,
 }
 
 struct Partial {
@@ -159,6 +159,11 @@ pub struct Receiver {
     shards_lost: u64,
     /// Frames completed thanks to parity (a data shard of theirs was lost).
     rebuilt: u64,
+    /// Frames returned with data shards rebuilt from parity, by seq: `(block, index)`
+    /// of those shards. A shard that arrives late after all (reordered, not lost) is
+    /// taken off; a frame still listed when it closes (two behind the newest, as for
+    /// the loss) counts as rebuilt (review NET-6, K4).
+    repaired: BTreeMap<u64, Vec<(u8, u8)>>,
 }
 
 impl Receiver {
@@ -184,6 +189,12 @@ impl Receiver {
         );
         self.count(seq, block, blocks, data + parity);
         if seq <= self.last {
+            if let Some(shards) = self.repaired.get_mut(&seq) {
+                shards.retain(|&s| s != (block as u8, index as u8));
+                if shards.is_empty() {
+                    self.repaired.remove(&seq);
+                }
+            }
             return Ok(None);
         }
         let partial = self.frames.entry(seq).or_insert_with(|| Partial {
@@ -203,10 +214,15 @@ impl Receiver {
             shards: vec![None; data + parity],
             received: 0,
             done: None,
-            repaired: false,
+            rebuilt: Vec::new(),
         });
         ensure!(state.data == data && state.parity == parity, "inconsistent video block");
-        if state.done.is_some() || state.shards[index].is_some() {
+        if state.done.is_some() {
+            // A data shard rebuilt already, arriving late: it was not lost.
+            state.rebuilt.retain(|&i| usize::from(i) != index);
+            return Ok(None);
+        }
+        if state.shards[index].is_some() {
             return Ok(None);
         }
         state.shards[index] = Some(shard.to_vec());
@@ -214,7 +230,7 @@ impl Receiver {
         if state.received < data {
             return Ok(None);
         }
-        state.repaired = state.shards[..data].iter().any(Option::is_none);
+        state.rebuilt = (0..data).filter(|&i| state.shards[i].is_none()).map(|i| i as u8).collect();
         ReedSolomon::new(data, parity)?
             .reconstruct_data(&mut state.shards)
             .context("rebuilding a video block")?;
@@ -232,8 +248,15 @@ impl Receiver {
         // before). Such a frame is dropped, and the viewer counts it as lost.
         let len = partial.blocks.iter().flatten().map(|b| b.data).sum::<usize>() * partial.shard_len;
         ensure!(partial.frame_len <= len, "video frame longer than its shards");
-        if partial.blocks.iter().flatten().any(|b| b.repaired) {
-            self.rebuilt += 1;
+        let rebuilt: Vec<(u8, u8)> = partial
+            .blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(n, b)| Some((n as u8, b.as_ref()?)))
+            .flat_map(|(n, b)| b.rebuilt.iter().map(move |&i| (n, i)))
+            .collect();
+        if !rebuilt.is_empty() {
+            self.repaired.insert(seq, rebuilt);
         }
         let mut frame = Vec::with_capacity(len);
         for block in partial.blocks.into_iter().flatten() {
@@ -251,7 +274,9 @@ impl Receiver {
         (std::mem::take(&mut self.shards), std::mem::take(&mut self.shards_lost))
     }
 
-    /// Frames completed thanks to parity since the previous call (statistics only).
+    /// Frames completed thanks to parity since the previous call (statistics only),
+    /// counted once they can get no more shards, as [`Receiver::take_loss`]: a data
+    /// shard that was only reordered behind a parity shard does not count.
     pub fn take_rebuilt(&mut self) -> u64 {
         std::mem::take(&mut self.rebuilt)
     }
@@ -280,6 +305,11 @@ impl Receiver {
             let expected: usize = count.blocks.iter().map(|&n| if n > 0 { n } else { typical }).sum();
             self.shards += expected as u64;
             self.shards_lost += expected.saturating_sub(count.got) as u64;
+        }
+        let closed: Vec<u64> = self.repaired.range(..seq.saturating_sub(1)).map(|(s, _)| *s).collect();
+        for s in closed {
+            self.repaired.remove(&s);
+            self.rebuilt += 1;
         }
         // Memory bound when many frames are lost.
         self.frames.retain(|&s, _| s.saturating_add(KEEP_BEHIND) > seq);
@@ -340,13 +370,22 @@ mod tests {
             }
         }
         assert_eq!(got, Some((7, f)));
-        assert_eq!(rx.take_rebuilt(), 1);
+        // Counted once frame 7 can get no more shards (two behind the newest).
         assert_eq!(rx.take_rebuilt(), 0);
         // Only parity lost: nothing to rebuild.
         for p in &encode(8, &frame(5000), 1200, 0.25).unwrap()[..5] {
             rx.push(p).unwrap();
         }
         assert_eq!(rx.take_rebuilt(), 0);
+        for p in encode(9, &frame(10), 1200, 0.25).unwrap() {
+            rx.push(&p).unwrap();
+        }
+        assert_eq!(rx.take_rebuilt(), 1, "frame 7 closed");
+        assert_eq!(rx.take_rebuilt(), 0);
+        for p in encode(10, &frame(10), 1200, 0.25).unwrap() {
+            rx.push(&p).unwrap();
+        }
+        assert_eq!(rx.take_rebuilt(), 0, "frame 8 closed, only parity lost");
     }
 
     #[test]
