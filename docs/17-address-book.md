@@ -37,7 +37,7 @@ Visibility: an account sees its personal book and the shared books it is a membe
 ## Security
 
 - **Account passwords**: Argon2id (2 passes, 19 MB, OWASP parameters), at least 8 characters; a 1 s pause after a failed sign-in.
-- **Tokens**: random, returned only at sign-in, stored on the server as SHA-256. The app saves the token in `app.json`, never the password. Logout deletes the token; changing the password invalidates all of the account's tokens.
+- **Tokens**: random, returned only at sign-in, stored on the server as SHA-256. The app saves the token in `app.json` protected, never the password: as `token_protected`, with DPAPI on Windows and with the local address book's key (Keychain, Secret Service) elsewhere, and on Linux and macOS `app.json` is the person's alone (0600). A token in clear text written by 0.28.0 or earlier is read once and saved protected; an older app reading the new file sees no token and asks to sign in again, and a token that cannot be read on this computer (a copied file, another user, a locked keyring) counts as signed out (since the review, APP-6). Logout deletes the token; changing the password invalidates all of the account's tokens.
 - **Device passwords**: AES-256-GCM with the key `address-book.key` in the server's data folder (created at first start, readable only by the owner). The database alone is not enough to read them; the key must be backed up with it.
 - **Transport**: the API runs inside the QUIC/TLS connection to the server, whose certificate the app pins at the first connection (as the agent and viewer do).
 - **Errors** are translation keys (`@server.denied`, `@server.password_too_short`, …) that the app shows in the user's language (D15).
