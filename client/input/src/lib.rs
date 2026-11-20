@@ -79,8 +79,44 @@ pub fn pieces(text: &str) -> Vec<Piece> {
     out
 }
 
+/// Whether an event may reach the system: a mouse move whose coordinate is not
+/// a finite number (NaN, infinity) points nowhere and is dropped (VWR-7; Windows
+/// and X11 turned NaN into the screen's top-left corner, Wayland and macOS passed
+/// it on). The viewers never send one; a misbehaving one could.
+pub fn injectable(event: &InputEvent) -> bool {
+    match &event.event {
+        Some(nuvira_proto::v1::input_event::Event::MouseMove(m)) => m.x.is_finite() && m.y.is_finite(),
+        _ => true,
+    }
+}
+
+/// The system's injector behind the [`injectable`] check.
+struct Checked(Box<dyn InputInjector>);
+
+impl InputInjector for Checked {
+    fn inject(&mut self, event: &InputEvent) -> anyhow::Result<()> {
+        if !injectable(event) {
+            tracing::debug!("mouse move to a non-finite position dropped");
+            return Ok(());
+        }
+        self.0.inject(event)
+    }
+
+    fn release_all(&mut self) {
+        self.0.release_all();
+    }
+
+    fn set_screen(&mut self, screen: ScreenRect) {
+        self.0.set_screen(screen);
+    }
+}
+
 /// Opens input injection on the given screen.
 pub fn open(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
+    Ok(Box::new(Checked(open_system(screen)?)))
+}
+
+fn open_system(screen: ScreenRect) -> anyhow::Result<Box<dyn InputInjector>> {
     #[cfg(windows)]
     return Ok(Box::new(windows::SendInputInjector::new(screen)));
     #[cfg(target_os = "linux")]
@@ -129,7 +165,57 @@ pub(crate) fn wayland_session() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Piece, pieces};
+    use super::{Checked, InputInjector, Piece, ScreenRect, injectable, pieces};
+    use nuvira_proto::v1::input_event::Event;
+    use nuvira_proto::v1::{InputEvent, Key, MouseMove};
+
+    fn mv(x: f32, y: f32) -> InputEvent {
+        InputEvent { event: Some(Event::MouseMove(MouseMove { x, y })) }
+    }
+
+    #[test]
+    fn non_finite_moves_are_not_injectable() {
+        for (x, y) in [(f32::NAN, 0.5), (0.5, f32::NAN), (f32::INFINITY, 0.5), (0.5, f32::NEG_INFINITY)] {
+            assert!(!injectable(&mv(x, y)), "({x}, {y})");
+        }
+        // Out of range but finite: the injectors clamp it to the edge, as before.
+        for (x, y) in [(0.0, 0.0), (1.0, 1.0), (0.5, 0.25), (-0.5, 2.0), (f32::MAX, f32::MIN)] {
+            assert!(injectable(&mv(x, y)), "({x}, {y})");
+        }
+        let key = InputEvent { event: Some(Event::Key(Key { code: "KeyA".into(), down: true })) };
+        assert!(injectable(&key));
+        assert!(injectable(&InputEvent { event: None }));
+    }
+
+    #[test]
+    fn checked_injector_drops_only_non_finite_moves() {
+        #[derive(Default)]
+        struct Seen(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+        impl InputInjector for Seen {
+            fn inject(&mut self, event: &InputEvent) -> anyhow::Result<()> {
+                self.0.lock().unwrap().push(format!("{:?}", event.event));
+                Ok(())
+            }
+            fn release_all(&mut self) {
+                self.0.lock().unwrap().push("release_all".into());
+            }
+            fn set_screen(&mut self, screen: ScreenRect) {
+                self.0.lock().unwrap().push(format!("screen {}", screen.width));
+            }
+        }
+        let seen = Seen::default();
+        let log = seen.0.clone();
+        let mut checked = Checked(Box::new(seen));
+        checked.inject(&mv(f32::NAN, f32::NAN)).unwrap();
+        checked.inject(&mv(0.25, f32::INFINITY)).unwrap();
+        checked.inject(&mv(0.25, 0.75)).unwrap();
+        checked.set_screen(ScreenRect { left: 0, top: 0, width: 640, height: 480 });
+        checked.release_all();
+        let log = log.lock().unwrap().clone();
+        assert_eq!(log.len(), 3, "{log:?}");
+        assert!(log[0].contains("x: 0.25, y: 0.75"), "{log:?}");
+        assert_eq!(log[1..], ["screen 640".to_string(), "release_all".to_string()]);
+    }
 
     #[test]
     fn text_pieces() {

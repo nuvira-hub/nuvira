@@ -331,6 +331,28 @@ mod win {
         move_and_check(&mut s.inj, half, 1.0, 1.0);
         move_and_check(&mut s.inj, half, 0.5, 0.5);
         report(&format!("moves ok on {screen:?} and {half:?}"));
+
+        // A move to a non-finite position is dropped: the pointer stays (VWR-7;
+        // before, NaN went to the virtual desktop's top-left corner).
+        s.inj.set_screen(screen);
+        for (x, y) in [(f32::NAN, f32::NAN), (f32::NAN, 0.25), (0.25, f32::INFINITY)] {
+            let mut moved = None;
+            for _ in 0..3 {
+                move_and_check(&mut s.inj, screen, 0.5, 0.5);
+                let before = cursor();
+                s.inj.inject(&mv(x, y)).unwrap();
+                std::thread::sleep(Duration::from_millis(80));
+                let after = cursor();
+                report(&format!("move ({x}, {y}): pointer {before:?} -> {after:?}"));
+                // The jiggler may move it by a pixel meanwhile: tried again then.
+                if (after.0 - before.0).abs() <= 1 && (after.1 - before.1).abs() <= 1 {
+                    moved = None;
+                    break;
+                }
+                moved = Some((before, after));
+            }
+            assert_eq!(moved, None, "move ({x}, {y}) moved the pointer");
+        }
     }
 
     #[test]
@@ -760,6 +782,23 @@ mod linux {
             // Rounded on every backend (Wayland too: VWR-8, Phase 2 P5 saw Mutter
             // and KWin a pixel off where the point fell on a half).
             assert_eq!(got, want, "move ({x}, {y})");
+        }
+
+        // A move to a non-finite position is dropped: the pointer stays (VWR-7;
+        // before, X11 put NaN on the screen's top-left corner and Wayland passed
+        // it to the compositor).
+        let start = (0.4, 0.4);
+        for (x, y) in [(f32::NAN, f32::NAN), (f32::NAN, 0.6), (0.6, f32::INFINITY)] {
+            s.inj.inject(&mv(start.0, start.1)).unwrap();
+            std::thread::sleep(Duration::from_millis(150));
+            let before = s.window.pointer();
+            assert_eq!(before, expected(screen, start.0, start.1), "move to the start point");
+            s.inj.inject(&mv(x, y)).unwrap();
+            // Time for the compositor to apply a move, had one been sent.
+            std::thread::sleep(Duration::from_millis(300));
+            let after = s.window.pointer();
+            report(&format!("move ({x}, {y}): pointer {before:?} -> {after:?}"));
+            assert_eq!(after, before, "move ({x}, {y}) moved the pointer");
         }
     }
 
