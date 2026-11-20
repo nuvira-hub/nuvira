@@ -254,11 +254,11 @@ pub fn server_config() -> Result<(ServerConfig, Fingerprint)> {
     Ok((config, fingerprint))
 }
 
-/// Viewer connection to an agent. Without an expected fingerprint any certificate is accepted.
+/// Viewer connection to an agent. Without an expected fingerprint any certificate
+/// is accepted (LAN tests): the fingerprint seen is then logged, so that it can be
+/// compared with the one the agent prints and given with `--fingerprint` (review
+/// NET-17).
 pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<Connection> {
-    if expected.is_none() {
-        warn!("agent fingerprint not given: connection NOT verified (LAN tests only)");
-    }
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .dangerous()
@@ -274,7 +274,19 @@ pub async fn connect(addr: SocketAddr, expected: Option<Fingerprint>) -> Result<
     endpoint.set_default_client_config(config);
     let conn =
         endpoint.connect(addr, "nuvira-agent")?.await.with_context(|| format!("connecting to {addr}"))?;
+    if expected.is_none() {
+        let seen = peer_fingerprint(&conn).map(|fp| fingerprint_hex(&fp)).unwrap_or_else(|| "unknown".into());
+        warn!(
+            "agent fingerprint not given: connection NOT verified (LAN tests only); {addr} has the certificate fingerprint {seen}: compare it with the agent's and pass it with --fingerprint"
+        );
+    }
     Ok(conn)
+}
+
+/// SHA-256 fingerprint of the certificate the other side of `conn` presented.
+pub fn peer_fingerprint(conn: &Connection) -> Option<Fingerprint> {
+    let certs = conn.peer_identity()?.downcast::<Vec<CertificateDer<'static>>>().ok()?;
+    Some(Sha256::digest(certs.first()?).into())
 }
 
 /// Checks the agent's certificate by comparing its SHA-256 fingerprint.
@@ -476,6 +488,25 @@ pub async fn read_stream(rx: &mut FramedRecv, header: &FileChunk, limit: u64) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review NET-17: without `--fingerprint` the fingerprint seen is the agent's,
+    /// so the one logged can be pinned.
+    #[tokio::test]
+    async fn unverified_connection_reports_the_agent_fingerprint() {
+        let (server, fp) = server_endpoint("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = server.local_addr().unwrap();
+        let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
+        let conn = connect(addr, None).await.unwrap();
+        assert_eq!(peer_fingerprint(&conn), Some(fp));
+        let _agent = accept.await.unwrap();
+        // The pinned connection sees the same.
+        let (server, fp2) = server_endpoint("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = server.local_addr().unwrap();
+        let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
+        let conn = connect(addr, Some(fp2)).await.unwrap();
+        assert_eq!(peer_fingerprint(&conn), Some(fp2));
+        let _agent = accept.await.unwrap();
+    }
 
     #[test]
     fn resolve_adds_default_port() {
