@@ -177,7 +177,8 @@ fn bind_relay(socket: &UdpSocket, route: &Route, locals: &[SocketAddr]) -> Resul
         socket.send_to(&bind, relay)?;
         loop {
             match socket.recv_from(&mut buf) {
-                Ok((n, from)) if canonical(from) == route.relay => match bound_state(&buf[..n], &route.token) {
+                Ok((n, from)) if canonical(from) == route.relay => match bound_state(&buf[..n], &route.token)
+                {
                     Some(true) => {
                         socket.set_read_timeout(None)?;
                         return Ok(parse_candidates(&buf[22..n]));
@@ -273,7 +274,12 @@ fn parse_candidates(b: &[u8]) -> Candidates {
 /// Local addresses this PC uses to reach the relay or the Internet (the main
 /// network interface), one per family the socket has, with the session socket's
 /// port. On IPv6 the local address is also the public one (no NAT).
-fn local_candidates(relay: SocketAddr, relay_alt: Option<SocketAddr>, port: u16, ipv6_socket: bool) -> Vec<SocketAddr> {
+fn local_candidates(
+    relay: SocketAddr,
+    relay_alt: Option<SocketAddr>,
+    port: u16,
+    ipv6_socket: bool,
+) -> Vec<SocketAddr> {
     // Towards the relay where it has an address of that family, otherwise a public
     // one (connect on UDP sends nothing: it only asks the system which interface
     // it would use).
@@ -312,19 +318,24 @@ fn usable_ipv6(ip: std::net::Ipv6Addr, relay: SocketAddr) -> bool {
         && (!ip.is_loopback() || relay.ip().is_loopback())
 }
 
+/// An opening packet: the magic, then 16 zero bytes. Nobody reads it, in any
+/// version (QUIC drops it: first byte without the 0x40 bit). It used to carry
+/// the relay token, and the other side's private addresses can be unrelated
+/// hosts on this side's network, which could then re-point the relayed session
+/// (review NET-2); the length stays 20 bytes so that NATs and firewalls see what
+/// they saw before.
+const PUNCH: [u8; 20] = [0x00, b'N', b'X', b'P', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
 /// Opening packets towards the other side: they open the NAT mapping and the local
 /// firewall state, so the other side's direct QUIC packets can get in.
-/// QUIC drops them (first byte without the 0x40 bit).
-fn punch(socket: &UdpSocket, peer: SocketAddr, token: &[u8; 16]) {
+fn punch(socket: &UdpSocket, peer: SocketAddr) {
     let Ok(local) = socket.local_addr() else { return };
     if !reachable(peer, local.is_ipv6()) {
         return;
     }
     let peer = for_socket(peer, local.is_ipv6());
-    let mut packet = vec![0x00, b'N', b'X', b'P'];
-    packet.extend_from_slice(token);
     for _ in 0..3 {
-        let _ = socket.send_to(&packet, peer);
+        let _ = socket.send_to(&PUNCH, peer);
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -376,7 +387,7 @@ async fn session_socket(route: &Route) -> Result<(UdpSocket, Vec<SocketAddr>)> {
             .filter(|a| !relays.contains(&Some(*a)) && reachable(*a, local.is_ipv6()) && has_family(a))
             .collect();
         for peer in &peers {
-            punch(&socket, *peer, &route.token);
+            punch(&socket, *peer);
         }
         socket.set_nonblocking(true)?;
         Ok((socket, peers))
@@ -662,6 +673,23 @@ mod tests {
         assert_eq!(for_socket(v6, true), v6);
         assert!(!reachable(v6, false));
         assert!(reachable(v4, true));
+    }
+
+    #[test]
+    fn punch_packets_do_not_carry_the_token() {
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        punch(&socket, peer.local_addr().unwrap());
+        let mut buf = [0u8; 64];
+        for _ in 0..3 {
+            let (n, from) = peer.recv_from(&mut buf).unwrap();
+            assert_eq!(from, socket.local_addr().unwrap());
+            // Same length and magic as before review NET-2, no token after it.
+            assert_eq!(n, 20);
+            assert_eq!(buf[..4], [0x00, b'N', b'X', b'P']);
+            assert_eq!(buf[4..20], [0; 16]);
+        }
     }
 
     #[test]
