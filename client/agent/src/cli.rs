@@ -274,6 +274,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
             (true, None) => {
                 let data = nuvira_transport::identity::data_dir();
                 let base = nuvira_update::update_base(&opts.server_name, opts.server_ws.as_deref());
+                crate::ipc::watch_update_stale(data.join(nuvira_update::STALE_FILE));
                 nuvira_update::unix::spawn_agent_updates(base, data.join("busy"), data.join("update"));
                 Some(data.join("busy"))
             }
@@ -284,6 +285,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         #[cfg(windows)]
         if let (true, Some(dir)) = (ipc, busy_file.as_ref().and_then(|f| f.parent())) {
             crate::ipc::watch_update_blocked(dir.join(nuvira_update::BLOCKED_FILE));
+            crate::ipc::watch_update_stale(dir.join(nuvira_update::STALE_FILE));
         }
         if let Some(file) = &busy_file {
             // Left over by an agent that did not end cleanly.

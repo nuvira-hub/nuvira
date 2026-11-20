@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
-use nuvira_update::{CURRENT, Manifest, check_channel, download, newer};
+use nuvira_update::{CURRENT, Manifest, Stale, check_channel, check_offer, download, newer, now};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 
 fn key() -> Ed25519KeyPair {
@@ -191,6 +191,36 @@ fn check_channel_answers() {
             .into_bytes();
     r.extend(&body);
     assert_eq!(check(r).0.unwrap(), Some(newer_one));
+}
+
+/// APP-1: what a server offers with and without a recent signed publication time.
+#[test]
+fn check_offer_says_when_updates_look_held_back() {
+    let k = key();
+    let keys = [public(&k)];
+    let rt = rt();
+    let offer = |m: &Manifest| {
+        let (base, _) = serve(ok_with(&serde_json::to_vec(m).unwrap()));
+        rt.block_on(check_offer(&base, &keys, "linux-x64")).unwrap()
+    };
+    let day = 86_400;
+    let fresh = Manifest::sign_published(&k, CURRENT, "linux-x64", b"p", now() - day);
+    assert_eq!(offer(&fresh), (None, None));
+    let old = Manifest::sign_published(&k, CURRENT, "linux-x64", b"p", now() - 200 * day);
+    assert_eq!(offer(&old), (None, Some(Stale { version: CURRENT.into(), published: old.published })));
+    // A manifest of before (or with the time taken off on the way).
+    let undated = Manifest::sign(&k, &next_version(), "linux-x64", b"p");
+    assert_eq!(
+        offer(&undated),
+        (Some(undated.clone()), Some(Stale { version: next_version(), published: None }))
+    );
+    // A time signed by another key counts as none.
+    let mut forged = Manifest::sign_published(&key(), CURRENT, "linux-x64", b"p", now());
+    forged.signature = Manifest::sign(&k, CURRENT, "linux-x64", b"p").signature;
+    assert_eq!(offer(&forged).1, Some(Stale { version: CURRENT.into(), published: None }));
+    // Nothing published: nothing to say.
+    let (base, _) = serve(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_vec());
+    assert_eq!(rt.block_on(check_offer(&base, &keys, "linux-x64")).unwrap(), (None, None));
 }
 
 #[test]

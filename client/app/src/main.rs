@@ -133,6 +133,9 @@ struct UiState {
     installed: Option<String>,
     /// A version the service keeps failing to install (something on the PC stops it).
     update_blocked: Option<String>,
+    /// Updates look held back: the newest version the server offers is old or has
+    /// no signed time (from the app's own check, or from the service's agent).
+    update_stale: Option<nuvira_update::Stale>,
     /// The service is installed but stopped: this PC is not reachable.
     service_stopped: bool,
     /// Version of the stopped service's program, when older than this app (starting
@@ -757,7 +760,7 @@ fn start_service_link(app: &AppHandle) {
                         match msg {
                             // With the service the server in the settings is the service's
                             // (empty = public), also for outgoing connections.
-                            ToApp::Info { server, version, update_blocked } => {
+                            ToApp::Info { server, version, update_blocked, update_stale } => {
                                 *state.service_server.lock().expect("service server") = Some(server.clone());
                                 keep_service_server(&server);
                                 state.update(&app, |ui| {
@@ -765,6 +768,7 @@ fn start_service_link(app: &AppHandle) {
                                     ui.installed = nuvira_update::newer(&version, nuvira_update::CURRENT)
                                         .then_some(version);
                                     ui.update_blocked = update_blocked;
+                                    ui.update_stale = update_stale;
                                 })
                             }
                             ToApp::Event { event } => on_agent_event(&app, event),
@@ -2226,10 +2230,19 @@ fn start_update_checks(app: &AppHandle) {
             if !installed {
                 let server = nuvira_transport::signal::server_or_public(&settings.server);
                 let base = nuvira_update::update_base(server, None);
-                match nuvira_update::check(&base, &nuvira_update::PUBLIC_KEYS).await {
-                    Ok(found) => {
+                match nuvira_update::check_offer(
+                    &base,
+                    &nuvira_update::PUBLIC_KEYS,
+                    nuvira_update::platform(),
+                )
+                .await
+                {
+                    Ok((found, stale)) => {
                         let version = found.map(|m| m.version);
-                        app.state::<NuviraApp>().update(&app, |ui| ui.update = version);
+                        app.state::<NuviraApp>().update(&app, |ui| {
+                            ui.update = version;
+                            ui.update_stale = stale;
+                        });
                     }
                     Err(e) => tracing::debug!("update check: {e:#}"),
                 }

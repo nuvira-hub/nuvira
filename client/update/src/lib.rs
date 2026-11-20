@@ -19,10 +19,17 @@
 //! two: the one in use and a backup kept offline, so that losing the first does not
 //! leave the installed copies without updates (sign with the backup, then ship a
 //! program with a new pair).
+//!
+//! Since 0.29 the manifest also carries the time it was signed (`published`), with
+//! a second signature of its own, so that programs of before, which check only the
+//! first one, still accept it. A server whose newest version has no signed time,
+//! or one older than [`STALE_AFTER`], makes the app say that updates look held
+//! back (review APP-1): someone on the network, or a server nobody keeps up to
+//! date, cannot hide newer releases without it being seen.
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use ring::signature::{ED25519, Ed25519KeyPair, KeyPair, UnparsedPublicKey};
@@ -70,6 +77,14 @@ pub const BLOCKED_FILE: &str = "update-blocked";
 #[cfg(unix)]
 pub mod unix;
 
+/// File in the agent's data folder (the service's on Windows) holding the
+/// [`Stale`] of the last check, as JSON: written by the updater, read by the agent,
+/// which tells the app. No file: updates look fine.
+pub const STALE_FILE: &str = "update-stale";
+
+/// The newest version a server offers is older than this: updates look held back.
+pub const STALE_AFTER: Duration = Duration::from_secs(90 * 24 * 3600);
+
 /// Largest program accepted (the Windows one is ~28 MB).
 const MAX_PROGRAM: u64 = 256 << 20;
 const MAX_MANIFEST: u64 = 64 << 10;
@@ -112,6 +127,14 @@ pub struct Manifest {
     pub sha256: String,
     /// Ed25519 signature of `signed_message()`, hexadecimal.
     pub signature: String,
+    /// When `nuvira-release` signed it, in seconds since 1970 (UTC). Since 0.29;
+    /// older programs ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published: Option<u64>,
+    /// Ed25519 signature of `published_message()`, hexadecimal: a signature of its
+    /// own, so that `signature` stays what the older programs check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_signature: Option<String>,
 }
 
 impl Manifest {
@@ -125,7 +148,18 @@ impl Manifest {
             .into_bytes()
     }
 
-    /// Makes a signed manifest for `program` (used by `nuvira-release`).
+    /// The publication time with everything the first signature covers: a time
+    /// cannot be moved to another manifest.
+    fn published_message(&self, published: u64) -> Vec<u8> {
+        format!(
+            "nuvira-update-published\n{}\n{}\n{}\n{}\n{published}",
+            self.version, self.platform, self.size, self.sha256
+        )
+        .into_bytes()
+    }
+
+    /// Makes a signed manifest for `program`, without a publication time (as the
+    /// programs before 0.29 made them).
     pub fn sign(key: &Ed25519KeyPair, version: &str, platform: &str, program: &[u8]) -> Self {
         let mut manifest = Self {
             version: version.to_string(),
@@ -133,9 +167,36 @@ impl Manifest {
             size: program.len() as u64,
             sha256: hex(&Sha256::digest(program)),
             signature: String::new(),
+            published: None,
+            published_signature: None,
         };
         manifest.signature = hex(key.sign(&manifest.signed_message()).as_ref());
         manifest
+    }
+
+    /// Like [`Manifest::sign`], with the signed publication time `published`
+    /// (seconds since 1970): what `nuvira-release sign` writes.
+    pub fn sign_published(
+        key: &Ed25519KeyPair,
+        version: &str,
+        platform: &str,
+        program: &[u8],
+        published: u64,
+    ) -> Self {
+        let mut manifest = Self::sign(key, version, platform, program);
+        manifest.published = Some(published);
+        manifest.published_signature = Some(hex(key.sign(&manifest.published_message(published)).as_ref()));
+        manifest
+    }
+
+    /// The publication time, if there is one and it is signed by one of `keys`.
+    pub fn verified_published(&self, keys: &[[u8; 32]]) -> Option<u64> {
+        let published = self.published?;
+        let signature = unhex(self.published_signature.as_deref()?)?;
+        let message = self.published_message(published);
+        keys.iter()
+            .any(|key| UnparsedPublicKey::new(&ED25519, key).verify(&message, &signature).is_ok())
+            .then_some(published)
     }
 
     /// Checks the signature against `public_key`.
@@ -218,14 +279,106 @@ pub fn update_base(server: &str, server_ws: Option<&str>) -> String {
     base_url(server, server_ws, DEFAULT_PORT)
 }
 
+/// Updates look held back (see [`STALE_AFTER`]): the newest version a server
+/// offers, and when it was published (`None`: no signed time).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stale {
+    pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published: Option<u64>,
+}
+
+impl Stale {
+    /// Text for the logs.
+    pub fn describe(&self, base: &str) -> String {
+        match self.published {
+            Some(p) => format!(
+                "updates may be held back: the newest version on {base} is {}, published {} days ago",
+                self.version,
+                now().saturating_sub(p) / 86_400
+            ),
+            None => format!(
+                "updates may be held back: the newest version on {base} is {}, with no signed publication time",
+                self.version
+            ),
+        }
+    }
+}
+
+/// What a server offers on a channel, checked (signature, platform, version): its
+/// newest version, whatever it is compared with this program.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Offer {
+    pub manifest: Manifest,
+    /// The signed publication time, if any.
+    pub published: Option<u64>,
+}
+
+impl Offer {
+    /// Updates look held back at `now` (seconds since 1970): no signed publication
+    /// time, or one older than [`STALE_AFTER`]. A time ahead of the clock is fresh.
+    pub fn stale(&self, now: u64) -> Option<Stale> {
+        let fresh = self.published.is_some_and(|p| now.saturating_sub(p) <= STALE_AFTER.as_secs());
+        (!fresh).then(|| Stale { version: self.manifest.version.clone(), published: self.published })
+    }
+}
+
+/// Seconds since 1970.
+pub fn now() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// Writes `stale` to the [`STALE_FILE`] of `dir`, or removes the file when updates look fine.
+pub fn record_stale(dir: &Path, stale: Option<&Stale>) {
+    let path = dir.join(STALE_FILE);
+    match stale.and_then(|s| serde_json::to_vec(s).ok()) {
+        Some(json) => {
+            let _ = std::fs::write(path, json);
+        }
+        None => {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// The [`Stale`] written by [`record_stale`], if any.
+pub fn read_stale(path: &Path) -> Option<Stale> {
+    use std::io::Read;
+    let mut text = Vec::new();
+    std::fs::File::open(path).ok()?.take(4096).read_to_end(&mut text).ok()?;
+    serde_json::from_slice(&text).ok()
+}
+
 /// The version offered by the server, if newer than this program and correctly
 /// signed with `public_key`. `Ok(None)`: nothing to install.
 pub async fn check(base: &str, keys: &[[u8; 32]]) -> Result<Option<Manifest>> {
     check_channel(base, keys, platform()).await
 }
 
-/// Like [`check`], for the channel `platform` (e.g. a Linux package's).
+/// Like [`check`], for the channel `platform` (e.g. a Linux package's). Updates
+/// that look held back are logged.
 pub async fn check_channel(base: &str, keys: &[[u8; 32]], platform: &str) -> Result<Option<Manifest>> {
+    Ok(check_offer(base, keys, platform).await?.0)
+}
+
+/// Like [`check_channel`], also telling whether updates look held back (logged
+/// too). No manifest on the server (404): nothing to install and nothing to say.
+pub async fn check_offer(
+    base: &str,
+    keys: &[[u8; 32]],
+    platform: &str,
+) -> Result<(Option<Manifest>, Option<Stale>)> {
+    let Some(offer) = offer(base, keys, platform).await? else { return Ok((None, None)) };
+    let stale = offer.stale(now());
+    if let Some(stale) = &stale {
+        tracing::warn!("{}", stale.describe(base));
+    }
+    Ok((newer(&offer.manifest.version, CURRENT).then_some(offer.manifest), stale))
+}
+
+/// The newest version on the server for `platform`, checked, whatever it is
+/// compared with this program. `Ok(None)`: no manifest (404).
+pub async fn offer(base: &str, keys: &[[u8; 32]], platform: &str) -> Result<Option<Offer>> {
     let url = format!("{base}/{platform}.json");
     let Some(body) = get(&url, MAX_MANIFEST, None).await? else { return Ok(None) };
     let manifest: Manifest = serde_json::from_slice(&body).with_context(|| format!("{url} is not valid"))?;
@@ -237,7 +390,8 @@ pub async fn check_channel(base: &str, keys: &[[u8; 32]], platform: &str) -> Res
     if !is_version(&manifest.version) {
         bail!("{url}: {:?} is not a version", manifest.version);
     }
-    Ok(newer(&manifest.version, CURRENT).then_some(manifest))
+    let published = manifest.verified_published(keys);
+    Ok(Some(Offer { manifest, published }))
 }
 
 /// Downloads the program of `manifest` to `dest`, checking size and SHA-256. On any
@@ -504,6 +658,83 @@ mod tests {
         assert_eq!(path("macos"), "macos/nuvira-0.17.0.zip");
     }
 
+    /// APP-1: the signed publication time. Older programs check only `signature`,
+    /// which stays the same; the time cannot be changed, moved to another manifest
+    /// or signed by another key; a manifest without it, as before, still verifies.
+    #[test]
+    fn published_time() {
+        let key = test_key();
+        let keys: [[u8; 32]; 1] = [key.public_key().as_ref().try_into().expect("32")];
+        let plain = Manifest::sign(&key, "0.29.0", "linux-x64", b"program");
+        let dated = Manifest::sign_published(&key, "0.29.0", "linux-x64", b"program", 1_800_000_000);
+        assert_eq!(dated.signature, plain.signature);
+        dated.verify_any(&keys).expect("first signature");
+        assert_eq!(dated.verified_published(&keys), Some(1_800_000_000));
+        assert_eq!(plain.verified_published(&keys), None);
+        let mut moved = dated.clone();
+        moved.published = Some(1_900_000_000);
+        assert_eq!(moved.verified_published(&keys), None, "time changed");
+        let mut other = Manifest::sign(&key, "0.29.1", "linux-x64", b"program");
+        other.published = dated.published;
+        other.published_signature = dated.published_signature.clone();
+        assert_eq!(other.verified_published(&keys), None, "time of another manifest");
+        let foreign = Manifest::sign_published(&test_key(), "0.29.0", "linux-x64", b"program", 1_800_000_000);
+        assert_eq!(foreign.verified_published(&keys), None, "another key");
+        let mut garbage = dated.clone();
+        garbage.published_signature = Some("zz".into());
+        assert_eq!(garbage.verified_published(&keys), None);
+
+        // In JSON: two more fields, read by a manifest of before as unknown ones.
+        let json = serde_json::to_value(&dated).expect("json");
+        assert_eq!(json["published"], 1_800_000_000u64);
+        assert!(json["published_signature"].is_string());
+        assert!(!serde_json::to_string(&plain).expect("json").contains("published"));
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct Before {
+            version: String,
+            platform: String,
+            size: u64,
+            sha256: String,
+            signature: String,
+        }
+        let before: Before = serde_json::from_value(json).expect("old reader");
+        assert_eq!(before.signature, plain.signature);
+    }
+
+    /// APP-1: when updates look held back.
+    #[test]
+    fn stale_offers() {
+        let key = test_key();
+        let day = 86_400;
+        let now = 1_800_000_000;
+        let offer = |published: Option<u64>| Offer {
+            manifest: match published {
+                Some(p) => Manifest::sign_published(&key, "0.29.0", "linux-x64", b"p", p),
+                None => Manifest::sign(&key, "0.29.0", "linux-x64", b"p"),
+            },
+            published,
+        };
+        assert_eq!(offer(Some(now - day)).stale(now), None);
+        assert_eq!(offer(Some(now - 90 * day)).stale(now), None);
+        assert_eq!(offer(Some(now + day)).stale(now), None, "ahead of the clock");
+        assert_eq!(
+            offer(Some(now - 91 * day)).stale(now),
+            Some(Stale { version: "0.29.0".into(), published: Some(now - 91 * day) })
+        );
+        assert_eq!(offer(None).stale(now), Some(Stale { version: "0.29.0".into(), published: None }));
+
+        let dir = std::env::temp_dir().join(format!("nuvira-stale-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let stale = Stale { version: "0.29.0".into(), published: Some(now) };
+        record_stale(&dir, Some(&stale));
+        assert_eq!(read_stale(&dir.join(STALE_FILE)), Some(stale));
+        record_stale(&dir, None);
+        assert!(!dir.join(STALE_FILE).exists());
+        assert_eq!(read_stale(&dir.join(STALE_FILE)), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn versions() {
         assert!(newer("0.0.2", "0.0.1"));
@@ -536,7 +767,9 @@ mod tests {
                 assert_eq!(newer(a, b), old(a, b), "{a} vs {b}");
             }
         }
-        for not_a_version in ["", "v1.0.0", "1..0", ".1", "1.", "1.0.0-rc.1", "1.0.0-rc1", "../../x", "1.x", " 1.0"] {
+        for not_a_version in
+            ["", "v1.0.0", "1..0", ".1", "1.", "1.0.0-rc.1", "1.0.0-rc1", "../../x", "1.x", " 1.0"]
+        {
             assert!(!is_version(not_a_version), "{not_a_version:?}");
         }
     }
@@ -559,7 +792,10 @@ mod tests {
         for public in ["connect.nuvirahub.dev", "CONNECT.nuvirahub.dev", "connect.nuvirahub.dev:21116"] {
             assert_eq!(update_base(public, None), "https://connect.nuvirahub.dev/nuvira/update", "{public}");
         }
-        assert_eq!(update_base("connect.nuvirahub.dev:21117", None), "http://connect.nuvirahub.dev:21117/nuvira/update");
+        assert_eq!(
+            update_base("connect.nuvirahub.dev:21117", None),
+            "http://connect.nuvirahub.dev:21117/nuvira/update"
+        );
         assert_eq!(update_base("alexbn.ddns.net", None), "http://alexbn.ddns.net:21116/nuvira/update");
         assert_eq!(update_base("10.0.0.5:21117", None), "http://10.0.0.5:21117/nuvira/update");
         assert_eq!(

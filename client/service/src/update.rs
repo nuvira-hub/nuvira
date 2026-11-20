@@ -59,7 +59,14 @@ fn check_and_apply(stop: &AtomicBool) -> Result<()> {
     let server = nuvira_transport::signal::server_or_public(&service.server);
     let base = nuvira_update::update_base(server, service.server_ws.as_deref());
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    let Some(manifest) = rt.block_on(nuvira_update::check(&base, &nuvira_update::PUBLIC_KEYS))? else {
+    let (manifest, stale) = rt.block_on(nuvira_update::check_offer(
+        &base,
+        &nuvira_update::PUBLIC_KEYS,
+        nuvira_update::platform(),
+    ))?;
+    // The service's agent tells the app (nuvira_update::STALE_FILE).
+    nuvira_update::record_stale(&config::data_dir(), stale.as_ref());
+    let Some(manifest) = manifest else {
         // Up to date (also right after an update that went through).
         let _ = std::fs::remove_file(config::data_dir().join(ATTEMPTS_FILE));
         let _ = std::fs::remove_file(config::data_dir().join(nuvira_update::BLOCKED_FILE));

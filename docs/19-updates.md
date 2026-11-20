@@ -14,10 +14,12 @@ nuvira-release sign  ──copy──►  data/updates/windows-x64.json   ◄─
 ```
 
 - **Manifest** (`windows-x64.json`): version, platform, size, SHA-256 of the program and an Ed25519 signature over all of them.
+- **Publication time** (since the review, APP-1): `nuvira-release sign` also writes `published` (seconds since 1970) and `published_signature`, a second Ed25519 signature with the release key over the time and the fields above. The first signature is unchanged, so the programs of before, which ignore unknown fields, accept the new manifests. See "Updates that look held back" below.
 - **Channels**: `windows-x64` (`nuvira-<v>.exe`), `linux-x64` (`nuvira-<v>`, the program alone), `linux-x64-deb` and `linux-x64-rpm` (`nuvira-<v>.deb`/`.rpm`), `macos` (`nuvira-<v>.zip`, the signed NuviraHub.app). The server serves only these names; servers older than 0.17.0 serve only the Windows one.
 - **Release key**: made once with `nuvira-release keygen`, kept in `%USERPROFILE%\.nuvira\release-signing.pk8` on the machine that builds the releases, never in the repository. Its public half is built into the program (`client/update/src/lib.rs`): a tampered server, file or download cannot get anything installed, whatever the transport. Whoever has the private key can get any program installed on every device: it must be backed up offline and kept private. The program also trusts a **backup key** (since 0.21.1), made on 2026-11-09 and kept offline, never on the build machine: if the key in use is lost or stolen, the next release is signed with the backup (`nuvira-release sign --key <backup>`) and brings a new pair in `PUBLIC_KEYS`; the installed copies update as usual. Without the backup too, devices would need a program with new public keys, installed by hand.
 - **Server** (`server/internal/updates`): serves only `<platform>.json` and `<platform>/nuvira-<version>.exe` from `updates` in its data, on the TCP port of the WebSocket fallback (`/nuvira/update/`). Whoever runs a server decides when its devices update by copying the files. With `NUVIRA_WS_LISTEN=off` there are no updates.
-- **Client** (`client/update`): a minimal HTTP/HTTPS GET (behind a reverse proxy the URL follows `--server-ws`), at most 256 MB, written to a `.part` file, checked against size and SHA-256, then renamed.
+- **Client** (`client/update`): a minimal HTTP/HTTPS GET (behind a reverse proxy the URL follows `--server-ws`), at most 256 MB, written to a new `.part` file (one left by an earlier attempt is deleted first, a file or link put there is never written through), checked against size and SHA-256, then renamed. A manifest whose version is not digits and dots (`v1.0`, `1.0.0-rc.1`, `../x`) is refused: release candidates are numbered 0.99.x. A download already in a cache folder is installed only if its size and SHA-256 are the manifest's, otherwise it is downloaded again (Windows always did this; Linux and macOS since the review, APP-8).
+- **Public server over HTTPS** (since the review, APP-1): for NuviraHub's public server, with no `--server-ws`, the programs ask `https://connect.nuvirahub.dev/nuvira/update/` (Caddy on the VPS in front of the hub's update files, certificate from Let's Encrypt checked with the built-in web roots), never the plain address; older programs keep using `http://connect.nuvirahub.dev:21116/nuvira/update/`, which stays. Self-hosted servers are unchanged (plain HTTP on their port, or their `--server-ws`): the manifest signature is what protects them.
 
 ## Installed devices (service)
 
@@ -38,6 +40,15 @@ The Start menu shortcut is made by the program itself (no PowerShell: a script s
 ### The open app
 
 The app open at the PC keeps running the old program (moved aside as `nuvira.old.exe`). When its link with the service's agent comes back after the update, the agent tells it its version: if newer, a bar shows "NuviraHub X has been installed" with "Restart", which starts the installed program in place of the app. It works from the update after 0.11.0 on: the open app must already have this check.
+
+### Updates that look held back (since the review, APP-1)
+
+The signature stops anything unsigned or older from being installed, but someone on the network (or a server nobody keeps up to date) could still keep a device on the version it has, or on an older release that is still newer than it. So after every check the updaters look at the newest version the server offers, whatever it is: if its manifest has no valid signed publication time, or one more than **90 days** old, updates look held back. Then:
+- the check writes a warning to the log (service, agent, root's timer: "updates may be held back: the newest version on ... is X, published N days ago");
+- the Windows service and the Unix user agent write it to `update-stale` in their data folder (JSON: version and time), which the agent sends to the app in its `Info` message (`update_stale`, ignored by older apps) when the app connects and when it changes; the app's own check (without unattended access) does the same directly;
+- the app shows a notice with no button: "Updates may be held back: the newest version your server offers (X) is from DATE. Check on nuvirahub.dev whether there is a newer one." (or "has no publication date" for manifests of before). It goes away at the first check that finds a recent version.
+
+No manifest at all (404, a server that does not publish updates) says nothing. A publication time ahead of the device's clock counts as recent. The manifests published before this change have no time: a device with this version on a server still serving them shows the notice until the server gets a newer release. macOS root's bundle updater only logs it.
 
 ## Linux and macOS (2026-11-07)
 
@@ -63,7 +74,7 @@ The app checks at start-up and every 6 hours. A bar shows "NuviraHub X is availa
 ## Publishing a version
 
 1. Raise the version in `Cargo.toml` (`[workspace.package]`) as in "Version numbers" below: devices already on it do not update.
-2. `tools/publish-update.sh`: builds and signs into `dist/update/`.
+2. `tools/publish-update.sh`: builds and signs into `dist/update/` (the manifests carry the signed publication time: build `nuvira-release` from the same tree, as the script does).
    For Linux and macOS: download the artifacts of the CI runs of the same commit (`gh run download … -D dist/ci`) and run `tools/sign-unix-updates.sh dist/ci`: it signs `linux-x64`, `linux-x64-deb`, `linux-x64-rpm` and `macos` into `dist/update/` and makes `dist/nuvira-update-VERSION.zip` again with every channel.
 3. Copy the contents of `dist/update/` into `updates` in the server's data (on Unraid `/mnt/user/appdata/nuvira-server/updates`).
 4. The apt and dnf repositories (docs/20, "Package repositories"): `tools/publish-repo.sh VERSION FOLDER` on a Linux host, with the private key of the packages, then the folder copied to `/srv/nuvira/repo` on the server of the website (VPS). Copy the contents into the existing folder (`rsync -a --delete NEW/ /srv/nuvira/repo/`), do not replace the folder: Caddy's container mounts that folder, and after a `mv` it keeps serving the old, deleted one (0.27.0: `/apt` and `/rpm` answered 404 until `docker compose restart caddy`).

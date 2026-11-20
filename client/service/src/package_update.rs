@@ -104,9 +104,12 @@ pub fn run() -> Result<()> {
     let server = nuvira_transport::signal::server_or_public(&server).to_string();
     let base = nuvira_update::update_base(&server, None);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    let Some(manifest) =
-        rt.block_on(nuvira_update::check_channel(&base, &nuvira_update::PUBLIC_KEYS, kind.channel()))?
-    else {
+    let (manifest, stale) =
+        rt.block_on(nuvira_update::check_offer(&base, &nuvira_update::PUBLIC_KEYS, kind.channel()))?;
+    if let Some(stale) = &stale {
+        println!("{}", stale.describe(&base));
+    }
+    let Some(manifest) = manifest else {
         println!("up to date ({}, server {server})", nuvira_update::CURRENT);
         return Ok(());
     };

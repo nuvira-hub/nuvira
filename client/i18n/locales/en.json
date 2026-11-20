@@ -460,6 +460,8 @@
   "update.none": "No newer version on the server.",
   "update.installed": "NuviraHub {version} has been installed: restart the app to use it.",
   "update.blocked": "NuviraHub {version} could not be installed: a security program on this PC (antivirus or anti-ransomware) is probably stopping the update. Allow C:\\Program Files\\nuvira\\nuvira.exe, C:\\ProgramData\\nuvira\\backup\\nuvira.exe and C:\\ProgramData\\nuvira\\update\\nuvira-update.exe in it, or install the new version by hand from nuvirahub.dev.",
+  "update.stale": "Updates may be held back: the newest version your server offers ({version}) is from {date}. Check on nuvirahub.dev whether there is a newer one.",
+  "update.stale_undated": "Updates may be held back: the newest version your server offers ({version}) has no publication date. Check on nuvirahub.dev whether there is a newer one.",
   "update.restart": "Restart",
   "service.stopped": "The NuviraHub service is stopped: until it starts again this PC cannot be reached remotely.",
   "service.stopped_old": "The NuviraHub {version} service is stopped: until it starts again this PC cannot be reached remotely. Starting it will also update it to this version.",
