@@ -253,7 +253,8 @@ impl Receiver {
     }
 
     fn count(&mut self, seq: u64, block: usize, blocks: usize, total: usize) {
-        if seq + KEEP_BEHIND <= self.newest {
+        // Saturating: a peer may send any seq, up to u64::MAX (review NET-6).
+        if seq.saturating_add(KEEP_BEHIND) <= self.newest {
             return;
         }
         let count = self.counts.entry(seq).or_insert_with(|| Count { blocks: vec![0; blocks], got: 0 });
@@ -277,7 +278,7 @@ impl Receiver {
             self.shards_lost += expected.saturating_sub(count.got) as u64;
         }
         // Memory bound when many frames are lost.
-        self.frames.retain(|&s, _| s + KEEP_BEHIND > seq);
+        self.frames.retain(|&s, _| s.saturating_add(KEEP_BEHIND) > seq);
     }
 }
 

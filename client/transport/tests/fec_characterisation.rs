@@ -243,45 +243,44 @@ fn loss_is_counted_only_for_frames_two_behind_and_within_keep_behind() {
 }
 
 #[test]
-fn characterises_bug_seq_near_u64_max_overflows() {
-    // KNOWN BUG (Phase 2, lead fec.rs:200): `seq + KEEP_BEHIND` in `count` (and
-    // `s + KEEP_BEHIND` in the retain) overflow for seq > u64::MAX - 64: a panic in
-    // debug builds, a wrapping sum in release builds. The agent numbers frames from 1,
-    // so only a malicious or broken peer can send such a seq.
-    // Expected after fix: saturating arithmetic, no panic.
+fn seq_near_u64_max_does_not_overflow() {
+    // Fixed in review lot 18 (NET-6, K1): `seq + KEEP_BEHIND` in `count` and in the
+    // retain is saturating (before: a panic in debug builds, a wrapping sum in release
+    // builds for seq > u64::MAX - 64). The agent numbers frames from 1, so only a
+    // malicious or broken peer can send such a seq.
     let packets = encode(u64::MAX - 10, &frame(10, 0), 1200, 0.0).unwrap();
-    let result = std::panic::catch_unwind(|| {
-        let mut rx = Receiver::default();
-        push_all(&mut rx, &packets)
-    });
-    if cfg!(debug_assertions) {
-        assert!(result.is_err(), "debug build: overflow panic");
-    } else {
-        // Release: the sum wraps and the frame is delivered.
-        assert_eq!(result.unwrap(), vec![(u64::MAX - 10, frame(10, 0))]);
-    }
-    // Up to u64::MAX - 64 no overflow.
+    let mut rx = Receiver::default();
+    assert_eq!(push_all(&mut rx, &packets), vec![(u64::MAX - 10, frame(10, 0))]);
+    // The very last seq, then older frames: late, ignored.
+    let got = push_all(&mut rx, &encode(u64::MAX, &frame(10, 1), 1200, 0.0).unwrap());
+    assert_eq!(got, vec![(u64::MAX, frame(10, 1))]);
+    assert!(push_all(&mut rx, &encode(u64::MAX - 5, &frame(10, 0), 1200, 0.0).unwrap()).is_empty());
+    assert!(push_all(&mut rx, &encode(5, &frame(10, 0), 1200, 0.0).unwrap()).is_empty());
+    // Up to u64::MAX - 64, as before.
     let mut rx = Receiver::default();
     let got = push_all(&mut rx, &encode(u64::MAX - 64, &frame(10, 0), 1200, 0.0).unwrap());
     assert_eq!(got, vec![(u64::MAX - 64, frame(10, 0))]);
+    // An incomplete frame near the end, then a complete one: the loss is counted.
+    let mut rx = Receiver::default();
+    let p = encode(u64::MAX - 3, &frame(5000, 0), 1200, 0.25).unwrap();
+    push_all(&mut rx, &p[..3]);
+    for seq in [u64::MAX - 2, u64::MAX - 1] {
+        push_all(&mut rx, &encode(seq, &frame(10, 0), 1200, 0.0).unwrap());
+    }
+    assert_eq!(rx.take_loss(), (7, 4));
 }
 
 #[test]
-fn characterises_bug_fuzz_reproducer_fec_receiver_seq_overflow() {
+fn fuzz_reproducer_fec_receiver_seq_overflow() {
     // The crash cargo-fuzz found in `fuzz/fuzz_targets/fec_receiver.rs` (MSI-UBUNTU,
     // 2026-11-18, after 73 682 runs): one datagram of seq u64::MAX, "attempt to add
-    // with overflow" at fec.rs:214 (`seq + KEEP_BEHIND`). Same bug as above.
+    // with overflow" at fec.rs:214 (`seq + KEEP_BEHIND`). Fixed with K1 (review lot
+    // 18): block 0 of 81, waiting for the rest, in debug and release builds alike.
     let packet: [u8; 21] = [
         0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x51, 0x00, 0x11, 0xff, 0xff, 0xff, 0xff,
         0x3f, 0x01, 0x00, 0x10,
     ];
-    let result = std::panic::catch_unwind(|| Receiver::default().push(&packet).map(|r| r.is_some()));
-    if cfg!(debug_assertions) {
-        assert!(result.is_err(), "debug build: overflow panic");
-    } else {
-        // Release: block 0 of 81, waiting for the rest.
-        assert!(matches!(result, Ok(Ok(false))));
-    }
+    assert!(matches!(Receiver::default().push(&packet), Ok(None)));
 }
 
 #[test]
@@ -401,15 +400,11 @@ proptest! {
         }
     }
 
-    /// Arbitrary datagrams never panic (seq kept away from the overflow above; any
-    /// frame_len since NET-6).
+    /// Arbitrary datagrams never panic (any seq and frame_len since NET-6).
     #[test]
     fn arbitrary_datagrams_never_panic(packets in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..80), 0..64)) {
         let mut rx = Receiver::default();
-        for mut p in packets {
-            if p.len() > 8 {
-                p[8] &= 0x7f;
-            }
+        for p in packets {
             let _ = rx.push(&p);
             let _ = rx.take_loss();
         }
