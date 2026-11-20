@@ -56,9 +56,15 @@ func (c *Conn) Impair(im *Impairment) {
 // WebSockets returns the handler of the WebSocket connections (to mount on HTTP).
 func (c *Conn) WebSockets() *WebSockets { return c.ws }
 
+// Largest UDP payload: a smaller read buffer truncates (Linux) or drops
+// (Windows) a larger datagram silently (K18).
+const maxDatagram = 65535
+
 func (c *Conn) readUDP() {
+	// One buffer for every read (this goroutine is the only reader); each
+	// datagram is copied at its own size for the queue.
+	buf := make([]byte, maxDatagram)
 	for {
-		buf := make([]byte, 2048)
 		n, from, err := c.udp.ReadFromUDP(buf)
 		if err != nil {
 			select {
@@ -71,7 +77,7 @@ func (c *Conn) readUDP() {
 			}
 			continue
 		}
-		c.deliver(buf[:n], from)
+		c.deliver(append([]byte(nil), buf[:n]...), from)
 	}
 }
 

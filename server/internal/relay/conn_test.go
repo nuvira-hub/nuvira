@@ -11,7 +11,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -64,76 +63,54 @@ func readOne(u *net.UDPConn, timeout time.Duration) []byte {
 	return buf[:n]
 }
 
-// KNOWN BUG (Phase 2, lead conn.go:57): readUDP reads into a 2048-byte buffer.
-// A larger datagram is truncated to 2048 bytes on Linux and dropped on Windows
-// (WSAEMSGSIZE is an error, the loop goes on); either way silently.
-// Expected after fix: datagrams up to the maximum UDP payload are delivered whole
-// (or refused visibly). The datagram after it must arrive intact on both.
-func TestCharacterisesBug_LargeDatagramTruncatedOrDropped(t *testing.T) {
+// K18 (fixed in Phase 6, SRV-11): readUDP used to read into a 2048-byte buffer,
+// so a larger datagram was truncated to 2048 bytes on Linux and dropped on
+// Windows, silently. Now datagrams up to the largest IPv4 UDP payload are
+// delivered whole, and the datagram after them intact.
+func TestLargeDatagramDeliveredWhole(t *testing.T) {
 	c, _ := newLoopbackConn(t)
 	got := make(chan []byte, 8)
 	go pump(c, got)
 	client := listenLoopback(t)
-	big := bytes.Repeat([]byte{0xc3}, 3000)
-	if _, err := client.WriteTo(big, c.LocalAddr()); err != nil {
-		t.Fatal(err)
-	}
 	small := []byte{0x41, 1, 2, 3}
-	if _, err := client.WriteTo(small, c.LocalAddr()); err != nil {
-		t.Fatal(err)
-	}
-	var first []byte
-	select {
-	case first = <-got:
-	case <-time.After(3 * time.Second):
-		t.Fatal("nothing delivered")
-	}
-	switch runtime.GOOS {
-	case "windows":
-		if !bytes.Equal(first, small) {
-			t.Fatalf("windows: expected the large datagram dropped, got %d bytes first", len(first))
+	for _, size := range []int{2049, 3000, maxIPv4Payload} {
+		big := bytes.Repeat([]byte{0xc3}, size)
+		if _, err := client.WriteTo(big, c.LocalAddr()); err != nil {
+			t.Fatal(err)
 		}
-	default:
-		if len(first) != 2048 || !bytes.Equal(first, big[:2048]) {
-			t.Fatalf("%s: expected the large datagram truncated to 2048, got %d bytes", runtime.GOOS, len(first))
+		if _, err := client.WriteTo(small, c.LocalAddr()); err != nil {
+			t.Fatal(err)
 		}
-		select {
-		case second := <-got:
-			if !bytes.Equal(second, small) {
-				t.Fatalf("second datagram %x", second)
+		for _, want := range [][]byte{big, small} {
+			select {
+			case p := <-got:
+				if !bytes.Equal(p, want) {
+					t.Fatalf("size %d: got %d bytes, want %d", size, len(p), len(want))
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("size %d: %d-byte datagram not delivered", size, len(want))
 			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("datagram after the large one lost")
 		}
 	}
 }
 
-// The same limit applies to relayed traffic: the other side receives the large
-// datagram truncated (Linux) or not at all (Windows). See the test above.
-func TestCharacterisesBug_LargeRelayedDatagram(t *testing.T) {
+// Largest UDP payload over IPv4 (65,535 - 20 - 8).
+const maxIPv4Payload = 65507
+
+// The same holds for relayed traffic: the other side receives large datagrams whole.
+func TestLargeRelayedDatagramForwardedWhole(t *testing.T) {
 	c, r := newLoopbackConn(t)
 	go pump(c, nil)
 	viewer, agent := listenLoopback(t), listenLoopback(t)
 	bindPair(t, r, c, viewer, agent, [tokenLen]byte{9})
 
-	if _, err := viewer.WriteTo(bytes.Repeat([]byte{0xc4}, 2048), c.LocalAddr()); err != nil {
-		t.Fatal(err)
-	}
-	if got := readOne(agent, 3*time.Second); len(got) != 2048 {
-		t.Fatalf("2048-byte datagram relayed as %d bytes", len(got))
-	}
-	if _, err := viewer.WriteTo(bytes.Repeat([]byte{0xc5}, 2049), c.LocalAddr()); err != nil {
-		t.Fatal(err)
-	}
-	got := readOne(agent, 1500*time.Millisecond)
-	switch runtime.GOOS {
-	case "windows":
-		if got != nil {
-			t.Fatalf("windows: expected the 2049-byte datagram dropped, got %d bytes", len(got))
+	for i, size := range []int{2048, 2049, 9000, maxIPv4Payload} {
+		data := bytes.Repeat([]byte{0xc4 + byte(i)}, size)
+		if _, err := viewer.WriteTo(data, c.LocalAddr()); err != nil {
+			t.Fatal(err)
 		}
-	default:
-		if len(got) != 2048 {
-			t.Fatalf("%s: expected the 2049-byte datagram truncated to 2048, got %d", runtime.GOOS, len(got))
+		if got := readOne(agent, 3*time.Second); !bytes.Equal(got, data) {
+			t.Fatalf("%d-byte datagram relayed as %d bytes", size, len(got))
 		}
 	}
 }
