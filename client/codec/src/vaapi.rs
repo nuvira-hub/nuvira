@@ -2190,6 +2190,98 @@ impl VideoEncoder for VaapiEncoder {
     }
 }
 
+/// Set in the child of [`driver_survives`]: it tries the driver itself.
+static IN_PROBE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the driver opens and encodes without killing the process: the first
+/// time, a child process (fork) does what [`VaapiEncoder::new`] does. Some drivers
+/// abort instead of failing: i965 2.4.1 on an Intel Braswell (Celeron N3xxx),
+/// `intel_enc_hw_context_init: Assertion 'encoder_context->mfc_context' failed` in
+/// vaCreateContext, also with ffmpeg (2026-11-12); without this the agent died at
+/// its start. A driver that only fails is left to the attempt in this process,
+/// which tells why; one that crashes is not used again in this process. One that
+/// does not answer within 15 s is tried once more at the next encoder (the child
+/// of a multi-threaded process can block on a lock another thread held at the
+/// fork), and then not used again either.
+///
+/// The child takes as few locks as it can: logging is switched off for it with
+/// `Dispatch::none()` (no allocation, no registration in tracing's global lists),
+/// so the process's subscriber and its writer (a `Mutex<File>` in the app) are
+/// never entered there.
+fn driver_survives(settings: EncoderSettings) -> Result<()> {
+    driver_survives_within(settings, std::time::Duration::from_secs(15))
+}
+
+/// What [`driver_survives_within`] found so far in this process.
+enum Probe {
+    Untried,
+    TimedOutOnce,
+    Done(std::result::Result<(), String>),
+}
+
+static PROBE: std::sync::Mutex<Probe> = std::sync::Mutex::new(Probe::Untried);
+
+fn driver_survives_within(settings: EncoderSettings, limit: std::time::Duration) -> Result<()> {
+    use std::time::Instant;
+    if IN_PROBE.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(());
+    }
+    let mut probe = PROBE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Probe::Done(verdict) = &*probe {
+        return verdict.clone().map_err(|e| anyhow!(e));
+    }
+    let none = tracing::Dispatch::none();
+    let verdict = (|| {
+        // SAFETY: the child only runs the encoder test and leaves with _exit (no
+        // destructors, no atexit handlers of the parent).
+        let pid = unsafe { libc::fork() };
+        if pid < 0 {
+            return Ok(()); // no child: tried in this process
+        }
+        if pid == 0 {
+            IN_PROBE.store(true, std::sync::atomic::Ordering::Relaxed);
+            let ok = tracing::dispatcher::with_default(&none, || VaapiEncoder::new(settings).is_ok());
+            unsafe { libc::_exit(if ok { 0 } else { 1 }) }
+        }
+        let started = Instant::now();
+        let mut status = 0;
+        loop {
+            // SAFETY: waiting for our own child.
+            let r = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if r == pid {
+                break;
+            }
+            if r < 0 {
+                return Ok(());
+            }
+            if started.elapsed() > limit {
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                    libc::waitpid(pid, &mut status, 0);
+                }
+                return Err(format!("the VA-API driver did not answer within {} s", limit.as_secs()));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if libc::WIFSIGNALED(status) {
+            return Err(format!(
+                "the VA-API driver crashed while trying it (signal {})",
+                libc::WTERMSIG(status)
+            ));
+        }
+        Ok(())
+    })();
+    let timed_out = verdict.as_ref().is_err_and(|e| e.contains("did not answer"));
+    *probe = match &*probe {
+        Probe::Untried if timed_out => {
+            warn!("VA-API: the driver test did not answer; tried again at the next encoder");
+            Probe::TimedOutOnce
+        }
+        _ => Probe::Done(verdict.clone()),
+    };
+    verdict.map_err(|e| anyhow!(e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2462,12 +2554,16 @@ mod tests {
         assert_eq!(c.qp(), 32);
     }
 
-    /// Needs a VA-API device that encodes H.264; skipped elsewhere.
+    /// Needs a VA-API device that encodes H.264; skipped elsewhere, unless
+    /// `NUVIRA_EXPECT_VAAPI=1` (a machine that has one, set by `run-hw-tests.sh`):
+    /// then a missing encoder fails.
     #[test]
     fn encodes_and_decodes() {
         let mut enc = match VaapiEncoder::new(EncoderSettings::default()) {
             Ok(enc) => enc,
             Err(e) => {
+                let expected = std::env::var("NUVIRA_EXPECT_VAAPI").is_ok_and(|v| v == "1");
+                assert!(!expected, "NUVIRA_EXPECT_VAAPI=1 but no VA-API encoder: {e:#}");
                 eprintln!("no VA-API encoder here: {e:#}");
                 return;
             }
@@ -2504,96 +2600,4 @@ mod tests {
         assert_eq!((dw, dh), (322, 180));
         assert!((90..=118).contains(&luma), "luma {luma}");
     }
-}
-
-/// Set in the child of [`driver_survives`]: it tries the driver itself.
-static IN_PROBE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Whether the driver opens and encodes without killing the process: the first
-/// time, a child process (fork) does what [`VaapiEncoder::new`] does. Some drivers
-/// abort instead of failing: i965 2.4.1 on an Intel Braswell (Celeron N3xxx),
-/// `intel_enc_hw_context_init: Assertion 'encoder_context->mfc_context' failed` in
-/// vaCreateContext, also with ffmpeg (2026-11-12); without this the agent died at
-/// its start. A driver that only fails is left to the attempt in this process,
-/// which tells why; one that crashes is not used again in this process. One that
-/// does not answer within 15 s is tried once more at the next encoder (the child
-/// of a multi-threaded process can block on a lock another thread held at the
-/// fork), and then not used again either.
-///
-/// The child takes as few locks as it can: logging is switched off for it with
-/// `Dispatch::none()` (no allocation, no registration in tracing's global lists),
-/// so the process's subscriber and its writer (a `Mutex<File>` in the app) are
-/// never entered there.
-fn driver_survives(settings: EncoderSettings) -> Result<()> {
-    driver_survives_within(settings, std::time::Duration::from_secs(15))
-}
-
-/// What [`driver_survives_within`] found so far in this process.
-enum Probe {
-    Untried,
-    TimedOutOnce,
-    Done(std::result::Result<(), String>),
-}
-
-static PROBE: std::sync::Mutex<Probe> = std::sync::Mutex::new(Probe::Untried);
-
-fn driver_survives_within(settings: EncoderSettings, limit: std::time::Duration) -> Result<()> {
-    use std::time::Instant;
-    if IN_PROBE.load(std::sync::atomic::Ordering::Relaxed) {
-        return Ok(());
-    }
-    let mut probe = PROBE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Probe::Done(verdict) = &*probe {
-        return verdict.clone().map_err(|e| anyhow!(e));
-    }
-    let none = tracing::Dispatch::none();
-    let verdict = (|| {
-        // SAFETY: the child only runs the encoder test and leaves with _exit (no
-        // destructors, no atexit handlers of the parent).
-        let pid = unsafe { libc::fork() };
-        if pid < 0 {
-            return Ok(()); // no child: tried in this process
-        }
-        if pid == 0 {
-            IN_PROBE.store(true, std::sync::atomic::Ordering::Relaxed);
-            let ok = tracing::dispatcher::with_default(&none, || VaapiEncoder::new(settings).is_ok());
-            unsafe { libc::_exit(if ok { 0 } else { 1 }) }
-        }
-        let started = Instant::now();
-        let mut status = 0;
-        loop {
-            // SAFETY: waiting for our own child.
-            let r = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-            if r == pid {
-                break;
-            }
-            if r < 0 {
-                return Ok(());
-            }
-            if started.elapsed() > limit {
-                unsafe {
-                    libc::kill(pid, libc::SIGKILL);
-                    libc::waitpid(pid, &mut status, 0);
-                }
-                return Err(format!("the VA-API driver did not answer within {} s", limit.as_secs()));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        if libc::WIFSIGNALED(status) {
-            return Err(format!(
-                "the VA-API driver crashed while trying it (signal {})",
-                libc::WTERMSIG(status)
-            ));
-        }
-        Ok(())
-    })();
-    let timed_out = verdict.as_ref().is_err_and(|e| e.contains("did not answer"));
-    *probe = match &*probe {
-        Probe::Untried if timed_out => {
-            warn!("VA-API: the driver test did not answer; tried again at the next encoder");
-            Probe::TimedOutOnce
-        }
-        _ => Probe::Done(verdict.clone()),
-    };
-    verdict.map_err(|e| anyhow!(e))
 }

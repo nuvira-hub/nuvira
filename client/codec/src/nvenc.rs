@@ -860,16 +860,8 @@ impl NvencEncoder {
 
     fn encode_nv(&mut self, image: &BgraImage, force_keyframe: bool) -> Result<EncodedFrame> {
         let (w, h) = crate::convert::even_size(image);
-        let (w, h) = (w as u32, h as u32);
+        self.session_for(w as u32, h as u32)?;
         let nv = self.nv;
-        if self.session.as_ref().is_none_or(|s| (s.width, s.height) != (w, h)) {
-            self.session_drop();
-            let _current = Current::push(nv, self.ctx)?;
-            self.session = Some(Session::new(nv, self.ctx, &self.settings, w, h)?);
-            debug!(w, h, "NVENC session");
-            self.force_key = true;
-            self.new_rate = false;
-        }
         let pending = std::mem::take(&mut self.force_key);
         let key = force_keyframe || pending;
         let new_rate = std::mem::take(&mut self.new_rate);
@@ -974,6 +966,21 @@ impl VideoEncoder for NvencEncoder {
 mod tests {
     use super::*;
 
+    /// The encoder of the hardware tests, or `None` (skipped) on a machine without
+    /// NVENC; with `NUVIRA_EXPECT_NVENC=1` (a machine that has it, set by
+    /// `run-hw-tests.sh`) a missing encoder fails instead of passing silently.
+    fn encoder_or_skip(what: &str) -> Option<NvencEncoder> {
+        match NvencEncoder::new(EncoderSettings::default()) {
+            Ok(enc) => Some(enc),
+            Err(e) => {
+                let expected = std::env::var("NUVIRA_EXPECT_NVENC").is_ok_and(|v| v == "1");
+                assert!(!expected, "NUVIRA_EXPECT_NVENC=1 but no NVENC: {e:#}");
+                eprintln!("no NVENC here{what}: {e:#}");
+                None
+            }
+        }
+    }
+
     #[test]
     fn guid_bytes() {
         let g = Guid::from_bytes(l::GUID_H264);
@@ -996,13 +1003,7 @@ mod tests {
     /// Needs an NVIDIA GPU with its driver; skipped elsewhere.
     #[test]
     fn gpu_scale_matches_cpu() {
-        let mut enc = match NvencEncoder::new(EncoderSettings::default()) {
-            Ok(enc) => enc,
-            Err(e) => {
-                eprintln!("no NVENC here, skipped: {e:#}");
-                return;
-            }
-        };
+        let Some(mut enc) = encoder_or_skip(", skipped") else { return };
         // A screen with detail (text-like stripes and a gradient), not a multiple of
         // the output size; a stride with padding.
         let (sw, sh, stride) = (1366u32, 768u32, 1366 * 4 + 64);
@@ -1040,13 +1041,7 @@ mod tests {
     /// Needs an NVIDIA GPU with its driver; skipped elsewhere.
     #[test]
     fn encodes_and_decodes() {
-        let mut enc = match NvencEncoder::new(EncoderSettings::default()) {
-            Ok(enc) => enc,
-            Err(e) => {
-                eprintln!("no NVENC here: {e:#}");
-                return;
-            }
-        };
+        let Some(mut enc) = encoder_or_skip("") else { return };
         let (w, h) = (322u32, 180u32);
         let stride = w as usize * 4 + 16;
         let mut data = vec![0u8; stride * h as usize];
