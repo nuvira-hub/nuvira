@@ -786,8 +786,16 @@ mod linux {
 
         // A move to a non-finite position is dropped: the pointer stays (VWR-7;
         // before, X11 put NaN on the screen's top-left corner and Wayland passed
-        // it to the compositor).
+        // it to the compositor). Under Xwayland the pointer's position is known
+        // only over Xwayland's windows, so a wheel notch tells whether the
+        // pointer is still over the test window: it gets the notch only then.
         let start = (0.4, 0.4);
+        let notch = |s: &mut Setup| -> bool {
+            s.window.drain();
+            s.inj.inject(&wheel(0, -120)).unwrap();
+            let got = s.window.collect(Duration::from_millis(400));
+            got.iter().any(|g| matches!(g, Got::Button(4 | 5, true)))
+        };
         for (x, y) in [(f32::NAN, f32::NAN), (f32::NAN, 0.6), (0.6, f32::INFINITY)] {
             s.inj.inject(&mv(start.0, start.1)).unwrap();
             std::thread::sleep(Duration::from_millis(150));
@@ -797,9 +805,18 @@ mod linux {
             // Time for the compositor to apply a move, had one been sent.
             std::thread::sleep(Duration::from_millis(300));
             let after = s.window.pointer();
-            report(&format!("move ({x}, {y}): pointer {before:?} -> {after:?}"));
-            assert_eq!(after, before, "move ({x}, {y}) moved the pointer");
+            let over = notch(&mut s);
+            report(&format!(
+                "move ({x}, {y}): pointer {before:?} -> {after:?}, still over the window {over}"
+            ));
+            assert_eq!((after, over), (before, true), "move ({x}, {y}) moved the pointer");
         }
+        // The check can see a move away: off the window the notch does not reach it.
+        s.inj.inject(&mv(0.95, 0.95)).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let over = notch(&mut s);
+        report(&format!("move (0.95, 0.95): still over the window {over}"));
+        assert!(!over, "a wheel notch off the test window does not reach it");
     }
 
     #[test]
