@@ -18,6 +18,9 @@ pub struct Report {
     pub render_us: u64,
     /// Frames decoded but overtaken by a more recent one before being shown.
     pub dropped: u64,
+    /// Keep every latency and RTT sample (only with `--stats-file`, the one reader: without it
+    /// the two vectors would grow by 4 bytes per frame shown for the whole session).
+    pub keep_samples: bool,
     /// Capture→display latency of every frame, when the clocks are aligned.
     pub latencies_us: Vec<u32>,
     pub rtt_us: Vec<u32>,
@@ -64,6 +67,25 @@ fn json_opt<T: std::fmt::Display>(v: Option<T>) -> String {
 }
 
 impl Report {
+    /// `keep_samples`: see [`Report::keep_samples`].
+    pub fn new(keep_samples: bool) -> Self {
+        Self { keep_samples, ..Self::default() }
+    }
+
+    /// A frame's capture→display latency (kept only with [`Report::keep_samples`]).
+    pub fn latency(&mut self, us: u32) {
+        if self.keep_samples {
+            self.latencies_us.push(us);
+        }
+    }
+
+    /// A clock measurement's round trip (kept only with [`Report::keep_samples`]).
+    pub fn rtt(&mut self, us: u32) {
+        if self.keep_samples {
+            self.rtt_us.push(us);
+        }
+    }
+
     /// A frame was shown now. Returns the pause before it if it was a freeze.
     pub fn shown(&mut self, now: Instant) -> Option<std::time::Duration> {
         let gap = now.duration_since(self.last_shown.replace(now)?);
@@ -129,6 +151,22 @@ mod tests {
         assert!(json.contains("\"latency_ms_p50\": 20"));
         assert!(json.contains("\"exit_reason\": \"end \\\"test\\\"\""));
         assert!(json.contains("\"renderer\": null"));
+    }
+
+    #[test]
+    fn samples_only_when_asked() {
+        let mut r = Report::default();
+        r.latency(1000);
+        r.rtt(2000);
+        assert!(r.latencies_us.is_empty() && r.rtt_us.is_empty());
+        assert!(r.to_json(Instant::now()).contains("\"latency_ms_p50\": null"));
+        let mut r = Report::new(true);
+        r.latency(1000);
+        r.rtt(2000);
+        assert_eq!((r.latencies_us.as_slice(), r.rtt_us.as_slice()), (&[1000][..], &[2000][..]));
+        let json = r.to_json(Instant::now());
+        assert!(json.contains("\"latency_ms_p50\": 1"), "{json}");
+        assert!(json.contains("\"rtt_ms_p50\": 2"), "{json}");
     }
 
     #[test]

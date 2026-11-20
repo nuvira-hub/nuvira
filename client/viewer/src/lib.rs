@@ -486,7 +486,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         slot: Arc::new(FrameSlot::default()),
         session_stats: None,
         started,
-        report: Report::default(),
+        report: Report::new(args.stats_file.is_some()),
         connect: Some((
             target,
             args.support_ticket.as_ref().map(|t| format!("{SUPPORT_TICKET}{t}")).or_else(|| args.password.clone()),
@@ -946,7 +946,7 @@ impl App {
             downloads: session.downloads.clone(),
         });
         self.files = Some(session.files);
-        self.net_thread = Some(session.thread);
+        self.net_thread = session.thread;
     }
 
     /// Restart button: an agent that can tell is asked first who else is signed in,
@@ -1606,7 +1606,7 @@ impl ApplicationHandler<NetEvent> for App {
                 self.control = Some(session.control);
                 self.term_link = Some(session.terminals);
                 self.tunnel_link = Some(session.tunnels);
-                self.net_thread = Some(session.thread);
+                self.net_thread = session.thread;
             }
             return;
         }
@@ -1920,7 +1920,7 @@ impl ApplicationHandler<NetEvent> for App {
                     let captured_here = frame.capture_us as i64 - offset;
                     let latency = nuvira_proto::now_us() as i64 - captured_here;
                     self.stats.latency_us += latency.max(0) as u64;
-                    self.report.latencies_us.push(latency.clamp(0, u32::MAX as i64) as u32);
+                    self.report.latency(latency.clamp(0, u32::MAX as i64) as u32);
                     self.feedback_window.1.push((latency.max(0) / 1000) as u32);
                     // From the end of encoding to arrival: the network alone.
                     let transit = frame.received_us as i64 - (frame.encoded_us as i64 - offset);
@@ -2034,7 +2034,7 @@ impl ApplicationHandler<NetEvent> for App {
                     }
                 }
                 self.rtt_us = rtt_us;
-                self.report.rtt_us.push(rtt_us.min(u32::MAX as u64) as u32);
+                self.report.rtt(rtt_us.min(u32::MAX as u64) as u32);
                 // The measurement with the lowest RTT is the least disturbed by network queues.
                 if rtt_us <= self.best_rtt_us {
                     self.best_rtt_us = rtt_us;

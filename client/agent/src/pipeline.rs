@@ -817,6 +817,9 @@ mod tests {
         let mut decoder = nuvira_codec::OpenH264Decoder::new().unwrap();
         let yuv = nuvira_codec::VideoDecoder::decode(&mut decoder, &frame.data).unwrap().expect("picture");
         assert_eq!((yuv.width, yuv.height), (1280, 720));
+        // The receiver first: the encoding thread may be waiting to hand over the next
+        // frame (channel of 1), and joining it while nobody receives never ends.
+        drop(rx);
         drop(pipeline);
         assert!(calls.load(Ordering::Relaxed) >= 2, "the refused frame was not tried");
     }
@@ -876,6 +879,7 @@ mod tests {
             }
         };
         assert_eq!(size, (160, 90));
+        drop(rx);
         drop(pipeline);
     }
 }
