@@ -376,8 +376,9 @@ pub struct Session {
     pub terminals: mpsc::UnboundedSender<TermCmd>,
     /// TCP tunnels.
     pub tunnels: mpsc::UnboundedSender<TunnelCmd>,
-    /// To be joined before exiting.
-    pub thread: std::thread::JoinHandle<()>,
+    /// To be joined before exiting; `None` when the thread could not be started (the
+    /// window was told with `Disconnected`).
+    pub thread: Option<std::thread::JoinHandle<()>>,
 }
 
 /// Starts the session on a dedicated thread.
@@ -396,10 +397,20 @@ pub fn start(
     let (files_tx, files_rx) = mpsc::unbounded_channel();
     let downloads = Downloads::default();
     let session_downloads = downloads.clone();
+    let failed = proxy.clone();
     let thread = std::thread::Builder::new()
         .name("network".into())
         .spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            // Without a runtime (threads or handles exhausted) the window is told, as for any
+            // other end of the session, instead of waiting forever on "connecting".
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    let reason = format!("cannot start the network runtime: {e}");
+                    let _ = proxy.send_event(NetEvent::Disconnected { reason, retry: false });
+                    return;
+                }
+            };
             let channels = (input_rx, control_rx, files_rx, session_downloads, (terminals_rx, tunnels_rx));
             let (reason, retry) = match rt.block_on(session(target, password, proxy.clone(), (slot, recording), channels, terminal_only)) {
                 Ok(()) => ("session ended".to_string(), true),
@@ -411,7 +422,11 @@ pub fn start(
             };
             let _ = proxy.send_event(NetEvent::Disconnected { reason, retry });
         })
-        .expect("network thread");
+        .map_err(|e| {
+            let reason = format!("cannot start the network thread: {e}");
+            let _ = failed.send_event(NetEvent::Disconnected { reason, retry: false });
+        })
+        .ok();
     Session { input: input_tx, control: control_tx, files: files_tx, downloads, terminals: terminals_tx, tunnels: tunnels_tx, thread }
 }
 

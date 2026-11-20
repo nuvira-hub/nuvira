@@ -946,7 +946,7 @@ impl App {
             downloads: session.downloads.clone(),
         });
         self.files = Some(session.files);
-        self.net_thread = Some(session.thread);
+        self.net_thread = session.thread;
     }
 
     /// Restart button: an agent that can tell is asked first who else is signed in,
@@ -1606,7 +1606,7 @@ impl ApplicationHandler<NetEvent> for App {
                 self.control = Some(session.control);
                 self.term_link = Some(session.terminals);
                 self.tunnel_link = Some(session.tunnels);
-                self.net_thread = Some(session.thread);
+                self.net_thread = session.thread;
             }
             return;
         }
