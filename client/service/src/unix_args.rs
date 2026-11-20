@@ -70,12 +70,17 @@ impl Options {
     }
 }
 
-/// A permanent password read from a file (removed afterwards).
+/// A permanent password read from a file (removed afterwards), with the same
+/// rule as the app and `deploy`: at least 8 characters.
 #[cfg(unix)]
 pub(crate) fn password_file(file: &str) -> Result<String> {
     let text = std::fs::read_to_string(file).map_err(|e| anyhow::anyhow!("{file}: {e}"))?;
     let _ = std::fs::remove_file(file);
-    Ok(text.trim().to_string())
+    let password = text.trim().to_string();
+    if password.chars().count() < 8 {
+        bail!("the password in {file} must have at least 8 characters");
+    }
+    Ok(password)
 }
 
 #[cfg(test)]
@@ -129,5 +134,25 @@ mod tests {
         assert_eq!(error("--server a b"), "unexpected argument \"b\"");
         assert_eq!(error("--"), "unexpected argument \"--\"");
         assert_eq!(error("-s a"), "unexpected argument \"-s\"");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn passwords_from_a_file() {
+        let dir = std::env::temp_dir().join(format!("nuvira-password-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("p");
+        let path = file.to_str().unwrap();
+        for (text, ok) in
+            [("", false), ("\n", false), ("   \n", false), ("short1\n", false), ("eight ch\n", true)]
+        {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(password_file(path).is_ok(), ok, "{text:?}");
+            assert!(!file.exists(), "removed after reading");
+        }
+        std::fs::write(&file, "  long enough  \n").unwrap();
+        assert_eq!(password_file(path).unwrap(), "long enough");
+        assert!(password_file(path).is_err(), "missing file");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
