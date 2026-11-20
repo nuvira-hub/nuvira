@@ -116,6 +116,29 @@ func benchServer(tb testing.TB) (string, *signal.Server) {
 	return udp.LocalAddr().String(), srv
 }
 
+// benchDialer dials every connection of a sub-benchmark from one client socket
+// (one quic.Transport), as harness_p2_test.go does. A new socket per dial
+// measured the client's first Initial on Windows loopback, lost and resent after
+// the ~200 ms PTO (T6, SRV-15: p50 ~204 ms against ~2 ms on Linux), not the server.
+type benchDialer struct {
+	udp *net.UDPConn
+	tr  *quic.Transport
+}
+
+func newBenchDialer(tb testing.TB) *benchDialer {
+	tb.Helper()
+	udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	d := &benchDialer{udp: udp, tr: &quic.Transport{Conn: udp}}
+	tb.Cleanup(func() {
+		_ = d.tr.Close()
+		_ = udp.Close()
+	})
+	return d
+}
+
 type benchClient struct {
 	conn   *quic.Conn
 	stream *quic.Stream
@@ -155,11 +178,22 @@ func (c *benchClient) readUntil(want func(*pb.ServerMessage) bool) (*pb.ServerMe
 func (c *benchClient) close() { _ = c.conn.CloseWithError(0, "") }
 
 // benchRegister connects and registers as the app does: Register, Challenge,
-// Proof (Ed25519 over prefix + nonce), Registered.
-func benchRegister(ctx context.Context, addr string, priv ed25519.PrivateKey, name string) (*benchClient, error) {
-	conn, err := quic.DialAddr(ctx, addr,
-		&tls.Config{InsecureSkipVerify: true, NextProtos: []string{benchALPN}},
-		&quic.Config{KeepAlivePeriod: 2 * time.Second, MaxIdleTimeout: 30 * time.Second})
+// Proof (Ed25519 over prefix + nonce), Registered. With a nil dialer the
+// connection gets a socket of its own (quic.DialAddr).
+func benchRegister(ctx context.Context, d *benchDialer, addr string, priv ed25519.PrivateKey, name string) (*benchClient, error) {
+	tlsConf := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{benchALPN}}
+	qconf := &quic.Config{KeepAlivePeriod: 2 * time.Second, MaxIdleTimeout: 30 * time.Second}
+	var conn *quic.Conn
+	var err error
+	if d == nil {
+		conn, err = quic.DialAddr(ctx, addr, tlsConf, qconf)
+	} else {
+		var ua *net.UDPAddr
+		if ua, err = net.ResolveUDPAddr("udp", addr); err != nil {
+			return nil, err
+		}
+		conn, err = d.tr.Dial(ctx, ua, tlsConf, qconf)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +253,7 @@ func TestBenchSignalLiterals(t *testing.T) {
 	addr, _ := benchServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, err := benchRegister(ctx, addr, benchKey(1), "bench")
+	c, err := benchRegister(ctx, nil, addr, benchKey(1), "bench")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,18 +269,20 @@ func TestBenchSignalLiterals(t *testing.T) {
 //
 // One operation = a new QUIC connection + Register/Challenge/Proof/Registered +
 // close. "new-device" uses a new key each time (store insert), "known-device"
-// one of 64 keys already registered (store update).
+// one of 64 keys already registered (store update). Every connection of a
+// sub-benchmark is dialled from one client socket (SRV-15).
 func BenchmarkSignalRegister(b *testing.B) {
 	for _, mode := range []string{"new-device", "known-device"} {
 		b.Run(mode, func(b *testing.B) {
 			addr, _ := benchServer(b)
+			d := newBenchDialer(b)
 			ctx := context.Background()
 			const known = 64
 			var keys []ed25519.PrivateKey
 			if mode == "known-device" {
 				for i := range known {
 					keys = append(keys, benchKey(i))
-					c, err := benchRegister(ctx, addr, keys[i], "bench")
+					c, err := benchRegister(ctx, d, addr, keys[i], "bench")
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -264,7 +300,7 @@ func BenchmarkSignalRegister(b *testing.B) {
 			start := time.Now()
 			for i := 0; i < b.N; i++ {
 				t0 := time.Now()
-				c, err := benchRegister(ctx, addr, keys[i%len(keys)], "bench")
+				c, err := benchRegister(ctx, d, addr, keys[i%len(keys)], "bench")
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -287,12 +323,12 @@ func BenchmarkSignalRegister(b *testing.B) {
 func BenchmarkSignalConnect(b *testing.B) {
 	addr, srv := benchServer(b)
 	ctx := context.Background()
-	agent, err := benchRegister(ctx, addr, benchKey(1), "bench-agent")
+	agent, err := benchRegister(ctx, nil, addr, benchKey(1), "bench-agent")
 	if err != nil {
 		b.Fatal(err)
 	}
 	defer agent.close()
-	viewer, err := benchRegister(ctx, addr, benchKey(2), "bench-viewer")
+	viewer, err := benchRegister(ctx, nil, addr, benchKey(2), "bench-viewer")
 	if err != nil {
 		b.Fatal(err)
 	}
