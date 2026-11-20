@@ -1908,7 +1908,9 @@ impl ApplicationHandler<NetEvent> for App {
                 renderer.upload(&frame.yuv);
                 renderer.render();
                 let render_us = t.elapsed().as_micros() as u64;
-                self.shown = Some(std::mem::take(&mut frame.yuv));
+                if let Some(old) = self.shown.replace(std::mem::take(&mut frame.yuv)) {
+                    self.slot.recycle(old);
+                }
                 tracing::trace!("frame shown in {render_us} µs");
                 if let Some(s) = &self.session_stats {
                     s.frames_shown.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
