@@ -52,6 +52,10 @@ const (
 	bindTimeout = 60 * time.Second
 )
 
+// Time a session still forwards after Forget, so the CONNECTION_CLOSE frames of
+// its two sides still pass (a variable for the tests).
+var forgetGrace = 5 * time.Second
+
 type session struct {
 	token  [tokenLen]byte
 	peers  [2]net.Addr // [0] viewer, [1] agent (UDP or WebSocket)
@@ -60,7 +64,10 @@ type session struct {
 	announced [2]*net.UDPAddr
 	created   time.Time
 	last      time.Time
-	bytes     uint64
+	// Set by Forget: the session no longer binds nor refreshes `last`, and is
+	// removed after forgetGrace.
+	ended time.Time
+	bytes uint64
 }
 
 func (s *session) ready() bool { return s.peers[0] != nil && s.peers[1] != nil }
@@ -102,6 +109,50 @@ func (r *Relay) Allow(token [tokenLen]byte) {
 	r.sessions[token] = &session{token: token, created: now, last: now}
 }
 
+// Forget ends the session of token (its end reported by the agent): after
+// forgetGrace it is removed with its address links, so a new socket that gets
+// one of those addresses (a random ephemeral port reused within the idle
+// timeout, or a CGNAT mapping) reaches the server again instead of the old peer
+// (SRV-13, K39). Until then it still forwards, without refreshing its idle
+// time, and no longer accepts binds. Unknown tokens are ignored.
+func (r *Relay) Forget(token [tokenLen]byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s := r.sessions[token]
+	if s == nil || !s.ended.IsZero() {
+		return
+	}
+	s.ended = time.Now()
+	time.AfterFunc(forgetGrace, func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.sessions[token] == s {
+			r.removeLocked(token, s, time.Now())
+		}
+	})
+}
+
+// removeLocked drops a session and the address links that still point to it.
+func (r *Relay) removeLocked(token [tokenLen]byte, s *session, now time.Time) {
+	for _, p := range s.peers {
+		if p == nil {
+			continue
+		}
+		if l := r.links[p.String()]; l != nil && l.session == s {
+			delete(r.links, p.String())
+		}
+	}
+	delete(r.sessions, token)
+	if s.ready() {
+		r.hourSessions++
+	}
+	end := now
+	if !s.ended.IsZero() {
+		end = s.ended
+	}
+	r.log.Info("relay session closed", "bytes", s.bytes, "duration", end.Sub(s.created).Round(time.Second))
+}
+
 // IsControl tells whether the datagram is a relay control message.
 func IsControl(p []byte) bool { return len(p) >= 5 && bytes.Equal(p[:4], magic) }
 
@@ -138,7 +189,7 @@ func (r *Relay) HandleControl(p []byte, from net.Addr) []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s := r.sessions[token]
-	if s == nil {
+	if s == nil || !s.ended.IsZero() {
 		return nil
 	}
 	i := role - 1
@@ -244,7 +295,9 @@ func (r *Relay) Destination(from net.Addr, n int) net.Addr {
 	if l == nil {
 		return nil
 	}
-	l.session.last = time.Now()
+	if l.session.ended.IsZero() {
+		l.session.last = time.Now()
+	}
 	l.session.bytes += uint64(n)
 	r.hourBytes += uint64(n)
 	r.fwdPackets++
@@ -262,16 +315,7 @@ func (r *Relay) expireLoop() {
 			if !idle && !unbound {
 				continue
 			}
-			for _, p := range s.peers {
-				if p != nil {
-					delete(r.links, p.String())
-				}
-			}
-			delete(r.sessions, token)
-			if s.ready() {
-				r.hourSessions++
-			}
-			r.log.Info("relay session closed", "bytes", s.bytes, "duration", now.Sub(s.created).Round(time.Second))
+			r.removeLocked(token, s, now)
 		}
 		if now.Sub(r.hourStart) >= time.Hour {
 			r.log.Info("relay traffic in the last hour", "bytes", r.hourBytes,

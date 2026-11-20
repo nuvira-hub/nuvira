@@ -642,7 +642,7 @@ func (s *Server) accept(agent *client, id string) {
 	}
 	s.log.Info("session accepted", "session", id)
 	s.mu.Lock()
-	s.routed[id] = &routed{agentID: agent.device.ID, accepted: time.Now()}
+	s.routed[id] = &routed{agentID: agent.device.ID, accepted: time.Now(), relayToken: token}
 	s.mu.Unlock()
 	s.event(ext.SessionEvent{ID: id, Kind: ext.SessionAccepted, AgentID: agent.device.ID})
 }
