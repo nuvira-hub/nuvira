@@ -77,20 +77,75 @@ pub fn install() -> Result<&'static str> {
         None if backend.exists() => {}
         None => bail!("{BACKEND_PROGRAM} not found beside this program"),
     }
-    let ppd = std::env::temp_dir().join(format!("nuvira-printer-{}.ppd", std::process::id()));
-    std::fs::write(&ppd, nuvira_cups::PPD).context("writing the PPD")?;
+    let ppd = PrivatePpd::write(&std::env::temp_dir())?;
     let uri = format!("{}:/", nuvira_cups::SCHEME);
     let output = lpadmin()
         .args(["-p", PRINTER, "-E", "-v", &uri, "-P"])
-        .arg(&ppd)
+        .arg(ppd.path())
         .args(["-D", PRINTER, "-o", "printer-is-shared=false", "-o", "printer-error-policy=abort-job"])
         .output();
-    let _ = std::fs::remove_file(&ppd);
+    drop(ppd);
     let output = output.context("lpadmin")?;
     if !output.status.success() {
         bail!("lpadmin: {}", String::from_utf8_lossy(&output.stderr).trim());
     }
     Ok("NuviraHub printer installed (remote printing)")
+}
+
+/// The PPD for `lpadmin`, in a new folder of its own (mode 0700, random name) in
+/// `parent`: root runs this, and on Linux `parent` is the shared /tmp, where a
+/// predictable name could be a file or a link someone else put there first.
+/// The folder is created, never reused, and the file inside it too; both are
+/// removed on drop.
+struct PrivatePpd {
+    dir: PathBuf,
+    file: PathBuf,
+}
+
+impl PrivatePpd {
+    fn write(parent: &Path) -> Result<Self> {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+
+        let mut tries = 0;
+        let dir = loop {
+            let mut random = [0u8; 12];
+            ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut random)
+                .map_err(|_| anyhow::anyhow!("random generator"))?;
+            let name: String = random.iter().map(|b| format!("{b:02x}")).collect();
+            let dir = parent.join(format!("nuvira-printer-{name}"));
+            // Not recursive: fails if anything (also a link) has that name.
+            match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+                Ok(()) => break dir,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && tries < 8 => tries += 1,
+                Err(e) => {
+                    return Err(e).with_context(|| format!("folder for the PPD in {}", parent.display()));
+                }
+            }
+        };
+        let file = dir.join("nuvira.ppd");
+        let ppd = Self { dir, file };
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&ppd.file)
+            .context("writing the PPD")?;
+        out.write_all(nuvira_cups::PPD.as_bytes()).context("writing the PPD")?;
+        Ok(ppd)
+    }
+
+    fn path(&self) -> &Path {
+        &self.file
+    }
+}
+
+impl Drop for PrivatePpd {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.file);
+        let _ = std::fs::remove_dir(&self.dir);
+    }
 }
 
 /// CUPS runs a backend as root only if nobody else can execute or change it.
@@ -134,3 +189,50 @@ pub fn uninstall() -> Result<()> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// APP-4: what someone else left at the old predictable names in the
+    /// shared folder is not written to nor followed; the PPD is in a new
+    /// private folder, removed afterwards.
+    #[test]
+    fn ppd_written_in_a_private_folder() {
+        let parent = std::env::temp_dir().join(format!("nuvira-ppd-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&parent);
+        std::fs::create_dir_all(&parent).unwrap();
+        // The old name, as a planted file and as a link to a file.
+        let planted = parent.join(format!("nuvira-printer-{}.ppd", std::process::id()));
+        std::fs::write(&planted, "planted").unwrap();
+        let target = parent.join("target");
+        std::fs::write(&target, "target").unwrap();
+        let link = parent.join(format!("nuvira-printer-{}.ppd", std::process::id() + 1));
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let ppd = PrivatePpd::write(&parent).unwrap();
+        let path = ppd.path().to_path_buf();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), nuvira_cups::PPD);
+        let dir = path.parent().unwrap().to_path_buf();
+        assert_eq!(dir.parent().unwrap(), parent);
+        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        // A second one gets another folder.
+        let other = PrivatePpd::write(&parent).unwrap();
+        assert_ne!(other.path().parent(), Some(dir.as_path()));
+        drop(other);
+        drop(ppd);
+        assert!(!path.exists() && !dir.exists(), "removed after use");
+        assert_eq!(std::fs::read_to_string(&planted).unwrap(), "planted");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "target");
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        // Only what the test made is left.
+        let mut left: Vec<_> = std::fs::read_dir(&parent)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left.len(), 3, "{left:?}");
+        std::fs::remove_dir_all(&parent).unwrap();
+    }
+}
