@@ -14,7 +14,10 @@
 //! the password hash, a generated 8-character password the first time only, the
 //! password kept or replaced, the state reported, and an uninstall that removes
 //! the unit, the autostart entry, `service.env` and the GNOME extension, and
-//! takes the extension out of `enabled-extensions`. On a computer installed for
+//! takes the extension out of `enabled-extensions`. Since the review (P8, APP-16)
+//! the session variables `start` put into the person's systemd are taken away
+//! again at uninstall, and the ones the desktop had set already are kept.
+//! On a computer installed for
 //! everyone (`/etc/nuvira/managed.json`) both are refused with `@install.managed`.
 
 #![cfg(target_os = "linux")]
@@ -51,6 +54,16 @@ fn is_active() -> String {
 }
 
 const HASH_VAR: &str = "NUVIRA_PASSWORD_HASH=";
+
+/// The environment of this user's systemd manager.
+fn manager_environment() -> Vec<(String, String)> {
+    let out = Command::new("systemctl").args(["--user", "show-environment"]).output().unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(n, v)| (n.to_string(), v.to_string()))
+        .collect()
+}
 
 #[test]
 fn user_service_installed_and_removed() {
@@ -89,6 +102,22 @@ fn user_service_installed_and_removed() {
     }
     assert_eq!(user::service_state().unwrap(), ServiceState::NotInstalled);
     let enabled_before = gsettings("enabled-extensions");
+    // P8: a session variable the person's systemd does not have yet, given to
+    // this process: `start` imports it, `uninstall` takes it away again. One it
+    // has already (the desktop's own, same value) stays.
+    let environment_before = manager_environment();
+    let added = ["WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY", "XDG_CURRENT_DESKTOP"]
+        .into_iter()
+        .find(|name| !environment_before.iter().any(|(n, _)| n == name));
+    if let Some(name) = added {
+        // SAFETY: the only test of this binary.
+        unsafe { std::env::set_var(name, "nuvira-test-p8") };
+    }
+    let kept = environment_before.iter().find(|(n, _)| n == "XDG_RUNTIME_DIR").cloned();
+    if let Some((name, value)) = &kept {
+        // SAFETY: the only test of this binary.
+        unsafe { std::env::set_var(name, value) };
+    }
 
     let result = std::panic::catch_unwind(|| {
         // First install, no password: one is generated and returned.
@@ -150,8 +179,23 @@ fn user_service_installed_and_removed() {
 
         // `start` (the autostart entry's) restarts it.
         user::start().expect("start");
+        if let Some(name) = added {
+            let value = manager_environment().into_iter().find(|(n, _)| n == name).map(|(_, v)| v);
+            assert_eq!(value.as_deref(), Some("nuvira-test-p8"), "{name} imported");
+        }
 
         user::uninstall().expect("uninstall");
+        let environment_after = manager_environment();
+        match added {
+            Some(name) => {
+                assert!(!environment_after.iter().any(|(n, _)| n == name), "{name} taken away at uninstall");
+                report(&format!("P8: {name} imported by start, taken away by uninstall"));
+            }
+            None => report("P8: every variable is set in this systemd already: removal not checked"),
+        }
+        if let Some(kept) = &kept {
+            assert!(environment_after.contains(kept), "{} kept", kept.0);
+        }
         assert!(!unit.exists() && !autostart.exists() && !env.exists(), "files removed");
         assert!(!extension.exists(), "GNOME extension removed");
         assert_eq!(user::service_state().unwrap(), ServiceState::NotInstalled);

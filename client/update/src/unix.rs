@@ -60,7 +60,7 @@ impl PackageKind {
     /// The package NuviraHub is installed from, if any.
     pub fn installed() -> Option<Self> {
         let ok = |program: &str, args: &[&str], expect: &str| {
-            Command::new(program)
+            Command::new(system_tool(program))
                 .args(args)
                 .env("LC_ALL", "C")
                 .output()
@@ -259,6 +259,18 @@ fn requirement(bundle: &Path) -> Option<String> {
     text.lines().find_map(|l| l.strip_prefix("designated => ").map(str::to_string))
 }
 
+/// A package tool by its absolute path, like the package managers above: root
+/// runs these (the update timer, pkexec, sudo), and a fixed folder does not
+/// depend on whatever PATH it was given. The bare name only where none of the
+/// usual folders has it.
+fn system_tool(name: &str) -> PathBuf {
+    ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        .iter()
+        .map(|dir| Path::new(dir).join(name))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
 /// Installs a downloaded, verified package (root, Linux).
 pub fn install_package(kind: PackageKind, file: &Path) -> Result<()> {
     let exists = |p: &str| Path::new(p).exists();
@@ -276,7 +288,7 @@ pub fn install_package(kind: PackageKind, file: &Path) -> Result<()> {
             c
         }
         PackageKind::Deb => {
-            let mut c = Command::new("dpkg");
+            let mut c = Command::new(system_tool("dpkg"));
             c.arg("-i");
             c
         }
@@ -285,13 +297,16 @@ pub fn install_package(kind: PackageKind, file: &Path) -> Result<()> {
             c.args(["install", "-y"]);
             c
         }
+        // The package is not GPG-signed: what makes it NuviraHub's is the
+        // Ed25519-signed manifest (size and SHA-256) checked before this, as
+        // dnf does for a local file (`localpkg_gpgcheck=0`).
         PackageKind::Rpm if exists("/usr/bin/zypper") => {
             let mut c = Command::new("/usr/bin/zypper");
             c.args(["--non-interactive", "install", "--allow-unsigned-rpm"]);
             c
         }
         PackageKind::Rpm => {
-            let mut c = Command::new("rpm");
+            let mut c = Command::new(system_tool("rpm"));
             c.arg("-U");
             c
         }
@@ -479,6 +494,14 @@ mod tests {
         );
         assert_eq!(bundle_of(Path::new("/usr/bin/nuvira")), None);
         assert_eq!(bundle_of(Path::new("/tmp/x.app/Contents/Resources/nuvira")), None);
+    }
+
+    /// APP-12: the package tools root runs are found in the system folders.
+    #[test]
+    fn package_tools_by_absolute_path() {
+        let sh = system_tool("sh");
+        assert!(sh.is_absolute() && sh.is_file(), "{}", sh.display());
+        assert_eq!(system_tool("nuvira-no-such-tool"), PathBuf::from("nuvira-no-such-tool"));
     }
 
     #[test]

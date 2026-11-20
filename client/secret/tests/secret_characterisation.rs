@@ -1,10 +1,13 @@
 //! Characterisation tests (Phase 2 of the full review) of the permanent password
 //! hash (PBKDF2) and of the two-factor codes (TOTP): edge cases of the formats
-//! accepted, pinned as they are now.
+//! accepted, pinned as they are now (the stored hash's parameters since the
+//! review's fix of S15: see `verify_refuses_parameters_outside_the_ranges`).
 
 use std::num::NonZeroU32;
 
-use nuvira_secret::{TOTP_STEP, hash, is_hash, totp_code, totp_secret, totp_uri, totp_verify, verify};
+use nuvira_secret::{
+    TOTP_STEP, hash, is_hash, is_valid_hash, totp_code, totp_secret, totp_uri, totp_verify, verify,
+};
 use proptest::prelude::*;
 use ring::pbkdf2;
 
@@ -41,35 +44,65 @@ fn hash_format() {
     assert!(verify("pässwörd ✓", &h));
     assert!(!verify("pässwörd", &h));
     assert!(is_hash(&h) && !is_hash("pbkdf2-sha256") && is_hash("pbkdf2-sha256$garbage"));
+    assert!(is_valid_hash(&h) && !is_valid_hash("pbkdf2-sha256$garbage"));
 }
 
 #[test]
-fn verify_accepts_any_parameters_in_the_stored_text() {
-    // The stored text decides the cost: one iteration, an empty salt, a short or
-    // long output, upper-case hex, "+1" as the count are all accepted.
-    // (Whoever can write the stored hash can also replace it, so this is only
-    // pinned, not a finding. A huge count, e.g. 4294967295, would make every check
-    // take hours: not run here.)
-    assert!(verify("p", &stored("p", 1, b"", 32)));
-    assert!(verify("p", &stored("p", 1, b"salt", 4)));
-    assert!(verify("p", &stored("p", 2, b"salt", 100)));
-    assert!(verify(
-        "p",
-        &stored("p", 1, b"salt", 32).to_uppercase().replace("PBKDF2-SHA256", "pbkdf2-sha256")
-    ));
-    assert!(verify("p", &stored("p", 1, b"s", 32).replacen("$1$", "$+1$", 1)));
-    // An empty expected hash: pbkdf2::verify refuses it.
-    assert!(!verify("p", "pbkdf2-sha256$1$00$"));
-    // Five parts, odd hex, non-ASCII in the hex, a zero count: refused.
+fn verify_refuses_parameters_outside_the_ranges() {
+    // Fixed in the review (S15, APP-7): the stored text no longer decides the
+    // cost or the strength. Iterations 100,000..=10,000,000 in plain digits, a
+    // salt of at least 16 bytes and exactly 32 bytes of output; everything that
+    // `hash()` makes is inside.
+    let salt = [7u8; 16];
+    let good = stored("p", 100_000, &salt, 32);
+    assert!(verify("p", &good) && is_valid_hash(&good));
+    assert!(!verify("q", &good));
+    // Upper-case hex is still read.
+    let upper = good.to_uppercase().replace("PBKDF2-SHA256", "pbkdf2-sha256");
+    assert!(verify("p", &upper));
+    // A longer salt is fine.
+    assert!(verify("p", &stored("p", 100_000, &[1u8; 32], 32)));
+    // What was accepted before: one iteration, an empty or short salt, a short
+    // or long output, "+N" as the count. All refused now, whatever the password.
     for bad in [
-        format!("{}$x", stored("p", 1, b"s", 32)),
-        "pbkdf2-sha256$1$0$00".to_string(),
-        "pbkdf2-sha256$1$é0$00".to_string(),
-        "pbkdf2-sha256$0$00$00".to_string(),
-        "pbkdf2-sha256$-1$00$00".to_string(),
-        "PBKDF2-SHA256$1$00$00".to_string(),
+        stored("p", 1, b"", 32),
+        stored("p", 1, b"salt", 4),
+        stored("p", 2, b"salt", 100),
+        stored("p", 99_999, &salt, 32),
+        stored("p", 100_000, &salt[..15], 32),
+        stored("p", 100_000, &salt, 31),
+        stored("p", 100_000, &salt, 33),
+        stored("p", 100_000, &salt, 32).replacen("$100000$", "$+100000$", 1),
+        stored("p", 100_000, &salt, 32).replacen("$100000$", "$ 100000$", 1),
+        // Above the range: refused before any work is done.
+        "pbkdf2-sha256$10000001$07070707070707070707070707070707$0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+        "pbkdf2-sha256$4294967295$07070707070707070707070707070707$0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+        "pbkdf2-sha256$1$00$".to_string(),
     ] {
         assert!(!verify("p", &bad), "{bad}");
+        assert!(!is_valid_hash(&bad), "{bad}");
+        // Still recognised as a hash (not a password in clear text).
+        assert!(is_hash(&bad));
+    }
+    // A count far above the range is refused at once.
+    let started = std::time::Instant::now();
+    assert!(!verify(
+        "p",
+        "pbkdf2-sha256$4294967295$07070707070707070707070707070707$0000000000000000000000000000000000000000000000000000000000000000"
+    ));
+    assert!(started.elapsed() < std::time::Duration::from_millis(50));
+    // Five parts, odd hex, non-ASCII in the hex, a zero or negative count,
+    // the prefix in capitals: refused, as before.
+    for bad in [
+        format!("{good}$x"),
+        "pbkdf2-sha256$100000$0$00".to_string(),
+        "pbkdf2-sha256$100000$é0$00".to_string(),
+        "pbkdf2-sha256$0$00$00".to_string(),
+        "pbkdf2-sha256$-1$00$00".to_string(),
+        good.replace("pbkdf2-sha256", "PBKDF2-SHA256"),
+    ] {
+        assert!(!verify("p", &bad), "{bad}");
+        assert!(!is_valid_hash(&bad), "{bad}");
     }
 }
 

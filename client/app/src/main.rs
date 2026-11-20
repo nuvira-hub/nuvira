@@ -239,9 +239,20 @@ struct SessionUi {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct Settings {
     server: String,
-    /// Remembered address book sign-in (server token, not the password).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Remembered address book sign-in (server token, not the password), in
+    /// memory only: the file has it protected as the local address book's
+    /// passwords are ([`Settings::token_protected`]).
+    #[serde(skip)]
     token: Option<String>,
+    /// The token protected with DPAPI on Windows, with the address book's key
+    /// (the Keychain, the Secret Service) elsewhere: a copy of `app.json` alone
+    /// does not sign anybody in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    token_protected: Option<String>,
+    /// The token in clear text, as versions up to 0.28 saved it: read once and
+    /// saved protected.
+    #[serde(default, rename = "token", skip_serializing)]
+    plain_token: Option<String>,
     /// Interface language ("auto" or a code from `nuvira_i18n::LANGUAGES`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
@@ -456,19 +467,119 @@ fn settings_path() -> PathBuf {
 }
 
 fn load_settings() -> Settings {
-    std::fs::read_to_string(settings_path())
-        .ok()
-        // Editors such as Notepad (and PowerShell 5) may add a UTF-8 byte order mark.
-        .and_then(|s| serde_json::from_str(s.trim_start_matches('\u{feff}')).ok())
-        .unwrap_or_default()
+    load_settings_from(&settings_path())
 }
 
 fn save_settings(settings: &Settings) -> anyhow::Result<()> {
-    let path = settings_path();
+    save_settings_to(&settings_path(), settings)
+}
+
+impl Settings {
+    /// In place of a settings file that cannot be read: everything the person
+    /// at this PC can switch off stays off until they choose again (the agent
+    /// gets these, and the defaults would allow everything).
+    fn after_a_bad_file() -> Self {
+        Self {
+            no_privacy: true,
+            no_terminal: true,
+            no_tunnel: true,
+            no_print: true,
+            no_recording: true,
+            ..Self::default()
+        }
+    }
+}
+
+/// The settings in `path`; none yet: the defaults. A file that cannot be read
+/// (cut short by a crash in an older version, edited by hand) is kept aside as
+/// `app.json.bad`, said in the log, and replaced with
+/// [`Settings::after_a_bad_file`].
+fn load_settings_from(path: &std::path::Path) -> Settings {
+    let problem = match std::fs::read_to_string(path) {
+        // Editors such as Notepad (and PowerShell 5) may add a UTF-8 byte order mark.
+        Ok(text) => match serde_json::from_str::<Settings>(text.trim_start_matches('\u{feff}')) {
+            Ok(mut settings) => {
+                settings.token =
+                    settings.token_protected.as_deref().map(local_book::unprotect).filter(|t| !t.is_empty());
+                if settings.token_protected.is_some() && settings.token.is_none() {
+                    // Another user's or computer's, or the key store locked:
+                    // signed out, as after a sign-out.
+                    warn!("the saved address book sign-in cannot be read here: sign in again");
+                }
+                if let Some(plain) = settings.plain_token.take() {
+                    // Saved by an earlier version: from now on protected.
+                    settings.token = Some(plain);
+                    match save_settings_to(path, &settings) {
+                        Ok(()) => info!("address book sign-in in {} now protected", path.display()),
+                        Err(e) => warn!("settings not saved: {e:#}"),
+                    }
+                }
+                return settings;
+            }
+            Err(e) => e.to_string(),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
+        Err(e) => e.to_string(),
+    };
+    let settings = Settings::after_a_bad_file();
+    let aside = path.with_extension("json.bad");
+    match std::fs::rename(path, &aside) {
+        Ok(()) => {
+            tracing::error!(
+                "{} could not be read ({problem}): kept as {}; the permissions of this PC are off until chosen again",
+                path.display(),
+                aside.display()
+            );
+            if let Err(e) = save_settings_to(path, &settings) {
+                warn!("settings not saved: {e:#}");
+            }
+        }
+        Err(e) => tracing::error!(
+            "{} could not be read ({problem}) nor kept aside ({e}): the permissions of this PC are off",
+            path.display()
+        ),
+    }
+    settings
+}
+
+/// Written aside and renamed: a crash halfway leaves the previous file whole.
+/// The sign-in token only protected; on Linux and macOS the file is the
+/// person's alone (0600).
+fn save_settings_to(path: &std::path::Path, settings: &Settings) -> anyhow::Result<()> {
+    let mut stored = settings.clone();
+    stored.plain_token = None;
+    stored.token_protected = match &settings.token {
+        // The same token as loaded: its protected text as it is.
+        Some(token)
+            if settings.token_protected.as_deref().map(local_book::unprotect).as_deref() == Some(token) =>
+        {
+            settings.token_protected.clone()
+        }
+        Some(token) => match local_book::protect(token) {
+            Ok(protected) => Some(protected),
+            Err(e) => {
+                warn!("address book sign-in not saved (it cannot be protected here: {e})");
+                None
+            }
+        },
+        None => None,
+    };
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, serde_json::to_string_pretty(settings)?)?;
+    let part = path.with_extension("json.part");
+    let text = serde_json::to_string_pretty(&stored)?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::remove_file(&part);
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&part)?;
+        file.write_all(text.as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&part, text)?;
+    std::fs::rename(&part, path)?;
     Ok(())
 }
 
@@ -2245,6 +2356,93 @@ mod tests {
     use super::*;
 
     const KEY: &str = "eb4a40cdaac1e2d3948c053723f7a42f9aa6bcbcc7520f228cea427a15070fe3";
+
+    fn test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("nuvira-app-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// APP-10: settings written whole or not at all; a file cut short is kept
+    /// aside and the permissions of the PC stay off, not on.
+    #[test]
+    fn bad_settings_file_kept_aside() {
+        let dir = test_dir("settings");
+        let path = dir.join("app.json");
+        // None yet: the defaults.
+        let fresh = load_settings_from(&path);
+        assert!(!fresh.no_terminal && fresh.server.is_empty());
+
+        let saved = Settings { server: "nuvira.example.com".into(), no_print: true, ..Settings::default() };
+        save_settings_to(&path, &saved).unwrap();
+        assert!(!path.with_extension("json.part").exists(), "renamed into place");
+        let loaded = load_settings_from(&path);
+        assert_eq!(loaded.server, "nuvira.example.com");
+        assert!(loaded.no_print && !loaded.no_terminal);
+
+        // Cut short, as by a crash in the middle of a write in place.
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, &text[..text.len() / 2]).unwrap();
+        let loaded = load_settings_from(&path);
+        assert!(
+            loaded.no_privacy
+                && loaded.no_terminal
+                && loaded.no_tunnel
+                && loaded.no_print
+                && loaded.no_recording
+        );
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("json.bad")).unwrap(),
+            &text[..text.len() / 2]
+        );
+        // Saved at once: the next start does not fall back to the open defaults.
+        let again = load_settings_from(&path);
+        assert!(again.no_terminal && again.no_recording);
+        // Not text at all.
+        std::fs::write(&path, [0xffu8, 0xfe, 0x00]).unwrap();
+        assert!(load_settings_from(&path).no_tunnel);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// APP-6: the sign-in token is saved protected; a plain one of an older
+    /// version is read once and saved protected.
+    #[test]
+    fn token_saved_protected() {
+        let dir = test_dir("token");
+        let path = dir.join("app.json");
+        let token = "0123456789abcdef-token";
+        std::fs::write(&path, format!(r#"{{"server": "nuvira.example.com", "token": "{token}"}}"#)).unwrap();
+        let loaded = load_settings_from(&path);
+        assert_eq!(loaded.token.as_deref(), Some(token));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains(token) && !text.contains("\"token\""), "{text}");
+        assert!(text.contains("\"token_protected\""), "{text}");
+        assert_eq!(load_settings_from(&path).token.as_deref(), Some(token));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+
+        // A new sign-in, then a sign-out.
+        let mut settings = load_settings_from(&path);
+        settings.token = Some("another".into());
+        save_settings_to(&path, &settings).unwrap();
+        assert_eq!(load_settings_from(&path).token.as_deref(), Some("another"));
+        settings.token = None;
+        save_settings_to(&path, &settings).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("token"), "{text}");
+        assert_eq!(load_settings_from(&path).token, None);
+
+        // Protected for someone else (or garbage): signed out, nothing else lost.
+        std::fs::write(&path, r#"{"server": "s", "no_print": true, "token_protected": "dpapi:00"}"#).unwrap();
+        let loaded = load_settings_from(&path);
+        assert_eq!(loaded.token, None);
+        assert!(loaded.no_print && loaded.server == "s");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn server_from_the_file_name() {

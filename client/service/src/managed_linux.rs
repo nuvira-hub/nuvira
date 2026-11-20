@@ -81,6 +81,8 @@ struct SessionAgent {
     password_hash: String,
 }
 
+pub use crate::unix_shared::Deployed;
+
 #[derive(Debug, Default)]
 pub struct DeployOptions {
     pub server: Option<String>,
@@ -114,7 +116,7 @@ fn write_public(path: &Path, text: &str) -> Result<()> {
 /// kept from the installation in place (also the person's own one, whose ID the
 /// computer takes over), or made the first time: the ID, and a permanent password,
 /// returned to show it once. The policies win over everything.
-pub fn deploy(opts: DeployOptions) -> Result<Option<String>> {
+pub fn deploy(opts: DeployOptions) -> Result<Deployed> {
     signin::ensure_root()?;
     let given = |v: Option<String>| v.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     // Also after `deploy --remove`, which keeps the data folder.
@@ -131,7 +133,7 @@ pub fn deploy(opts: DeployOptions) -> Result<Option<String>> {
     let policy = crate::policy::read();
     let mut generated = None;
     let hash = match (given(opts.password_hash), given(opts.password)) {
-        (Some(hash), _) if nuvira_secret::is_hash(&hash) => Some(hash),
+        (Some(hash), _) if nuvira_secret::is_valid_hash(&hash) => Some(hash),
         (Some(_), _) => anyhow::bail!("--password-hash is not a hash made by `nuvira service password-hash`"),
         (None, Some(password)) if password.chars().count() < 8 => {
             anyhow::bail!("the password must have at least 8 characters")
@@ -213,7 +215,7 @@ pub fn deploy(opts: DeployOptions) -> Result<Option<String>> {
     // is signed in.
     signin::install_service(&program, &settings)?;
     info!(server = settings.server, program = %program.display(), "installed for the whole computer");
-    Ok(generated)
+    Ok(Deployed { generated, server: settings.server })
 }
 
 /// `nuvira service deploy --remove` (as root): the computer keeps its ID,
