@@ -12,7 +12,7 @@
 //! `version u8, seq u64, block u8, blocks u8, index u8, data u8, parity u8, frame_len u32, shard_len u16`
 //! (little endian). The frame is laid out shard after shard, the last one padded.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Context, Result, bail, ensure};
 use reed_solomon_erasure::galois_8::ReedSolomon;
@@ -39,47 +39,84 @@ const MIN_PARITY: usize = 2;
 /// of shards lost: 0.12 is 0.7% lost).
 const LOSSLESS_RATIO: f64 = 0.12;
 
-/// The datagrams carrying frame `seq`, each at most `max_datagram` bytes, with
-/// `ratio` parity shards per data shard (0.2 = 20% more).
-pub fn encode(seq: u64, frame: &[u8], max_datagram: usize, ratio: f64) -> Result<Vec<Vec<u8>>> {
-    ensure!(max_datagram > HEADER + 16, "datagrams too small: {max_datagram} bytes");
-    ensure!(frame.len() <= u32::MAX as usize, "frame too large");
-    let max_payload = (max_datagram - HEADER).min(u16::MAX as usize);
-    let shards = frame.len().div_ceil(max_payload).max(1);
-    let blocks = shards.div_ceil(MAX_DATA);
-    if blocks > 255 {
-        bail!("frame of {} bytes too large for the datagrams", frame.len());
+/// Reed-Solomon codecs kept by an [`Encoder`]. `ReedSolomon::new` builds and inverts
+/// the encoding matrix (about half of the time of a 500 kB frame, review NET-9); the
+/// sender's `(data, parity)` pairs repeat from frame to frame. With `data <= MAX_DATA`
+/// only the ratio makes them vary: past this many the cache starts again.
+const MAX_CODECS: usize = 64;
+
+/// [`encode`] with the Reed-Solomon codecs kept from one frame to the next: the
+/// agent's video sender owns one for its session. Same output as [`encode`].
+#[derive(Default)]
+pub struct Encoder {
+    codecs: HashMap<(usize, usize), ReedSolomon>,
+}
+
+impl Encoder {
+    fn codec(&mut self, data: usize, parity: usize) -> Result<&ReedSolomon> {
+        if self.codecs.len() >= MAX_CODECS && !self.codecs.contains_key(&(data, parity)) {
+            self.codecs.clear();
+        }
+        Ok(match self.codecs.entry((data, parity)) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => e.insert(ReedSolomon::new(data, parity)?),
+        })
     }
-    // Shards of equal size, as small as the frame allows (a small frame is not padded
-    // to a full datagram).
-    let shard_len = frame.len().div_ceil(shards).max(1);
-    let mut out = Vec::new();
-    let mut offset = 0;
-    for block in 0..blocks {
-        // Shards spread evenly over the blocks.
-        let data = shards / blocks + usize::from(block < shards % blocks);
-        let parity = parity_for(data, ratio);
-        let mut set = vec![vec![0u8; shard_len]; data + parity];
-        for shard in set.iter_mut().take(data) {
-            let end = (offset + shard_len).min(frame.len());
-            if offset < end {
-                shard[..end - offset].copy_from_slice(&frame[offset..end]);
+
+    /// The datagrams carrying frame `seq`, as [`encode`].
+    pub fn encode(
+        &mut self,
+        seq: u64,
+        frame: &[u8],
+        max_datagram: usize,
+        ratio: f64,
+    ) -> Result<Vec<Vec<u8>>> {
+        ensure!(max_datagram > HEADER + 16, "datagrams too small: {max_datagram} bytes");
+        ensure!(frame.len() <= u32::MAX as usize, "frame too large");
+        let max_payload = (max_datagram - HEADER).min(u16::MAX as usize);
+        let shards = frame.len().div_ceil(max_payload).max(1);
+        let blocks = shards.div_ceil(MAX_DATA);
+        if blocks > 255 {
+            bail!("frame of {} bytes too large for the datagrams", frame.len());
+        }
+        // Shards of equal size, as small as the frame allows (a small frame is not padded
+        // to a full datagram).
+        let shard_len = frame.len().div_ceil(shards).max(1);
+        let mut out = Vec::new();
+        let mut offset = 0;
+        for block in 0..blocks {
+            // Shards spread evenly over the blocks.
+            let data = shards / blocks + usize::from(block < shards % blocks);
+            let parity = parity_for(data, ratio);
+            let mut set = vec![vec![0u8; shard_len]; data + parity];
+            for shard in set.iter_mut().take(data) {
+                let end = (offset + shard_len).min(frame.len());
+                if offset < end {
+                    shard[..end - offset].copy_from_slice(&frame[offset..end]);
+                }
+                offset += shard_len;
             }
-            offset += shard_len;
+            self.codec(data, parity)?.encode(&mut set)?;
+            for (index, shard) in set.into_iter().enumerate() {
+                let mut packet = Vec::with_capacity(HEADER + shard_len);
+                packet.push(VERSION);
+                packet.extend_from_slice(&seq.to_le_bytes());
+                packet.extend_from_slice(&[block as u8, blocks as u8, index as u8, data as u8, parity as u8]);
+                packet.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+                packet.extend_from_slice(&(shard_len as u16).to_le_bytes());
+                packet.extend_from_slice(&shard);
+                out.push(packet);
+            }
         }
-        ReedSolomon::new(data, parity)?.encode(&mut set)?;
-        for (index, shard) in set.into_iter().enumerate() {
-            let mut packet = Vec::with_capacity(HEADER + shard_len);
-            packet.push(VERSION);
-            packet.extend_from_slice(&seq.to_le_bytes());
-            packet.extend_from_slice(&[block as u8, blocks as u8, index as u8, data as u8, parity as u8]);
-            packet.extend_from_slice(&(frame.len() as u32).to_le_bytes());
-            packet.extend_from_slice(&(shard_len as u16).to_le_bytes());
-            packet.extend_from_slice(&shard);
-            out.push(packet);
-        }
+        Ok(out)
     }
-    Ok(out)
+}
+
+/// The datagrams carrying frame `seq`, each at most `max_datagram` bytes, with
+/// `ratio` parity shards per data shard (0.2 = 20% more). Builds its codecs anew: a
+/// sender of many frames keeps an [`Encoder`] instead.
+pub fn encode(seq: u64, frame: &[u8], max_datagram: usize, ratio: f64) -> Result<Vec<Vec<u8>>> {
+    Encoder::default().encode(seq, frame, max_datagram, ratio)
 }
 
 struct Block {
@@ -245,6 +282,18 @@ mod tests {
 
     fn frame(len: usize) -> Vec<u8> {
         (0..len).map(|i| (i * 7 % 251) as u8).collect()
+    }
+
+    #[test]
+    fn a_kept_encoder_gives_the_same_datagrams() {
+        // Many ratios: more (data, parity) pairs than the cache keeps.
+        let mut enc = Encoder::default();
+        for i in 0..300u64 {
+            let f = frame(100 + (i as usize * 977) % 60_000);
+            let ratio = (i % 97) as f64 / 40.0;
+            assert_eq!(enc.encode(i + 1, &f, 1200, ratio).unwrap(), encode(i + 1, &f, 1200, ratio).unwrap());
+            assert!(enc.codecs.len() <= MAX_CODECS);
+        }
     }
 
     #[test]

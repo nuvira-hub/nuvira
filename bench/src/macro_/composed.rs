@@ -423,11 +423,12 @@ fn one_run(
                     let _ = tx.finish();
                 }
                 Mode::Datagrams => {
+                    let mut fec = nuvira_transport::fec::Encoder::default();
                     while let Some(f) = frames_rx.recv().await {
                         let max = conn.max_datagram_size().context("datagrams not available")?;
                         let bytes = prost::Message::encode_to_vec(&f);
                         let ratio = if f.keyframe { (FEC_RATIO * 2.0).max(FEC_MAX) } else { FEC_RATIO };
-                        for p in nuvira_transport::fec::encode(f.seq, &bytes, max, ratio)? {
+                        for p in fec.encode(f.seq, &bytes, max, ratio)? {
                             conn.send_datagram_wait(p.into()).await?;
                         }
                     }
