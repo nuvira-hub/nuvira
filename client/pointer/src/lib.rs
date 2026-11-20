@@ -518,7 +518,7 @@ mod tests {
         publish(None, Position { x: 6, y: 6, visible: true, serial: 5 });
         let mut piece = vec![0u8; (w * h * 4) as usize];
         snap.draw_region(&mut piece, x as i32, y as i32, w, h, w as usize * 4, false);
-        assert!(piece.chunks_exact(4).all(|p| p == [255, 255, 255, 0]), "{piece:?}");
+        assert!(piece.as_chunks::<4>().0.iter().all(|p| *p == [255, 255, 255, 0]), "{piece:?}");
         // Two separate readings miss it: the piece is left empty.
         let mut piece = vec![0u8; (w * h * 4) as usize];
         draw_region(&mut piece, x as i32, y as i32, w, h, w as usize * 4, false);
