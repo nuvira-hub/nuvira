@@ -290,6 +290,10 @@ fn encode_loop(
     // A DMA-BUF picture read into RAM, when the encoder does not import it.
     #[cfg(target_os = "linux")]
     let (mut dmabuf_ram, mut dmabuf_warned) = (Vec::new(), false);
+    // macOS: a picture read back from its pixel buffer, when the encoder does not
+    // take the buffer (OpenH264); kept so its memory is reused frame after frame.
+    #[cfg(target_os = "macos")]
+    let mut mac_read: Option<Captured> = None;
     let mut last_encoded = Instant::now() - Duration::from_secs(1);
     // Diagnosis: the first frame encoded, an encoder that takes nothing for long.
     let mut first_encoded = false;
@@ -430,20 +434,23 @@ fn encode_loop(
         let image = read.as_ref().unwrap_or(image);
         // macOS: a GPU buffer to VideoToolbox, else read into RAM.
         #[cfg(target_os = "macos")]
-        let mut read: Option<Captured> = None;
+        let mut read_back = false;
         #[cfg(target_os = "macos")]
         if let Some(buffer) = &image.pixel_buffer {
             imported = encoder.encode_pixel_buffer(buffer.as_ptr(), (image.width, image.height), size, force_key);
             if imported.is_none() {
                 let row = image.width as usize * 4;
-                let mut data = shared.spare.lock().expect("spare").pop().unwrap_or_default();
+                // The previous read's buffer (the capture's spares are empty with
+                // pixel buffers): no new allocation of a whole frame each time (VID-18).
+                let mut data = mac_read.take().map(|r| r.data).unwrap_or_default();
                 data.clear();
+                data.reserve(image.height as usize * row);
                 buffer.with_pixels(|bytes, stride| {
                     for y in 0..image.height as usize {
                         data.extend_from_slice(&bytes[y * stride..][..row]);
                     }
                 });
-                read = Some(Captured {
+                mac_read = Some(Captured {
                     width: image.width,
                     height: image.height,
                     stride: row,
@@ -451,10 +458,14 @@ fn encode_loop(
                     captured_us: image.captured_us,
                     pixel_buffer: None,
                 });
+                read_back = true;
             }
         }
         #[cfg(target_os = "macos")]
-        let image = read.as_ref().unwrap_or(image);
+        let image = match read_back {
+            true => mac_read.as_ref().unwrap_or(image),
+            false => image,
+        };
         let result = if let Some(result) = imported {
             result
         } else {
