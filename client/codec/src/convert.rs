@@ -1,5 +1,6 @@
 //! BGRA → YUV 4:2:0 conversion (BT.601, limited range) with integer arithmetic,
-//! split over several cores by rows of 2x2 blocks.
+//! split over several cores by rows of 2x2 blocks (a pool of parked threads, made at
+//! the first frame).
 //!
 //! Formula (ITU-R BT.601, 8-bit coefficients):
 //!   Y = ((66 R + 129 G + 25 B + 128) >> 8) + 16
@@ -57,6 +58,115 @@ fn threads() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8)
 }
 
+/// A small pool of parked threads for the conversion and scaling jobs (VID-7): the
+/// threads are made once, at the first frame, instead of `threads()` new OS threads
+/// (stack mapping, start, join) for every frame.
+mod pool {
+    use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+    use std::sync::{Arc, Condvar, Mutex, OnceLock, mpsc};
+
+    /// Jobs of one call still running, and whether one of them panicked.
+    #[derive(Default)]
+    struct Latch {
+        state: Mutex<(usize, bool)>,
+        done: Condvar,
+    }
+
+    impl Latch {
+        fn finished(&self, panicked: bool) {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.0 -= 1;
+            state.1 |= panicked;
+            if state.0 == 0 {
+                self.done.notify_all();
+            }
+        }
+    }
+
+    struct Task {
+        /// The caller's job: valid until the latch reaches 0 (`run` waits for it).
+        job: *const (dyn Fn(usize) + Sync + 'static),
+        index: usize,
+        latch: Arc<Latch>,
+    }
+
+    // SAFETY: the job is `Sync` and outlives the task (see `run`).
+    unsafe impl Send for Task {}
+
+    fn workers() -> &'static [mpsc::Sender<Task>] {
+        static WORKERS: OnceLock<Vec<mpsc::Sender<Task>>> = OnceLock::new();
+        WORKERS.get_or_init(|| {
+            (1..super::threads())
+                .filter_map(|n| {
+                    let (tx, rx) = mpsc::channel::<Task>();
+                    std::thread::Builder::new()
+                        .name(format!("nuvira-convert-{n}"))
+                        .spawn(move || {
+                            for task in rx {
+                                // SAFETY: `run` does not return before this task's `finished`.
+                                let job = unsafe { &*task.job };
+                                let panicked = catch_unwind(AssertUnwindSafe(|| job(task.index))).is_err();
+                                task.latch.finished(panicked);
+                            }
+                        })
+                        .ok()
+                        .map(|_| tx)
+                })
+                .collect()
+        })
+    }
+
+    /// Runs `job(0)` .. `job(count - 1)`, job 0 on the calling thread and the others on
+    /// the pool, and returns when all have ended (a job's panic is raised again here).
+    pub fn run(count: usize, job: &(dyn Fn(usize) + Sync)) {
+        let workers = workers();
+        if count <= 1 || workers.is_empty() {
+            (0..count).for_each(job);
+            return;
+        }
+        let latch = Arc::new(Latch::default());
+        // SAFETY: only the lifetime is erased; this function waits below until every
+        // task sent has run (the wait is reached even when job 0 panics).
+        let erased: *const (dyn Fn(usize) + Sync + 'static) = unsafe { std::mem::transmute(job) };
+        let mut inline = Vec::new();
+        for index in 1..count {
+            latch.state.lock().unwrap_or_else(|e| e.into_inner()).0 += 1;
+            let task = Task { job: erased, index, latch: latch.clone() };
+            if let Err(mpsc::SendError(task)) = workers[(index - 1) % workers.len()].send(task) {
+                // A worker that is gone: the job runs here.
+                task.latch.finished(false);
+                inline.push(index);
+            }
+        }
+        let mine = catch_unwind(AssertUnwindSafe(|| {
+            job(0);
+            inline.iter().for_each(|&i| job(i));
+        }));
+        let mut state = latch.state.lock().unwrap_or_else(|e| e.into_inner());
+        while state.0 > 0 {
+            state = latch.done.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
+        let panicked = state.1;
+        drop(state);
+        if let Err(payload) = mine {
+            resume_unwind(payload);
+        }
+        if panicked {
+            panic!("a conversion job panicked");
+        }
+    }
+
+    /// Runs `job` once for each item, as [`run`] does (one item per job).
+    pub fn each<T: Send>(items: impl Iterator<Item = T>, job: impl Fn(usize, T) + Sync) {
+        let items: Vec<Mutex<Option<T>>> = items.map(|t| Mutex::new(Some(t))).collect();
+        run(items.len(), &|i| {
+            if let Some(item) = items[i].lock().unwrap_or_else(|e| e.into_inner()).take() {
+                job(i, item);
+            }
+        });
+    }
+}
+
 /// Even sizes used by the conversion (at most one row/column is dropped).
 pub fn even_size(image: &BgraImage) -> (usize, usize) {
     ((image.width & !1) as usize, (image.height & !1) as usize)
@@ -73,26 +183,20 @@ pub fn bgra_to_i420(image: &BgraImage, y: &mut Vec<u8>, u: &mut Vec<u8>, v: &mut
         return;
     }
     let rows_per_job = ch.div_ceil(threads());
-    std::thread::scope(|s| {
-        let jobs = y
-            .chunks_mut(w * 2 * rows_per_job)
-            .zip(u.chunks_mut(cw * rows_per_job))
-            .zip(v.chunks_mut(cw * rows_per_job))
-            .enumerate();
-        for (job, ((y, u), v)) in jobs {
-            s.spawn(move || {
-                for (i, ((yy, uu), vv)) in
-                    y.chunks_mut(w * 2).zip(u.chunks_mut(cw)).zip(v.chunks_mut(cw)).enumerate()
-                {
-                    let row = (job * rows_per_job + i) * 2;
-                    let src0 = &image.data[row * image.stride..];
-                    let src1 = &image.data[(row + 1) * image.stride..];
-                    let (y0, y1) = yy.split_at_mut(w);
-                    convert_row_pair(src0, src1, y0, y1, w, |x, cu, cv| {
-                        uu[x] = cu;
-                        vv[x] = cv;
-                    });
-                }
+    let jobs = y
+        .chunks_mut(w * 2 * rows_per_job)
+        .zip(u.chunks_mut(cw * rows_per_job))
+        .zip(v.chunks_mut(cw * rows_per_job));
+    pool::each(jobs, |job, ((y, u), v)| {
+        for (i, ((yy, uu), vv)) in y.chunks_mut(w * 2).zip(u.chunks_mut(cw)).zip(v.chunks_mut(cw)).enumerate()
+        {
+            let row = (job * rows_per_job + i) * 2;
+            let src0 = &image.data[row * image.stride..];
+            let src1 = &image.data[(row + 1) * image.stride..];
+            let (y0, y1) = yy.split_at_mut(w);
+            convert_row_pair(src0, src1, y0, y1, w, |x, cu, cv| {
+                uu[x] = cu;
+                vv[x] = cv;
             });
         }
     });
@@ -108,23 +212,18 @@ pub fn bgra_to_nv12(image: &BgraImage, out: &mut [u8], pitch: usize, height_alig
     }
     let (luma_plane, chroma_plane) = out.split_at_mut(pitch * height_aligned);
     let rows_per_job = ch.div_ceil(threads());
-    std::thread::scope(|s| {
-        let jobs = luma_plane[..pitch * h]
-            .chunks_mut(pitch * 2 * rows_per_job)
-            .zip(chroma_plane[..pitch * ch].chunks_mut(pitch * rows_per_job))
-            .enumerate();
-        for (job, (y, uv)) in jobs {
-            s.spawn(move || {
-                for (i, (yy, uv)) in y.chunks_mut(pitch * 2).zip(uv.chunks_mut(pitch)).enumerate() {
-                    let row = (job * rows_per_job + i) * 2;
-                    let src0 = &image.data[row * image.stride..];
-                    let src1 = &image.data[(row + 1) * image.stride..];
-                    let (y0, y1) = yy.split_at_mut(pitch);
-                    convert_row_pair(src0, src1, y0, y1, w, |x, cu, cv| {
-                        uv[x * 2] = cu;
-                        uv[x * 2 + 1] = cv;
-                    });
-                }
+    let jobs = luma_plane[..pitch * h]
+        .chunks_mut(pitch * 2 * rows_per_job)
+        .zip(chroma_plane[..pitch * ch].chunks_mut(pitch * rows_per_job));
+    pool::each(jobs, |job, (y, uv)| {
+        for (i, (yy, uv)) in y.chunks_mut(pitch * 2).zip(uv.chunks_mut(pitch)).enumerate() {
+            let row = (job * rows_per_job + i) * 2;
+            let src0 = &image.data[row * image.stride..];
+            let src1 = &image.data[(row + 1) * image.stride..];
+            let (y0, y1) = yy.split_at_mut(pitch);
+            convert_row_pair(src0, src1, y0, y1, w, |x, cu, cv| {
+                uv[x * 2] = cu;
+                uv[x * 2 + 1] = cv;
             });
         }
     });
@@ -148,39 +247,35 @@ pub fn scale_bgra(image: &BgraImage, width: usize, height: usize, out: &mut Vec<
     // Output column x averages source columns cols[x]..cols[x + 1] (never empty: width <= sw).
     let cols: Vec<usize> = (0..=width).map(|x| x * sw / width).collect();
     let rows_per_job = height.div_ceil(threads());
-    std::thread::scope(|s| {
-        for (job, chunk) in out.chunks_mut(width * 4 * rows_per_job).enumerate() {
-            let cols = &cols;
-            s.spawn(move || {
-                let mut column_sums = vec![0u32; sw * 4];
-                for (i, row) in chunk.chunks_mut(width * 4).enumerate() {
-                    let y = job * rows_per_job + i;
-                    let (y0, y1) = (y * sh / height, (y + 1) * sh / height);
-                    let first = &image.data[y0 * image.stride..][..sw * 4];
-                    for (sum, &v) in column_sums.iter_mut().zip(first) {
-                        *sum = v as u32;
-                    }
-                    for sy in y0 + 1..y1 {
-                        let src = &image.data[sy * image.stride..][..sw * 4];
-                        for (sum, &v) in column_sums.iter_mut().zip(src) {
-                            *sum += v as u32;
-                        }
-                    }
-                    for (x, dst) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-                        let (c0, c1) = (cols[x], cols[x + 1]);
-                        let mut sum = [0u32; 4];
-                        for px in column_sums[c0 * 4..c1 * 4].as_chunks::<4>().0 {
-                            for c in 0..4 {
-                                sum[c] += px[c];
-                            }
-                        }
-                        let n = ((c1 - c0) * (y1 - y0)) as u32;
-                        for c in 0..4 {
-                            dst[c] = ((sum[c] + n / 2) / n) as u8;
-                        }
+    let cols = &cols;
+    pool::each(out.chunks_mut(width * 4 * rows_per_job), |job, chunk| {
+        let mut column_sums = vec![0u32; sw * 4];
+        for (i, row) in chunk.chunks_mut(width * 4).enumerate() {
+            let y = job * rows_per_job + i;
+            let (y0, y1) = (y * sh / height, (y + 1) * sh / height);
+            let first = &image.data[y0 * image.stride..][..sw * 4];
+            for (sum, &v) in column_sums.iter_mut().zip(first) {
+                *sum = v as u32;
+            }
+            for sy in y0 + 1..y1 {
+                let src = &image.data[sy * image.stride..][..sw * 4];
+                for (sum, &v) in column_sums.iter_mut().zip(src) {
+                    *sum += v as u32;
+                }
+            }
+            for (x, dst) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let (c0, c1) = (cols[x], cols[x + 1]);
+                let mut sum = [0u32; 4];
+                for px in column_sums[c0 * 4..c1 * 4].as_chunks::<4>().0 {
+                    for c in 0..4 {
+                        sum[c] += px[c];
                     }
                 }
-            });
+                let n = ((c1 - c0) * (y1 - y0)) as u32;
+                for c in 0..4 {
+                    dst[c] = ((sum[c] + n / 2) / n) as u8;
+                }
+            }
         }
     });
 }
@@ -282,6 +377,42 @@ mod tests {
 
     fn solid(w: u32, h: u32, bgra: [u8; 4]) -> Vec<u8> {
         bgra.repeat((w * h) as usize)
+    }
+
+    #[test]
+    fn pool_runs_every_job_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for count in [0, 1, 2, threads(), threads() * 3 + 1] {
+            let hits: Vec<AtomicUsize> = (0..count).map(|_| AtomicUsize::new(0)).collect();
+            pool::run(count, &|i| {
+                hits[i].fetch_add(1, Ordering::Relaxed);
+            });
+            assert!(hits.iter().all(|h| h.load(Ordering::Relaxed) == 1), "{count} jobs");
+        }
+        // Several callers at once (two sessions, all screens) share the pool.
+        std::thread::scope(|s| {
+            for t in 0..4 {
+                s.spawn(move || {
+                    for n in 0..200 {
+                        let mut out = vec![0usize; 16];
+                        pool::each(out.chunks_mut(2), |job, c| c.fill(job + t + n));
+                        let want: Vec<usize> = (0..16).map(|i| i / 2 + t + n).collect();
+                        assert_eq!(out, want);
+                    }
+                });
+            }
+        });
+    }
+
+    #[test]
+    fn pool_raises_a_job_panic_and_keeps_working() {
+        for bad in [0, 1] {
+            let r = std::panic::catch_unwind(|| pool::run(threads().max(2), &|i| assert_ne!(i, bad)));
+            assert!(r.is_err(), "job {bad} panicked");
+        }
+        let mut out = vec![0u8; 64];
+        pool::each(out.chunks_mut(8), |job, c| c.fill(job as u8));
+        assert_eq!(out[63], 7);
     }
 
     #[test]
