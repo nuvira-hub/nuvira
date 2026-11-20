@@ -12,8 +12,10 @@
 //!   "Lock Screen" does.
 
 use anyhow::Result;
+#[cfg(target_os = "linux")]
+use anyhow::Context;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use anyhow::{Context, bail};
+use anyhow::bail;
 
 /// Whether this agent can lock the computer (a person signed in to lock).
 pub fn available() -> bool {
