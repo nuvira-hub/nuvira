@@ -291,9 +291,14 @@ pub async fn serve(
 /// rejected right away, since there is nobody to ask.
 fn without_app(event: &AgentEvent, snapshot: &mut Snapshot, commands: &mpsc::UnboundedSender<AgentCommand>) {
     snapshot.apply(event);
-    if matches!(event, AgentEvent::Incoming { .. }) {
-        info!("no app open to confirm the request: rejected");
-        snapshot.reject_pending(commands);
+    match event {
+        AgentEvent::Incoming { .. } => {
+            info!("no app open to confirm the request: rejected");
+            snapshot.reject_pending(commands);
+        }
+        // Not kept for an app that connects later (AGT-14): at least the log says so.
+        AgentEvent::Chat { .. } => info!("chat message from the viewer: no app open to show it"),
+        _ => {}
     }
 }
 

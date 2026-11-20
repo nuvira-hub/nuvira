@@ -25,6 +25,7 @@ Text chat between the person in control and the person using the PC.
 - Viewer: speech-bubble button in the bar; the panel (`chat.html`) is a second WebView on the right, under the bar. It opens by itself when a message arrives. While it is open the keyboard is used for typing; a click on the image gives it back to the session.
 - On the controlled PC the chat is in the NuviraHub app, in the chat section next to the session strip: an incoming message brings the app to the front with the cursor in the reply field. It works with the app's agent and with the service's (`chat` events and `chat` command on the local channel, see [14-phase3-service.md](14-phase3-service.md)).
 - The chat stays visible in the app after the session closes, until the next session. It is not saved.
+- With no app open on the controlled PC (the service's agent alone, e.g. nobody signed in or the app closed) a message from the viewer reaches nobody: it is not kept for an app that opens later, and the viewer is not told. The agent logs `chat message from the viewer: no app open to show it`. Without a local channel at all (LAN mode, switch sides) the agent logs the text itself.
 - The command-line agent, without the app, writes received messages to the log.
 
 Test of 2026-10-27: a message from the NUC arrived in the app on PC-LABORATORIO (service), the reply from there arrived in the viewer's panel.
