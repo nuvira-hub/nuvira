@@ -83,6 +83,10 @@ pub struct Clipboard {
     /// Last state seen: sequence number (see `Sequence`), text and image (hash of the pixels).
     seq: Sequence,
     last_seq: u32,
+    /// The last read after a change found nothing readable (the owner was slow or
+    /// busy, or the content is of another kind): read again at the next check,
+    /// also without a new change.
+    unread: bool,
     last_text: Option<String>,
     last_image: Option<u64>,
     last_files: Option<Vec<PathBuf>>,
@@ -109,6 +113,7 @@ impl Clipboard {
         Ok(Self {
             inner,
             last_seq: seq.now(),
+            unread: false,
             seq,
             last_text,
             last_image,
@@ -130,9 +135,10 @@ impl Clipboard {
         self.last_seq = seq;
         // Nothing copied since the last check: no read (a 1080p image costs
         // ~18 ms of X transfer, PNG decode and hash at every check: VWR-6).
-        if !copied_again && self.seq.tells_every_copy() {
+        if !copied_again && !self.unread && self.seq.tells_every_copy() {
             return None;
         }
+        self.unread = false;
         if copied_again {
             debug!(seq, "clipboard changed");
         }
@@ -175,7 +181,17 @@ impl Clipboard {
             }
             return Some(Content::Text(text));
         }
-        let Ok(image) = self.inner.get_image() else { return self.read_by_fallback() };
+        let image = match self.inner.get_image() {
+            Ok(image) => image,
+            Err(e) => {
+                debug!("clipboard image not read: {e}");
+                let content = self.read_by_fallback();
+                // Windows keeps its rule: one read per sequence number (the
+                // fallback asks a helper process).
+                self.unread = content.is_none() && !cfg!(windows);
+                return content;
+            }
+        };
         let hash = pixels_hash(&image.bytes);
         if self.last_image == Some(hash) {
             return None;
