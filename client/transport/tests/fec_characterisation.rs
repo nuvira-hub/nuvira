@@ -115,11 +115,10 @@ fn malformed_shards_are_errors() {
 }
 
 #[test]
-fn characterises_bug_seq_zero_is_never_delivered() {
-    // KNOWN BUG (Phase 2): `Receiver::last` starts at 0 and shards with
-    // `seq <= last` are late, so a frame with seq 0 is never returned. The agent
-    // numbers frames from 1, so this does not show today.
-    // Expected after fix: either documented as reserved, or frame 0 delivered.
+fn seq_zero_is_reserved_and_never_delivered() {
+    // Review lot 18 (NET-6, K3): seq 0 is reserved, documented in `fec.rs`: the
+    // receiver starts as if frame 0 had been delivered, so a frame with seq 0 is late.
+    // The agent numbers frames from 1.
     let mut rx = Receiver::default();
     let got = push_all(&mut rx, &encode(0, &frame(100, 0), 1200, 0.2).unwrap());
     assert!(got.is_empty());

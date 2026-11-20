@@ -11,6 +11,10 @@
 //! Shard: [`HEADER`] bytes, then `shard_len` bytes of data or parity.
 //! `version u8, seq u64, block u8, blocks u8, index u8, data u8, parity u8, frame_len u32, shard_len u16`
 //! (little endian). The frame is laid out shard after shard, the last one padded.
+//!
+//! Frames are numbered from 1: seq 0 is reserved, the [`Receiver`] starts as if frame
+//! 0 had been delivered and ignores it as late. A peer may send any other seq, up to
+//! `u64::MAX`, and any header field: the receiver checks them all.
 
 use std::collections::{BTreeMap, HashMap};
 
