@@ -504,7 +504,7 @@ const UPDATE_CACHE: &str = "/Library/Caches/NuviraHub/update";
 /// the installation's server, never during someone's session.
 fn spawn_updates(settings: &Settings) {
     let server = nuvira_transport::signal::server_or_public(&settings.server).to_string();
-    let base = nuvira_update::base_url(&server, None, nuvira_update::DEFAULT_PORT);
+    let base = nuvira_update::update_base(&server, None);
     // The agent of the person in front keeps `busy` in their data folder during a session.
     let busy = Box::new(|| {
         std::fs::read_dir("/Users").into_iter().flatten().flatten().any(|home| {
@@ -521,6 +521,14 @@ fn spawn_updates(settings: &Settings) {
     let cache = PathBuf::from(UPDATE_CACHE);
     if let Some(parent) = cache.parent() {
         let _ = std::fs::create_dir_all(parent);
+        // /Library/Caches is writable by the admin group: a folder made there first
+        // by someone else is taken back, so that nobody but root can change a
+        // checked download before it is installed (APP-8).
+        for dir in [parent, cache.as_path()] {
+            if dir.exists() {
+                let _ = std::os::unix::fs::chown(dir, Some(0), Some(0));
+            }
+        }
         let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
     }
     nuvira_update::unix::spawn_root_bundle_updates(base, busy, cache, restarted);

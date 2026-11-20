@@ -6,7 +6,9 @@
 //! ```
 //!
 //! `sign` writes `<out>/windows-x64.json` and `<out>/windows-x64/nuvira-<version>.exe`:
-//! the contents of the `updates` folder in the server's data.
+//! the contents of the `updates` folder in the server's data. The manifest carries
+//! the signing time, signed too (`published`): the apps say that updates look held
+//! back when the newest version a server offers is older than 90 days.
 //!
 //! The private key stays on the machine that builds the releases, outside the
 //! repository: whoever has it can get any program installed on every NuviraHub
@@ -49,6 +51,9 @@ enum Cmd {
         /// Output folder (the server's `updates`).
         #[arg(long, value_name = "DIR")]
         out: PathBuf,
+        /// Publication time to sign, seconds since 1970; default: now.
+        #[arg(long, value_name = "SECONDS")]
+        published: Option<u64>,
     },
 }
 
@@ -83,7 +88,7 @@ fn main() -> Result<()> {
                 println!("    {},", row.iter().map(|b| format!("0x{b:02x}")).collect::<Vec<_>>().join(", "));
             }
         }
-        Cmd::Sign { program, version, platform, key, out } => {
+        Cmd::Sign { program, version, platform, key, out, published } => {
             let path = key.unwrap_or_else(default_key);
             let pkcs8 = std::fs::read(&path)
                 .with_context(|| format!("reading the release key {}", path.display()))?;
@@ -96,13 +101,14 @@ fn main() -> Result<()> {
             }
             let version = version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
             let data = std::fs::read(&program).with_context(|| format!("reading {}", program.display()))?;
-            let manifest = Manifest::sign(&key, &version, &platform, &data);
+            let published = published.unwrap_or_else(nuvira_update::now);
+            let manifest = Manifest::sign_published(&key, &version, &platform, &data, published);
             let target = out.join(manifest.program_path());
             std::fs::create_dir_all(target.parent().context("output folder")?)?;
             std::fs::write(&target, &data)?;
             let manifest_path = out.join(format!("{platform}.json"));
             std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
-            println!("{} {version} ({} bytes)", platform, data.len());
+            println!("{} {version} ({} bytes, published {published})", platform, data.len());
             println!("  {}", manifest_path.display());
             println!("  {}", target.display());
         }

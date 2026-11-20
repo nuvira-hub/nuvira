@@ -102,11 +102,14 @@ pub fn run() -> Result<()> {
         })
         .unwrap_or_default();
     let server = nuvira_transport::signal::server_or_public(&server).to_string();
-    let base = nuvira_update::base_url(&server, None, nuvira_update::DEFAULT_PORT);
+    let base = nuvira_update::update_base(&server, None);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    let Some(manifest) =
-        rt.block_on(nuvira_update::check_channel(&base, &nuvira_update::PUBLIC_KEYS, kind.channel()))?
-    else {
+    let (manifest, stale) =
+        rt.block_on(nuvira_update::check_offer(&base, &nuvira_update::PUBLIC_KEYS, kind.channel()))?;
+    if let Some(stale) = &stale {
+        println!("{}", stale.describe(&base));
+    }
+    let Some(manifest) = manifest else {
         println!("up to date ({}, server {server})", nuvira_update::CURRENT);
         return Ok(());
     };
@@ -125,8 +128,8 @@ pub fn run() -> Result<()> {
             let _ = std::fs::remove_file(entry.path());
         }
     }
-    if !file.exists() {
-        rt.block_on(nuvira_update::download(&base, &manifest, &file))?;
+    // A file already there is installed only if it is this version's package (APP-8).
+    if rt.block_on(nuvira_update::download_unless_cached(&base, &manifest, &file))? {
         println!("downloaded and checked");
     }
     if let Some(home) = homes.iter().find(|h| user_flag(&h.join(".config/nuvira/busy"))) {

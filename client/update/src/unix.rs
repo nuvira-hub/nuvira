@@ -394,7 +394,7 @@ pub fn spawn_agent_updates(base: String, busy: PathBuf, cache: PathBuf) {
                 continue;
             }
             next = Instant::now()
-                + match check_and_apply(&base, &install, channel, &|| busy.exists(), &cache) {
+                + match check_and_apply(&base, &install, channel, &|| busy.exists(), &cache, busy.parent()) {
                     Ok(wait) => wait,
                     Err(e) => {
                         warn!("update check failed: {e:#}");
@@ -414,16 +414,22 @@ fn check_and_apply(
     channel: &str,
     busy: &dyn Fn() -> bool,
     cache: &Path,
+    stale_dir: Option<&Path>,
 ) -> Result<Duration> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    let Some(manifest) = rt.block_on(crate::check_channel(base, &crate::PUBLIC_KEYS, channel))? else {
+    let (manifest, stale) = rt.block_on(crate::check_offer(base, &crate::PUBLIC_KEYS, channel))?;
+    // The agent tells the app (crate::STALE_FILE).
+    if let Some(dir) = stale_dir {
+        crate::record_stale(dir, stale.as_ref());
+    }
+    let Some(manifest) = manifest else {
         return Ok(INTERVAL);
     };
     info!("version {} available (this is {})", manifest.version, crate::CURRENT);
     std::fs::create_dir_all(cache)?;
     let file = cache.join(format!("nuvira-{}{}", manifest.version, crate::extension(channel)));
-    if !file.exists() {
-        rt.block_on(crate::download(base, &manifest, &file))?;
+    // A file already there is installed only if it is this version's program (APP-8).
+    if rt.block_on(crate::download_unless_cached(base, &manifest, &file))? {
         info!("version {} downloaded and checked", manifest.version);
     }
     // Not in the middle of someone's work.
@@ -462,7 +468,7 @@ pub fn spawn_root_bundle_updates(
         let replaced = Replaced::watch(&exe);
         std::thread::sleep(FIRST_CHECK);
         loop {
-            let wait = match check_and_apply(&base, &install, crate::platform(), &*busy, &cache) {
+            let wait = match check_and_apply(&base, &install, crate::platform(), &*busy, &cache, None) {
                 Ok(wait) => wait.min(ROOT_INTERVAL),
                 Err(e) => {
                     warn!("update check failed: {e:#}");

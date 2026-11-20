@@ -49,6 +49,19 @@ pub fn watch_update_blocked(path: std::path::PathBuf) {
     let _ = UPDATE_BLOCKED.set(path);
 }
 
+/// The agent's (on Windows the service's) [`nuvira_update::STALE_FILE`]: updates
+/// look held back.
+static UPDATE_STALE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Tells the apps when updates look held back (see [`UPDATE_STALE`]).
+pub fn watch_update_stale(path: std::path::PathBuf) {
+    let _ = UPDATE_STALE.set(path);
+}
+
+fn update_stale() -> Option<nuvira_update::Stale> {
+    nuvira_update::read_stale(UPDATE_STALE.get()?)
+}
+
 /// The version the service cannot install, if any.
 fn update_blocked() -> Option<String> {
     let text = std::fs::read_to_string(UPDATE_BLOCKED.get()?).ok()?;
@@ -72,6 +85,10 @@ pub enum ToApp {
         /// anti-ransomware program on the PC stops it. Sent again when it changes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         update_blocked: Option<String>,
+        /// Updates look held back: the newest version the server offers is old
+        /// or has no signed time (since 0.29). Sent again when it changes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        update_stale: Option<nuvira_update::Stale>,
     },
     Event {
         event: AgentEvent,
@@ -289,13 +306,15 @@ async fn serve_app(
 ) -> Result<()> {
     let (read, mut write) = tokio::io::split(pipe);
     let mut lines = BufReader::new(read).lines();
-    let info = |update_blocked| ToApp::Info {
+    let info = |update_blocked, update_stale| ToApp::Info {
         server: server.to_string(),
         version: env!("CARGO_PKG_VERSION").into(),
         update_blocked,
+        update_stale,
     };
     let mut blocked = update_blocked();
-    send_line(&mut write, &info(blocked.clone())).await?;
+    let mut stale = update_stale();
+    send_line(&mut write, &info(blocked.clone(), stale.clone())).await?;
     let mut blocked_check = tokio::time::interval(UPDATE_BLOCKED_EVERY);
     blocked_check.tick().await;
     for event in snapshot.events() {
@@ -317,11 +336,11 @@ async fn serve_app(
                 snapshot.apply(&event);
                 send_line(&mut write, &ToApp::Event { event }).await?;
             }
-            _ = blocked_check.tick(), if UPDATE_BLOCKED.get().is_some() => {
-                let now = update_blocked();
-                if now != blocked {
-                    blocked = now;
-                    send_line(&mut write, &info(blocked.clone())).await?;
+            _ = blocked_check.tick(), if UPDATE_BLOCKED.get().is_some() || UPDATE_STALE.get().is_some() => {
+                let (now_blocked, now_stale) = (update_blocked(), update_stale());
+                if now_blocked != blocked || now_stale != stale {
+                    (blocked, stale) = (now_blocked, now_stale);
+                    send_line(&mut write, &info(blocked.clone(), stale.clone())).await?;
                 }
             }
         }
@@ -598,6 +617,17 @@ pub fn connect() -> Result<(mpsc::UnboundedReceiver<ToApp>, mpsc::UnboundedSende
 mod tests {
     use super::*;
 
+    /// The update crate's public host is the public server (APP-1: its updates
+    /// go over HTTPS).
+    #[test]
+    fn public_update_host_is_the_public_server() {
+        assert_eq!(nuvira_update::PUBLIC_HOST, nuvira_transport::signal::PUBLIC_SERVER);
+        assert_eq!(
+            nuvira_update::update_base(nuvira_transport::signal::server_or_public(""), None),
+            nuvira_update::PUBLIC_UPDATES
+        );
+    }
+
     #[test]
     fn messages_round_trip() {
         let msg =
@@ -612,9 +642,20 @@ mod tests {
         // nothing to say (older apps read it as before).
         let old: ToApp = serde_json::from_str(r#"{"type":"info","server":"s","version":"0.22.2"}"#).unwrap();
         assert!(matches!(old, ToApp::Info { update_blocked: None, .. }));
-        let none = serde_json::to_string(&ToApp::Info { server: "s".into(), version: "1".into(), update_blocked: None }).unwrap();
+        let none = serde_json::to_string(&ToApp::Info {
+            server: "s".into(),
+            version: "1".into(),
+            update_blocked: None,
+            update_stale: None,
+        })
+        .unwrap();
         assert!(!none.contains("update_blocked"));
-        let some = ToApp::Info { server: "s".into(), version: "1".into(), update_blocked: Some("0.22.4".into()) };
+        let some = ToApp::Info {
+            server: "s".into(),
+            version: "1".into(),
+            update_blocked: Some("0.22.4".into()),
+            update_stale: None,
+        };
         let back: ToApp = serde_json::from_str(&serde_json::to_string(&some).unwrap()).unwrap();
         assert!(matches!(back, ToApp::Info { update_blocked: Some(v), .. } if v == "0.22.4"));
         let command: AgentCommand =

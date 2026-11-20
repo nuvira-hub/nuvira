@@ -133,6 +133,9 @@ struct UiState {
     installed: Option<String>,
     /// A version the service keeps failing to install (something on the PC stops it).
     update_blocked: Option<String>,
+    /// Updates look held back: the newest version the server offers is old or has
+    /// no signed time (from the app's own check, or from the service's agent).
+    update_stale: Option<nuvira_update::Stale>,
     /// The service is installed but stopped: this PC is not reachable.
     service_stopped: bool,
     /// Version of the stopped service's program, when older than this app (starting
@@ -757,7 +760,7 @@ fn start_service_link(app: &AppHandle) {
                         match msg {
                             // With the service the server in the settings is the service's
                             // (empty = public), also for outgoing connections.
-                            ToApp::Info { server, version, update_blocked } => {
+                            ToApp::Info { server, version, update_blocked, update_stale } => {
                                 *state.service_server.lock().expect("service server") = Some(server.clone());
                                 keep_service_server(&server);
                                 state.update(&app, |ui| {
@@ -765,6 +768,7 @@ fn start_service_link(app: &AppHandle) {
                                     ui.installed = nuvira_update::newer(&version, nuvira_update::CURRENT)
                                         .then_some(version);
                                     ui.update_blocked = update_blocked;
+                                    ui.update_stale = update_stale;
                                 })
                             }
                             ToApp::Event { event } => on_agent_event(&app, event),
@@ -2225,11 +2229,20 @@ fn start_update_checks(app: &AppHandle) {
             let settings = load_settings();
             if !installed {
                 let server = nuvira_transport::signal::server_or_public(&settings.server);
-                let base = nuvira_update::base_url(server, None, nuvira_update::DEFAULT_PORT);
-                match nuvira_update::check(&base, &nuvira_update::PUBLIC_KEYS).await {
-                    Ok(found) => {
+                let base = nuvira_update::update_base(server, None);
+                match nuvira_update::check_offer(
+                    &base,
+                    &nuvira_update::PUBLIC_KEYS,
+                    nuvira_update::platform(),
+                )
+                .await
+                {
+                    Ok((found, stale)) => {
                         let version = found.map(|m| m.version);
-                        app.state::<NuviraApp>().update(&app, |ui| ui.update = version);
+                        app.state::<NuviraApp>().update(&app, |ui| {
+                            ui.update = version;
+                            ui.update_stale = stale;
+                        });
                     }
                     Err(e) => tracing::debug!("update check: {e:#}"),
                 }
@@ -2247,14 +2260,21 @@ fn start_update_checks(app: &AppHandle) {
 async fn apply_update(app: AppHandle) -> Result<(), String> {
     let settings = load_settings();
     let server = nuvira_transport::signal::server_or_public(&settings.server);
-    let base = nuvira_update::base_url(server, None, nuvira_update::DEFAULT_PORT);
+    let base = nuvira_update::update_base(server, None);
     let error = |e: anyhow::Error| tf("update.failed", &[("e", &format!("{e:#}"))]);
     let manifest = nuvira_update::check(&base, &nuvira_update::PUBLIC_KEYS)
         .await
         .map_err(error)?
         .ok_or_else(|| t("update.none"))?;
-    let download = std::env::temp_dir()
-        .join(format!("nuvira-{}{}", manifest.version, nuvira_update::extension(&manifest.platform)));
+    // Linux and macOS: in this user's data folder, not the shared /tmp of Linux,
+    // where another user can take the names first (APP-9).
+    #[cfg(unix)]
+    let folder = nuvira_transport::identity::data_dir().join("update");
+    #[cfg(not(unix))]
+    let folder = std::env::temp_dir();
+    std::fs::create_dir_all(&folder).map_err(|e| error(e.into()))?;
+    let download =
+        folder.join(format!("nuvira-{}{}", manifest.version, nuvira_update::extension(&manifest.platform)));
     nuvira_update::download(&base, &manifest, &download).await.map_err(error)?;
 
     // Linux: the program; macOS: the whole app.
