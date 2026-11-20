@@ -8,7 +8,6 @@
 //! drawing (`DrawIconEx`, inverting pointers included), always: this capture does
 //! not give it apart to the viewers.
 
-use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
@@ -30,7 +29,8 @@ pub struct GdiCapturer {
     bitmap: HBITMAP,
     old: HGDIOBJ,
     pixels: *mut u8,
-    last_hash: u64,
+    /// `frame.data` holds a copy of the screen (the first copy is always reported).
+    copied: bool,
     next: Instant,
 }
 
@@ -82,7 +82,7 @@ impl GdiCapturer {
             bitmap,
             old,
             pixels: pixels.cast(),
-            last_hash: 0,
+            copied: false,
             next: Instant::now(),
         })
     }
@@ -112,13 +112,10 @@ impl GdiCapturer {
         self.draw_pointer();
         // SAFETY: the DIB section holds w*h*4 bytes, rows from the top.
         let src = unsafe { std::slice::from_raw_parts(self.pixels, self.frame.data.len()) };
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        src.hash(&mut hasher);
-        let hash = hasher.finish();
-        if hash == self.last_hash {
+        if self.copied && same_colours(src, &self.frame.data) {
             return Ok(false);
         }
-        self.last_hash = hash;
+        self.copied = true;
         self.frame.data.copy_from_slice(src);
         // GDI leaves the alpha channel at 0: opaque, as DXGI gives it.
         for alpha in self.frame.data.iter_mut().skip(3).step_by(4) {
@@ -127,6 +124,27 @@ impl GdiCapturer {
         self.frame.captured_us = nuvira_proto::now_us();
         Ok(true)
     }
+}
+
+/// Whether the new DIB shows the same picture as the last frame: compared in place, alpha
+/// left out (0 in the DIB, 255 in the frame), 8 bytes at a time. Replaces a SipHash of the
+/// whole DIB at every poll (VID-13): a compare stops at the first difference and costs
+/// less than the hash even on a still screen.
+fn same_colours(dib: &[u8], frame: &[u8]) -> bool {
+    const COLOURS: u64 = 0x00ff_ffff_00ff_ffff;
+    if dib.len() != frame.len() {
+        return false;
+    }
+    let (dib_words, dib_rest) = dib.as_chunks::<8>();
+    let (frame_words, frame_rest) = frame.as_chunks::<8>();
+    dib_words
+        .iter()
+        .zip(frame_words)
+        .all(|(a, b)| (u64::from_le_bytes(*a) ^ u64::from_le_bytes(*b)) & COLOURS == 0)
+        && dib_rest
+            .chunks(4)
+            .zip(frame_rest.chunks(4))
+            .all(|(a, b)| a[..a.len().min(3)] == b[..b.len().min(3)])
 }
 
 impl GdiCapturer {
@@ -216,4 +234,23 @@ pub fn displays() -> Vec<Display> {
     let mut list: Vec<Display> = Vec::new();
     let _ = unsafe { EnumDisplayMonitors(None, None, Some(add), LPARAM(&mut list as *mut _ as isize)) };
     list
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_colours;
+
+    #[test]
+    fn same_colours_ignores_only_alpha() {
+        // 3 pixels (one in the tail after the 8-byte words), DIB alpha 0, frame alpha 255.
+        let dib = [1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9, 0];
+        let frame = [1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255];
+        assert!(same_colours(&dib, &frame));
+        for i in [0, 1, 2, 4, 5, 6, 8, 9, 10] {
+            let mut other = frame;
+            other[i] ^= 1;
+            assert!(!same_colours(&dib, &other), "byte {i}");
+        }
+        assert!(!same_colours(&dib, &frame[..8]));
+    }
 }
