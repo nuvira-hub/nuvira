@@ -35,6 +35,8 @@ pub struct Position {
     pub serial: u32,
 }
 
+// Process-wide state: the agent runs one capture pipeline per process (a new
+// screen or session drops the old pipeline first), so one pointer is enough.
 static WANTED: AtomicBool = AtomicBool::new(false);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static COMPOSITE: AtomicBool = AtomicBool::new(false);
@@ -110,8 +112,45 @@ pub fn draw(data: &mut [u8], width: u32, height: u32, stride: usize, rgb: bool) 
 /// The rectangle the pointer covers in the picture (left, top, width, height),
 /// clipped to `width`x`height`; `None` when it is hidden or outside.
 pub fn bounds(width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
+    snapshot().bounds(width, height)
+}
+
+/// One reading of the pointer, for a frame that both places it and draws it: a
+/// pointer published between two separate readings would be drawn partly
+/// outside the piece read back (clipped for one frame).
+pub struct Snapshot {
+    shape: Option<Shape>,
+    pos: Position,
+}
+
+/// The latest shape and position, read once.
+pub fn snapshot() -> Snapshot {
     let (shape, pos) = latest();
-    bounds_of(shape.as_ref()?, pos, width, height)
+    Snapshot { shape, pos }
+}
+
+impl Snapshot {
+    /// Like [`bounds`], of this reading.
+    pub fn bounds(&self, width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
+        bounds_of(self.shape.as_ref()?, self.pos, width, height)
+    }
+
+    /// Like [`draw_region`], of this reading.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_region(
+        &self,
+        data: &mut [u8],
+        x0: i32,
+        y0: i32,
+        width: u32,
+        height: u32,
+        stride: usize,
+        rgb: bool,
+    ) {
+        if let Some(shape) = &self.shape {
+            draw_shape(shape, self.pos, data, x0, y0, width, height, stride, rgb);
+        }
+    }
 }
 
 fn bounds_of(shape: &Shape, pos: Position, width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
@@ -130,10 +169,7 @@ fn bounds_of(shape: &Shape, pos: Position, width: u32, height: u32) -> Option<(u
 /// pixels whose top-left is at (`x0`, `y0`) of the picture (Windows: the piece of a
 /// GPU texture under the pointer, read back, drawn on and written again).
 pub fn draw_region(data: &mut [u8], x0: i32, y0: i32, width: u32, height: u32, stride: usize, rgb: bool) {
-    let (shape, pos) = latest();
-    if let Some(shape) = shape {
-        draw_shape(&shape, pos, data, x0, y0, width, height, stride, rgb);
-    }
+    snapshot().draw_region(data, x0, y0, width, height, stride, rgb);
 }
 
 /// The pointer drawn into a picture kept from one frame to the next, with the
@@ -465,6 +501,28 @@ mod tests {
         assert_eq!(&piece[0..4], &[0, 0, 0, 0]);
         publish(None, Position { x: 9, y: 9, visible: true, serial: 9 });
         assert_eq!(bounds(4, 4), None);
+    }
+
+    /// One snapshot places and draws the same pointer, even when another one is
+    /// published in between (VID-17).
+    #[test]
+    fn one_snapshot_bounds_and_draws() {
+        let _one = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+        let shape =
+            Shape { serial: 5, width: 2, height: 2, hot_x: 0, hot_y: 0, bgra: Arc::new(vec![255; 16]) };
+        publish(Some(shape), Position { x: 1, y: 1, visible: true, serial: 5 });
+        let snap = snapshot();
+        let (x, y, w, h) = snap.bounds(8, 8).expect("visible");
+        assert_eq!((x, y, w, h), (1, 1, 2, 2));
+        // The pointer moves away before the piece is drawn on.
+        publish(None, Position { x: 6, y: 6, visible: true, serial: 5 });
+        let mut piece = vec![0u8; (w * h * 4) as usize];
+        snap.draw_region(&mut piece, x as i32, y as i32, w, h, w as usize * 4, false);
+        assert!(piece.chunks_exact(4).all(|p| p == [255, 255, 255, 0]), "{piece:?}");
+        // Two separate readings miss it: the piece is left empty.
+        let mut piece = vec![0u8; (w * h * 4) as usize];
+        draw_region(&mut piece, x as i32, y as i32, w, h, w as usize * 4, false);
+        assert!(piece.iter().all(|&b| b == 0));
     }
 
     #[test]

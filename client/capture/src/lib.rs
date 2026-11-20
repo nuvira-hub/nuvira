@@ -37,7 +37,7 @@ pub use synthetic::SyntheticCapturer;
 
 /// All the screens at once ([`AllCapturer`]): where its picture starts in the
 /// virtual desktop. Its screens publish the pointer in its coordinates and leave the
-/// drawing to it.
+/// drawing to it. Process-wide: the agent runs one capture pipeline at a time.
 static NESTED: std::sync::Mutex<Option<(i32, i32)>> = std::sync::Mutex::new(None);
 
 /// Set by [`AllCapturer`] while it lives.
