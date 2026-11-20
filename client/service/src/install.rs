@@ -185,7 +185,7 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     std::fs::create_dir_all(&program_dir).with_context(|| format!("creating {}", program_dir.display()))?;
     let program = program_dir.join(config::PROGRAM_EXE);
     let keep_newer = opts.msi_product.is_some()
-        && installed_version().is_some_and(|v| version_newer(&v, env!("CARGO_PKG_VERSION")));
+        && installed_version().is_some_and(|v| nuvira_update::newer(&v, env!("CARGO_PKG_VERSION")));
     if keep_newer {
         step("a newer NuviraHub is already installed: kept");
     } else if !same_file(&src, &program) {
@@ -830,12 +830,6 @@ fn msi_registered(code: &str) -> bool {
         .args(["query", r"HKLM\SOFTWARE\nuvira\Msi", "/v", "ProductCode", "/reg:64"])
         .output()
         .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains(code))
-}
-
-/// `a` newer than `b`, both "X.Y.Z".
-fn version_newer(a: &str, b: &str) -> bool {
-    let parse = |v: &str| v.split('.').map(|n| n.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>();
-    parse(a) > parse(b)
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {

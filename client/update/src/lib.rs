@@ -154,10 +154,25 @@ pub fn public_key_of(pkcs8: &[u8]) -> Result<[u8; 32]> {
     Ok(key.public_key().as_ref().try_into()?)
 }
 
-/// `a` is newer than `b` (versions `x.y.z`; missing parts count as 0).
+/// The parts of a version: one or more dot-separated runs of digits (`0.28.0`, and
+/// the four parts of a Windows file version). Anything else is not a version: a
+/// leading `v`, an empty part (`1..0`), a suffix (`1.0.0-rc.1`, never published:
+/// the release candidates are 0.99.x), a part beyond u64, a path.
+fn version_parts(v: &str) -> Option<Vec<u64>> {
+    v.split('.')
+        .map(|p| if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) { p.parse().ok() } else { None })
+        .collect()
+}
+
+/// `v` is a version as [`newer`] understands it.
+pub fn is_version(v: &str) -> bool {
+    version_parts(v).is_some()
+}
+
+/// `a` is newer than `b` (versions `x.y.z`; missing parts count as 0). Never when
+/// either is not a version (see [`is_version`]).
 pub fn newer(a: &str, b: &str) -> bool {
-    let parse = |v: &str| -> Vec<u64> { v.split('.').map(|p| p.parse().unwrap_or(0)).collect() };
-    let (mut a, mut b) = (parse(a), parse(b));
+    let (Some(mut a), Some(mut b)) = (version_parts(a), version_parts(b)) else { return false };
     let n = a.len().max(b.len());
     a.resize(n, 0);
     b.resize(n, 0);
@@ -196,12 +211,19 @@ pub async fn check_channel(base: &str, keys: &[[u8; 32]], platform: &str) -> Res
         bail!("{url} is for {}", manifest.platform);
     }
     manifest.verify_any(keys)?;
+    // Signed, but used in the download path: only digits and dots.
+    if !is_version(&manifest.version) {
+        bail!("{url}: {:?} is not a version", manifest.version);
+    }
     Ok(newer(&manifest.version, CURRENT).then_some(manifest))
 }
 
 /// Downloads the program of `manifest` to `dest`, checking size and SHA-256. On any
 /// mismatch the file is deleted.
 pub async fn download(base: &str, manifest: &Manifest, dest: &Path) -> Result<()> {
+    if !is_version(&manifest.version) {
+        bail!("{:?} is not a version", manifest.version);
+    }
     let url = format!("{base}/{}", manifest.program_path());
     let partial = dest.with_extension("part");
     let result = async {
@@ -448,6 +470,33 @@ mod tests {
         assert!(!newer("0.0.1", "0.0.1"));
         assert!(!newer("0.0.1", "0.0.2"));
         assert!(!newer("1.0", "1.0.0"));
+    }
+
+    /// APP-2: every pair of plain numeric versions keeps the order of before the
+    /// strict parser (the installed programs still use the old function).
+    #[test]
+    fn numeric_versions_keep_their_order() {
+        let old = |a: &str, b: &str| {
+            let parse = |v: &str| -> Vec<u64> { v.split('.').map(|p| p.parse().unwrap_or(0)).collect() };
+            let (mut a, mut b) = (parse(a), parse(b));
+            let n = a.len().max(b.len());
+            a.resize(n, 0);
+            b.resize(n, 0);
+            a > b
+        };
+        let all = [
+            "0", "0.0.1", "0.0.2", "0.9.9", "0.10.0", "0.22.4", "0.28.0", "0.28.0.0", "0.28.1", "0.99.0",
+            "0.99.12", "1", "1.0", "1.0.0", "1.0.0.1", "1.2.3", "10.0.0", "2.0.0",
+        ];
+        for a in all {
+            assert!(is_version(a), "{a}");
+            for b in all {
+                assert_eq!(newer(a, b), old(a, b), "{a} vs {b}");
+            }
+        }
+        for not_a_version in ["", "v1.0.0", "1..0", ".1", "1.", "1.0.0-rc.1", "1.0.0-rc1", "../../x", "1.x", " 1.0"] {
+            assert!(!is_version(not_a_version), "{not_a_version:?}");
+        }
     }
 
     #[test]

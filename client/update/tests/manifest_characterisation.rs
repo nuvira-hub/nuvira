@@ -64,26 +64,28 @@ fn version_comparison_edge_cases() {
     assert!(newer("1.0.0.1", "1.0.0"), "a fourth part counts");
     assert!(!newer("", "0"));
     assert!(!newer("0", ""));
-    // Parts that are not numbers count as 0.
+    // Parts that are not numbers: not a version, never newer.
     assert!(!newer("1.x.0", "1.0.0"));
-    assert!(!newer("99999999999999999999.0", "0.0"), "beyond u64: 0");
-    assert!(newer("1.0", "0.99999999999999999999"), "beyond u64 on the other side: 0");
+    assert!(!newer("99999999999999999999.0", "0.0"), "beyond u64: not a version");
+    // Fixed with K8 (APP-2): a part beyond u64 used to count as 0, which made this true.
+    assert!(!newer("1.0", "0.99999999999999999999"), "beyond u64 on the other side: not a version");
 }
 
 #[test]
-fn characterises_bug_pre_release_versions_compare_wrongly() {
-    // KNOWN BUG (Phase 2): `newer` splits on '.' and parses each part as u64,
-    // non-numbers being 0. A leading "v" makes the major 0, and the pre-release
-    // suffixes of release candidates (the 1.0 is planned "via RC") compare wrongly:
-    // "1.0.0-rc.1" = [1, 0, 0, 1] is NEWER than "1.0.0" = [1, 0, 0], so a device
-    // on the RC would never be offered the final release; "1.0.0-rc1" = [1, 0, 0]
-    // equals "1.0.0". Expected after fix: semver ordering (rc < release).
+fn pre_release_versions_are_not_versions() {
+    // K8, fixed (APP-2): `newer` used to parse each part as u64 with non-numbers as
+    // 0, so "1.0.0-rc.1" = [1, 0, 0, 1] was NEWER than "1.0.0" and "v1.0.0" was
+    // 0.0.0. Now only digits and dots are a version (the release candidates are
+    // numbered 0.99.x): anything else is never newer, in either direction.
     assert!(!newer("v1.0.0", "0.28.0"));
-    assert!(newer("1.0.0-rc.1", "1.0.0"));
+    assert!(!newer("0.28.0", "v1.0.0"));
+    assert!(!newer("1.0.0-rc.1", "1.0.0"));
     assert!(!newer("1.0.0", "1.0.0-rc.1"));
     assert!(!newer("1.0.0", "1.0.0-rc1"));
     assert!(!newer("1.0.0-rc.2", "1.0.0-rc.10"));
-    assert!(newer("1.0.0-rc.2", "1.0.0-rc.1"));
+    assert!(!newer("1.0.0-rc.2", "1.0.0-rc.1"));
+    assert!(!newer("1..0", "0.28.0"));
+    assert!(newer("0.99.1", "0.99.0") && newer("1.0.0", "0.99.9"));
 }
 
 #[test]
@@ -199,17 +201,20 @@ fn download_paths_and_limits() {
     std::fs::create_dir_all(&dir).unwrap();
     let dest = dir.join("new.exe");
 
-    // The version is used in the URL path as signed, without any check.
+    // K9, fixed (APP-2): a signed version that is not a version ("../../x") is
+    // refused before any request, and nothing is written; check_channel refuses
+    // such a manifest too.
     let program = b"program".to_vec();
     let odd = Manifest::sign(&k, "../../x", "windows-x64", &program);
     let (base, requests) = serve(ok_with(&program));
-    rt.block_on(download(&base, &odd, &dest)).unwrap();
-    assert_eq!(
-        requests.lock().unwrap().as_slice(),
-        ["GET /nuvira/update/windows-x64/nuvira-../../x.exe HTTP/1.1"]
-    );
-    assert_eq!(std::fs::read(&dest).unwrap(), program);
-    std::fs::remove_file(&dest).unwrap();
+    let err = rt.block_on(download(&base, &odd, &dest)).unwrap_err().to_string();
+    assert_eq!(err, "\"../../x\" is not a version");
+    assert!(requests.lock().unwrap().is_empty());
+    assert!(!dest.exists() && !dest.with_extension("part").exists());
+    let odd = Manifest::sign(&k, "../../x", "linux-x64", &program);
+    let (base, _) = serve(ok_with(&serde_json::to_vec(&odd).unwrap()));
+    let err = rt.block_on(check_channel(&base, &[public(&k)], "linux-x64")).unwrap_err().to_string();
+    assert!(err.ends_with("\"../../x\" is not a version"), "{err}");
 
     // An empty program.
     let empty = Manifest::sign(&k, "1.0.0", "linux-x64", b"");
