@@ -87,6 +87,15 @@ pub enum TransportMode {
 /// Time given to UDP before trying the WebSocket.
 const UDP_ATTEMPT: std::time::Duration = std::time::Duration::from_secs(4);
 
+/// Time a UDP handshake with the server gets before it is started again, once,
+/// from a new socket (review NET-13): a handshake answered in time takes one
+/// round trip. A socket can be the wrong one: the server's relay forwards
+/// datagrams by source address before its QUIC listener sees them, so a new
+/// socket that gets the port of a recent session's (a link the relay still
+/// keeps, on Linux and macOS) has its Initials forwarded to the old peer. With
+/// [`TransportMode::Auto`] the second try has what is left of [`UDP_ATTEMPT`].
+const UDP_HANDSHAKE_RETRY: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Like [`connect`], choosing the transport: with `Auto` it tries UDP and, if the
 /// server does not answer (network blocking UDP), moves to the WebSocket `ws_url`.
 pub async fn connect_auto(
@@ -191,12 +200,27 @@ pub async fn connect(
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
     config.transport_config(signal_transport_config());
 
-    let mut endpoint = crate::endpoint_for(transport, server, None, None).await?;
-    endpoint.set_default_client_config(config);
-    let conn = endpoint
-        .connect(server, "nuvira-server")?
-        .await
-        .with_context(|| format!("connecting to nuvira-server {server}"))?;
+    let handshake = async || -> Result<quinn::Connection> {
+        let mut endpoint = crate::endpoint_for(transport, server, None, None).await?;
+        endpoint.set_default_client_config(config.clone());
+        endpoint
+            .connect(server, "nuvira-server")?
+            .await
+            .with_context(|| format!("connecting to nuvira-server {server}"))
+    };
+    let conn = match transport {
+        ServerTransport::Udp => match tokio::time::timeout(UDP_HANDSHAKE_RETRY, handshake()).await {
+            Ok(conn) => conn?,
+            Err(_) => {
+                tracing::info!(
+                    "no answer from nuvira-server {server} over UDP in {} s: trying again from a new socket",
+                    UDP_HANDSHAKE_RETRY.as_secs()
+                );
+                handshake().await?
+            }
+        },
+        ServerTransport::WebSocket(_) => handshake().await?,
+    };
     let server_fingerprint =
         seen.lock().expect("fingerprint").expect("fingerprint stored during the handshake");
 
@@ -437,6 +461,98 @@ pub mod known_server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review NET-13 (b): the first socket's packets go nowhere (as when the relay
+    /// forwards them to a stale link); the handshake is started again from a new
+    /// socket after 3 s and reaches the server, which here answers the
+    /// registration with an error.
+    #[tokio::test]
+    async fn handshake_tried_again_from_a_new_socket() {
+        use std::net::UdpSocket;
+        use std::time::{Duration, Instant};
+
+        // A signalling server that refuses every registration.
+        let cert = rcgen::generate_simple_self_signed(vec!["nuvira-server".to_string()]).unwrap();
+        let cert_der = rustls::pki_types::CertificateDer::from(cert.cert.der().to_vec());
+        let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+            cert.signing_key.serialize_der(),
+        ));
+        let mut tls = rustls::ServerConfig::builder_with_provider(provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert_der], key)
+            .unwrap();
+        tls.alpn_protocols = vec![ALPN.to_vec()];
+        let config = quinn::ServerConfig::with_crypto(Arc::new(
+            quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
+        ));
+        let server = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let server_addr = server.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Some(incoming) = server.accept().await {
+                tokio::spawn(async move {
+                    let conn = incoming.await?;
+                    let (send, recv) = conn.accept_bi().await?;
+                    let (mut tx, mut rx) = (FramedSend::new(send), FramedRecv::new(recv));
+                    rx.recv::<ClientMessage>().await?;
+                    let error =
+                        nuvira_proto::v1::Error { message: "test refusal".into(), ..Default::default() };
+                    tx.send(&ServerMessage { msg: Some(server_message::Msg::Error(error)) }).await?;
+                    conn.closed().await;
+                    anyhow::Ok(())
+                });
+            }
+        });
+
+        // In front of it: drops everything from the first client address.
+        let front = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let front_addr = front.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut first = None;
+            let mut backs: Vec<(SocketAddr, Arc<UdpSocket>)> = Vec::new();
+            let mut buf = [0u8; 2048];
+            while let Ok((n, from)) = front.recv_from(&mut buf) {
+                if *first.get_or_insert(from) == from {
+                    continue;
+                }
+                let back = match backs.iter().find(|(c, _)| *c == from) {
+                    Some((_, b)) => b.clone(),
+                    None => {
+                        let b = Arc::new(UdpSocket::bind("127.0.0.1:0").unwrap());
+                        b.connect(server_addr).unwrap();
+                        let (b2, front2) = (b.clone(), front.try_clone().unwrap());
+                        std::thread::spawn(move || {
+                            let mut buf = [0u8; 2048];
+                            while let Ok(n) = b2.recv(&mut buf) {
+                                let _ = front2.send_to(&buf[..n], from);
+                            }
+                        });
+                        backs.push((from, b.clone()));
+                        b
+                    }
+                };
+                let _ = back.send(&buf[..n]);
+            }
+        });
+
+        let dir = std::env::temp_dir().join(format!("nuvira-signal-retry-{}", std::process::id()));
+        let identity = Identity::load_or_create(&dir.join("device.key")).unwrap();
+        let device = DeviceInfo { name: "test", reachable: false, alias: None };
+        let start = Instant::now();
+        let err = connect(front_addr, &ServerTransport::Udp, None, &identity, &device)
+            .await
+            .err()
+            .expect("refused")
+            .to_string();
+        let took = start.elapsed();
+        assert_eq!(err, "the server refuses the registration: test refusal");
+        assert!(
+            took >= UDP_HANDSHAKE_RETRY && took < UDP_HANDSHAKE_RETRY + Duration::from_secs(3),
+            "{took:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn targets() {

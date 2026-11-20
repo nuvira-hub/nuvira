@@ -142,7 +142,7 @@ Instead of a second session protocol over TCP (like RustDesk's `hbbr`, which for
 
 - **client** (`client/transport/src/ws.rs`): a socket for quinn that sends and receives datagrams through the WebSocket. QUIC, end-to-end encryption, key verification and relay stay identical. Direct path attempts are skipped (UDP does not get through on these networks).
 - **server** (`server/internal/relay/websocket.go`): each WebSocket connection becomes a virtual address in the same dispatching as the UDP port; the relay pairs a UDP side with a WebSocket side with no difference.
-- **Choice**: `--transport auto` (default) tries UDP for 4 s and then switches to `ws://<server>:21116/nuvira`; `--transport udp|websocket` forces one; `--server-ws wss://…` gives the URL published behind a reverse proxy. The session uses the same transport as signalling.
+- **Choice**: `--transport auto` (default) tries UDP for 4 s and then switches to `ws://<server>:21116/nuvira` (a UDP handshake unanswered after 3 s is started again once from a new socket, also with `--transport udp`: since the review's lot 19, NET-13, against a new socket that got the port of a link the server's relay still keeps); `--transport udp|websocket` forces one; `--server-ws wss://…` gives the URL published behind a reverse proxy. The session uses the same transport as signalling.
 - Server: `NUVIRA_WS_LISTEN` (default `:21116` on TCP, `off` to disable it), path `/nuvira`.
 
 Local tests (agent and viewer on the same PC, 1280x720 at 30 fps):
