@@ -219,15 +219,21 @@ pub async fn check_channel(base: &str, keys: &[[u8; 32]], platform: &str) -> Res
 }
 
 /// Downloads the program of `manifest` to `dest`, checking size and SHA-256. On any
-/// mismatch the file is deleted.
+/// mismatch the file is deleted. The partial file (`dest` with the extension
+/// `part`) of an earlier attempt is deleted first and a new one is always made: a
+/// file or link someone else put there is never written through (APP-9).
 pub async fn download(base: &str, manifest: &Manifest, dest: &Path) -> Result<()> {
     if !is_version(&manifest.version) {
         bail!("{:?} is not a version", manifest.version);
     }
     let url = format!("{base}/{}", manifest.program_path());
     let partial = dest.with_extension("part");
+    let _ = tokio::fs::remove_file(&partial).await;
     let result = async {
-        let mut file = tokio::fs::File::create(&partial)
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&partial)
             .await
             .with_context(|| format!("creating {}", partial.display()))?;
         let mut hash = Sha256::new();
@@ -560,6 +566,23 @@ mod tests {
             wrong_size.size += 1;
             assert!(download(&base, &wrong_size, &dest).await.is_err());
             assert!(!dest.exists() && !dest.with_extension("part").exists());
+
+            // APP-9: a partial file left by an earlier attempt does not stop the
+            // download; a link there is replaced, not written through.
+            std::fs::write(dest.with_extension("part"), b"left over").expect("write");
+            download(&base, &good, &dest).await.expect("download over a partial file");
+            assert_eq!(std::fs::read(&dest).expect("read"), program);
+            std::fs::remove_file(&dest).expect("remove");
+            #[cfg(unix)]
+            {
+                let victim = dir.join("victim");
+                std::fs::write(&victim, b"keep me").expect("write");
+                std::os::unix::fs::symlink(&victim, dest.with_extension("part")).expect("link");
+                download(&base, &good, &dest).await.expect("download over a link");
+                assert_eq!(std::fs::read(&victim).expect("read"), b"keep me");
+                assert_eq!(std::fs::read(&dest).expect("read"), program);
+                std::fs::remove_file(&dest).expect("remove");
+            }
 
             // APP-8: a cached file with the right name and other content is
             // downloaded again; the right program is used as it is.

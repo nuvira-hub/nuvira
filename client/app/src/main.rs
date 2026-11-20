@@ -2253,8 +2253,15 @@ async fn apply_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(error)?
         .ok_or_else(|| t("update.none"))?;
-    let download = std::env::temp_dir()
-        .join(format!("nuvira-{}{}", manifest.version, nuvira_update::extension(&manifest.platform)));
+    // Linux and macOS: in this user's data folder, not the shared /tmp of Linux,
+    // where another user can take the names first (APP-9).
+    #[cfg(unix)]
+    let folder = nuvira_transport::identity::data_dir().join("update");
+    #[cfg(not(unix))]
+    let folder = std::env::temp_dir();
+    std::fs::create_dir_all(&folder).map_err(|e| error(e.into()))?;
+    let download =
+        folder.join(format!("nuvira-{}{}", manifest.version, nuvira_update::extension(&manifest.platform)));
     nuvira_update::download(&base, &manifest, &download).await.map_err(error)?;
 
     // Linux: the program; macOS: the whole app.
