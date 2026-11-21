@@ -12,6 +12,9 @@
 //! - `set` writes text and images (PNG in, pixels on the clipboard) and is not
 //!   reported back; `set(Files)` does nothing;
 //! - the same text copied again is not reported again;
+//! - a copy of one kind does not hide the next copy of another: image A, text
+//!   B, image A again are three reports (since the Phase 7 A,B,A fix; before,
+//!   the second image A was not reported);
 //! - empty text and text over `MAX_TEXT_BYTES` are not reported;
 //! - `spawn_sync`: local copies reach `outgoing`, `Incoming` is written and its
 //!   `then` gets `true`, and what it wrote is not sent back.
@@ -183,6 +186,101 @@ fn text_images_and_files_round_trip() {
     // Files from the other side are offered as RemoteFiles; plain Files are ignored.
     clip.set(Content::Files(vec![a.clone()])).expect("Files is a no-op");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A copy of one kind does not hide the next copy of another (A, B, A): image A,
+/// text B, image A again are three reports, and so are text A, image C, text A;
+/// the other side's text or image written in between hides nothing either, and
+/// is itself not reported back (an OS that offered a text flavour for a written
+/// image would show it here as one echo). The same text twice in a row: one report.
+#[test]
+fn alternating_kinds_are_each_reported() {
+    if !gate() {
+        return;
+    }
+    let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut local = Local::new();
+    let _back = PutBack(local.get_text());
+    // Opaque (a system may premultiply or drop alpha), different for every seed.
+    let image = |seed: u8| {
+        let (w, h) = (16usize, 12usize);
+        let rgba: Vec<u8> =
+            (0..w * h).flat_map(|i| [(i as u8).wrapping_mul(seed), (i as u8) ^ seed, seed, 255]).collect();
+        (w, h, rgba)
+    };
+    let copy_image = |local: &mut Local, seed: u8| {
+        let (width, height, rgba) = image(seed);
+        local.0.set_image(arboard::ImageData { width, height, bytes: rgba.into() }).expect("set image");
+        settle();
+    };
+    let kind = |c: &Option<Content>| match c {
+        None => "none".to_string(),
+        Some(Content::Text(t)) => format!("text {t:?}"),
+        Some(Content::Image(png)) => {
+            let (w, h, rgba) = nuvira_clipboard::decode_png(png).expect("PNG");
+            let seed = (1..=255u8).find(|&s| image(s) == (w, h, rgba.clone()));
+            format!("image {}", seed.map_or("?".into(), |s| s.to_string()))
+        }
+        Some(other) => format!("{other:?}"),
+    };
+    local.text("before the A, B, A copies");
+    let mut clip = Clipboard::new().expect("clipboard");
+    let mut steps: Vec<(String, String)> = Vec::new();
+    let mut step = |name: &str, clip: &mut Clipboard| {
+        let got = kind(&poll(clip));
+        report(&format!("{name}: {got}"));
+        steps.push((name.to_string(), got));
+    };
+
+    copy_image(&mut local, 3);
+    step("image A", &mut clip);
+    local.text("aba text B");
+    step("text B", &mut clip);
+    copy_image(&mut local, 3);
+    step("image A again", &mut clip);
+    local.text("aba text A");
+    step("text A", &mut clip);
+    copy_image(&mut local, 7);
+    step("image C", &mut clip);
+    local.text("aba text A");
+    step("text A again", &mut clip);
+    local.text("aba text A");
+    step("the same text A copied twice", &mut clip);
+
+    // Written by the other side in between.
+    copy_image(&mut local, 5);
+    step("image D", &mut clip);
+    clip.set(Content::Text("aba from the other side".into())).expect("set text");
+    settle();
+    step("text written by the other side (no echo)", &mut clip);
+    copy_image(&mut local, 5);
+    step("image D again after the written text", &mut clip);
+    local.text("aba text E");
+    step("text E", &mut clip);
+    let (w, h, rgba) = image(9);
+    clip.set(Content::Image(png(w as u32, h as u32, &rgba))).expect("set image");
+    settle();
+    step("image written by the other side (no echo)", &mut clip);
+    local.text("aba text E");
+    step("text E again after the written image", &mut clip);
+
+    let want = [
+        "image 3",
+        "text \"aba text B\"",
+        "image 3",
+        "text \"aba text A\"",
+        "image 7",
+        "text \"aba text A\"",
+        "none",
+        "image 5",
+        "none",
+        "image 5",
+        "text \"aba text E\"",
+        "none",
+        "text \"aba text E\"",
+    ];
+    let got: Vec<&str> = steps.iter().map(|(_, g)| g.as_str()).collect();
+    assert_eq!(got, want, "steps: {steps:#?}");
 }
 
 #[test]

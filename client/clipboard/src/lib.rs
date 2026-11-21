@@ -80,16 +80,14 @@ impl From<Content> for Incoming {
 
 pub struct Clipboard {
     inner: arboard::Clipboard,
-    /// Last state seen: sequence number (see `Sequence`), text and image (hash of the pixels).
+    /// Last state seen: sequence number (see `Sequence`) and content (`Seen`).
     seq: Sequence,
     last_seq: u32,
     /// The last read after a change found nothing readable (the owner was slow or
     /// busy, or the content is of another kind): read again at the next check,
     /// also without a new change.
     unread: bool,
-    last_text: Option<String>,
-    last_image: Option<u64>,
-    last_files: Option<Vec<PathBuf>>,
+    seen: Seen,
     /// Asked when the clipboard changed but nothing of it could be read here
     /// (Windows, as SYSTEM: see `Fallback`).
     fallback: Option<Fallback>,
@@ -106,18 +104,22 @@ impl Clipboard {
     /// Content already present when opened is not sent: only what is copied afterwards counts.
     pub fn new() -> Result<Self> {
         let mut inner = arboard::Clipboard::new().context("clipboard not available")?;
-        let last_text = inner.get_text().ok();
-        let last_image = inner.get_image().ok().map(|i| pixels_hash(&i.bytes));
-        let last_files = inner.get().file_list().ok().filter(|f| !f.is_empty());
+        // What `poll` would read first: files, else text, else an image.
+        let mut seen = Seen::default();
+        if let Some(files) = inner.get().file_list().ok().filter(|f| !f.is_empty()) {
+            seen.wrote_files(files);
+        } else if let Ok(text) = inner.get_text() {
+            seen.wrote_text(text);
+        } else if let Ok(image) = inner.get_image() {
+            seen.wrote_image(pixels_hash(&image.bytes));
+        }
         let mut seq = Sequence::new();
         Ok(Self {
             inner,
             last_seq: seq.now(),
             unread: false,
             seq,
-            last_text,
-            last_image,
-            last_files,
+            seen,
             fallback: None,
             #[cfg(windows)]
             virtual_files: None,
@@ -155,26 +157,23 @@ impl Clipboard {
                 // A new sequence number is a new copy, also of the same files
                 // (copied again for a session started afterwards); without
                 // one only different files are.
-                if !copied_again && self.last_files.as_ref() == Some(&files) {
+                if !self.seen.files_are_new(&files, copied_again) {
                     return None;
                 }
-                self.last_files = Some(files.clone());
-                // The same text or image copied again afterwards is new again.
-                self.last_text = None;
-                self.last_image = None;
                 return Some(Content::Files(files));
             }
-            Ok(_) => self.last_files = None,
+            Ok(_) => self.seen.no_files(),
             Err(e) => {
                 debug!("clipboard files not read: {e}");
-                self.last_files = None;
+                self.seen.no_files();
             }
         }
+        // Text and images: new when different from the content seen last, whatever
+        // its kind (`Seen`); empty or too long text is remembered but not shared.
         if let Ok(text) = self.inner.get_text() {
-            if self.last_text.as_ref() == Some(&text) {
+            if !self.seen.text_is_new(&text) {
                 return None;
             }
-            self.last_text = Some(text.clone());
             if text.is_empty() || text.len() > MAX_TEXT_BYTES {
                 debug!(bytes = text.len(), "clipboard text not shared");
                 return None;
@@ -192,11 +191,9 @@ impl Clipboard {
                 return content;
             }
         };
-        let hash = pixels_hash(&image.bytes);
-        if self.last_image == Some(hash) {
+        if !self.seen.image_is_new(pixels_hash(&image.bytes)) {
             return None;
         }
-        self.last_image = Some(hash);
         match encode_png(image.width, image.height, &image.bytes) {
             Ok(png) => Some(Content::Image(png)),
             Err(e) => {
@@ -211,11 +208,11 @@ impl Clipboard {
         match content {
             Content::Text(text) => {
                 self.inner.set_text(text.clone()).context("writing the clipboard")?;
-                self.last_text = Some(text);
+                self.seen.wrote_text(text);
             }
             Content::Image(png) => {
                 let (width, height, rgba) = decode_png(&png)?;
-                self.last_image = Some(pixels_hash(&rgba));
+                self.seen.wrote_image(pixels_hash(&rgba));
                 let image = arboard::ImageData { width, height, bytes: rgba.into() };
                 self.inner.set_image(image).context("writing the clipboard")?;
             }
@@ -232,16 +229,10 @@ impl Clipboard {
     fn read_by_fallback(&mut self) -> Option<Content> {
         let content = (self.fallback.as_mut()?)()?;
         match &content {
-            Content::Files(files) => {
-                self.last_files = Some(files.clone());
-                self.last_text = None;
-                self.last_image = None;
-            }
-            Content::Text(text) => {
-                if self.last_text.as_ref() == Some(text) || text.len() > MAX_TEXT_BYTES {
-                    return None;
-                }
-                self.last_text = Some(text.clone());
+            Content::Files(files) => self.seen.wrote_files(files.clone()),
+            // Remembered (`text_is_new`) also when too long to share.
+            Content::Text(text) if !self.seen.text_is_new(text) || text.len() > MAX_TEXT_BYTES => {
+                return None;
             }
             _ => {}
         }
@@ -262,7 +253,8 @@ impl Clipboard {
             self.virtual_files = Some(win_files::VirtualClipboard::spawn()?);
         }
         self.virtual_files.as_ref().expect("spawned").set(files);
-        self.last_files = None;
+        // What the clipboard holds now (they do not read back as files here).
+        self.seen = Seen::default();
         Ok(())
     }
 
@@ -277,7 +269,8 @@ impl Clipboard {
             self.x11_files = Some(x11_files::X11Offer::spawn()?);
         }
         self.x11_files.as_ref().expect("spawned").set(files);
-        self.last_files = None;
+        // What the clipboard holds now (not read while offered: `poll`).
+        self.seen = Seen::default();
         Ok(())
     }
 
@@ -286,10 +279,10 @@ impl Clipboard {
     #[cfg(target_os = "macos")]
     fn offer(&mut self, files: RemoteFiles) -> Result<()> {
         if files.files.is_empty() {
-            if self.mac_files.take().is_some() && self.inner.get().file_list().ok() == self.last_files {
+            if self.mac_files.take().is_some() && self.inner.get().file_list().ok() == self.seen.files {
                 let _ = self.inner.clear();
             }
-            self.last_files = None;
+            self.seen.no_files();
             return Ok(());
         }
         if self.mac_files.is_none() {
@@ -297,9 +290,8 @@ impl Clipboard {
         }
         let top = self.mac_files.as_mut().expect("spawned").set(files)?;
         self.inner.set().file_list(&top[..]).context("writing the pasteboard")?;
-        self.last_files = self.inner.get().file_list().ok().or(Some(top));
-        self.last_text = None;
-        self.last_image = None;
+        let listed = self.inner.get().file_list().ok().unwrap_or(top);
+        self.seen.wrote_files(listed);
         Ok(())
     }
 
@@ -307,6 +299,69 @@ impl Clipboard {
     fn offer(&mut self, files: RemoteFiles) -> Result<()> {
         debug!(entries = files.files.len(), "files of the other side: not offered on this system yet");
         Ok(())
+    }
+}
+
+/// The content last seen on this clipboard (copied here and reported, or
+/// written from the other side), to tell a new copy from the same content read
+/// again. One kind at a time, as the clipboard holds one thing: remembering a
+/// text forgets the image and the files, and so on. Before, each kind kept its
+/// own memory: image A, then text B, then image A copied again matched the
+/// image remembered from before text B and was never sent (the same for text A,
+/// image C, text A). The same content twice in a row is still not new, and what
+/// `set` wrote is not reported back.
+#[derive(Debug, Default, PartialEq)]
+struct Seen {
+    text: Option<String>,
+    /// Hash of the pixels.
+    image: Option<u64>,
+    files: Option<Vec<PathBuf>>,
+}
+
+impl Seen {
+    /// Whether `text` differs from the content seen last; remembered either way.
+    fn text_is_new(&mut self, text: &str) -> bool {
+        if self.text.as_deref() == Some(text) {
+            return false;
+        }
+        self.wrote_text(text.to_owned());
+        true
+    }
+
+    /// Whether the image with these pixels (`hash`) differs from the content seen last.
+    fn image_is_new(&mut self, hash: u64) -> bool {
+        if self.image == Some(hash) {
+            return false;
+        }
+        self.wrote_image(hash);
+        true
+    }
+
+    /// Whether `files` are a new copy: other files, or the same ones copied
+    /// again (`copied_again`: a new sequence number).
+    fn files_are_new(&mut self, files: &[PathBuf], copied_again: bool) -> bool {
+        if !copied_again && self.files.as_deref() == Some(files) {
+            return false;
+        }
+        self.wrote_files(files.to_vec());
+        true
+    }
+
+    /// No files on the clipboard: the text or image seen last stays.
+    fn no_files(&mut self) {
+        self.files = None;
+    }
+
+    fn wrote_text(&mut self, text: String) {
+        *self = Self { text: Some(text), ..Self::default() };
+    }
+
+    fn wrote_image(&mut self, hash: u64) {
+        *self = Self { image: Some(hash), ..Self::default() };
+    }
+
+    fn wrote_files(&mut self, files: Vec<PathBuf>) {
+        *self = Self { files: Some(files), ..Self::default() };
     }
 }
 
@@ -517,5 +572,107 @@ mod tests {
         assert!(encode_png(0, 0, &[]).is_err());
         assert!(encode_png(2, 2, &[0; 3]).is_err());
         assert!(decode_png(b"not a png").is_err());
+    }
+
+    /// One read of `poll` after a copy, as `poll` uses `Seen`: whether it is
+    /// reported (text over the limit and empty text are remembered, not sent).
+    enum Copy<'a> {
+        Text(&'a str),
+        Image(u64),
+        Files(&'a [&'a str], bool),
+    }
+
+    fn reported(seen: &mut Seen, copy: Copy) -> bool {
+        match copy {
+            Copy::Files(files, copied_again) => {
+                let files: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
+                seen.files_are_new(&files, copied_again)
+            }
+            Copy::Text(text) => {
+                seen.no_files();
+                seen.text_is_new(text) && !text.is_empty() && text.len() <= MAX_TEXT_BYTES
+            }
+            Copy::Image(hash) => {
+                seen.no_files();
+                seen.image_is_new(hash)
+            }
+        }
+    }
+
+    #[test]
+    fn image_text_image_reports_the_image_again() {
+        let mut seen = Seen::default();
+        let got: Vec<bool> = [Copy::Image(1), Copy::Text("B"), Copy::Image(1)]
+            .into_iter()
+            .map(|c| reported(&mut seen, c))
+            .collect();
+        assert_eq!(got, [true, true, true]);
+    }
+
+    #[test]
+    fn text_image_text_reports_the_text_again() {
+        let mut seen = Seen::default();
+        let got: Vec<bool> = [Copy::Text("A"), Copy::Image(3), Copy::Text("A")]
+            .into_iter()
+            .map(|c| reported(&mut seen, c))
+            .collect();
+        assert_eq!(got, [true, true, true]);
+    }
+
+    #[test]
+    fn text_files_text_reports_the_text_again() {
+        let mut seen = Seen::default();
+        let got: Vec<bool> = [Copy::Text("A"), Copy::Files(&["/tmp/f"], true), Copy::Text("A")]
+            .into_iter()
+            .map(|c| reported(&mut seen, c))
+            .collect();
+        assert_eq!(got, [true, true, true]);
+        // Files, text, the same files again (no new sequence number: Wayland).
+        assert!(reported(&mut seen, Copy::Files(&["/tmp/f"], false)));
+    }
+
+    #[test]
+    fn the_same_content_twice_in_a_row_is_not_new() {
+        let mut seen = Seen::default();
+        assert!(reported(&mut seen, Copy::Text("A")));
+        assert!(!reported(&mut seen, Copy::Text("A")), "same text copied twice");
+        assert!(reported(&mut seen, Copy::Image(5)));
+        assert!(!reported(&mut seen, Copy::Image(5)), "same image read again");
+        assert!(reported(&mut seen, Copy::Files(&["/a", "/b"], true)));
+        assert!(!reported(&mut seen, Copy::Files(&["/a", "/b"], false)), "same files, no new copy");
+        assert!(reported(&mut seen, Copy::Files(&["/a", "/b"], true)), "same files copied again");
+    }
+
+    #[test]
+    fn written_content_is_not_reported_back_and_hides_no_other_kind() {
+        let mut seen = Seen::default();
+        // Local image A, then the other side's text B written here, then image A
+        // copied again locally: a new copy.
+        assert!(reported(&mut seen, Copy::Image(1)));
+        seen.wrote_text("B".into());
+        assert!(!reported(&mut seen, Copy::Text("B")), "own text not echoed");
+        assert!(reported(&mut seen, Copy::Image(1)));
+        // Local text A, the other side's image written, text A copied again.
+        assert!(reported(&mut seen, Copy::Text("A")));
+        seen.wrote_image(9);
+        assert!(!reported(&mut seen, Copy::Image(9)), "own image not echoed");
+        assert!(reported(&mut seen, Copy::Text("A")));
+        // Written files (the other side's, offered on macOS) read back: not new.
+        seen.wrote_files(vec![PathBuf::from("/r")]);
+        assert!(!reported(&mut seen, Copy::Files(&["/r"], false)));
+        assert!(reported(&mut seen, Copy::Text("A")));
+    }
+
+    #[test]
+    fn empty_and_oversized_text_is_remembered_but_not_sent() {
+        let mut seen = Seen::default();
+        assert!(reported(&mut seen, Copy::Image(1)));
+        assert!(!reported(&mut seen, Copy::Text("")), "empty text not sent");
+        assert_eq!(seen, Seen { text: Some(String::new()), ..Seen::default() });
+        assert!(reported(&mut seen, Copy::Image(1)), "the image after an empty text is new");
+        let long = "x".repeat(MAX_TEXT_BYTES + 1);
+        assert!(!reported(&mut seen, Copy::Text(&long)), "too long");
+        assert!(!reported(&mut seen, Copy::Text(&long)), "and not read as new again");
+        assert!(reported(&mut seen, Copy::Text("short")));
     }
 }
