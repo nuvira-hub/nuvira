@@ -36,6 +36,9 @@ nuvira-agent = { path = "../client/agent" }
 nuvira-secret = { path = "../client/secret" }
 
 anyhow = "1"
+# The clipboard cases: a copier on a real desktop, PNG images (versions of the workspace).
+arboard = { version = "3.4", default-features = false, features = ["image-data"] }
+png = "0.18"
 prost = "0.14"
 quinn = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

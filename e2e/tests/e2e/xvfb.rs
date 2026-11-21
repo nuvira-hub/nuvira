@@ -28,6 +28,7 @@ pub fn cases() -> Vec<Case> {
         Case::new("xvfb/files/upload-download-exact", files_exact).group(Group::Xvfb).timeout_s(600),
         Case::new("xvfb/files/cut-and-resumed", files_resumed).group(Group::Xvfb).timeout_s(400),
         Case::new("xvfb/clipboard/both-ways", clipboard).group(Group::Xvfb),
+        Case::new("xvfb/clipboard/alternating-kinds", clipboard_kinds).group(Group::Xvfb),
         Case::new("xvfb/input/mouse-moves-the-x-pointer", mouse).group(Group::Xvfb),
         // The same file cases with the machine's real capture (Windows, macOS):
         // `scripts/run-real-desktop.*`, only where the screen may be used.
@@ -39,6 +40,10 @@ pub fn cases() -> Vec<Case> {
             .group(Group::RealDesktop)
             .needs(&[Need::Wildcard])
             .timeout_s(600),
+        // Takes the machine's clipboard (nothing put back): a test machine only.
+        Case::new("real-desktop/clipboard/alternating-kinds", clipboard_kinds)
+            .group(Group::RealDesktop)
+            .needs(&[Need::Wildcard]),
     ]
 }
 
@@ -405,6 +410,220 @@ fn clipboard(ctx: &mut Ctx) -> Result<()> {
         s.close().await;
         anyhow::Ok(())
     })
+}
+
+/// A program on the agent's machine copying: `xclip` on the run's Xvfb (another
+/// process), or on a real desktop another clipboard handle of this process (as
+/// the clipboard probes do; on Windows and macOS a copy by any program changes
+/// the same counter).
+enum Copier {
+    Xclip { display: String, dir: PathBuf },
+    Arboard(Box<arboard::Clipboard>),
+}
+
+impl Copier {
+    fn text(&mut self, text: &str) -> Result<()> {
+        match self {
+            Copier::Xclip { display, .. } => xclip(display, &["-i"], Some(text)).map(drop),
+            Copier::Arboard(c) => c.set_text(text.to_string()).context("set text"),
+        }
+    }
+
+    fn image(&mut self, seed: u8) -> Result<()> {
+        let (w, h, rgba) = aba_image(seed);
+        match self {
+            Copier::Xclip { display, dir } => {
+                let file = dir.join(format!("aba-{seed}.png"));
+                std::fs::write(&file, encode_png(w, h, &rgba)?)?;
+                let path = file.display().to_string();
+                let child = Command::new("xclip")
+                    .args(["-display", display, "-selection", "clipboard", "-t", "image/png", "-i", &path])
+                    .stdin(std::process::Stdio::null())
+                    .spawn()
+                    .context("xclip (apt install xclip)")?;
+                nuvira_e2e::runner::track_pid(child.id());
+                Ok(())
+            }
+            Copier::Arboard(c) => c
+                .set_image(arboard::ImageData { width: w as usize, height: h as usize, bytes: rgba.into() })
+                .context("set image"),
+        }
+    }
+
+    /// What the clipboard holds now, as the agent's side sees it: a text, or "image".
+    fn holds(&mut self) -> String {
+        match self {
+            Copier::Xclip { display, .. } => {
+                let targets = xclip(display, &["-o", "-t", "TARGETS"], None).unwrap_or_default();
+                if targets.lines().any(|t| t.trim() == "image/png") {
+                    "image".into()
+                } else {
+                    xclip(display, &["-o"], None).unwrap_or_default()
+                }
+            }
+            Copier::Arboard(c) => match c.get_text() {
+                Ok(t) => t,
+                Err(_) if c.get_image().is_ok() => "image".into(),
+                Err(_) => String::new(),
+            },
+        }
+    }
+}
+
+/// Opaque, different for every seed.
+fn aba_image(seed: u8) -> (u32, u32, Vec<u8>) {
+    let (w, h) = (32u32, 24u32);
+    let rgba = (0..w * h).flat_map(|i| [(i as u8).wrapping_mul(seed), (i as u8) ^ seed, seed, 255]).collect();
+    (w, h, rgba)
+}
+
+fn encode_png(w: u32, h: u32, rgba: &[u8]) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut enc = png::Encoder::new(&mut out, w, h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.write_header()?.write_image_data(rgba)?;
+    Ok(out)
+}
+
+/// Which `aba_image` seed a PNG from the agent shows ("image ?" if none).
+fn image_seed(png: &[u8]) -> String {
+    let decoded = (|| -> Result<(u32, u32, Vec<u8>)> {
+        let mut dec = png::Decoder::new(std::io::Cursor::new(png));
+        dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+        let mut reader = dec.read_info()?;
+        let mut buf = vec![0; reader.output_buffer_size().context("size")?];
+        let frame = reader.next_frame(&mut buf)?;
+        buf.truncate(frame.buffer_size());
+        ensure(frame.color_type == png::ColorType::Rgba, || format!("{:?}", frame.color_type))?;
+        Ok((frame.width, frame.height, buf))
+    })();
+    match decoded {
+        Ok(img) => match (1..=255u8).find(|&s| aba_image(s) == img) {
+            Some(s) => format!("image {s}"),
+            None => format!("image ? {}x{}", img.0, img.1),
+        },
+        Err(e) => format!("image not decoded: {e:#}"),
+    }
+}
+
+/// The next content the agent sent from its clipboard within `wait`: `text ...`
+/// (control channel) or `image N` (its own stream), or "none".
+async fn next_clip(s: &mut HeadlessSession, wait: Duration) -> Result<String> {
+    let conn = s.conn.clone();
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        tokio::select! {
+            m = s.events().recv() => match m {
+                None => bail!("session closed: {:?}", s.error()),
+                Some(ControlMessage { msg: Some(Msg::Clipboard(c)) }) => return Ok(format!("text {:?}", c.text)),
+                Some(_) => {}
+            },
+            stream = conn.accept_uni() => {
+                let mut rx = FramedRecv::new(stream?);
+                if let Some(first) = rx.recv::<FileChunk>().await?
+                    && first.clipboard_image
+                {
+                    let png = nuvira_transport::read_stream(&mut rx, &first, 32 << 20).await?;
+                    return Ok(image_seed(&png));
+                }
+            }
+            _ = tokio::time::sleep_until(deadline) => return Ok("none".into()),
+        }
+    }
+}
+
+/// What a step of `clipboard_kinds` does.
+enum Step<'a> {
+    Text(&'a str),
+    Image(u8),
+    ViewerText(&'a str),
+    ViewerImage(u8),
+}
+
+/// Copies of alternating kinds on the agent's machine (image A, text B, image A
+/// again; text A, image C, text A again) each reach the viewer, also when the
+/// viewer's text or image was written there in between, which is not sent back;
+/// the same text twice in a row is sent once. Before the Phase 7 fix the second
+/// image A and the second text A never arrived.
+fn clipboard_kinds(ctx: &mut Ctx) -> Result<()> {
+    let mut copier = if ctx.name.starts_with("real-desktop/") {
+        Copier::Arboard(Box::new(arboard::Clipboard::new().context("system clipboard")?))
+    } else {
+        Copier::Xclip { display: check_xvfb()?, dir: ctx.tmp.clone() }
+    };
+    let rig = Rig::start(ctx)?;
+    let settle = Duration::from_millis(300);
+    let (arrive, quiet) = (Duration::from_secs(8), Duration::from_secs(2));
+    let pid = std::process::id();
+    let (text_a, text_b, text_e) = (format!("aba A {pid}"), format!("aba B {pid}"), format!("aba E {pid}"));
+    let steps = [
+        ("image A", Step::Image(3), "image 3".to_string()),
+        ("text B", Step::Text(&text_b), format!("text {text_b:?}")),
+        ("image A again", Step::Image(3), "image 3".into()),
+        ("text A", Step::Text(&text_a), format!("text {text_a:?}")),
+        ("image C", Step::Image(7), "image 7".into()),
+        ("text A again", Step::Text(&text_a), format!("text {text_a:?}")),
+        ("the same text A twice", Step::Text(&text_a), "none".into()),
+        ("image D", Step::Image(5), "image 5".into()),
+        ("viewer's text written (no echo)", Step::ViewerText("aba from the viewer"), "none".into()),
+        ("image D again", Step::Image(5), "image 5".into()),
+        ("text E", Step::Text(&text_e), format!("text {text_e:?}")),
+        ("viewer's image written (no echo)", Step::ViewerImage(9), "none".into()),
+        ("text E again", Step::Text(&text_e), format!("text {text_e:?}")),
+    ];
+    let mut log = Vec::new();
+    let mut failed = Vec::new();
+    let result = rig.vrt.block_on(async {
+        let mut s = rig.session().await?;
+        // The agent's clipboard thread takes what is there now as already seen.
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        for (name, step, want) in steps {
+            let t = Instant::now();
+            let wait = if want == "none" { quiet } else { arrive };
+            match step {
+                Step::Text(text) => copier.text(text)?,
+                Step::Image(seed) => copier.image(seed)?,
+                Step::ViewerText(text) => {
+                    let clip = nuvira_proto::v1::Clipboard { text: text.to_string(), ..Default::default() };
+                    s.control().send_msg(Msg::Clipboard(clip)).await?;
+                    wait_holds(&mut copier, text).await?;
+                }
+                Step::ViewerImage(seed) => {
+                    let (w, h, rgba) = aba_image(seed);
+                    let header = FileChunk { clipboard_image: true, ..Default::default() };
+                    nuvira_transport::send_stream(&s.conn, header, &encode_png(w, h, &rgba)?).await?;
+                    wait_holds(&mut copier, "image").await?;
+                }
+            }
+            tokio::time::sleep(settle).await;
+            let got = next_clip(&mut s, wait).await?;
+            log.push(format!("{name}: {got} ({} ms)", t.elapsed().as_millis()));
+            if got != want {
+                failed.push(format!("{name}: got {got}, expected {want}"));
+            }
+        }
+        s.close().await;
+        anyhow::Ok(())
+    });
+    for line in &log {
+        ctx.note(line);
+    }
+    result?;
+    ensure(failed.is_empty(), || failed.join("; "))
+}
+
+/// Waits until the agent's clipboard holds what the viewer sent (`Copier::holds`).
+async fn wait_holds(copier: &mut Copier, want: &str) -> Result<()> {
+    let t = Instant::now();
+    let mut seen = String::new();
+    while t.elapsed() < Duration::from_secs(10) {
+        seen = copier.holds();
+        if seen == want {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    bail!("the agent's clipboard holds {seen:?}, not {want:?}")
 }
 
 /// `MouseMove` events move the pointer of the X display (XTest), read back with
