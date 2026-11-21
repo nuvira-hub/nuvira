@@ -597,7 +597,11 @@ fn one_run(
     let netem_counts = netem.map(|n| n.stop()).transpose()?;
 
     if let Some(e) = enc_err {
-        bail!("encoder: {e}");
+        // "network side gone" means the sender stopped first: say why.
+        match &send_result {
+            Err(s) => bail!("encoder: {e} (sending: {s:#})"),
+            Ok(()) => bail!("encoder: {e}"),
+        }
     }
     if let Err(e) = send_result {
         bail!("sending: {e:#}");
