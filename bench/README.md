@@ -50,10 +50,31 @@ bench/scripts/bench-compare.sh --base-only --tier full --suite long --rounds 1
 
 `bench-compare.sh` builds both sides with each side's `Cargo.lock`, verifies the fixtures,
 makes the shared inputs with the A binary (files, B-MICRO-08/09 decode streams), runs the rounds
-in ABBA order, and writes `compare.md` / `compare.json`. It refuses to gate (exit 2) when the
+in ABBA order, and writes `compare.md` / `compare.json`. The noise file is `bench/noise/noise-<machine>.json`
+(committed: MSI-UBUNTU and PC-LABORATORIO, recalibrated in lot 26 on 2026-11-21), else
+`$WORK/noise-<machine>.json` (where `--calibrate` writes; copy it into `bench/noise/` and commit
+it to make it the reference). It refuses to gate (exit 2) when the
 machine has no noise file; `--no-noise` compares on the thresholds alone. Exit codes: 0 no
 regression, 1 regression or exact mismatch, 2 invalid run. Other machines: `bench-remote.sh`
 (PC-LABORATORIO), `bench-ssh.sh` (Linux VMs, Mac), `lan-ab.sh` (B-MACRO-09); see `bench-run.md`.
+
+## Notes on some cases (lot 26)
+
+- B-RES-01 sums the session up in fixed memory (`ViewerOptions { keep_frames: false }`,
+  `measure::UsHistogram`): no per-frame records, so its RSS slope is the product's (VWR-1).
+  Every other case keeps the per-frame records and exact percentiles.
+- B-MACRO-02 sends a fixed 70 % of a rate-limited link (`LINK_SHARE`, no ABR in the composed
+  pipeline). On N3 the S5 keyframes overflow the 56 KB queue at any share tried (70-25 %):
+  latency and fps of the N3 datagram cases are `info`; `netem_dropped_queue_pct` /
+  `netem_dropped_loss_pct` show why. The production path on N3 is B-MACRO-04 (VID-9).
+- B-MACRO-03/04 gate `video_format_after_connect_ms` / `first_frame_after_connect_ms`:
+  on Windows loopback `connected_ms` is ~50 ms or ~1060 ms (a lost first packet and quinn's
+  first PTO), which made `first_frame_ms` / `video_format_ms` bimodal on PC-LABORATORIO.
+- B-GO-06 dials from one client socket per sub-benchmark (SRV-15). A failed registration
+  says which operation, after how long, from which address, and the server's queue drops;
+  `QLOGDIR=<dir>` (passed on by `bench-ssh.sh`) writes a qlog per connection (SRV-16).
+- `bench-compare.sh` stamps each target dir with a checksum of the sources it built
+  (`.nuvira-bench-tree`) and rebuilds the workspace crates when another tree comes.
 
 ## Which machine gates
 

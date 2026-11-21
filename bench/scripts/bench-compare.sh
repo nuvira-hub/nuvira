@@ -28,7 +28,8 @@
 #                       (default $NUVIRA_BENCH_WORK, else <parent of the repo>/nuvira-review)
 #   --machine ALIAS     machine alias recorded in the results (default hostname)
 #   --config-ids LIST   hw-matrix config IDs of this machine (e.g. WIN11,GPU-INTEL-QSV)
-#   --noise FILE        noise calibration (default $WORK/noise-<machine>.json when present)
+#   --noise FILE        noise calibration (default bench/noise/noise-<machine>.json, the committed
+#                       one, else $WORK/noise-<machine>.json)
 #   --calibrate         A against A' (two builds of the base): writes the noise file
 #   --base-only         the baseline run: side A only, written as baseline.md / baseline.json
 #                       (medians and deviations of A). With --rounds >= 2 a second build of A
@@ -235,7 +236,15 @@ fi
 
 STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 [ -n "$OUT" ] || OUT="$WORK/runs/$MACHINE/$STAMP"
-[ -n "$NOISE" ] || NOISE="$WORK/noise-$MACHINE.json"
+# Noise: --noise, else the calibration committed with the bench (bench/noise/noise-<machine>.json,
+# the one the gating machines use), else the work folder's. A calibration always writes the
+# work folder's file (copy it into bench/noise/ and commit it to make it the reference).
+if [ -z "$NOISE" ]; then
+    NOISE="$WORK/noise-$MACHINE.json"
+    if [ "$CALIBRATE" = 0 ] && [ "$BASE_ONLY" = 0 ] && [ -f "$BENCH_SRC/noise/noise-$MACHINE.json" ]; then
+        NOISE="$BENCH_SRC/noise/noise-$MACHINE.json"
+    fi
+fi
 # Info-only machines (thresholds.json "machines": {"ALIAS": { "gate": false ...}}) never gate.
 if grep -q "\"$MACHINE\": *{ *\"gate\": *false" "$BENCH_SRC/thresholds.json" 2>/dev/null; then INFO_ONLY=1; fi
 # Gating needs the machine's noise (plan 9.3: threshold + noise): run --calibrate first.
@@ -364,11 +373,38 @@ stage_tree() {
     (cd "$1" && git ls-files -co --exclude-standard -z | tar --null -T - -cf -) | (cd "$STAGE" && tar -xf -)
 }
 
+tree_sum() {
+    # tree_sum TREE: a checksum of the files stage_tree copies (content and names, not times).
+    (cd "$1" && git ls-files -co --exclude-standard -z | xargs -0 cksum | cksum)
+}
+
+fresh_target() {
+    # fresh_target TARGET SUM: TARGET (a shared CARGO_TARGET_DIR: bench-a, bench-b, bench-a2,
+    # app-a, app-b) last built another tree. stage_tree keeps the files' times and cargo takes
+    # a source older than its last build as unchanged, so a target dir last used by a newer
+    # build of other code (the calibration's A' in app-b, an earlier lot) gave B stale crates
+    # (lot 25 on LAB). Every staged file is then touched: the workspace crates are rebuilt,
+    # third-party crates stay cached. The stamp is written by stamp_target after the build.
+    [ "$DRY" = 1 ] && return 0
+    if [ -f "$1/.nuvira-bench-tree" ] && [ "$(cat "$1/.nuvira-bench-tree")" = "$2" ]; then return 0; fi
+    say "target $1 last built other sources: touching the staged tree (full rebuild of the workspace crates)"
+    find "$STAGE" -type f -exec touch {} + || return 1
+}
+
+stamp_target() {
+    # stamp_target TARGET SUM
+    [ "$DRY" = 1 ] && return 0
+    mkdir -p "$1" && printf '%s
+' "$2" >"$1/.nuvira-bench-tree"
+}
+
 build_side() {
     # build_side SIDE TREE TARGET FEATURES
-    local side tree target feats fargs app_target gostage pkg d b dirty
+    local side tree target feats fargs app_target gostage pkg d b dirty sum
     side="$1"; tree="$2"; target="$3"; feats="$4"
     stage_tree "$tree" || return 1
+    # The bench crate also builds with the side's features; bench/ comes from this tree.
+    sum="$(tree_sum "$tree") $feats $(tree_sum "$BENCH_SRC")"
     # Rule 2.1: the side's own third-party versions (in the staged copy only).
     run cp -f "$STAGE/Cargo.lock" "$STAGE/bench/Cargo.lock" || return 1
     fargs=""
@@ -382,14 +418,18 @@ build_side() {
     export NUVIRA_BENCH_TREE_DIRTY="$dirty"
     export NUVIRA_BENCH_COMMIT="$(git -C "$SRC_REPO" log -1 --format=%H -- bench 2>/dev/null)"
     say "build $side: bench crate ($(cd "$tree" && rustc -V)) from $STAGE"
+    fresh_target "$target" "$sum" || return 1
     ( cd "$STAGE/bench" && CARGO_TARGET_DIR="$(native "$target")" run cargo build --release $fargs ) || return 1
+    stamp_target "$target" "$sum"
     run mkdir -p "$DIST/$side" || return 1
     run cp -f "$target/release/nuvira-bench$EXE" "$DIST/$side/nuvira-bench$EXE" || return 1
     if [ "$WITH_BINARIES" = 1 ]; then
         app_target="$WORK/app-$(echo "$side" | tr 'AB' 'ab')"
         say "build $side: nuvira-agent, nuvira-viewer, animate"
+        fresh_target "$app_target" "$sum" || return 1
         ( cd "$STAGE" && CARGO_TARGET_DIR="$(native "$app_target")" run cargo build --release -p nuvira-agent -p nuvira-viewer ) || return 1
         ( cd "$STAGE" && CARGO_TARGET_DIR="$(native "$app_target")" run cargo build --release -p nuvira-viewer --example animate ) || return 1
+        stamp_target "$app_target" "$sum"
         for b in nuvira-agent nuvira-viewer; do run cp -f "$app_target/release/$b$EXE" "$DIST/$side/$b$EXE" || return 1; done
         run cp -f "$app_target/release/examples/animate$EXE" "$DIST/$side/animate$EXE" || return 1
     fi

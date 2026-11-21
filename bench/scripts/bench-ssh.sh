@@ -25,7 +25,8 @@
 #   The remote PATH gets ~/.cargo/bin, <remote-root>/sdk/go/bin, /usr/local/go/bin.
 #   NUVIRA_BENCH_MACRO_SECS / _LONG_SECS / _EVENTS / _NOISE_CORES set here are passed on.
 #   So are NUVIRA_STATS / NUVIRA_STATS_INTERVAL_MS (the statistics log, docs/48, to measure
-#   its overhead: only builds that have it read them).
+#   its overhead: only builds that have it read them). And QLOGDIR (a folder on the
+#   machine: the Go signalling benchmarks then write a qlog per QUIC connection, SRV-16).
 #
 # What it does: sends a git bundle (base tag + B commit), the current bench/ folder and the
 # patch; checks out B in <remote-root>/repo; starts bench-compare.sh there detached from
@@ -163,7 +164,7 @@ cat >"$TMPL/drive.sh" <<EOF
 set -u
 export PATH="\$HOME/.cargo/bin:\$HOME/$REMOTE_ROOT/sdk/go/bin:/usr/local/go/bin:/opt/homebrew/bin:\$PATH"
 export NUVIRA_BENCH_POWER_SETUP="$POWER_SETUP"
-$(for v in NUVIRA_BENCH_MACRO_SECS NUVIRA_BENCH_LONG_SECS NUVIRA_BENCH_EVENTS NUVIRA_BENCH_NOISE_CORES NUVIRA_STATS NUVIRA_STATS_INTERVAL_MS; do
+$(for v in NUVIRA_BENCH_MACRO_SECS NUVIRA_BENCH_LONG_SECS NUVIRA_BENCH_EVENTS NUVIRA_BENCH_NOISE_CORES NUVIRA_STATS NUVIRA_STATS_INTERVAL_MS QLOGDIR; do
     eval "x=\${$v:-}"; [ -n "$x" ] && printf 'export %s=%q
 ' "$v" "$x"; done)
 cd "\$HOME/$REMOTE_ROOT" || cd "$REMOTE_ROOT" || exit 2

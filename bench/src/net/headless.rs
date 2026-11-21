@@ -45,7 +45,7 @@ use serde::Serialize;
 use tokio::sync::{Notify, mpsc};
 
 use super::{CpuMark, SideUsage};
-use crate::measure::Distribution;
+use crate::measure::{Distribution, UsHistogram};
 
 /// A longer pause between two decoded frames is a freeze (`viewer/src/report.rs` FREEZE).
 pub const FREEZE: Duration = Duration::from_millis(200);
@@ -79,6 +79,12 @@ pub struct ViewerOptions {
     pub device_name: String,
     /// Send `Feedback` (the agent's adaptive bitrate needs it). Default true.
     pub feedback: bool,
+    /// Keep a record of every decoded frame of the window (`SessionStats::per_frame`,
+    /// exact percentiles). Default true. False for long sessions (B-RES-01): the window
+    /// is summed up in fixed memory instead ([`FrameAgg`]), so the bench's own records
+    /// (72 B per frame, ~15 MiB/h at 60 fps) do not show up as the session's memory
+    /// growth (VWR-1).
+    pub keep_frames: bool,
 }
 
 impl Default for ViewerOptions {
@@ -93,6 +99,7 @@ impl Default for ViewerOptions {
             sample_every: 15,
             device_name: "nuvira-bench headless".into(),
             feedback: true,
+            keep_frames: true,
         }
     }
 }
@@ -219,10 +226,72 @@ impl SessionStats {
     }
 }
 
+/// The decoded frames of a window summed up in fixed memory (`keep_frames: false`):
+/// the same figures as [`frames_stats`] computes from the records, with the
+/// percentiles of [`UsHistogram`] (within 0.1 %).
+#[derive(Default)]
+struct FrameAgg {
+    frames: u64,
+    bytes: u64,
+    keyframes: u64,
+    /// Viewer clock at the window start, µs (the origin of `trace`).
+    start_us: u64,
+    last_decoded_us: Option<u64>,
+    freezes: u64,
+    freeze_ms: f64,
+    /// Received kbit/s per 250 ms.
+    trace: Vec<f64>,
+    latency_us: UsHistogram,
+    /// Received minus capture / minus encode end, µs, without the clock offset (applied
+    /// at the end, as `frames_stats` applies the offset in force then).
+    recv_capture_us: UsHistogram,
+    recv_encoded_us: UsHistogram,
+    encode_us: UsHistogram,
+    decode_us: UsHistogram,
+}
+
+impl FrameAgg {
+    fn add(&mut self, f: &FrameRec) {
+        self.frames += 1;
+        self.bytes += f.bytes as u64;
+        self.keyframes += u64::from(f.keyframe);
+        if let Some(last) = self.last_decoded_us {
+            let gap = f.decoded_us.saturating_sub(last);
+            if gap > FREEZE.as_micros() as u64 {
+                self.freezes += 1;
+                self.freeze_ms += gap as f64 / 1000.0;
+            }
+        }
+        self.last_decoded_us = Some(self.last_decoded_us.map_or(f.decoded_us, |l| l.max(f.decoded_us)));
+        let k = (f.received_us.saturating_sub(self.start_us) / 250_000) as usize;
+        // A frame received days after the start is no bitrate sample (clock jump).
+        if k < 1 << 20 {
+            if self.trace.len() <= k {
+                self.trace.resize(k + 1, 0.0);
+            }
+            self.trace[k] += f.bytes as f64 * 8.0 / 0.25 / 1000.0;
+        }
+        if let Some(l) = f.latency_us {
+            self.latency_us.add(l);
+        }
+        self.recv_capture_us.add(f.received_us as i64 - f.capture_us as i64);
+        self.recv_encoded_us.add(f.received_us as i64 - encoded_us_of(f) as i64);
+        self.encode_us.add(f.encode_us as i64);
+        self.decode_us.add(f.decode_us as i64);
+    }
+}
+
+/// Encode end of a frame on the agent's clock (older agents send only `encode_us`).
+fn encoded_us_of(f: &FrameRec) -> u64 {
+    if f.encoded_us == 0 { f.capture_us + f.encode_us as u64 } else { f.encoded_us }
+}
+
 #[derive(Default)]
 struct Window {
     started: Option<Instant>,
+    /// Every decoded frame (`keep_frames`); empty otherwise, see `agg`.
     frames: Vec<FrameRec>,
+    agg: FrameAgg,
     rtt_us: Vec<u64>,
     keyframe_requests: u64,
     decode_errors: u64,
@@ -262,6 +331,7 @@ struct FeedbackWindow {
 
 struct Shared {
     same_clock: bool,
+    keep_frames: bool,
     datagrams: bool,
     quality_samples: usize,
     sample_every: u32,
@@ -435,6 +505,7 @@ impl HeadlessViewer {
 
         let shared = Arc::new(Shared {
             same_clock: opts.same_clock,
+            keep_frames: opts.keep_frames,
             datagrams,
             quality_samples: opts.quality_samples,
             sample_every: opts.sample_every.max(1),
@@ -557,6 +628,7 @@ impl HeadlessSession {
     pub fn mark(&self) {
         let mut w = self.shared.window.lock().expect("window");
         *w = Window { started: Some(Instant::now()), ..Default::default() };
+        w.agg.start_us = nuvira_proto::now_us();
         *self.shared.mark.lock().expect("mark") = CpuMark::now();
     }
 
@@ -618,6 +690,32 @@ fn ms(d: Duration) -> f64 {
 
 fn stats_of(w: &Window, usage: SideUsage, shared: &Shared) -> SessionStats {
     let window_s = w.started.map_or(0.0, |t| t.elapsed().as_secs_f64());
+    let offset = shared.offset_known.load(Relaxed).then(|| shared.offset_us.load(Relaxed));
+    let mut s = if shared.keep_frames {
+        frames_stats(w, window_s, offset, shared.same_clock)
+    } else {
+        agg_stats(&w.agg, window_s, offset, shared.same_clock)
+    };
+    s.window_s = window_s;
+    s.fps = s.frames as f64 / window_s.max(1e-3);
+    s.mbit_s = s.bytes as f64 * 8.0 / window_s.max(1e-3) / 1e6;
+    s.rtt_ms = Distribution::of(&w.rtt_us.iter().map(|&r| r as f64 / 1000.0).collect::<Vec<_>>());
+    s.clock_offset_us = offset.filter(|_| shared.best_rtt_us.load(Relaxed) != u64::MAX);
+    s.keyframe_requests = w.keyframe_requests;
+    s.decode_errors = w.decode_errors;
+    s.dropped_waiting_key = w.dropped_waiting_key;
+    s.shards = w.shards;
+    s.shards_lost = w.shards_lost;
+    s.frames_lost = w.frames_lost;
+    s.frames_rebuilt = w.frames_rebuilt;
+    s.feedback_sent = w.feedback_sent;
+    s.control_messages = w.control.clone();
+    s.usage = usage;
+    s
+}
+
+/// The frame figures of a window from its records (`keep_frames`).
+fn frames_stats(w: &Window, window_s: f64, offset: Option<i64>, same_clock: bool) -> SessionStats {
     let frames = &w.frames;
     let bytes: u64 = frames.iter().map(|f| f.bytes as u64).sum();
     let dist = |f: &dyn Fn(&FrameRec) -> Option<f64>| {
@@ -646,45 +744,57 @@ fn stats_of(w: &Window, usage: SideUsage, shared: &Shared) -> SessionStats {
             }
         }
     }
-    let offset = shared.offset_known.load(Relaxed).then(|| shared.offset_us.load(Relaxed));
     let transit = |f: &FrameRec| {
-        let encoded = if f.encoded_us == 0 { f.capture_us + f.encode_us as u64 } else { f.encoded_us };
-        let off = if shared.same_clock { 0 } else { offset.unwrap_or(0) };
-        Some((f.received_us as i64 - (encoded as i64 - off)) as f64 / 1000.0)
+        let off = if same_clock { 0 } else { offset.unwrap_or(0) };
+        Some((f.received_us as i64 - (encoded_us_of(f) as i64 - off)) as f64 / 1000.0)
     };
     SessionStats {
-        window_s,
-        first_frame_ms: None,
         frames: frames.len() as u64,
         bytes,
-        fps: frames.len() as f64 / window_s.max(1e-3),
-        mbit_s: bytes as f64 * 8.0 / window_s.max(1e-3) / 1e6,
         latency_ms: dist(&|f| f.latency_us.map(|l| l as f64 / 1000.0)),
         latency_received_ms: dist(&|f| {
-            let off = if shared.same_clock { 0 } else { offset? };
+            let off = if same_clock { 0 } else { offset? };
             Some((f.received_us as i64 - (f.capture_us as i64 - off)) as f64 / 1000.0)
         }),
         transit_ms: dist(&transit),
         encode_ms: dist(&|f| Some(f.encode_us as f64 / 1000.0)),
         decode_ms: dist(&|f| Some(f.decode_us as f64 / 1000.0)),
-        rtt_ms: Distribution::of(&w.rtt_us.iter().map(|&r| r as f64 / 1000.0).collect::<Vec<_>>()),
-        clock_offset_us: offset.filter(|_| shared.best_rtt_us.load(Relaxed) != u64::MAX),
         freezes,
         freeze_ms,
         keyframes: frames.iter().filter(|f| f.keyframe).count() as u64,
-        keyframe_requests: w.keyframe_requests,
-        decode_errors: w.decode_errors,
-        dropped_waiting_key: w.dropped_waiting_key,
-        shards: w.shards,
-        shards_lost: w.shards_lost,
-        frames_lost: w.frames_lost,
-        frames_rebuilt: w.frames_rebuilt,
-        feedback_sent: w.feedback_sent,
         bitrate_trace_kbps: trace,
-        control_messages: w.control.clone(),
-        usage,
         per_frame: frames.clone(),
-        samples: Arc::new(Vec::new()),
+        ..Default::default()
+    }
+}
+
+/// The same figures from the fixed-memory summary (`keep_frames: false`).
+fn agg_stats(a: &FrameAgg, window_s: f64, offset: Option<i64>, same_clock: bool) -> SessionStats {
+    let mut trace = Vec::new();
+    if a.frames > 0 {
+        trace = a.trace.clone();
+        trace.resize(((window_s / 0.25).ceil() as usize).max(1), 0.0);
+    }
+    let off_ms = if same_clock { 0.0 } else { offset.unwrap_or(0) as f64 / 1000.0 };
+    // Without a known offset the records give no `latency_received` value at all.
+    let latency_received_ms = if same_clock || offset.is_some() {
+        a.recv_capture_us.distribution(1e-3, off_ms)
+    } else {
+        Distribution::default()
+    };
+    SessionStats {
+        frames: a.frames,
+        bytes: a.bytes,
+        latency_ms: a.latency_us.distribution(1e-3, 0.0),
+        latency_received_ms,
+        transit_ms: a.recv_encoded_us.distribution(1e-3, off_ms),
+        encode_ms: a.encode_us.distribution(1e-3, 0.0),
+        decode_ms: a.decode_us.distribution(1e-3, 0.0),
+        freezes: a.freezes,
+        freeze_ms: a.freeze_ms,
+        keyframes: a.keyframes,
+        bitrate_trace_kbps: trace,
+        ..Default::default()
     }
 }
 
@@ -1009,7 +1119,11 @@ fn decode_loop(
                     let mut w = shared.window.lock().expect("window");
                     if w.started.is_some() {
                         w.decoded += 1;
-                        w.frames.push(rec);
+                        if shared.keep_frames {
+                            w.frames.push(rec);
+                        } else {
+                            w.agg.add(&rec);
+                        }
                         shared.quality_samples > w.samples.len()
                             && (w.decoded - 1).is_multiple_of(shared.sample_every as u64)
                     } else {
@@ -1045,6 +1159,58 @@ fn decode_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_memory_summary_matches_the_records() {
+        // A 60 fps window with a keyframe every 120 frames, one 500 ms freeze, a latency
+        // spread and a tail: the summary (B-RES-01) gives the records' figures (VWR-1).
+        let start_us = nuvira_proto::now_us();
+        let mut w = Window { started: Some(Instant::now()), ..Default::default() };
+        w.agg.start_us = start_us;
+        let mut t = start_us + 1000;
+        for i in 0..3000u64 {
+            t += if i == 1500 { 500_000 } else { 16_667 };
+            let lat = 9_000 + (i * 7919 % 13_000) as i64 + if i % 97 == 0 { 80_000 } else { 0 };
+            let rec = FrameRec {
+                seq: i + 1,
+                keyframe: i % 120 == 0,
+                bytes: 2_000 + (i * 31 % 900) as u32,
+                capture_us: t - lat as u64,
+                encoded_us: t - lat as u64 + 4_000,
+                encode_us: 4_000 + (i % 50) as u32,
+                received_us: t - 2_000,
+                decoded_us: t,
+                decode_us: 1_500 + (i % 40) as u32,
+                latency_us: Some(lat),
+            };
+            w.frames.push(rec);
+            w.agg.add(&rec);
+        }
+        let window_s = (t - start_us) as f64 / 1e6 + 0.1;
+        let a = frames_stats(&w, window_s, None, true);
+        let b = agg_stats(&w.agg, window_s, None, true);
+        assert_eq!((a.frames, a.bytes, a.keyframes, a.freezes), (b.frames, b.bytes, b.keyframes, b.freezes));
+        assert!((a.freeze_ms - b.freeze_ms).abs() < 1e-6);
+        for (x, y) in [
+            (a.latency_ms, b.latency_ms),
+            (a.latency_received_ms, b.latency_received_ms),
+            (a.transit_ms, b.transit_ms),
+            (a.encode_ms, b.encode_ms),
+            (a.decode_ms, b.decode_ms),
+        ] {
+            assert_eq!(x.n, y.n);
+            for (u, v) in [(x.mean, y.mean), (x.min, y.min), (x.max, y.max)] {
+                assert!((u - v).abs() < 1e-9, "{u} vs {v}");
+            }
+            for (u, v) in [(x.p50, y.p50), (x.p95, y.p95), (x.p99, y.p99)] {
+                assert!((u - v).abs() <= u.abs() * 1e-3, "{u} vs {v}");
+            }
+        }
+        assert_eq!(a.bitrate_trace_kbps.len(), b.bitrate_trace_kbps.len());
+        let (sa, sb): (f64, f64) = (a.bitrate_trace_kbps.iter().sum(), b.bitrate_trace_kbps.iter().sum());
+        assert!((sa - sb).abs() < 1e-6 * sa, "{sa} vs {sb}");
+        assert!(b.per_frame.is_empty());
+    }
 
     #[test]
     fn shard_tracking_sees_parity_use() {

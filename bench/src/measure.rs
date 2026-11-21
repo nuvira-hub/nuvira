@@ -494,11 +494,25 @@ fn timeval(t: libc::timeval) -> Duration {
 /// Detects reps during which other processes used the CPU (plan 6.1): whole-machine
 /// CPU minus this process's, in cores. Threshold from `NUVIRA_BENCH_NOISE_CORES`
 /// (default 0.10 of one core; `off` disables the guard).
+///
+/// macOS (Apple silicon): only the performance cores are watched, read directly from
+/// the processors' tick counters ([`maccpu`]); see [`NoiseGuard::end`] for why.
 pub struct NoiseGuard {
     sys: Option<sysinfo::System>,
     threshold: f64,
-    /// Start: time, this process's CPU, all processors' idle time (Windows).
-    start: Option<(Instant, Duration, Option<Duration>)>,
+    /// Start of the observed interval.
+    start: Option<GuardStart>,
+}
+
+struct GuardStart {
+    at: Instant,
+    /// This process's CPU time.
+    own: Duration,
+    /// All processors' idle time (Windows).
+    idle: Option<Duration>,
+    /// Busy and total ticks per processor (macOS).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    ticks: Option<Vec<(u64, u64)>>,
 }
 
 impl NoiseGuard {
@@ -516,24 +530,52 @@ impl NoiseGuard {
     /// Start of an observed interval.
     pub fn begin(&mut self) {
         if let Some(sys) = &mut self.sys {
-            sys.refresh_cpu_usage();
-            self.start = Some((Instant::now(), cpu_time_process(), idle_time()));
+            #[cfg(target_os = "macos")]
+            let ticks = maccpu::ticks();
+            #[cfg(not(target_os = "macos"))]
+            let ticks = None;
+            if ticks.is_none() {
+                sys.refresh_cpu_usage();
+            }
+            self.start =
+                Some(GuardStart { at: Instant::now(), own: cpu_time_process(), idle: idle_time(), ticks });
         }
     }
 
     /// End of the interval: cores used by other processes, if measured.
     pub fn end(&mut self) -> Option<f64> {
         let sys = self.sys.as_mut()?;
-        let (t0, c0, i0) = self.start.take()?;
-        let wall = t0.elapsed().as_secs_f64();
+        let st = self.start.take()?;
+        let wall = st.at.elapsed().as_secs_f64();
         // Shorter intervals than this give too coarse a reading (Windows counters
-        // advance in 15.6 ms ticks).
+        // advance in 15.6 ms ticks, macOS's processor ticks every 10 ms).
         if wall < 0.05 {
             return None;
         }
+        let own = (cpu_time_process() - st.own).as_secs_f64() / wall;
+        // macOS: the processors' own tick counters, read at both ends of the rep.
+        // sysinfo is not used there: it ignores a CPU refresh less than 200 ms after
+        // the previous one (its MINIMUM_CPU_UPDATE_INTERVAL) and returns the old
+        // value, so the reading of a rep could cover another interval (the previous
+        // rep, or the gap between reps) while `own` covered this rep.
+        // On Apple silicon only the performance cluster is counted: macOS keeps
+        // background work (Spotlight, media analysis, the Neural Engine compiler:
+        // several cores on a freshly installed Mac; 0.1-0.2 core of daemons at any
+        // time) on the efficiency cores, where it does not compete with the bench's
+        // default-priority threads, which run on the performance cores. Counted over
+        // all cores it put nearly every micro rep above the threshold (Phase 1 Mac
+        // baseline: medians 0.14-0.47 core on a machine left alone). A process that
+        // needs more cores than the performance cluster has spills over to the
+        // efficiency cores: then the whole machine counts again.
+        #[cfg(target_os = "macos")]
+        if let (Some(t0), Some(t1)) = (&st.ticks, maccpu::ticks())
+            && let Some(other) = maccpu::other_cores(t0, &t1, own)
+        {
+            return Some(other);
+        }
         sys.refresh_cpu_usage();
         let n = sys.cpus().len() as f64;
-        let all = match (i0, idle_time()) {
+        let all = match (st.idle, idle_time()) {
             // Windows: busy = processors - idle, from the idle threads' cycle times
             // (precise). `% Idle Time` (sysinfo) is sampled at the 15.6 ms clock tick
             // per processor: on a 200 ms rep that is +-0.08 core per processor and
@@ -541,12 +583,116 @@ impl NoiseGuard {
             (Some(a), Some(b)) => n - b.saturating_sub(a).as_secs_f64() / wall,
             _ => sys.global_cpu_usage() as f64 / 100.0 * n,
         };
-        let own = (cpu_time_process() - c0).as_secs_f64() / wall;
         Some((all - own).max(0.0))
     }
 
     pub fn is_noisy(&self, other_cores: Option<f64>) -> bool {
         other_cores.is_some_and(|c| c > self.threshold)
+    }
+}
+
+/// macOS processor load from `host_processor_info(PROCESSOR_CPU_LOAD_INFO)`: busy
+/// (user + system + nice) and total ticks per logical processor, counted at the
+/// statistics clock (100 Hz).
+#[cfg(target_os = "macos")]
+pub mod maccpu {
+    use std::ops::Range;
+
+    /// Busy and total ticks per logical processor, in logical processor order.
+    pub fn ticks() -> Option<Vec<(u64, u64)>> {
+        let mut n: libc::natural_t = 0;
+        let mut info: libc::processor_info_array_t = std::ptr::null_mut();
+        let mut count: libc::mach_msg_type_number_t = 0;
+        // SAFETY: out pointers; on success `info` is a kernel-allocated array of
+        // `count` integers (CPU_STATE_MAX per processor), freed below.
+        #[allow(deprecated)]
+        let r = unsafe {
+            libc::host_processor_info(
+                libc::mach_host_self(),
+                libc::PROCESSOR_CPU_LOAD_INFO,
+                &mut n,
+                &mut info,
+                &mut count,
+            )
+        };
+        if r != libc::KERN_SUCCESS || info.is_null() {
+            return None;
+        }
+        let per = libc::CPU_STATE_MAX as usize;
+        // SAFETY: `count` integers at `info`.
+        let all = unsafe { std::slice::from_raw_parts(info, count as usize) };
+        let out = (count as usize >= n as usize * per && n > 0).then(|| {
+            all.chunks_exact(per)
+                .take(n as usize)
+                .map(|c| {
+                    let t = |i: libc::c_int| c[i as usize] as u32 as u64;
+                    let busy = t(libc::CPU_STATE_USER) + t(libc::CPU_STATE_SYSTEM) + t(libc::CPU_STATE_NICE);
+                    (busy, busy + t(libc::CPU_STATE_IDLE))
+                })
+                .collect()
+        });
+        // SAFETY: the array was allocated by the kernel in this task.
+        #[allow(deprecated)]
+        unsafe {
+            libc::vm_deallocate(
+                libc::mach_task_self(),
+                info as libc::vm_address_t,
+                count as libc::vm_size_t * std::mem::size_of::<libc::integer_t>() as libc::vm_size_t,
+            );
+        }
+        out
+    }
+
+    /// Logical processors of the performance cluster on Apple silicon: the last
+    /// `hw.perflevel0.logicalcpu` of them (the efficiency cores are numbered first:
+    /// `ioreg -p IODeviceTree -n cpus` gives cluster-type "E" for cpu0..3 on an M1).
+    /// None on a Mac with one kind of core (Intel).
+    pub fn performance_cores(total: usize) -> Option<Range<usize>> {
+        let levels = sysctl_u32(c"hw.nperflevels")?;
+        let p = sysctl_u32(c"hw.perflevel0.logicalcpu")? as usize;
+        (levels >= 2 && p > 0 && p < total).then(|| total - p..total)
+    }
+
+    fn sysctl_u32(name: &std::ffi::CStr) -> Option<u32> {
+        let mut v: u32 = 0;
+        let mut len = std::mem::size_of::<u32>();
+        // SAFETY: a u32 out value and its length.
+        let r = unsafe {
+            libc::sysctlbyname(name.as_ptr(), (&mut v as *mut u32).cast(), &mut len, std::ptr::null_mut(), 0)
+        };
+        (r == 0 && len == std::mem::size_of::<u32>()).then_some(v)
+    }
+
+    /// Cores used by other processes between two readings, given this process's
+    /// own use (cores) over the same interval: on Apple silicon the performance
+    /// cluster only, unless `own` does not fit in it (then all processors).
+    pub fn other_cores(t0: &[(u64, u64)], t1: &[(u64, u64)], own: f64) -> Option<f64> {
+        other_cores_in(t0, t1, own, performance_cores(t0.len()))
+    }
+
+    pub(crate) fn other_cores_in(
+        t0: &[(u64, u64)],
+        t1: &[(u64, u64)],
+        own: f64,
+        perf: Option<Range<usize>>,
+    ) -> Option<f64> {
+        if t0.len() != t1.len() || t0.is_empty() {
+            return None;
+        }
+        let busy = |r: Range<usize>| -> f64 {
+            r.map(|i| {
+                let (b, t) = (t1[i].0.saturating_sub(t0[i].0), t1[i].1.saturating_sub(t0[i].1));
+                if t == 0 { 0.0 } else { b as f64 / t as f64 }
+            })
+            .sum()
+        };
+        let range = match perf {
+            // Half a core of margin: the process's threads are not pinned and some of
+            // `own` may run on the efficiency cores.
+            Some(p) if own <= p.len() as f64 - 0.5 => p,
+            _ => 0..t0.len(),
+        };
+        Some((busy(range) - own).max(0.0))
     }
 }
 
@@ -788,9 +934,171 @@ pub fn sleep_until(deadline: Instant) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Fixed-memory histogram (long sessions)
+
+/// Sub-buckets per power of two: values below `2^HIST_SUB` are exact, larger ones
+/// are kept with a relative error below `2^-HIST_SUB` (0.1 %).
+const HIST_SUB: u32 = 10;
+/// Largest octave kept (2^40 µs = 12.7 days): larger values go to the last bucket.
+const HIST_MAX_SHIFT: u32 = 40 - HIST_SUB;
+const HIST_BUCKETS: usize = ((HIST_MAX_SHIFT as usize) + 2) << HIST_SUB;
+
+/// Distribution of integer values (µs) in a fixed amount of memory, HDR-style
+/// (exact below 1024, then 1024 buckets per power of two). Used where a session is
+/// too long to keep every value: a growing vector of per-frame records is what the
+/// long-session leak gate B-RES-01 measured instead of the product (VWR-1).
+/// Count, mean, min and max are exact; percentiles within 0.1 %.
+#[derive(Clone, Debug, Default)]
+pub struct UsHistogram {
+    /// Counts of the values >= 0 and of the magnitudes of the values < 0,
+    /// allocated on the first value of each sign (then fixed).
+    pos: Vec<u32>,
+    neg: Vec<u32>,
+    n: u64,
+    sum: f64,
+    min: i64,
+    max: i64,
+}
+
+fn hist_index(v: u64) -> usize {
+    if v < (1 << HIST_SUB) {
+        return v as usize;
+    }
+    let shift = (63 - v.leading_zeros()) - HIST_SUB;
+    if shift > HIST_MAX_SHIFT {
+        return HIST_BUCKETS - 1;
+    }
+    (((shift + 1) as usize) << HIST_SUB) + ((v >> shift) as usize - (1 << HIST_SUB))
+}
+
+/// The value a bucket stands for: exact, or the middle of its range.
+fn hist_value(i: usize) -> f64 {
+    let sub = 1usize << HIST_SUB;
+    if i < sub {
+        return i as f64;
+    }
+    let shift = (i >> HIST_SUB) as u32 - 1;
+    let lo = ((sub + (i & (sub - 1))) as u64) << shift;
+    lo as f64 + ((1u64 << shift) as f64 - 1.0) / 2.0
+}
+
+impl UsHistogram {
+    pub fn add(&mut self, v: i64) {
+        let (counts, mag) =
+            if v >= 0 { (&mut self.pos, v as u64) } else { (&mut self.neg, v.unsigned_abs()) };
+        if counts.is_empty() {
+            counts.resize(HIST_BUCKETS, 0);
+        }
+        let c = &mut counts[hist_index(mag)];
+        *c = c.saturating_add(1);
+        if self.n == 0 {
+            (self.min, self.max) = (v, v);
+        } else {
+            self.min = self.min.min(v);
+            self.max = self.max.max(v);
+        }
+        self.n += 1;
+        self.sum += v as f64;
+    }
+
+    pub fn len(&self) -> u64 {
+        self.n
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    /// The value of rank `k` (0-based, ascending), clamped to the exact min and max.
+    fn at_rank(&self, k: u64) -> f64 {
+        let mut seen = 0u64;
+        // Negative values: largest magnitude first.
+        for (i, &c) in self.neg.iter().enumerate().rev() {
+            seen += c as u64;
+            if c > 0 && k < seen {
+                return (-hist_value(i)).clamp(self.min as f64, self.max as f64);
+            }
+        }
+        for (i, &c) in self.pos.iter().enumerate() {
+            seen += c as u64;
+            if c > 0 && k < seen {
+                return hist_value(i).clamp(self.min as f64, self.max as f64);
+            }
+        }
+        self.max as f64
+    }
+
+    /// As [`Distribution::of`] of the values times `scale` plus `shift` (e.g. µs to ms,
+    /// a clock offset applied afterwards), with [`percentile_sorted`]'s interpolation.
+    pub fn distribution(&self, scale: f64, shift: f64) -> Distribution {
+        if self.n == 0 {
+            return Distribution::default();
+        }
+        let pct = |p: f64| {
+            let rank = (p / 100.0).clamp(0.0, 1.0) * (self.n - 1) as f64;
+            let (lo, hi) = (rank.floor() as u64, rank.ceil() as u64);
+            let (a, b) = (self.at_rank(lo), self.at_rank(hi));
+            a + (b - a) * (rank - lo as f64)
+        };
+        let f = |v: f64| v * scale + shift;
+        Distribution {
+            n: self.n as usize,
+            mean: f(self.sum / self.n as f64),
+            min: f(self.min as f64),
+            p50: f(pct(50.0)),
+            p95: f(pct(95.0)),
+            p99: f(pct(99.0)),
+            max: f(self.max as f64),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn us_histogram_matches_exact_distribution() {
+        // Latency-like values (µs), some negative, a long tail: within 0.1 % of the exact
+        // percentiles; count, mean, min, max exact.
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut vals = Vec::new();
+        let mut h = UsHistogram::default();
+        for i in 0..50_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let v = match i % 50 {
+                0 => -((x % 3000) as i64),
+                1 => (x % 4_000_000) as i64,
+                _ => 8_000 + (x % 30_000) as i64,
+            };
+            vals.push(v as f64 / 1000.0);
+            h.add(v);
+        }
+        let exact = Distribution::of(&vals);
+        let got = h.distribution(1e-3, 0.0);
+        assert_eq!(got.n, exact.n);
+        for (a, b) in [(got.mean, exact.mean), (got.min, exact.min), (got.max, exact.max)] {
+            assert!((a - b).abs() < 1e-9, "{a} vs {b}");
+        }
+        for (a, b) in [(got.p50, exact.p50), (got.p95, exact.p95), (got.p99, exact.p99)] {
+            assert!((a - b).abs() <= b.abs() * 1e-3 + 1e-3, "{a} vs {b}");
+        }
+        // Small values are exact, a shift moves everything.
+        let mut h = UsHistogram::default();
+        for v in [3, 1, 2] {
+            h.add(v);
+        }
+        let d = h.distribution(1.0, 10.0);
+        assert_eq!((d.min, d.p50, d.max, d.mean), (11.0, 12.0, 13.0, 12.0));
+        assert!(UsHistogram::default().distribution(1.0, 0.0).n == 0);
+        // Huge values land in the last bucket, max stays exact.
+        let mut h = UsHistogram::default();
+        h.add(i64::MAX);
+        assert_eq!(h.distribution(1.0, 0.0).max, i64::MAX as f64);
+    }
 
     #[test]
     fn stats_known_values() {
@@ -881,6 +1189,34 @@ mod tests {
         std::thread::sleep(Duration::from_millis(120));
         let other = g.end();
         assert!(other.is_some_and(|c| c >= 0.0 && c.is_finite()), "{other:?}");
+    }
+
+    /// macOS: background load on the efficiency cores is not "other" while the
+    /// process fits in the performance cluster; it is once the process spills over.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_guard_counts_the_performance_cluster() {
+        use super::maccpu::other_cores_in;
+        // 4 E (0..4) + 4 P (4..8), 20 ticks: E cores fully busy, P cores: one at
+        // 100 % (our thread), one at 25 %.
+        let t0 = vec![(0, 0); 8];
+        let t1 = vec![(20, 20), (20, 20), (20, 20), (20, 20), (20, 20), (5, 20), (0, 20), (0, 20)];
+        let p = Some(4..8);
+        let other = other_cores_in(&t0, &t1, 1.0, p.clone()).unwrap();
+        assert!((other - 0.25).abs() < 1e-9, "{other}");
+        // A process using 4 cores: all processors (5.25 busy - 4 own).
+        let other = other_cores_in(&t0, &t1, 4.0, p).unwrap();
+        assert!((other - 1.25).abs() < 1e-9, "{other}");
+        // One kind of core: all processors.
+        let other = other_cores_in(&t0, &t1, 1.0, None).unwrap();
+        assert!((other - 4.25).abs() < 1e-9, "{other}");
+        assert!(other_cores_in(&t0, &t1[..4], 1.0, None).is_none());
+        // The real counters move and the cluster is found on Apple silicon.
+        let a = super::maccpu::ticks().expect("host_processor_info");
+        assert_eq!(a.len(), std::thread::available_parallelism().unwrap().get());
+        if cfg!(target_arch = "aarch64") {
+            assert!(super::maccpu::performance_cores(a.len()).is_some());
+        }
     }
 
     #[test]

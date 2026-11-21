@@ -279,6 +279,20 @@ fn fill(r: &mut CaseResult, runs: &[Outcome], case: &SessionCase) {
     let frames = |o: &Outcome| o.stats.frames.max(1) as f64;
     per("first_frame_ms", "ms", Better::Lower, Gate::MacroLatency, &|o| o.first_frame_ms);
     per("video_format_ms", "ms", Better::Lower, Gate::MacroLatency, &|o| o.handshake.times.video_format_ms);
+    // The QUIC handshake alone (info): on Windows loopback (PC-LABORATORIO) the first packet
+    // of the viewer's new socket is lost in about half the sessions and quinn resends it
+    // after its first PTO (333 ms initial RTT: ~1 s): connected_ms and video_format_ms are
+    // ~52 or ~1060 ms there, first_frame_ms ~225 or ~1240 (12 sessions on 2026-11-20, 6 of
+    // each), the client-socket effect of T6 / SRV-15 (B-GO-06). The same two figures counted
+    // from the established connection are what the session's start costs, and they gate.
+    let connected = |o: &Outcome| o.handshake.times.connected_ms.unwrap_or_default();
+    per("connected_ms", "ms", Better::Lower, Gate::Info, &connected);
+    per("video_format_after_connect_ms", "ms", Better::Lower, Gate::MacroLatency, &|o| {
+        o.handshake.times.video_format_ms - connected(o)
+    });
+    per("first_frame_after_connect_ms", "ms", Better::Lower, Gate::MacroLatency, &|o| {
+        o.first_frame_ms - connected(o)
+    });
     per("fps", "1/s", Better::Higher, Gate::MacroThroughput, &|o| o.stats.fps);
     per("frames_missing_pct", "%", Better::Lower, Gate::Info, &|o| {
         (100.0 * (1.0 - o.stats.fps / case.fps as f64)).max(0.0)
