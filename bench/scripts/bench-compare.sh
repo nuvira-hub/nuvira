@@ -28,7 +28,8 @@
 #                       (default $NUVIRA_BENCH_WORK, else <parent of the repo>/nuvira-review)
 #   --machine ALIAS     machine alias recorded in the results (default hostname)
 #   --config-ids LIST   hw-matrix config IDs of this machine (e.g. WIN11,GPU-INTEL-QSV)
-#   --noise FILE        noise calibration (default $WORK/noise-<machine>.json when present)
+#   --noise FILE        noise calibration (default bench/noise/noise-<machine>.json, the committed
+#                       one, else $WORK/noise-<machine>.json)
 #   --calibrate         A against A' (two builds of the base): writes the noise file
 #   --base-only         the baseline run: side A only, written as baseline.md / baseline.json
 #                       (medians and deviations of A). With --rounds >= 2 a second build of A
@@ -235,7 +236,15 @@ fi
 
 STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 [ -n "$OUT" ] || OUT="$WORK/runs/$MACHINE/$STAMP"
-[ -n "$NOISE" ] || NOISE="$WORK/noise-$MACHINE.json"
+# Noise: --noise, else the calibration committed with the bench (bench/noise/noise-<machine>.json,
+# the one the gating machines use), else the work folder's. A calibration always writes the
+# work folder's file (copy it into bench/noise/ and commit it to make it the reference).
+if [ -z "$NOISE" ]; then
+    NOISE="$WORK/noise-$MACHINE.json"
+    if [ "$CALIBRATE" = 0 ] && [ "$BASE_ONLY" = 0 ] && [ -f "$BENCH_SRC/noise/noise-$MACHINE.json" ]; then
+        NOISE="$BENCH_SRC/noise/noise-$MACHINE.json"
+    fi
+fi
 # Info-only machines (thresholds.json "machines": {"ALIAS": { "gate": false ...}}) never gate.
 if grep -q "\"$MACHINE\": *{ *\"gate\": *false" "$BENCH_SRC/thresholds.json" 2>/dev/null; then INFO_ONLY=1; fi
 # Gating needs the machine's noise (plan 9.3: threshold + noise): run --calibrate first.

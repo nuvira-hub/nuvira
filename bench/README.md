@@ -50,7 +50,10 @@ bench/scripts/bench-compare.sh --base-only --tier full --suite long --rounds 1
 
 `bench-compare.sh` builds both sides with each side's `Cargo.lock`, verifies the fixtures,
 makes the shared inputs with the A binary (files, B-MICRO-08/09 decode streams), runs the rounds
-in ABBA order, and writes `compare.md` / `compare.json`. It refuses to gate (exit 2) when the
+in ABBA order, and writes `compare.md` / `compare.json`. The noise file is `bench/noise/noise-<machine>.json`
+(committed: MSI-UBUNTU and PC-LABORATORIO, recalibrated in lot 26 on 2026-11-21), else
+`$WORK/noise-<machine>.json` (where `--calibrate` writes; copy it into `bench/noise/` and commit
+it to make it the reference). It refuses to gate (exit 2) when the
 machine has no noise file; `--no-noise` compares on the thresholds alone. Exit codes: 0 no
 regression, 1 regression or exact mismatch, 2 invalid run. Other machines: `bench-remote.sh`
 (PC-LABORATORIO), `bench-ssh.sh` (Linux VMs, Mac), `lan-ab.sh` (B-MACRO-09); see `bench-run.md`.
