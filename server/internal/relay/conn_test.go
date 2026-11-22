@@ -23,6 +23,10 @@ func listenLoopback(t testing.TB) *net.UDPConn {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { u.Close() })
+	// As main does on the server's socket. macOS also refuses a UDP send larger
+	// than the socket's send buffer (net.inet.udp.maxdgram, 9216 bytes by
+	// default), so without this the large-datagram tests (K18) fail there.
+	_ = u.SetWriteBuffer(1 << 20)
 	return u
 }
 
