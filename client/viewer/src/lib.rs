@@ -607,6 +607,8 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         app.tunnels.add_spec(spec).with_context(|| format!("--tunnel {spec}"))?;
     }
     event_loop.run_app(&mut app)?;
+    // The session's end for the report, before the exit wait below.
+    let ended = Instant::now();
     // Closing the input channel ends the session: wait (briefly) for the close to
     // reach the agent.
     app.input = None;
@@ -626,7 +628,7 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
     if let Some(path) = &args.stats_file {
         app.report.exit_reason = app.exit_reason.clone();
         app.report.dropped = app.slot.dropped();
-        std::fs::write(path, app.report.to_json(app.started))
+        std::fs::write(path, app.report.to_json(app.started, ended))
             .with_context(|| format!("writing {}", path.display()))?;
     }
     if let (Some(path), Some(frame)) = (&args.snapshot, &app.last_frame) {

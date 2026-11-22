@@ -97,8 +97,10 @@ impl Report {
         Some(gap)
     }
 
-    pub fn to_json(&self, started: Instant) -> String {
-        let secs = started.elapsed().as_secs_f64();
+    /// `ended`: when the session ended (the event loop returned), not when the
+    /// report is written after the network thread's exit wait.
+    pub fn to_json(&self, started: Instant, ended: Instant) -> String {
+        let secs = ended.duration_since(started).as_secs_f64();
         let streaming_secs = secs - self.first_frame_ms.map_or(secs, |ms| ms as f64 / 1000.0);
         let mut lat = self.latencies_us.clone();
         lat.sort_unstable();
@@ -147,7 +149,7 @@ mod tests {
             completed: true,
             ..Default::default()
         };
-        let json = r.to_json(Instant::now());
+        let json = r.to_json(Instant::now(), Instant::now());
         assert!(json.contains("\"latency_ms_p50\": 20"));
         assert!(json.contains("\"exit_reason\": \"end \\\"test\\\"\""));
         assert!(json.contains("\"renderer\": null"));
@@ -159,12 +161,12 @@ mod tests {
         r.latency(1000);
         r.rtt(2000);
         assert!(r.latencies_us.is_empty() && r.rtt_us.is_empty());
-        assert!(r.to_json(Instant::now()).contains("\"latency_ms_p50\": null"));
+        assert!(r.to_json(Instant::now(), Instant::now()).contains("\"latency_ms_p50\": null"));
         let mut r = Report::new(true);
         r.latency(1000);
         r.rtt(2000);
         assert_eq!((r.latencies_us.as_slice(), r.rtt_us.as_slice()), (&[1000][..], &[2000][..]));
-        let json = r.to_json(Instant::now());
+        let json = r.to_json(Instant::now(), Instant::now());
         assert!(json.contains("\"latency_ms_p50\": 1"), "{json}");
         assert!(json.contains("\"rtt_ms_p50\": 2"), "{json}");
     }
