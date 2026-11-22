@@ -550,8 +550,11 @@ fn render_nodes(dev: &std::path::Path, sys: &std::path::Path) -> Vec<String> {
 /// them: the conversion tests open such drivers on purpose.
 static REFUSED: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
 
-/// `vaInitialize` calls made by this process (for the tests).
-static INITIALISED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    /// `vaInitialize` calls made by this thread (for the tests: per thread, so
+    /// tests opening drivers in parallel do not change another test's count).
+    static INITIALISED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 fn refused(path: &str) -> Option<String> {
     let refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
@@ -613,7 +616,7 @@ impl Display {
                 bail!("no VA display");
             }
             let (mut major, mut minor) = (0, 0);
-            INITIALISED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            INITIALISED.set(INITIALISED.get() + 1);
             let status = (va.initialize)(dpy, &mut major, &mut minor);
             if status != VA_STATUS_SUCCESS {
                 (va.terminate)(dpy);
@@ -2409,12 +2412,12 @@ mod tests {
         std::fs::write(&node, b"").unwrap();
         let path = node.to_string_lossy().into_owned();
         refuse(&path, "the driver does not encode H.264");
-        let before = INITIALISED.load(std::sync::atomic::Ordering::Relaxed);
+        let before = INITIALISED.get();
         for _ in 0..20 {
             let e = Display::open_paths(va, vec![path.clone()], true).err().expect("refused");
             assert!(format!("{e:#}").contains("does not encode H.264 (not tried again)"), "{e:#}");
         }
-        assert_eq!(INITIALISED.load(std::sync::atomic::Ordering::Relaxed), before);
+        assert_eq!(INITIALISED.get(), before);
         // The first reason stays.
         assert_eq!(refused(&path).as_deref(), Some("the driver does not encode H.264"));
         refuse(&path, "another reason");

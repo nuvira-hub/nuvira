@@ -11,9 +11,9 @@
 //! - macOS: `SACLockScreenImmediate` of the login framework, as the menu bar's
 //!   "Lock Screen" does.
 
-use anyhow::Result;
 #[cfg(target_os = "linux")]
 use anyhow::Context;
+use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use anyhow::bail;
 
