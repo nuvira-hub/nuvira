@@ -18,7 +18,9 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use nuvira_update::unix::{Install, PackageKind, Replaced, apply, clean, this_install};
+#[cfg(target_os = "linux")]
+use nuvira_update::unix::PackageKind;
+use nuvira_update::unix::{Install, Replaced, apply, clean, this_install};
 
 fn dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("nuvira-update-{name}-{}", std::process::id()));
