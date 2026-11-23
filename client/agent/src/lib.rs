@@ -512,6 +512,7 @@ pub async fn serve_via_server(
         waiting: Mutex::new(None),
         end_session: Notify::new(),
         ends: Default::default(),
+        hosts: Default::default(),
         shared: Mutex::new(None),
         handover: Mutex::new(None),
         policy: Default::default(),
@@ -688,6 +689,8 @@ struct SessionContext {
     /// How each viewer's last session ended: an automatic reopen after a normal end
     /// is refused (`Hello.reopen`, see `reopen`).
     ends: reopen::Ends,
+    /// The viewers whose session is in progress, and when each was last heard.
+    hosts: reopen::Hosts,
     /// Rules of the server (confirmation always, no files, no clipboard).
     policy: Mutex<nuvira_proto::v1::Policy>,
     /// Ticket of the open support request: whoever presents it in a session is
@@ -937,6 +940,18 @@ async fn signal_loop(
                         cancel.notify_one();
                         accepted.insert(inc.session_id.clone(), request);
                         Some(client_message::Msg::Accept(Accept { session_id: inc.session_id }))
+                    } else if ctx.busy.load(Ordering::Relaxed) > 0
+                        && ctx.hosts.silent(&request.viewer_id, reopen::HOST_SILENT)
+                    {
+                        // The viewer of the session in progress comes back before the
+                        // loss of its connection was noticed (the web page back from
+                        // the background): busy until then, not a guest of its own
+                        // dead session (MT-P2-12 F1). The page tries again.
+                        info!("the viewer of the session in progress, silent, asks again: refused as busy");
+                        Some(client_message::Msg::Reject(Reject {
+                            session_id: inc.session_id,
+                            reason: "@agent.busy".into(),
+                        }))
                     } else if ctx.busy.load(Ordering::Relaxed) > 0 && shared::can_join(ctx) {
                         // Another viewer joins the session in progress, after the same
                         // access control.
@@ -1252,6 +1267,8 @@ async fn relayed_session(
     }
     acceptor.abort();
     let (conn, streams) = connected??;
+    // Known as a host while it runs (a guest is not one).
+    let _host = (!request.join).then(|| ctx.hosts.add(&request.viewer_id, &conn));
     let remote = nuvira_transport::p2p::canonical(conn.remote_address());
     let direct = remote != route.relay;
     outcome.connected = Some(std::time::Instant::now());
@@ -4116,6 +4133,7 @@ mod gate_characterisation {
             waiting: Mutex::new(None),
             end_session: Notify::new(),
             ends: Default::default(),
+            hosts: Default::default(),
             shared: Mutex::new(None),
             handover: Mutex::new(None),
             policy: Default::default(),
