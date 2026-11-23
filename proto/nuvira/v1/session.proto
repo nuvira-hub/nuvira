@@ -611,6 +611,13 @@ message Hello {
   // From the viewer: it can send its microphone. From the agent: it can play it
   // (a sound output, allowed by the server's rules).
   bool microphone = 31;
+  // From the viewer: this connection opens again by itself a session that was
+  // lost (the web page back from the background), not one the person asked for.
+  // An agent refuses it ("@agent.ended_at_computer", before the password) when
+  // that viewer's last session there ended normally: the person at the PC ended
+  // it while the page could not hear of it. Older viewers never set it; older
+  // agents ignore it.
+  bool reopen = 32;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do

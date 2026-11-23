@@ -381,6 +381,7 @@
   "agent.not_accepted": "connexion non acceptée sur l'appareil",
   "agent.no_answer": "aucune réponse de l'appareil",
   "agent.busy": "l'appareil est occupé dans une autre session",
+  "agent.ended_at_computer": "la session a été terminée sur l'ordinateur distant",
   "agent.rejected": "connexion refusée",
   "agent.downloads": "Téléchargements",
   "agent.no_user": "aucun utilisateur connecté sur l'ordinateur distant pour recevoir le fichier",

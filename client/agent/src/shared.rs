@@ -288,6 +288,7 @@ pub async fn guest_session(
     // Small messages only until the viewer has authenticated.
     let mut ctrl_rx = FramedRecv::with_limit(recv, crate::HANDSHAKE_MESSAGE_LIMIT);
     let hello = crate::read_hello(&mut ctrl_rx, "viewer joining the session in progress").await?;
+    gate.refuse_reopen(&hello)?;
     let policy = gate.policy();
     let Some(shared) = gate.ctx.shared.lock().expect("shared").clone() else {
         bail!("@agent.busy");

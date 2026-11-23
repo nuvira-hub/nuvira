@@ -22,6 +22,7 @@ mod lock;
 mod pipeline;
 mod printer;
 mod pty;
+mod reopen;
 mod restart;
 pub mod reverse;
 mod session_stats;
@@ -510,6 +511,7 @@ pub async fn serve_via_server(
         claims: Mutex::new(()),
         waiting: Mutex::new(None),
         end_session: Notify::new(),
+        ends: Default::default(),
         shared: Mutex::new(None),
         handover: Mutex::new(None),
         policy: Default::default(),
@@ -683,6 +685,9 @@ struct SessionContext {
     /// then reopened) replaces the attempt instead of finding the PC busy.
     waiting: Mutex<Option<(String, Arc<Notify>)>>,
     end_session: Notify,
+    /// How each viewer's last session ended: an automatic reopen after a normal end
+    /// is refused (`Hello.reopen`, see `reopen`).
+    ends: reopen::Ends,
     /// Rules of the server (confirmation always, no files, no clipboard).
     policy: Mutex<nuvira_proto::v1::Policy>,
     /// Ticket of the open support request: whoever presents it in a session is
@@ -988,6 +993,12 @@ async fn signal_loop(
                         let result = relayed_session(&ctx, &identity, &p2p_route, &request, &session_id, &mut outcome).await;
                         if let Err(e) = &result {
                             warn!("session ended: {e:#}");
+                        }
+                        // How it ended, for an automatic reopen by the same viewer: only
+                        // sessions that got in (the first viewer's, once claimed; a
+                        // guest's, once connected).
+                        if outcome.claimed || (join && outcome.connected.is_some()) {
+                            ctx.ends.record(&request.viewer_id, reopen::Ended::of(&result));
                         }
                         // The counters are reset when the session is claimed: a guest's
                         // transfers are none (they stay the session's), and an attempt
@@ -1401,6 +1412,18 @@ impl Gate<'_> {
     /// right, before the person at the PC is asked, so that they are asked about
     /// one viewer at a time. `Err` when another viewer authenticated first while
     /// both were connecting.
+    /// A viewer reopening by itself (`Hello.reopen`, the web page back from the
+    /// background) a session that ended normally here (the person at the PC ended
+    /// it while the page was suspended or stopped and never heard of it): refused,
+    /// before its password is asked for or read (MT-P2-11 F2 case 1, MT-P2-12 F2).
+    fn refuse_reopen(&self, hello: &Hello) -> Result<()> {
+        if hello.reopen && self.ctx.ends.refuses_reopen(&self.request.viewer_id) {
+            info!(viewer = self.request.viewer_id, "automatic reopen after a normal end: refused");
+            bail!("@agent.ended_at_computer");
+        }
+        Ok(())
+    }
+
     fn claim(&self) -> Result<(), String> {
         if self.request.join || self.claimed.load(Ordering::Relaxed) {
             return Ok(());
@@ -1806,6 +1829,9 @@ async fn run_session(
     let (switches, off) = switches::channel();
 
     let hello = read_hello(&mut ctrl_rx, "viewer").await?;
+    if let Some(gate) = gate {
+        gate.refuse_reopen(&hello)?;
+    }
     let viewer_protocol = hello.protocol_version;
     let terminal_only = hello.terminal_only;
     // The server's rules want every session recorded: by the viewer, which must be able to.
@@ -3866,6 +3892,7 @@ fn local_hello() -> Hello {
         wallpaper: false,
         restart_safe_mode: false,
         microphone: false,
+        reopen: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,
@@ -4088,6 +4115,7 @@ mod gate_characterisation {
             claims: Mutex::new(()),
             waiting: Mutex::new(None),
             end_session: Notify::new(),
+            ends: Default::default(),
             shared: Mutex::new(None),
             handover: Mutex::new(None),
             policy: Default::default(),
@@ -4602,5 +4630,57 @@ mod gate_characterisation {
         let v = authorize(&f.ctx, &request(VIEWER, true), &password(TEMPORARY)).await;
         assert_eq!((v.result, v.access), (Ok(()), "temporary"));
         assert!(drain(&mut f).is_empty(), "no SessionStarted for a guest");
+    }
+
+    /// A reopen by itself (`Hello.reopen`) after a normal end of that viewer's last
+    /// session is refused; after a loss, with no record, from another viewer or
+    /// asked by the person (no flag) it is not (MT-P2-11 F2 case 1).
+    #[tokio::test]
+    async fn an_automatic_reopen_after_a_normal_end_is_refused() {
+        let f = fixture("reopen", false, false, None);
+        let req = request(VIEWER, false);
+        let access = std::sync::Mutex::new("");
+        let gate = gate(&f.ctx, &req, &access, "s1");
+        let reopen = Hello { reopen: true, ..Default::default() };
+        let asked = Hello::default();
+        assert!(gate.refuse_reopen(&reopen).is_ok(), "no record: as before");
+        f.ctx.ends.record(VIEWER, reopen::Ended::Normal);
+        let e = gate.refuse_reopen(&reopen).unwrap_err();
+        assert_eq!(format!("{e:#}"), "@agent.ended_at_computer");
+        assert!(gate.refuse_reopen(&asked).is_ok(), "asked by the person: not refused");
+        f.ctx.ends.record("someone-else", reopen::Ended::Lost);
+        assert!(gate.refuse_reopen(&reopen).is_err(), "another viewer's record changes nothing");
+        f.ctx.ends.record(VIEWER, reopen::Ended::Lost);
+        assert!(gate.refuse_reopen(&reopen).is_ok(), "after a loss: reopened");
+    }
+
+    /// The refusal comes right after the viewer's Hello, on the real session path:
+    /// the agent sends nothing (no Hello, so no password is asked for or read) and
+    /// the session ends with the key, which the caller gives as the close reason.
+    #[tokio::test]
+    async fn the_refused_reopen_ends_before_the_password() {
+        let f = fixture("reopen-session", false, false, None);
+        f.ctx.ends.record(VIEWER, reopen::Ended::Normal);
+        let req = request(VIEWER, false);
+        let access = std::sync::Mutex::new("");
+        let gate = gate(&f.ctx, &req, &access, "s1");
+        let (endpoint, fingerprint) =
+            nuvira_transport::server_endpoint("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = endpoint.local_addr().unwrap();
+        let accepted = tokio::spawn(async move { endpoint.accept().await.unwrap().await.unwrap() });
+        let viewer = nuvira_transport::connect(addr, Some(fingerprint)).await.unwrap();
+        let agent = accepted.await.unwrap();
+        let (send, recv) = viewer.open_bi().await.unwrap();
+        let (mut tx, mut rx) = (FramedSend::new(send), FramedRecv::new(recv));
+        tx.send(&control(Msg::Hello(Hello { reopen: true, ..local_hello() }))).await.unwrap();
+        let streams = agent.accept_bi().await.unwrap();
+        let result = session(agent.clone(), streams, &f.ctx.config, Some(&gate), None).await;
+        let e = result.unwrap_err();
+        assert!(format!("{e:#}").contains("@agent.ended_at_computer"), "{e:#}");
+        assert_eq!(close_reason(&Err(e)), b"@agent.ended_at_computer".to_vec());
+        agent.close(0u32.into(), b"@agent.ended_at_computer");
+        let next = rx.recv::<ControlMessage>().await;
+        assert!(!matches!(next, Ok(Some(_))), "the agent sent something: {next:?}");
+        assert_eq!(f.ctx.busy.load(Ordering::Relaxed), 0, "nothing claimed");
     }
 }

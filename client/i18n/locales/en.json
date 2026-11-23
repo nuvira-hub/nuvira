@@ -381,6 +381,7 @@
   "agent.not_accepted": "connection not accepted on the device",
   "agent.no_answer": "no answer from the device",
   "agent.busy": "the device is busy in another session",
+  "agent.ended_at_computer": "the session was ended at the remote computer",
   "agent.rejected": "connection rejected",
   "agent.downloads": "Downloads",
   "agent.no_user": "no user is signed in on the remote computer to receive the file",

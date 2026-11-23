@@ -381,6 +381,7 @@
   "agent.not_accepted": "Verbindung auf dem Gerät nicht akzeptiert",
   "agent.no_answer": "keine Antwort vom Gerät",
   "agent.busy": "das Gerät ist in einer anderen Sitzung belegt",
+  "agent.ended_at_computer": "die Sitzung wurde am entfernten Computer beendet",
   "agent.rejected": "Verbindung abgelehnt",
   "agent.downloads": "Downloads",
   "agent.no_user": "am entfernten Computer ist kein Benutzer angemeldet, der die Datei empfangen kann",
