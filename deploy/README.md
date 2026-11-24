@@ -13,7 +13,7 @@ Images for `linux/amd64` and `linux/arm64`, built `FROM scratch` (only the stati
 | Kind | Name | Value | Notes |
 |---|---|---|---|
 | Port | UDP 21116 | 21116/udp | signalling (QUIC) and relay; **required** |
-| Port | TCP 21116 | 21116/tcp | WebSocket fallback for networks that block UDP |
+| Port | TCP 21116 | 21116/tcp | WebSocket fallback for networks that block UDP; status page at `http://server:21116/` (address to enter in the apps, port to forward, what to back up) |
 | Volume | `/data` | e.g. `/mnt/user/appdata/nuvira-server` | `nuvira.db`, `cert.pem`/`key.pem` (server identity) |
 | Variable | `NUVIRA_LOG` | `info` | `debug`, `info`, `warn` |
 | Variable | `NUVIRA_WS_LISTEN` | `:21116` | `off` disables the WebSocket fallback |
