@@ -83,6 +83,7 @@ The app opens a signalling connection with `Register.api_only` (it does not appe
 - Entry form: all fields, password included (the password field stays masked).
 - Administration section (administrators only): accounts (create, set the password, administrator flag, delete) and shared books with their members.
 - **Automatic add**: when the viewer reports `@connected` on its standard output, the app calls `AutoAdd` with the ID, the remote device's name and the password used.
+- Single sign-on (NuviraHub Pro, "Sign in with <provider>"): the app opens the server's page in the browser and waits. With servers that announce `pro.sso_confirm`, that page names the ID of the device that asked and asks the person to confirm it; this is the ID of the app's address-book connection (its own key `app.key`), not the "your ID" of the main screen (the service's or the app agent's key), so the app shows it under the button while it waits: "The browser page names the ID of this sign-in: ...". Since the review (Phase 7, F-SSO-APP-ID).
 - If the token has expired or was revoked the app goes back to the sign-in panel; if the connection to the server dropped it reopens it with the saved token.
 
 ## CSV (import and export)
