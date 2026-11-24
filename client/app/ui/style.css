@@ -203,6 +203,8 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .settings-card > h2:first-child { margin-top: 14px; }
 .settings-sub { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
 .settings-sub > h3:first-child { margin-top: 12px; }
+.uninstall-row { margin-top: 6px; }
+.settings-sub-title { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
 .status-line { font-weight: 500; }
 /* The notes under ID and password: the status line stays, the rest opens with it (main.js). */
 #pc-notes-toggle { font: inherit; }

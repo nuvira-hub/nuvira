@@ -205,6 +205,7 @@
   "settings.logout": "Esci",
   "settings.change_password": "Cambia password",
   "settings.pw_mismatch": "Le due password nuove non coincidono",
+  "settings.other": "Altre impostazioni",
   "settings.language": "Lingua",
   "settings.language_auto": "Automatica (lingua del sistema)",
   "settings.language_hint": "Vale anche per la finestra della sessione.",

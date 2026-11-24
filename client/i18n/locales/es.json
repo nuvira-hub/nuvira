@@ -205,6 +205,7 @@
   "settings.logout": "Cerrar sesión",
   "settings.change_password": "Cambiar contraseña",
   "settings.pw_mismatch": "Las dos contraseñas nuevas no coinciden",
+  "settings.other": "Otros ajustes",
   "settings.language": "Idioma",
   "settings.language_auto": "Automático (idioma del sistema)",
   "settings.language_hint": "También se aplica a la ventana de la sesión.",
