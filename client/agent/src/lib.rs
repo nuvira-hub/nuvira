@@ -1296,7 +1296,9 @@ async fn relayed_session(
         profile_off: AtomicU8::new(0),
         claimed: AtomicBool::new(false),
         throttled: AtomicBool::new(false),
+        end_reason: AtomicBool::new(false),
     };
+    let mut at_computer = false;
     let result = tokio::select! {
         r = async {
             match request.join {
@@ -1306,13 +1308,14 @@ async fn relayed_session(
         } => r,
         _ = ctx.end_session.notified() => {
             info!("session ended by the person at the PC");
+            at_computer = true;
             Ok(())
         }
     };
     let result = normal_end(result);
     // The whole endpoint is closed: including a connection left over through the relay,
     // which would otherwise keep the agent "busy" until its timeout.
-    endpoint.close(0u32.into(), &close_reason(&result));
+    endpoint.close(0u32.into(), &end_reason(&result, at_computer && gate.end_reason.load(Ordering::Relaxed)));
     endpoint.wait_idle().await;
     if result.is_ok() {
         info!("session ended");
@@ -1411,6 +1414,9 @@ struct Gate<'a> {
     /// Refused as a wrong password without checking it ([`guesses`]): the
     /// connection is closed without the longer pause of a wrong password.
     throttled: AtomicBool,
+    /// The viewer shows "@agent.ended_at_computer" as the end of the session
+    /// (`Hello.end_reason`): the person at the PC's end is closed with that key.
+    end_reason: AtomicBool,
 }
 
 /// A gate dropped with its claim still on (its session over) frees the computer.
@@ -1433,10 +1439,12 @@ impl Gate<'_> {
     /// background) a session that ended normally here (the person at the PC ended
     /// it while the page was suspended or stopped and never heard of it): refused,
     /// before its password is asked for or read (MT-P2-11 F2 case 1, MT-P2-12 F2).
+    /// Called with every viewer's Hello: it also keeps `Hello.end_reason`.
     fn refuse_reopen(&self, hello: &Hello) -> Result<()> {
+        self.end_reason.store(hello.end_reason, Ordering::Relaxed);
         if hello.reopen && self.ctx.ends.refuses_reopen(&self.request.viewer_id) {
             info!(viewer = self.request.viewer_id, "automatic reopen after a normal end: refused");
-            bail!("@agent.ended_at_computer");
+            bail!(ENDED_AT_COMPUTER);
         }
         Ok(())
     }
@@ -3502,6 +3510,22 @@ fn close_reason(result: &Result<()>) -> Vec<u8> {
         .map_or_else(|| b"end of session".to_vec(), String::into_bytes)
 }
 
+/// The close reason of a relayed session: [`close_reason`], or
+/// [`ENDED_AT_COMPUTER`] when the person at the PC ended it and the viewer shows
+/// that key (`Hello.end_reason`; older viewers get "end of session" as before).
+/// Still a normal end (code 0, `Ok`): the viewer neither reports it as an error
+/// nor opens the session again by itself.
+fn end_reason(result: &Result<()>, at_computer_told: bool) -> Vec<u8> {
+    match (result, at_computer_told) {
+        (Ok(()), true) => ENDED_AT_COMPUTER.as_bytes().to_vec(),
+        _ => close_reason(result),
+    }
+}
+
+/// The person at the PC ended the session: the close reason of that end, and the
+/// refusal of an automatic reopen after it ([`Gate::refuse_reopen`]).
+const ENDED_AT_COMPUTER: &str = "@agent.ended_at_computer";
+
 /// Capture and encoding of a screen, restartable on another one during the session.
 struct VideoSource {
     config: AgentConfig,
@@ -3910,6 +3934,7 @@ fn local_hello() -> Hello {
         restart_safe_mode: false,
         microphone: false,
         reopen: false,
+        end_reason: false,
         file_manager: false,
         video_datagrams: false,
         privacy_mode: false,
@@ -4192,6 +4217,7 @@ mod gate_characterisation {
             profile_off: AtomicU8::new(0),
             claimed: AtomicBool::new(false),
             throttled: AtomicBool::new(false),
+            end_reason: AtomicBool::new(false),
         }
     }
 
@@ -4670,6 +4696,31 @@ mod gate_characterisation {
         assert!(gate.refuse_reopen(&reopen).is_err(), "another viewer's record changes nothing");
         f.ctx.ends.record(VIEWER, reopen::Ended::Lost);
         assert!(gate.refuse_reopen(&reopen).is_ok(), "after a loss: reopened");
+    }
+
+    /// The person at the PC ends the session (Phase 7 F-END-MSG): a viewer that
+    /// said so in its Hello (`end_reason`) reads "@agent.ended_at_computer" as the
+    /// close reason; an older viewer (no flag) reads "end of session" as before.
+    /// Any other end keeps its own reason, and the flag is kept from each Hello.
+    #[tokio::test]
+    async fn the_end_at_the_computer_says_so_to_viewers_that_show_it() {
+        let f = fixture("end-reason", false, false, None);
+        let req = request(VIEWER, false);
+        let access = std::sync::Mutex::new("");
+        let gate = gate(&f.ctx, &req, &access, "s1");
+        assert!(!gate.end_reason.load(Ordering::Relaxed));
+        gate.refuse_reopen(&Hello { end_reason: true, ..Default::default() }).unwrap();
+        assert!(gate.end_reason.load(Ordering::Relaxed), "kept from the Hello");
+        gate.refuse_reopen(&Hello::default()).unwrap();
+        assert!(!gate.end_reason.load(Ordering::Relaxed), "an older viewer's Hello");
+
+        assert_eq!(end_reason(&Ok(()), true), b"@agent.ended_at_computer".to_vec());
+        assert_eq!(end_reason(&Ok(()), false), b"end of session".to_vec(), "older viewers: as before");
+        let idle = || Err(anyhow!("@agent.idle_ended").context("session"));
+        assert_eq!(end_reason(&idle(), true), b"@agent.idle_ended".to_vec(), "another end keeps its key");
+        assert_eq!(end_reason(&Err(anyhow!("timed out")), true), b"end of session".to_vec());
+        // Still a normal end: recorded as such (an automatic reopen is refused after it).
+        assert_eq!(reopen::Ended::of(&Ok(())), reopen::Ended::Normal);
     }
 
     /// The refusal comes right after the viewer's Hello, on the real session path:

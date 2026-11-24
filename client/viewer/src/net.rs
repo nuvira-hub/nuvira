@@ -618,6 +618,8 @@ async fn handshake(
             two_factor: true,
             // The technician's microphone can be sent (SetMicrophone).
             microphone: !terminal_only && nuvira_audio::microphone::available(),
+            // The end by the person at the PC comes as "@agent.ended_at_computer".
+            end_reason: true,
             ..Default::default()
         })))
         .await?;

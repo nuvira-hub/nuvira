@@ -339,7 +339,12 @@ impl Raw {
 
     /// Sends our Hello and returns the agent's.
     pub async fn hello(&mut self, two_factor: bool) -> Result<Hello> {
-        self.tx.send(&control(Msg::Hello(viewer_hello(two_factor)))).await?;
+        self.hello_with(viewer_hello(two_factor)).await
+    }
+
+    /// Sends `hello` and returns the agent's.
+    pub async fn hello_with(&mut self, hello: Hello) -> Result<Hello> {
+        self.tx.send(&control(Msg::Hello(hello))).await?;
         match self.next(Duration::from_secs(10)).await? {
             Some(ControlMessage { msg: Some(Msg::Hello(h)) }) => Ok(h),
             other => bail!("expected the agent's Hello, got {other:?}"),

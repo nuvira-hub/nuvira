@@ -618,6 +618,12 @@ message Hello {
   // it while the page could not hear of it. Older viewers never set it; older
   // agents ignore it.
   bool reopen = 32;
+  // From the viewer: when the person at the PC ends the session, it shows the
+  // agent's close reason "@agent.ended_at_computer" (code 0) as the message of a
+  // normal end, and the web page does not open that session again by itself. An
+  // agent closes that end with the key only for viewers that set this; older
+  // viewers get "end of session" as before, older agents ignore it.
+  bool end_reason = 33;
 }
 
 // From the agent, after AuthResult and whenever it changes: what the viewer may do
