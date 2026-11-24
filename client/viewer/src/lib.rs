@@ -2510,12 +2510,12 @@ impl ApplicationHandler<NetEvent> for App {
                 // The windows stay open with the reason; closing them exits.
                 info!("disconnected: {reason}");
                 self.exit_reason = Some(format!("disconnected: {reason}"));
-                self.terminals.status(&tf("viewer.session_closed", &[("reason", &reason)]));
+                self.terminals.status(&closed_text(&reason));
             }
             NetEvent::Disconnected { reason, .. } => {
                 info!("disconnected: {reason}");
                 self.exit_reason = Some(format!("disconnected: {reason}"));
-                self.closed_message = Some(tf("viewer.session_closed", &[("reason", &reason)]));
+                self.closed_message = Some(closed_text(&reason));
                 event_loop.exit();
             }
         }
@@ -2681,6 +2681,16 @@ impl ApplicationHandler<NetEvent> for App {
     }
 }
 
+/// What the window and the app say when the session closed with `reason`: "Session
+/// closed: …", or, when the person at the PC ended it, only that (as the web page
+/// says it).
+fn closed_text(reason: &str) -> String {
+    match reason == t("agent.ended_at_computer") {
+        true => reason.to_string(),
+        false => tf("viewer.session_closed", &[("reason", reason)]),
+    }
+}
+
 /// `--type-keys`: the W3C code of a character on a US layout, and whether it needs Shift.
 /// A test character's key and the modifier held with it (Shift for capitals,
 /// Ctrl for the control characters of Ctrl+A, C and V).
@@ -2808,6 +2818,19 @@ impl Stats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The person at the PC ended the session (Phase 7 F-END-MSG): the window and
+    /// the app say only that, as the web page does; any other end "Session
+    /// closed: …" as before.
+    #[test]
+    fn the_end_at_the_computer_is_said_alone() {
+        let at_computer = nuvira_i18n::message("@agent.ended_at_computer");
+        assert_ne!(at_computer, "@agent.ended_at_computer", "the key is translated");
+        assert_eq!(closed_text(&at_computer), at_computer);
+        let other = nuvira_i18n::message("@agent.busy");
+        assert_eq!(closed_text(&other), tf("viewer.session_closed", &[("reason", &other)]));
+        assert_eq!(closed_text("session ended"), tf("viewer.session_closed", &[("reason", "session ended")]));
+    }
 
     #[cfg(not(target_os = "macos"))]
     #[test]

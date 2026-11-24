@@ -22,8 +22,8 @@ use anyhow::{Context, Result, bail};
 use nuvira_agent::{AgentCommand, AgentEvent};
 use nuvira_e2e::rig::{self, AgentSpec, HeadlessViewer, LocalServer, Raw, ServerAgent, Srv};
 use nuvira_e2e::runner::{Case, Ctx, Group, Need, ensure};
-use nuvira_proto::v1::ControlMessage;
 use nuvira_proto::v1::control_message::Msg;
+use nuvira_proto::v1::{ControlMessage, Hello};
 use nuvira_transport::identity::Identity;
 use nuvira_transport::p2p;
 use nuvira_transport::signal::TransportMode;
@@ -42,6 +42,7 @@ pub fn cases() -> Vec<Case> {
             .env(&[("NUVIRA_FORCE_RELAY", "1")]),
         Case::new("server/auth/wrong-passwords-lock-the-viewer", wrong_password).needs(SRV),
         Case::new("server/auth/confirmation-accept-and-refuse", confirmation).needs(SRV),
+        Case::new("server/end/ended-at-the-computer-says-so", end_at_computer).needs(SRV),
         Case::new("server/auth/two-factor-replay-and-lockout", two_factor).needs(SRV),
         Case::new("server/security/impostor-viewer-refused", impostor).needs(SRV).timeout_s(240),
         Case::new("server/security/unauthenticated-viewer-does-not-keep-agent-busy", unauth_busy)
@@ -239,6 +240,40 @@ impl Attempt {
     async fn closed(&self) -> Result<(String, Duration)> {
         rig::wait_closed(&self.raw.conn, Duration::from_secs(10)).await
     }
+}
+
+/// The person at the PC ends the session (`AgentCommand::EndSession`; review
+/// Phase 7 F-END-MSG). A viewer that shows the agent's reason of that end
+/// (`Hello.end_reason`) gets a normal close, code 0, with
+/// "@agent.ended_at_computer"; a viewer that does not say so (every viewer before
+/// it) gets "end of session" as before. Both are normal ends for the app.
+fn end_at_computer(ctx: &mut Ctx) -> Result<()> {
+    let rig = Rig::start(ctx, AgentSpec::default())?;
+    let viewer = rig.viewer(ctx, "viewer")?;
+    rig.vrt.block_on(async {
+        for (tells, expected) in
+            [(true, "closed 0 @agent.ended_at_computer"), (false, "closed 0 end of session")]
+        {
+            let from = rig.agent.events.len();
+            let (conn, _) = rig::connect_via(&rig.srv, &viewer, &rig.id, TransportMode::Udp).await?;
+            let mut raw = Raw::open(conn).await?;
+            let hello = raw.hello_with(Hello { end_reason: tells, ..rig::viewer_hello(false) }).await?;
+            ensure(hello.password_required, || "no password asked".into())?;
+            let (ok, message) = rig::auth_result(&raw.auth(rig::PASSWORD, "").await?)?;
+            ensure(ok, || format!("refused: {message}"))?;
+            // A moment for the session to start, then the person at the PC ends it.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            rig.agent.command(AgentCommand::EndSession)?;
+            let (ended, after) = rig::wait_closed(&raw.conn, Duration::from_secs(10)).await?;
+            ctx.note(format!("end_reason={tells}: {ended} after {} ms", after.as_millis()));
+            ensure(ended == expected, || format!("end_reason={tells}: {ended}"))?;
+            let (_, error) = rig.ended(from, Duration::from_secs(15)).await?;
+            ensure(error.is_none(), || format!("end_reason={tells}: reported as an error: {error:?}"))?;
+        }
+        anyhow::Ok(())
+    })?;
+    rig.stop();
+    Ok(())
 }
 
 /// Temporary password (review AGT-4, Phase 6 lot 3; was the Phase 2 pin
