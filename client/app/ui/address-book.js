@@ -111,6 +111,11 @@ function renderAddressBook(state) {
   const sso = (state.features ?? []).find((f) => f.startsWith("pro.sso="))?.slice(8);
   $("login-sso").classList.toggle("hidden", !sso || Boolean(account));
   if (sso && !$("login-sso").disabled) $("login-sso").textContent = t("address_book.sso", { name: sso });
+  // While it waits: the ID the browser's confirmation page names (the address book
+  // connection's own, not this computer's ID for remote access; F-SSO-APP-ID).
+  const ssoId = state.sso_device_id;
+  $("login-sso-id").classList.toggle("hidden", !ssoId || Boolean(account));
+  $("login-sso-id").textContent = ssoId ? t("address_book.sso_waiting_id", { id: formatId(ssoId) }) : "";
   $("login-form").classList.toggle("hidden", Boolean(account) || !pro);
   $("address-book-list").classList.remove("hidden");
   $("address-book-tools").classList.remove("hidden");

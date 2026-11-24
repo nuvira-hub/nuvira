@@ -525,6 +525,7 @@
   "server.bad_level": "niveau de membre inconnu",
   "address_book.sso": "Se connecter avec {name}",
   "address_book.sso_waiting": "Termine la connexion dans le navigateur…",
+  "address_book.sso_waiting_id": "La page du navigateur indique l'ID de cette connexion : {id}. Ce n'est pas ton ID pour l'accès à distance : continue là-bas seulement si la page affiche bien celui-ci.",
   "server.sso_pending": "connexion dans le navigateur pas encore terminée",
   "server.sso_expired": "la connexion a expiré : recommence",
   "server.sso_failed": "échec de la connexion avec le fournisseur",

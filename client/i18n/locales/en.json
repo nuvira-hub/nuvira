@@ -525,6 +525,7 @@
   "server.bad_level": "unknown member level",
   "address_book.sso": "Sign in with {name}",
   "address_book.sso_waiting": "Complete the sign-in in the browser…",
+  "address_book.sso_waiting_id": "The browser page names the ID of this sign-in: {id}. It is not your ID for remote access: continue there only if the page shows this one.",
   "server.sso_pending": "sign-in in the browser not finished yet",
   "server.sso_expired": "the sign-in expired: start it again",
   "server.sso_failed": "sign-in with the provider failed",

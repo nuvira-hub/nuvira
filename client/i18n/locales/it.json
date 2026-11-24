@@ -525,6 +525,7 @@
   "server.bad_level": "livello del membro sconosciuto",
   "address_book.sso": "Accedi con {name}",
   "address_book.sso_waiting": "Completa l'accesso nel browser…",
+  "address_book.sso_waiting_id": "La pagina del browser indica l'ID di questo accesso: {id}. Non è il tuo ID per l'accesso remoto: continua lì solo se la pagina mostra proprio questo.",
   "server.sso_pending": "accesso nel browser non ancora completato",
   "server.sso_expired": "l'accesso è scaduto: ricomincia",
   "server.sso_failed": "accesso con il provider non riuscito",

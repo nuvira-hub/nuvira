@@ -525,6 +525,7 @@
   "server.bad_level": "unbekannte Mitgliedsstufe",
   "address_book.sso": "Mit {name} anmelden",
   "address_book.sso_waiting": "Schließ die Anmeldung im Browser ab…",
+  "address_book.sso_waiting_id": "Die Seite im Browser nennt die ID dieser Anmeldung: {id}. Das ist nicht deine ID für den Fernzugriff: Fahre dort nur fort, wenn die Seite genau diese zeigt.",
   "server.sso_pending": "Anmeldung im Browser noch nicht abgeschlossen",
   "server.sso_expired": "die Anmeldung ist abgelaufen: bitte erneut starten",
   "server.sso_failed": "Anmeldung beim Anbieter fehlgeschlagen",

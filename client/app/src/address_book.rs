@@ -399,13 +399,20 @@ pub fn sso_name(features: &[String]) -> Option<&str> {
     features.iter().find_map(|f| f.strip_prefix("pro.sso="))
 }
 
+/// Feature of servers whose browser page of an app's single sign-on names the ID
+/// of the device that began it and asks to confirm it (NuviraHub Pro, PRO-1).
+pub const PRO_SSO_CONFIRM: &str = "pro.sso_confirm";
+
+fn sso_confirms(features: &[String]) -> bool {
+    features.iter().any(|f| f == PRO_SSO_CONFIRM)
+}
+
 /// Single sign-on: opens the provider's page in the browser through the server,
 /// then waits (at most 10 minutes) for the server to hand over the session to
 /// whoever has the secret of this sign-in.
 #[tauri::command]
 pub async fn address_book_sso_login(app: AppHandle) -> Result<(), String> {
     use ring::rand::SecureRandom;
-    use tauri_plugin_opener::OpenerExt;
 
     let client = open(&app).await?;
     if sso_name(client.features()).is_none() {
@@ -420,12 +427,67 @@ pub async fn address_book_sso_login(app: AppHandle) -> Result<(), String> {
     else {
         return Err(t("err.unexpected"));
     };
-    app.opener().open_url(&page.url, None::<&str>).map_err(|e| e.to_string())?;
+    // The browser's confirmation page names the ID of this connection's identity
+    // (`app.key`), not the ID shown as "your ID" (the service's or the app agent's
+    // `device.key`): shown in the app while it waits, so that the person can check
+    // the page against it (F-SSO-APP-ID, PRO-1). Only with servers that have that
+    // page (0.28.0 sends the browser straight to the provider: nothing to compare).
+    let run = SSO_WAITING.begin();
+    let id = sso_confirms(client.features()).then(|| client.device_id().to_string());
+    app.state::<NuviraApp>().update(&app, |ui| ui.sso_device_id = id);
+    let session = sso_wait(&app, &client, &page.url, &verifier).await;
+    if SSO_WAITING.end(run) {
+        app.state::<NuviraApp>().update(&app, |ui| ui.sso_device_id = None);
+    }
+    let session = session?;
+    let mut settings = load_settings();
+    settings.token = Some(session.token.clone());
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    info!("address book sign-in through the browser");
+    set_account(&app, session.account);
+    *app.state::<NuviraApp>().address_book.client.lock().await = Some(client);
+    refresh(&app).await
+}
+
+/// Sign-ins through the browser begun by this app: the ID shown while waiting is
+/// the latest one's, so an earlier one that ends (replaced on the server by the
+/// new one) does not hide it.
+static SSO_WAITING: SsoRuns = SsoRuns::new();
+
+struct SsoRuns(std::sync::atomic::AtomicU64);
+
+impl SsoRuns {
+    const fn new() -> Self {
+        Self(std::sync::atomic::AtomicU64::new(0))
+    }
+
+    /// A new sign-in waits: its number.
+    fn begin(&self) -> u64 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    }
+
+    /// Sign-in `run` ended: true if it was the latest (its ID is to be hidden).
+    fn end(&self, run: u64) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst) == run
+    }
+}
+
+/// Opens the provider's page in the browser and waits (at most 10 minutes) for
+/// the session the server hands over to whoever has `verifier`.
+async fn sso_wait(
+    app: &AppHandle,
+    client: &ApiClient,
+    url: &str,
+    verifier: &str,
+) -> Result<pb::Session, String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-    let session = loop {
+    loop {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        match client.call(Call::SsoFinish(pb::SsoFinish { verifier: verifier.clone() })).await {
-            Ok(Some(ApiResult::Session(session))) => break session,
+        match client.call(Call::SsoFinish(pb::SsoFinish { verifier: verifier.to_string() })).await {
+            Ok(Some(ApiResult::Session(session))) => return Ok(session),
             Ok(_) => return Err(t("err.unexpected")),
             Err(e) => {
                 let text = format!("{e:#}");
@@ -438,14 +500,7 @@ pub async fn address_book_sso_login(app: AppHandle) -> Result<(), String> {
                 }
             }
         }
-    };
-    let mut settings = load_settings();
-    settings.token = Some(session.token.clone());
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    info!("address book sign-in through the browser");
-    set_account(&app, session.account);
-    *app.state::<NuviraApp>().address_book.client.lock().await = Some(client);
-    refresh(&app).await
+    }
 }
 
 fn base64url(bytes: &[u8]) -> String {
@@ -837,6 +892,30 @@ mod tests {
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let digest = ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes());
         assert_eq!(base64url(digest.as_ref()), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    }
+
+    /// F-SSO-APP-ID: the ID shown while a sign-in waits is hidden only by the end of
+    /// the latest sign-in, not by an earlier one the server dropped when the new one began.
+    #[test]
+    fn sso_waiting_id_hidden_only_by_the_latest_sign_in() {
+        let runs = SsoRuns::new();
+        let first = runs.begin();
+        assert!(runs.end(first), "a single sign-in hides its ID at its end");
+        let older = runs.begin();
+        let newer = runs.begin();
+        assert!(!runs.end(older), "the replaced sign-in must not hide the newer one's ID");
+        assert!(runs.end(newer));
+    }
+
+    /// Servers before the confirmation page (0.28.0) only name the provider: no ID shown.
+    #[test]
+    fn sso_waiting_id_only_with_a_confirming_server() {
+        let old = vec!["pro.address_book".to_string(), "pro.sso=Contoso".to_string()];
+        assert!(!sso_confirms(&old));
+        assert_eq!(sso_name(&old), Some("Contoso"));
+        let new = [old, vec![PRO_SSO_CONFIRM.to_string()]].concat();
+        assert!(sso_confirms(&new));
+        assert_eq!(sso_name(&new), Some("Contoso"), "the new feature is not taken for the provider's name");
     }
 }
 

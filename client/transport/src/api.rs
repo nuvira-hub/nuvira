@@ -20,6 +20,7 @@ type Reply = oneshot::Sender<Result<ApiResponse>>;
 pub struct ApiClient {
     requests: mpsc::UnboundedSender<(api_request::Call, Reply)>,
     features: Vec<String>,
+    device_id: String,
 }
 
 impl ApiClient {
@@ -53,6 +54,7 @@ impl ApiClient {
             signal::known_server::remember(server_name, &sig.server_fingerprint)?;
         }
         let features = std::mem::take(&mut sig.features);
+        let device_id = sig.device_id.clone();
         let (tx, mut rx) = mpsc::unbounded_channel::<(api_request::Call, Reply)>();
         tokio::spawn(async move {
             let mut pending: HashMap<u32, Reply> = HashMap::new();
@@ -86,7 +88,7 @@ impl ApiClient {
                 let _ = reply.send(Err(anyhow!("connection with the server lost: {reason}")));
             }
         });
-        Ok(Self { requests: tx, features })
+        Ok(Self { requests: tx, features, device_id })
     }
 
     /// Runs a request; `Err` with the server's message if it fails.
@@ -106,6 +108,13 @@ impl ApiClient {
     /// Optional modules of the server, from its registration answer.
     pub fn features(&self) -> &[String] {
         &self.features
+    }
+
+    /// ID the server gave this connection's identity at registration: the one the
+    /// server names for its requests (e.g. on the single sign-on confirmation page).
+    /// It is the identity's own (the app's `app.key`), not the agent's or service's ID.
+    pub fn device_id(&self) -> &str {
+        &self.device_id
     }
 
     /// The client cannot be used any more (connection dropped).

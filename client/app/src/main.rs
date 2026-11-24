@@ -123,6 +123,9 @@ struct UiState {
     note_request: Option<NoteRequestUi>,
     books: Vec<address_book::BookUi>,
     address_book_error: Option<String>,
+    /// While a single sign-on waits in the browser: the ID its confirmation page
+    /// names (the address book connection's own, not `device_id`).
+    sso_device_id: Option<String>,
     /// Optional modules of the server (NuviraHub Pro): the interface shows their
     /// functions only when listed.
     features: Vec<String>,
