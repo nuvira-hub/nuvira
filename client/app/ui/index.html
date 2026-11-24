@@ -79,11 +79,16 @@
               </button>
             </span>
           </div>
-          <div class="pc-notes">
-            <p class="status-line" id="status-text">…</p>
+          <div id="pc-notes" class="pc-notes collapsed">
+            <button type="button" id="pc-notes-toggle" class="sq-toggle" aria-expanded="false" aria-controls="pc-notes-body">
+              <span class="status-line" id="status-text">…</span>
+              <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div id="pc-notes-body">
             <p class="hint"><span id="server-line"></span><span class="public-only hidden"> · <a href="#" class="terms" data-i18n="status.terms">Terms of use</a></span></p>
             <p class="hint" data-i18n="connect.share_hint">Give your ID and password to the person helping you: you will be asked to confirm the connection.</p>
             <p id="service-note" class="hint hidden" data-i18n="connect.service_note">Unattended access is on (NuviraHub service): anyone with the permanent password connects without confirmation.</p>
+            </div>
           </div>
         </div>
 

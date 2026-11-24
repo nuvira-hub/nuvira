@@ -235,6 +235,25 @@ function statusText(state) {
   }
 }
 
+// The notes under ID and password stay collapsed to the status line unless
+// opened, like the support card (remembered on this computer).
+function setNotesCollapsed(collapsed) {
+  $("pc-notes").classList.toggle("collapsed", collapsed);
+  $("pc-notes-toggle").setAttribute("aria-expanded", String(!collapsed));
+}
+try {
+  setNotesCollapsed(localStorage.getItem("pc-notes-expanded") !== "1");
+} catch {
+  setNotesCollapsed(true);
+}
+$("pc-notes-toggle").addEventListener("click", () => {
+  const collapsed = !$("pc-notes").classList.contains("collapsed");
+  setNotesCollapsed(collapsed);
+  try {
+    localStorage.setItem("pc-notes-expanded", collapsed ? "0" : "1");
+  } catch {}
+});
+
 function render(state) {
   current = state;
   const text = statusText(state);
