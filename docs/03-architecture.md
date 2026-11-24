@@ -65,7 +65,7 @@ services:
 
     | System | Webview used by Tauri | Minimum NuviraHub version | Limit set by |
     |---|---|---|---|
-    | Windows | WebView2 (Edge, already present on Windows 10/11; can be installed by the installer) | Windows 10 1903 | Windows.Graphics.Capture |
+    | Windows | WebView2 (Edge, already present on Windows 10/11; installed by the setup, the MSI or the app when missing: [18-installer.md](18-installer.md)) | Windows 10 1903 | Windows.Graphics.Capture |
     | macOS | WKWebView | macOS 12.3 | ScreenCaptureKit (Tauri alone would reach 10.15) |
     | Linux | WebKitGTK 4.1 | Ubuntu 22.04, Debian 12, Fedora 36 or equivalent | WebKitGTK 4.1 required by Tauri v2 |
 

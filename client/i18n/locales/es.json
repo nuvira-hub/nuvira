@@ -765,5 +765,7 @@
   "invite.public_server": "el servidor público NuviraHub",
   "viewer.mic_none": "Este equipo no tiene micrófono",
   "viewer.mic_failed": "El micrófono no se inició: {e}",
-  "viewer.keyring_locked_mac": "el llavero de macOS está bloqueado o no es accesible: inicia sesión en el Mac (o desbloquea el llavero de inicio de sesión) y vuelve a conectarte"
+  "viewer.keyring_locked_mac": "el llavero de macOS está bloqueado o no es accesible: inicia sesión en el Mac (o desbloquea el llavero de inicio de sesión) y vuelve a conectarte",
+  "app.webview2_missing": "NuviraHub necesita Microsoft Edge WebView2 Runtime, que falta en este equipo.\n\n¿Lo instalas ahora? Es un componente gratuito de Microsoft: la descarga tarda alrededor de un minuto y luego se abre NuviraHub.",
+  "app.webview2_failed": "No se pudo instalar WebView2 Runtime: {e}\n\nInstálalo desde {url} («Evergreen Standalone Installer», ejecútalo como administrador) y vuelve a abrir NuviraHub."
 }

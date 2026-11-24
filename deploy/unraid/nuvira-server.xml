@@ -4,10 +4,10 @@
   Published in Community Applications from github.com/alexbn71/unraid-templates;
   the same file is in github.com/nuvira-hub/nuvira, deploy/unraid (keep the two copies identical).
   For a manual install, copy to /boot/config/plugins/dockerMan/templates-user/my-nuvira-server.xml,
-  then Docker → Add Container → Template: nuvira-server.
+  then Docker → Add Container → Template: NuviraHub.
 -->
 <Container version="2">
-  <Name>nuvira-server</Name>
+  <Name>NuviraHub</Name>
   <Repository>ghcr.io/nuvira-hub/nuvira-server:latest</Repository>
   <Registry>https://github.com/nuvira-hub/nuvira/pkgs/container/nuvira-server</Registry>
   <Network>bridge</Network>
@@ -19,7 +19,7 @@
   <TemplateURL>https://raw.githubusercontent.com/alexbn71/unraid-templates/main/NuviraHub/nuvira-server.xml</TemplateURL>
   <Overview>Your own server for NuviraHub, the self-hosted remote desktop and remote support app for Windows, macOS and Linux (open source, AGPL-3.0).[br][br]
 It handles signalling, the relay for devices that cannot connect directly, and the signed updates of the apps. Sessions are end-to-end encrypted between the two devices: the server never sees screen, input, clipboard or files.[br][br]
-In the NuviraHub app, enter this server's address in Settings → Server. A single port, 21116 UDP (plus TCP for the WebSocket fallback). Server address books, accounts, web console and the other team features are in the Pro edition (nuvira-server-pro).</Overview>
+In the NuviraHub app, enter this server's address in Settings → Server. A single port, 21116 UDP (plus TCP for the WebSocket fallback). Server address books, accounts, web console and the other team features are in the Pro edition (NuviraHub-Pro).</Overview>
   <Category>Network:Other Tools:</Category>
   <WebUI/>
   <Icon>https://raw.githubusercontent.com/nuvira-hub/.github/main/assets/nuvira-server.png</Icon>

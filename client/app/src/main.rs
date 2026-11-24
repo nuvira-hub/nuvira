@@ -1600,6 +1600,39 @@ fn open_terms(app: AppHandle) -> Result<(), String> {
     app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Windows: the window is a WebView2. Without the runtime Tauri stops with WebView2's
+/// own error, which does not say what to install: ask, install it (for this person,
+/// no administrator needed; see nuvira_service::webview2) and go on, or explain.
+#[cfg(windows)]
+fn ensure_webview2() {
+    use nuvira_service::webview2;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IDYES, MB_ICONERROR, MB_ICONQUESTION, MB_YESNO, MESSAGEBOX_STYLE, MessageBoxW,
+    };
+    use windows::core::HSTRING;
+
+    if webview2::installed().is_some() {
+        return;
+    }
+    let ask = |text: String, style: MESSAGEBOX_STYLE| {
+        // SAFETY: modal message box without an owner window.
+        unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from("NuviraHub"), style) }
+    };
+    tracing::warn!("Microsoft Edge WebView2 Runtime missing");
+    if ask(nuvira_i18n::t("app.webview2_missing"), MB_YESNO | MB_ICONQUESTION) != IDYES {
+        std::process::exit(1);
+    }
+    if let Err(e) = webview2::ensure(&|line| tracing::info!("{line}")) {
+        tracing::error!("WebView2 Runtime: {e:#}");
+        let text = nuvira_i18n::tf(
+            "app.webview2_failed",
+            &[("e", &format!("{e:#}")), ("url", webview2::DOWNLOAD_PAGE)],
+        );
+        ask(text, MB_ICONERROR);
+        std::process::exit(1);
+    }
+}
+
 fn init_logging() {
     let dir = nuvira_transport::identity::data_dir();
     let _ = std::fs::create_dir_all(&dir);
@@ -1685,6 +1718,8 @@ fn main() {
     apply_branding(&mut settings);
     apply_policy(&mut settings);
     nuvira_i18n::init(settings.language.as_deref());
+    #[cfg(windows)]
+    ensure_webview2();
     let password = nuvira_agent::random_password();
     let recordings = record_dir(&settings).display().to_string();
     let state = NuviraApp {

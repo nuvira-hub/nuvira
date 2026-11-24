@@ -765,5 +765,7 @@
   "invite.public_server": "il server pubblico NuviraHub",
   "viewer.mic_none": "Questo computer non ha un microfono",
   "viewer.mic_failed": "Il microfono non è partito: {e}",
-  "viewer.keyring_locked_mac": "il Portachiavi di macOS è chiuso o non raggiungibile: accedi al Mac (o sblocca il portachiavi di login), poi collegati di nuovo"
+  "viewer.keyring_locked_mac": "il Portachiavi di macOS è chiuso o non raggiungibile: accedi al Mac (o sblocca il portachiavi di login), poi collegati di nuovo",
+  "app.webview2_missing": "NuviraHub ha bisogno di Microsoft Edge WebView2 Runtime, che manca su questo computer.\n\nLo installi adesso? È un componente gratuito di Microsoft: il download dura circa un minuto e alla fine NuviraHub si apre.",
+  "app.webview2_failed": "Non è stato possibile installare WebView2 Runtime: {e}\n\nInstallalo da {url} (\"Evergreen Standalone Installer\", avvialo come amministratore), poi avvia di nuovo NuviraHub."
 }

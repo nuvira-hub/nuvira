@@ -295,6 +295,13 @@ pub fn install(opts: InstallOptions) -> Result<Installed> {
     step("service installed and started");
     // After the start: if an antivirus stops this process here, the PC is reachable anyway.
     register_app(&program, msi_product.as_deref())?;
+    // The app's window and the viewer's panels are WebViews: without the runtime the app
+    // does not open. Not fatal: the service itself does not need it (unattended access
+    // works), and it runs after the service started: an automatic update is not
+    // held up by its download. The app offers to install it again at its start.
+    if let Err(e) = crate::webview2::ensure(&|line| step(line)) {
+        step(&format!("warning: {e:#}; the app needs it: {}", crate::webview2::DOWNLOAD_PAGE));
+    }
     let id = wait_online(Duration::from_secs(30));
     match &id {
         Some(id) => match &generated_password {
