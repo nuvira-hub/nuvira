@@ -21,7 +21,7 @@
 
 ## Why NuviraHub
 
-- **Your server, one container.** Signalling, relay and app updates in a single Docker image on one port (21116, UDP and TCP), for a NAS, a home server or a small VPS. Templates for Unraid included. Without a server of your own, the app uses the free public one.
+- **Your server, one container.** Signalling, relay and app updates in a single Docker image on one port (21116, UDP and TCP), for a NAS, a home server or a small VPS. Listed in Unraid Community Applications and in the TrueNAS apps catalog. Without a server of your own, the app uses the free public one.
 - **End-to-end encrypted.** Sessions are QUIC/TLS between the two devices, authenticated with their Ed25519 keys, which the system protects where it can (DPAPI on Windows, the Keychain on macOS, Secret Service or systemd-creds on Linux). The server never sees the screen, the input, the clipboard or the files, not even when it relays the traffic.
 - **Fast.** The two devices connect directly whenever the network allows it, over IPv4 or IPv6, and through the server's relay otherwise; on networks that block UDP, over WebSocket. Capture and H.264 encoding stay on the graphics card. On a local network at 1920×1080: 16 ms median latency from capture to display with an NVIDIA RTX 4060 Ti, 27 ms with Intel Quick Sync ([how it was measured](https://nuvirahub.dev/en/features/)).
 - **Windows, Linux and macOS.**
@@ -29,7 +29,8 @@
   - Unattended access on all three, also at the sign-in screen after a restart; on Windows including administrator prompts (UAC), the lock screen and Ctrl+Alt+Del; the locked screen on GNOME, and on macOS by typing the password.
   - Signed program (Certum on Windows, Developer ID and notarization on macOS) and signed automatic updates.
   - Installation on many computers: MSI and Group Policy or Intune on Windows, a package and an MDM profile on macOS, `.deb`/`.rpm` and one command on Linux.
-- **Everything a session needs.** Multiple screens, the remote resolution adapted to the window, clipboard with text and images, chat, a file manager with resumable transfers, remote terminal, printing on the technician's printer, session recording (always announced to the person at the computer), privacy mode, remote restart, and a local address book.
+- **Everything a session needs.** Multiple screens, the remote resolution adapted to the window, clipboard with text, images and files, chat, a file manager with resumable transfers, remote audio and the technician's microphone, remote terminal, printing on the technician's printer, session recording (always announced to the person at the computer), privacy mode, remote restart, several technicians in one session, switch sides, and a local address book with names instead of IDs.
+- **The person at the computer stays in charge.** They can switch off keyboard and mouse, clipboard, files and the rest for the session; unattended access can be limited to allowed computers, a two-factor code or access profiles; the computer can lock itself when the session ends, and sessions left without activity end.
 - **Five languages**: English, Italian, French, German, Spanish.
 - **Free software** under the AGPL.
 
@@ -88,7 +89,7 @@ volumes:
 
 1. Run `docker compose up -d`.
 2. Open port 21116, UDP and TCP, towards the server.
-3. Enter the server's address in the app's settings.
+3. Enter the server's address in the app's settings. `http://<server>:21116/` in a browser shows the address to enter, the port to forward and the data to back up.
 
 Back up the `nuvira-data` volume: it holds the server's identity, which the apps pin. Details, Unraid templates and updates for your own devices are in [deploy/README.md](deploy/README.md).
 
@@ -104,7 +105,8 @@ Some modules are part of NuviraHub Pro: a separate server image that needs a lic
 - single sign-on;
 - session log, with the recordings kept on the server;
 - custom installers;
-- support queue;
+- allowed addresses and alarms about failed attempts;
+- support queue, invitation links and support time reports;
 - inventory and health of the computers;
 - web client (control computers from a browser);
 - TCP tunnels to the remote computer's network;
