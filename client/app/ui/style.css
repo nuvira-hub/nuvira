@@ -198,6 +198,11 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .pc-notes p:last-child { margin-bottom: 0; }
 .value-row { display: flex; align-items: center; gap: 4px; }
 .value { font-size: 26px; font-weight: 600; letter-spacing: .02em; flex: 1; min-width: 0; }
+/* Settings: one card per zone, sub-zones divided by a line. */
+.settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 4px 20px 16px; margin-bottom: 16px; }
+.settings-card > h2:first-child { margin-top: 14px; }
+.settings-sub { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
+.settings-sub > h3:first-child { margin-top: 12px; }
 .status-line { font-weight: 500; }
 /* The notes under ID and password: the status line stays, the rest opens with it (main.js). */
 #pc-notes-toggle { font: inherit; }
