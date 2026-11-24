@@ -45,6 +45,7 @@ import (
 	"github.com/nuvira-hub/nuvira/server/internal/ext"
 	"github.com/nuvira-hub/nuvira/server/internal/relay"
 	nuvirasignal "github.com/nuvira-hub/nuvira/server/internal/signal"
+	"github.com/nuvira-hub/nuvira/server/internal/statuspage"
 	"github.com/nuvira-hub/nuvira/server/internal/store"
 	"github.com/nuvira-hub/nuvira/server/internal/tlsutil"
 	"github.com/nuvira-hub/nuvira/server/internal/updates"
@@ -150,6 +151,7 @@ func run() error {
 		mux := http.NewServeMux()
 		mux.Handle("/nuvira", conn.WebSockets())
 		mux.Handle(updates.Prefix, updates.Handler(filepath.Join(dataDir, "updates")))
+		mux.Handle(statuspage.Pattern, statuspage.Handler(version, udp.LocalAddr().(*net.UDPAddr).Port, edition != "open"))
 		for _, m := range modules {
 			m.Routes(mux)
 		}
