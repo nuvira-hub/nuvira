@@ -384,3 +384,7 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .invite-item.ended { opacity: .6; }
 .for-me { color: var(--accent); font-weight: 600; }
 #nav-queue { position: relative; }
+
+/* Our "Show password" checkbox, the same on every system: not also Edge's eye
+   (WebView2 on Windows, Edge as a browser). */
+input::-ms-reveal, input::-ms-clear { display: none; }
