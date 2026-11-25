@@ -95,6 +95,13 @@ func TestHandler(t *testing.T) {
 	if csp := res.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") {
 		t.Errorf("CSP %q", csp)
 	}
+	// The favicon is inline (the page serves no other file), so the CSP allows data: images only.
+	if !strings.Contains(body, `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,`) {
+		t.Error("no inline favicon")
+	}
+	if csp := res.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "img-src data:;") {
+		t.Errorf("CSP %q does not allow the inline favicon", csp)
+	}
 
 	// The Host header is the browser's, so it can be anything: it is escaped.
 	_, body = serve(t, mux, "GET", "/", `<script>alert(1)</script>`, "")
