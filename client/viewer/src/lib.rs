@@ -137,6 +137,13 @@ struct Args {
     #[arg(long)]
     fingerprint: Option<String>,
 
+    /// When the session ends without the user closing it (refused, not reached,
+    /// connection lost, ended at the remote computer), the reason is shown in a
+    /// dialog before the window closes. The app passes it; scripts and tests do
+    /// not, so the viewer never waits for a click there.
+    #[arg(long, hide = true)]
+    error_dialog: bool,
+
     /// View only: does not send mouse and keyboard.
     #[arg(long)]
     view_only: bool,
@@ -600,6 +607,8 @@ pub fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<()> {
         pointer: Pointer::default(),
         exit_reason: None,
         closed_message: None,
+        error_dialog: args.error_dialog,
+        closing: false,
         restarting: None,
         restarted: false,
     };
@@ -819,6 +828,10 @@ struct App {
     exit_reason: Option<String>,
     /// Why the session ended, for the user (translated); printed as `@closed` for the app.
     closed_message: Option<String>,
+    /// `--error-dialog`: that reason in a dialog before closing.
+    error_dialog: bool,
+    /// The dialog is open: the viewer closes when it is answered.
+    closing: bool,
     /// The remote computer is restarting since then: the viewer waits and reconnects.
     restarting: Option<Instant>,
     /// It restarted, but the viewer cannot connect again by itself (no permanent password).
@@ -999,6 +1012,36 @@ impl App {
             if let Some(action) = action {
                 let _ = proxy.send_event(NetEvent::Toolbar(action));
             }
+        });
+    }
+
+    /// The session is over and the viewer closes, with message as its reason (for
+    /// the app's Connect page, `@closed`). With `--error-dialog` the message is
+    /// shown first in a dialog (information when the person at the remote
+    /// computer ended it, a warning otherwise) and the window closes when it is
+    /// answered: the technician sees why, not only a window that goes away.
+    fn close_saying(&mut self, event_loop: &ActiveEventLoop, message: String, information: bool) {
+        self.closed_message = Some(message.clone());
+        if !self.error_dialog {
+            event_loop.exit();
+            return;
+        }
+        if self.closing {
+            return;
+        }
+        self.closing = true;
+        // The dialog blocks its own thread, not the window (as the restart's).
+        let proxy = self.proxy.clone();
+        let title = tf("viewer.closed_title", &[("agent", &self.agent)]);
+        std::thread::spawn(move || {
+            let level = if information { rfd::MessageLevel::Info } else { rfd::MessageLevel::Warning };
+            let _ = rfd::MessageDialog::new()
+                .set_level(level)
+                .set_title(title)
+                .set_description(message)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+            let _ = proxy.send_event(NetEvent::ClosedDialogAnswered);
         });
     }
 
@@ -2500,11 +2543,11 @@ impl ApplicationHandler<NetEvent> for App {
             NetEvent::Disconnected { reason, .. } if self.restarting.is_some() || self.restarted => {
                 info!("disconnected after the restart: {reason}");
                 self.exit_reason = Some(format!("disconnected after the restart: {reason}"));
-                self.closed_message = Some(match self.restarting {
+                let message = match self.restarting {
                     Some(_) => tf("viewer.restart_not_back", &[("agent", &self.agent), ("reason", &reason)]),
                     None => tf("viewer.restarted", &[("agent", &self.agent)]),
-                });
-                event_loop.exit();
+                };
+                self.close_saying(event_loop, message, false);
             }
             NetEvent::Disconnected { reason, .. } if self.terminal_only && !self.terminals.is_empty() => {
                 // The windows stay open with the reason; closing them exits.
@@ -2515,9 +2558,10 @@ impl ApplicationHandler<NetEvent> for App {
             NetEvent::Disconnected { reason, .. } => {
                 info!("disconnected: {reason}");
                 self.exit_reason = Some(format!("disconnected: {reason}"));
-                self.closed_message = Some(closed_text(&reason));
-                event_loop.exit();
+                let by_the_computer = reason == t("agent.ended_at_computer");
+                self.close_saying(event_loop, closed_text(&reason), by_the_computer);
             }
+            NetEvent::ClosedDialogAnswered => event_loop.exit(),
         }
     }
 

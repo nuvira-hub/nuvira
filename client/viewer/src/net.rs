@@ -238,6 +238,8 @@ pub enum NetEvent {
     SwitchSides { on: bool, error: String },
     /// Click on the toolbar.
     Toolbar(crate::toolbar::Action),
+    /// The dialog with why the session ended was answered: the viewer closes.
+    ClosedDialogAnswered,
     /// File manager: answer of the agent to a request.
     Fs(nuvira_proto::v1::FsResponse),
     /// File manager: progress of a transfer (both directions).

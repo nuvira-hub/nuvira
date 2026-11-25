@@ -61,13 +61,30 @@ function confirmClick(button, label, action) {
 }
 
 async function call(command, args, messageId) {
+  const say = messageId === "address-book-message" ? showBookMessage : (text) => showMessage(messageId, text);
   try {
-    showMessage(messageId, null);
+    say(null);
     return await invoke(command, args);
   } catch (err) {
-    showMessage(messageId, String(err));
+    say(String(err));
     throw err;
   }
+}
+
+// What the page itself said in the address book's message line (a sign-in error,
+// the result of an import): kept across the redraws of every state event, until
+// the next action replaces it or the server reports an error of its own.
+let bookMessage = { text: null, ok: false };
+
+function showBookMessage(text, ok = false) {
+  bookMessage = { text, ok };
+  paintBookMessage(addressBook?.address_book_error ?? null);
+}
+
+function paintBookMessage(serverError) {
+  if (serverError) bookMessage = { text: null, ok: false };
+  showMessage("address-book-message", serverError ?? bookMessage.text);
+  $("address-book-message").classList.toggle("ok", !serverError && bookMessage.ok && Boolean(bookMessage.text));
 }
 
 // What the signed-in account may do on a book ("" from servers before roles).
@@ -127,7 +144,7 @@ function renderAddressBook(state) {
   $("account-in").classList.toggle("hidden", !account);
   if (account) $("account-name").textContent = `${t("settings.signed_in", { name: account.username })} · ${t(`role.${account.role}`)}`;
   renderTwoFactor(account);
-  showMessage("address-book-message", state.address_book_error ?? null);
+  paintBookMessage(state.address_book_error ?? null);
   $("connect-hint").textContent = t("connect.hint_address_book");
   $("remote-id").placeholder = t("connect.id_placeholder_address_book");
   renderEntries();
@@ -189,8 +206,7 @@ function bookHead(book, label) {
       const text = [t("book_csv.imported", { added: String(done.added), updated: String(done.updated) })];
       if (done.skipped.length) text.push(t("book_csv.skipped", { count: String(done.skipped.length) }), ...done.skipped.slice(0, 8));
       if (done.skipped.length > 8) text.push("…");
-      showMessage("address-book-message", text.join("\n"));
-      $("address-book-message").classList.toggle("ok", done.skipped.length === 0);
+      showBookMessage(text.join("\n"), done.skipped.length === 0);
     });
     head.append(imp);
   }
@@ -200,8 +216,7 @@ function bookHead(book, label) {
     exp.addEventListener("click", async () => {
       const n = await call("address_book_export", { bookId: book.id }, "address-book-message").catch(() => undefined);
       if (n == null) return;
-      showMessage("address-book-message", t("book_csv.exported", { count: String(n) }));
-      $("address-book-message").classList.add("ok");
+      showBookMessage(t("book_csv.exported", { count: String(n) }), true);
     });
     head.append(exp);
   }
@@ -365,6 +380,7 @@ function openEntry(entry) {
     $(`entry-${field}`).value = entry ? entry[field] : "";
   }
   $("entry-delete").classList.toggle("hidden", !entry);
+  $("entry-form").hidePasswords?.();
   showMessage("entry-message", null);
   $("entry-dialog").classList.remove("hidden");
   (entry ? $("entry-name") : $("entry-device")).focus();
@@ -421,6 +437,7 @@ $("login-form").addEventListener("submit", async (e) => {
     $("login-password").value = "";
     $("login-otp").value = "";
     $("login-otp").classList.add("hidden");
+    $("login-form").hidePasswords?.();
   } catch (err) {
     if (String(err) === "@server.otp_required") {
       // Password right: the code of the authenticator app is needed.

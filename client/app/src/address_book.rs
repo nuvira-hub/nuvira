@@ -271,6 +271,9 @@ pub async fn refresh(app: &AppHandle) -> Result<(), String> {
         // Opens the connection (and the remembered sign-in) if needed.
         match client(app).await {
             Ok(_) => {
+                if state.ui.lock().expect("state").account.is_some() && !reread_account(app).await {
+                    error = Some(t("err.session_expired"));
+                }
                 if state.ui.lock().expect("state").account.is_some() {
                     match call(app, Call::GetBooks(pb::GetBooks {})).await {
                         Ok(Some(ApiResult::Books(list))) => {
@@ -297,6 +300,28 @@ pub async fn refresh(app: &AppHandle) -> Result<(), String> {
         ui.address_book_error = error.clone();
     });
     error.map_or(Ok(()), Err)
+}
+
+/// The signed-in account as the server has it now: a role changed in the
+/// console (an administrator made technician) shows within one refresh, not at
+/// the next start of the app. The server answers LoginToken from its database
+/// without logging it. A token the server no longer accepts (signed out
+/// elsewhere, new password, account deleted) is forgotten: back to the sign-in,
+/// and false is returned.
+async fn reread_account(app: &AppHandle) -> bool {
+    let Some(token) = load_settings().token else { return true };
+    match call(app, Call::LoginToken(pb::LoginToken { token })).await {
+        Ok(Some(ApiResult::Session(session))) => set_account(app, session.account),
+        Ok(_) => {}
+        Err(e) if e.contains("@server.denied") => {
+            warn!("remembered sign-in no longer valid: {e}");
+            forget(app);
+            return false;
+        }
+        // Network or server trouble: the account shown stays as it was.
+        Err(e) => tracing::debug!("account not read again: {e}"),
+    }
+    true
 }
 
 fn book_ui(b: pb::Book) -> BookUi {
