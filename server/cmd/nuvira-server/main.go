@@ -165,7 +165,8 @@ func run() error {
 		mux := http.NewServeMux()
 		mux.Handle("/nuvira", conn.WebSockets())
 		mux.Handle(updates.Prefix, updates.Handler(filepath.Join(dataDir, "updates")))
-		mux.Handle(statuspage.Pattern, statuspage.Handler(version, udp.LocalAddr().(*net.UDPAddr).Port, edition != "open"))
+		mux.Handle(statuspage.Pattern, statuspage.Handler(version, udp.LocalAddr().(*net.UDPAddr).Port, edition != "open",
+			statuspage.PublicHost(os.Getenv("NUVIRA_PUBLIC_URL"))))
 		for _, m := range modules {
 			m.Routes(mux)
 		}

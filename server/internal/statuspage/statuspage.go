@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -22,6 +23,10 @@ const Pattern = "GET /{$}"
 type texts struct {
 	Title, Running, Version, ConnectTitle, Install, Download, Enter, Settings, PortNote string
 	OutsideTitle, Outside, BackupTitle, Backup, Console, Guide, Privacy                 string
+	// With the server's public address known (NUVIRA_PUBLIC_URL): Forward is the
+	// port to forward, then OutsideAddr introduces that address, or OutsideSame
+	// says the address above works from outside too.
+	Forward, OutsideAddr, OutsideSame string
 }
 
 // langs are the app's five languages (English first, the default).
@@ -37,7 +42,10 @@ var all = map[string]texts{
 		BackupTitle:  "Keep a backup",
 		Backup:       "Back up the server's data folder: it holds the server's identity. The apps remember it and refuse a server with a different one.",
 		Console:      "Web console", Guide: "Guide",
-		Privacy: "This page shows no data about your devices or sessions.",
+		Privacy:     "This page shows no data about your devices or sessions.",
+		Forward:     "Forward port 21116 UDP from your router to this machine (and TCP too, for networks that block UDP).",
+		OutsideAddr: "From outside your network, enter this address in the app:",
+		OutsideSame: "The address above works from outside your network too.",
 	},
 	"it": {
 		Title: "Server NuviraHub", Running: "Il server è in funzione.", Version: "Versione",
@@ -48,7 +56,10 @@ var all = map[string]texts{
 		BackupTitle:  "Tieni una copia di sicurezza",
 		Backup:       "Fai il backup della cartella dei dati del server: contiene l'identità del server. Le app la ricordano e rifiutano un server con un'identità diversa.",
 		Console:      "Console web", Guide: "Guida",
-		Privacy: "Questa pagina non mostra dati sui tuoi dispositivi né sulle sessioni.",
+		Privacy:     "Questa pagina non mostra dati sui tuoi dispositivi né sulle sessioni.",
+		Forward:     "Inoltra la porta 21116 UDP dal router a questo computer (e anche TCP, per le reti che bloccano UDP).",
+		OutsideAddr: "Da fuori della tua rete, inserisci nell'app questo indirizzo:",
+		OutsideSame: "L'indirizzo qui sopra funziona anche da fuori della tua rete.",
 	},
 	"fr": {
 		Title: "Serveur NuviraHub", Running: "Le serveur fonctionne.", Version: "Version",
@@ -59,7 +70,10 @@ var all = map[string]texts{
 		BackupTitle:  "Garde une sauvegarde",
 		Backup:       "Sauvegarde le dossier de données du serveur : il contient l'identité du serveur. Les apps la retiennent et refusent un serveur avec une autre identité.",
 		Console:      "Console web", Guide: "Guide",
-		Privacy: "Cette page ne montre aucune donnée sur tes appareils ni sur les sessions.",
+		Privacy:     "Cette page ne montre aucune donnée sur tes appareils ni sur les sessions.",
+		Forward:     "Redirige le port 21116 UDP de ton routeur vers cette machine (et aussi TCP, pour les réseaux qui bloquent UDP).",
+		OutsideAddr: "Depuis l'extérieur de ton réseau, saisis cette adresse dans l'app :",
+		OutsideSame: "L'adresse ci-dessus fonctionne aussi depuis l'extérieur de ton réseau.",
 	},
 	"de": {
 		Title: "NuviraHub-Server", Running: "Der Server läuft.", Version: "Version",
@@ -70,7 +84,10 @@ var all = map[string]texts{
 		BackupTitle:  "Mach eine Sicherung",
 		Backup:       "Sichere den Datenordner des Servers: Er enthält die Identität des Servers. Die Apps merken sie sich und lehnen einen Server mit einer anderen ab.",
 		Console:      "Webkonsole", Guide: "Anleitung",
-		Privacy: "Diese Seite zeigt keine Daten über deine Geräte oder Sitzungen.",
+		Privacy:     "Diese Seite zeigt keine Daten über deine Geräte oder Sitzungen.",
+		Forward:     "Leite Port 21116 UDP im Router an diesen Rechner weiter (und auch TCP, für Netze, die UDP sperren).",
+		OutsideAddr: "Von außerhalb deines Netzes gib in der App diese Adresse ein:",
+		OutsideSame: "Die Adresse oben funktioniert auch von außerhalb deines Netzes.",
 	},
 	"es": {
 		Title: "Servidor NuviraHub", Running: "El servidor está en marcha.", Version: "Versión",
@@ -81,7 +98,10 @@ var all = map[string]texts{
 		BackupTitle:  "Guarda una copia de seguridad",
 		Backup:       "Haz una copia de la carpeta de datos del servidor: contiene la identidad del servidor. Las apps la recuerdan y rechazan un servidor con otra distinta.",
 		Console:      "Consola web", Guide: "Guía",
-		Privacy: "Esta página no muestra datos de tus dispositivos ni de las sesiones.",
+		Privacy:     "Esta página no muestra datos de tus dispositivos ni de las sesiones.",
+		Forward:     "Redirige el puerto 21116 UDP del router a esta máquina (y también TCP, para las redes que bloquean UDP).",
+		OutsideAddr: "Desde fuera de tu red, introduce en la app esta dirección:",
+		OutsideSame: "La dirección de arriba también funciona desde fuera de tu red.",
 	},
 }
 
@@ -103,15 +123,16 @@ code{display:inline-block;font:1.05rem ui-monospace,Consolas,monospace;backgroun
 <div class="card"><h2>{{.T.ConnectTitle}}</h2>
 <p>{{.T.Install}} <a href="https://nuvirahub.dev/{{.Lang}}/download/" rel="noopener">{{.T.Download}}</a>.</p>
 <p>{{.T.Enter}} <strong>{{.T.Settings}}</strong> {{.T.PortNote}}</p><p><code>{{.Address}}</code></p></div>
-<div class="card"><h2>{{.T.OutsideTitle}}</h2><p>{{.T.Outside}}</p></div>
+<div class="card"><h2>{{.T.OutsideTitle}}</h2>{{if not .Public}}<p>{{.T.Outside}}</p>{{else if .Same}}<p>{{.T.Forward}} {{.T.OutsideSame}}</p>{{else}}<p>{{.T.Forward}} {{.T.OutsideAddr}}</p><p><code>{{.Public}}</code></p>{{end}}</div>
 <div class="card"><h2>{{.T.BackupTitle}}</h2><p>{{.T.Backup}}</p></div>
 <p class="muted">{{if .Pro}}<a href="/console/">{{.T.Console}}</a> · {{end}}<a href="https://nuvirahub.dev/{{.Lang}}/guide/" rel="noopener">{{.T.Guide}}</a> · {{.T.Privacy}}</p>
 </main></body></html>
 `))
 
 // Handler serves the page. udpPort is the server's UDP port (the one the apps
-// need); pro adds the link to the web console.
-func Handler(version string, udpPort int, pro bool) http.Handler {
+// need); pro adds the link to the web console; publicHost is the server's host
+// name from outside (from NUVIRA_PUBLIC_URL, see PublicHost), or empty.
+func Handler(version string, udpPort int, pro bool, publicHost string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lang := Lang(r.Header.Get("Accept-Language"))
 		h := w.Header()
@@ -128,12 +149,18 @@ func Handler(version string, udpPort int, pro bool) http.Handler {
 		t := all[lang]
 		if udpPort != 0 {
 			t.Outside = strings.ReplaceAll(t.Outside, strconv.Itoa(DefaultPort), strconv.Itoa(udpPort))
+			t.Forward = strings.ReplaceAll(t.Forward, strconv.Itoa(DefaultPort), strconv.Itoa(udpPort))
 		}
+		public := ""
+		if publicHost != "" {
+			public = Address(publicHost, udpPort)
+		}
+		address := Address(r.Host, udpPort)
 		_ = page.Execute(w, struct {
-			Lang, Version, Address string
-			Pro                    bool
-			T                      texts
-		}{lang, version, Address(r.Host, udpPort), pro, t})
+			Lang, Version, Address, Public string
+			Pro, Same                      bool
+			T                              texts
+		}{lang, version, address, public, pro, strings.EqualFold(public, address), t})
 	})
 }
 
@@ -153,6 +180,18 @@ func Address(hostport string, udpPort int) string {
 		return host
 	}
 	return net.JoinHostPort(host, strconv.Itoa(udpPort))
+}
+
+// PublicHost is the host name of the server's public address, NUVIRA_PUBLIC_URL
+// (the https:// address of the console from the browser, also used by single
+// sign-on and the invitation links). Its port is the web proxy's, not the UDP
+// port, so only the host is kept. Empty when raw is empty or not an http(s) URL.
+func PublicHost(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
 }
 
 // Lang is the first of the browser's languages that the page has, else English.
