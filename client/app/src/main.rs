@@ -1446,6 +1446,8 @@ pub(crate) fn launch_viewer(
     // (which other programs on the same PC can read).
     let mut command = std::process::Command::new(&exe);
     command.args(["viewer", "--server", &server, &device_id]);
+    // A session that ends by itself says why in the viewer, before it closes.
+    command.arg("--error-dialog");
     // A shell of the remote computer, without its desktop.
     if terminal {
         command.arg("--terminal");
