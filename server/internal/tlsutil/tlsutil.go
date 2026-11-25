@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -68,6 +69,29 @@ func LoadOrCreate(dir string) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 	return tls.LoadX509KeyPair(certPath, keyPath)
+}
+
+// RestrictKey puts key.pem in dir back to 0600 when others can read or write it,
+// and returns the mode it had. Some systems open up an app's whole data folder at
+// every start (Runtipi adds 0777 to every file in it). It changes nothing on
+// Windows, where the mode bits do not hold the file's access rights.
+func RestrictKey(dir string) (was os.FileMode, changed bool, err error) {
+	if runtime.GOOS == "windows" {
+		return 0, false, nil
+	}
+	keyPath := filepath.Join(dir, "key.pem")
+	fi, err := os.Stat(keyPath)
+	if err != nil {
+		return 0, false, err
+	}
+	was = fi.Mode().Perm()
+	if was&0o077 == 0 {
+		return was, false, nil
+	}
+	if err := os.Chmod(keyPath, 0o600); err != nil {
+		return was, false, err
+	}
+	return was, true, nil
 }
 
 // Fingerprint is the SHA-256 fingerprint of the certificate, in hexadecimal.
