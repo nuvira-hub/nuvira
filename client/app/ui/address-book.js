@@ -177,15 +177,18 @@ function renderEntries() {
     // Only the name in plain text; the kind of book and the number of entries
     // in italics, as in the web console (they read as part of the name).
     const note = book.local ? "" : t(book.personal ? "address_book.personal_note" : "address_book.shared_note");
-    children.push(bookHead(book, bookName(book), `${note ? `${note} ` : ""}(${book.entries.length})`));
-    if (entries.length === 0) children.push(el("p", "empty", t("address_book.empty_book")));
+    // Each book in its own card.
+    const card = el("div", "book-card");
+    card.append(bookHead(book, bookName(book), `${note ? `${note} ` : ""}(${book.entries.length})`));
+    if (entries.length === 0) card.append(el("p", "empty", t("address_book.empty_book")));
     // The server sends them sorted by group: a heading where the group changes.
     let group = null;
     for (const entry of entries) {
-      if (entry.group && entry.group !== group) children.push(el("p", "group-title", entry.group));
+      if (entry.group && entry.group !== group) card.append(el("p", "group-title", entry.group));
       group = entry.group;
-      children.push(entryRow(entry));
+      card.append(entryRow(entry));
     }
+    children.push(card);
   }
   if (books.length && children.length === 0) children.push(el("p", "empty", t("address_book.not_found")));
   $("address-book-list").replaceChildren(...children);

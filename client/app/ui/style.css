@@ -246,7 +246,9 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .tools input { width: 260px; }
 .login { display: flex; flex-direction: column; gap: 10px; max-width: 360px; margin: 12px 0 20px; }
 #address-book-message { margin: 0 0 12px; }
-.address-book-list { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px 4px; }
+/* One card per address book, one under the other. */
+.address-book-list { display: flex; flex-direction: column; gap: 12px; }
+.book-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px 4px; }
 .book-title { margin: 14px 14px 4px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .book-title:first-child { margin-top: 8px; }
 .book-head { display: flex; align-items: baseline; gap: 10px; }
