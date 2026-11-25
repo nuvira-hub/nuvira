@@ -114,6 +114,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("certificate: %w", err)
 	}
+	if was, changed, err := tlsutil.RestrictKey(dataDir); err != nil {
+		log.Warn("the server's private key is readable by other users and could not be restricted",
+			"file", filepath.Join(dataDir, "key.pem"), "mode", fmt.Sprintf("%04o", was), "err", err)
+	} else if changed {
+		log.Info("the server's private key was readable by other users: restricted to its owner",
+			"file", filepath.Join(dataDir, "key.pem"), "was", fmt.Sprintf("%04o", was))
+	}
 
 	addr, err := net.ResolveUDPAddr("udp", env("NUVIRA_LISTEN", ":21116"))
 	if err != nil {

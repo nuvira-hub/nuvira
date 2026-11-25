@@ -118,6 +118,49 @@ func TestLoadOrCreateOneFileMissing(t *testing.T) {
 	}
 }
 
+// A key others can read (Runtipi adds 0777 to the data folder at every start)
+// goes back to 0600; a private one is left alone; the certificate stays the same.
+func TestRestrictKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mode bits do not hold access rights on Windows")
+	}
+	dir := t.TempDir()
+	first, err := LoadOrCreate(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(dir, "key.pem")
+	if was, changed, err := RestrictKey(dir); err != nil || changed || was != 0o600 {
+		t.Fatalf("private key: was %o changed %v err %v", was, changed, err)
+	}
+	for _, open := range []os.FileMode{0o777, 0o640, 0o604} {
+		if err := os.Chmod(keyPath, open); err != nil {
+			t.Fatal(err)
+		}
+		was, changed, err := RestrictKey(dir)
+		if err != nil || !changed || was != open {
+			t.Fatalf("%o: was %o changed %v err %v", open, was, changed, err)
+		}
+		if fi, _ := os.Stat(keyPath); fi.Mode().Perm() != 0o600 {
+			t.Fatalf("%o: now %o", open, fi.Mode().Perm())
+		}
+	}
+	// Owner-only modes other than 0600 are not touched.
+	if err := os.Chmod(keyPath, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := RestrictKey(dir); err != nil || changed {
+		t.Fatalf("0400: changed %v err %v", changed, err)
+	}
+	again, err := LoadOrCreate(dir)
+	if err != nil || Fingerprint(again) != Fingerprint(first) {
+		t.Fatalf("reloaded %v %v", Fingerprint(again), err)
+	}
+	if _, _, err := RestrictKey(t.TempDir()); err == nil {
+		t.Fatal("no error without key.pem")
+	}
+}
+
 // A missing folder is an error (main creates it first).
 func TestLoadOrCreateNoDir(t *testing.T) {
 	if _, err := LoadOrCreate(filepath.Join(t.TempDir(), "missing")); err == nil {
