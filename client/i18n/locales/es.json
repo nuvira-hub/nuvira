@@ -97,6 +97,8 @@
   "connect.id_placeholder_address_book": "ID o nombre de la libreta",
   "connect.id_label": "ID del equipo",
   "connect.password_placeholder": "Contraseña",
+  "password.show": "Mostrar la contraseña",
+  "password.show_all": "Mostrar las contraseñas",
   "connect.saved_password": "Contraseña guardada en la libreta",
   "connect.button": "Conectar",
   "connect.terminal": "Solo terminal",

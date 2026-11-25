@@ -68,6 +68,38 @@ function applyBranding(b) {
   if (b.lock_language) $("language").disabled = true;
 }
 
+// "Show password": a checkbox after the last password field of each form (the
+// entry dialog's fields too), showing that form's passwords as text. A form that
+// is reset hides them again, as hidePasswords() on the form (the entry dialog,
+// when it opens). Built before the strings are applied, which name it.
+function addShowPassword() {
+  const groups = new Map();
+  for (const input of document.querySelectorAll('input[type="password"]')) {
+    const group = input.closest("form") ?? input.closest("label")?.parentElement ?? input.parentElement;
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(input);
+  }
+  for (const [group, inputs] of groups) {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    const text = document.createElement("span");
+    text.dataset.i18n = inputs.length > 1 ? "password.show_all" : "password.show";
+    const label = document.createElement("label");
+    label.className = "check show-password";
+    label.append(box, " ", text);
+    const show = (on) => {
+      box.checked = on;
+      for (const input of inputs) input.type = on ? "text" : "password";
+    };
+    box.addEventListener("change", () => show(box.checked));
+    group.addEventListener("reset", () => setTimeout(() => show(false)));
+    group.hidePasswords = () => show(false);
+    const last = inputs[inputs.length - 1];
+    (last.closest("label") ?? last).after(label);
+  }
+}
+addShowPassword();
+
 function useStrings(info) {
   strings = info.strings;
   document.documentElement.lang = info.lang;

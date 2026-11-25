@@ -97,6 +97,8 @@
   "connect.id_placeholder_address_book": "ID o nome dalla rubrica",
   "connect.id_label": "ID del computer",
   "connect.password_placeholder": "Password",
+  "password.show": "Mostra la password",
+  "password.show_all": "Mostra le password",
   "connect.saved_password": "Password salvata in rubrica",
   "connect.button": "Collega",
   "connect.terminal": "Solo terminale",

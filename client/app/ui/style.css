@@ -321,6 +321,8 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
 .grid label input, .grid label select, .grid label textarea { font-size: 14px; color: var(--text); }
 .grid .full { grid-column: 1 / -1; }
+/* "Show password" under the entry's password, in the same column */
+.grid label.show-password { flex-direction: row; align-items: center; gap: 6px; grid-column: 2; margin-top: -6px; font-size: 13px; color: var(--text); }
 
 /* narrow window */
 @media (max-width: 640px) {
@@ -328,6 +330,7 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
   .this-pc { grid-template-columns: 1fr; }
   .tools input { width: 160px; }
   .grid { grid-template-columns: 1fr; }
+  .grid label.show-password { grid-column: auto; }
 }
 
 /* Support queue */

@@ -365,6 +365,7 @@ function openEntry(entry) {
     $(`entry-${field}`).value = entry ? entry[field] : "";
   }
   $("entry-delete").classList.toggle("hidden", !entry);
+  $("entry-form").hidePasswords?.();
   showMessage("entry-message", null);
   $("entry-dialog").classList.remove("hidden");
   (entry ? $("entry-name") : $("entry-device")).focus();

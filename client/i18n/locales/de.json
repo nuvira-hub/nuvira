@@ -97,6 +97,8 @@
   "connect.id_placeholder_address_book": "ID oder Name aus dem Adressbuch",
   "connect.id_label": "ID des Computers",
   "connect.password_placeholder": "Passwort",
+  "password.show": "Passwort anzeigen",
+  "password.show_all": "Passwörter anzeigen",
   "connect.saved_password": "Passwort im Adressbuch gespeichert",
   "connect.button": "Verbinden",
   "connect.terminal": "Nur Terminal",
