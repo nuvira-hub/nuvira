@@ -143,8 +143,10 @@
             <div id="suggestions" class="suggestions hidden" role="listbox"></div>
           </div>
           <input id="remote-password" class="hero-password" type="password" data-i18n-placeholder="connect.password_placeholder" placeholder="Password">
-          <button type="submit" class="primary hero-button" data-i18n="connect.button">Connect</button>
-          <button type="button" id="terminal-button" class="hero-button" data-i18n="connect.terminal">Terminal only</button>
+          <div class="hero-actions">
+            <button type="submit" class="primary hero-button" data-i18n="connect.button">Connect</button>
+            <button type="button" id="terminal-button" class="hero-button" data-i18n="connect.terminal">Terminal only</button>
+          </div>
           <p id="connect-message" class="message hidden"></p>
         </form>
       </section>

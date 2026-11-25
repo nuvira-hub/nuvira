@@ -1774,6 +1774,18 @@ fn main() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        // The window comes back with the size, position and maximized state it
+        // had when the app last closed (a position off every connected screen is
+        // not restored). Not its visibility: how the app starts decides that.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             get_state,
