@@ -382,6 +382,13 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .invite-made { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
 .invite-made input { flex: 1 1 260px; min-width: 0; }
 .invite-item { justify-content: space-between; gap: 8px; }
+/* The invitations take the page's width (a stack stops at 420 px, which broke
+   "used 0 of 1" and the buttons over two lines) and keep some room from the
+   form above. */
+#invite-list { max-width: none; margin-top: 12px; }
+.invite-item .queue-text { flex: 1; }
+.invite-item .actions { display: flex; flex: none; gap: 6px; }
+.invite-item button { white-space: nowrap; }
 .invite-item.ended { opacity: .6; }
 .for-me { color: var(--accent); font-weight: 600; }
 #nav-queue { position: relative; }
