@@ -201,6 +201,8 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 /* Settings: one card per zone, sub-zones divided by a line. */
 .settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 4px 20px 16px; margin-bottom: 16px; }
 .settings-card > h2:first-child { margin-top: 14px; }
+/* Administration: the account form and the hints under it do not touch. */
+#account-form { margin-bottom: 10px; }
 .settings-sub { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
 .settings-sub > h3:first-child { margin-top: 12px; }
 .uninstall-row { margin-top: 6px; }
