@@ -77,7 +77,7 @@ func TestHandler(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("/nuvira", http.NotFoundHandler()) // the WebSocket route, as in the server
 	mux.Handle("/console/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "console") }))
-	mux.Handle(Pattern, Handler("1.2.3", 21116, false))
+	mux.Handle(Pattern, Handler("1.2.3", 21116, false, ""))
 
 	res, body := serve(t, mux, "GET", "/", "nas.local:21116", "it-IT,it")
 	if res.StatusCode != 200 || !strings.Contains(res.Header.Get("Content-Type"), "text/html") {
@@ -126,11 +126,55 @@ func TestHandler(t *testing.T) {
 	}
 
 	pro := http.NewServeMux()
-	pro.Handle(Pattern, Handler("1.2.3", 21200, true))
+	pro.Handle(Pattern, Handler("1.2.3", 21200, true, ""))
 	_, body = serve(t, pro, "GET", "/", "192.168.1.5:21116", "de")
 	for _, want := range []string{`href="/console/"`, "Webkonsole", "<code>192.168.1.5:21200</code>", "Port 21200 UDP"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("pro page without %q", want)
+		}
+	}
+}
+
+// With NUVIRA_PUBLIC_URL the page also shows the address from outside, once.
+func TestHandlerPublic(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle(Pattern, Handler("1.2.3", 21116, true, PublicHost("https://Nuvira.Example.net/")))
+	_, body := serve(t, mux, "GET", "/", "192.168.178.12:21116", "it")
+	for _, want := range []string{"<code>192.168.178.12</code>", "Inoltra la porta 21116 UDP", "Da fuori della tua rete, inserisci nell&#39;app questo indirizzo:", "<code>nuvira.example.net</code>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("LAN page without %q", want)
+		}
+	}
+	if strings.Contains(body, "il tuo indirizzo pubblico o il tuo nome di dominio") {
+		t.Error("generic text shown with the public address known")
+	}
+	// Opened from outside: the same address, shown once.
+	_, body = serve(t, mux, "GET", "/", "NUVIRA.example.net", "en")
+	if strings.Count(body, "<code>") != 1 || !strings.Contains(body, "The address above works from outside your network too.") {
+		t.Errorf("public page: %d addresses", strings.Count(body, "<code>"))
+	}
+	// Another UDP port: in both addresses and in the port to forward.
+	other := http.NewServeMux()
+	other.Handle(Pattern, Handler("1.2.3", 21216, false, "nuvira.example.net"))
+	_, body = serve(t, other, "GET", "/", "nas.local", "en")
+	for _, want := range []string{"<code>nas.local:21216</code>", "<code>nuvira.example.net:21216</code>", "Forward port 21216 UDP"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("port 21216 page without %q", want)
+		}
+	}
+}
+
+func TestPublicHost(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://nuvira.example.net":          "nuvira.example.net",
+		" https://nuvira.example.net:8443/x ": "nuvira.example.net",
+		"http://[2001:db8::1]:8080":           "2001:db8::1",
+		"":                                    "",
+		"nuvira.example.net":                  "",
+		"ftp://nuvira.example.net":            "",
+	} {
+		if got := PublicHost(raw); got != want {
+			t.Errorf("PublicHost(%q) = %q, want %q", raw, got, want)
 		}
 	}
 }

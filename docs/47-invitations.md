@@ -25,6 +25,9 @@ entitlement (`ADDRESS_BOOK`), the same as the queue.
 - The link is `NUVIRA_PUBLIC_URL/i/CODE` when the server knows its public
   address. Otherwise the app builds it from the server's address:
   `http://HOST:PORT/i/CODE`, on the same port as the WebSocket and the updates.
+  The console's Invitations tab, which gets no link either, makes it from its
+  own address (`location.origin/i/CODE`). The status page shows the host of
+  `NUVIRA_PUBLIC_URL` as the address from outside.
 - A request for this technician shows "Invited by you" in the queue. Another
   technician sees "For NAME" and has no Take button; the server refuses them
   anyway (`@server.support_reserved`).

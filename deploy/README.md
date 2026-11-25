@@ -18,6 +18,7 @@ Images for `linux/amd64` and `linux/arm64`, built `FROM scratch` (only the stati
 | Variable | `NUVIRA_LOG` | `info` | `debug`, `info`, `warn` |
 | Variable | `NUVIRA_WS_LISTEN` | `:21116` | `off` disables the WebSocket fallback |
 | Variable | `NUVIRA_RATE_LIMITS` | unset (= `on`) | limits per address on public addresses only; `all` also on local addresses; `off` none (see [Limits per address](#limits-per-address)) |
+| Variable | `NUVIRA_PUBLIC_URL` | unset | the server's address from outside, as `https://name` (the web console's address with NuviraHub Pro): the status page shows its name as the address to use from outside; Pro also uses it for the invitation links and single sign-on |
 
 The image runs as user 65532. With a bind mount owned by another user, run the container with that user (`--user UID:GID`) or give the folder to 65532.
 
