@@ -88,6 +88,7 @@ var all = map[string]texts{
 var page = template.Must(template.New("status").Parse(`<!doctype html>
 <html lang="{{.Lang}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>{{.T.Title}}</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2713%27 fill=%27%23136e8c%27/%3E%3Cpath d=%27M18 46V18l28 28V18%27 fill=%27none%27 stroke=%27%23fff%27 stroke-width=%277%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E">
 <style>
 :root{color-scheme:light dark;--bg:#f6f8fa;--card:#fff;--fg:#1b2430;--muted:#5b6675;--accent:#0f7aa8;--line:#d9dee5}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1418;--card:#172028;--fg:#e6edf3;--muted:#9aa7b4;--accent:#4fb3de;--line:#2a3540}}
@@ -119,7 +120,7 @@ func Handler(version string, udpPort int, pro bool) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Frame-Options", "SAMEORIGIN")
-		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
+		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
 		h.Set("Vary", "Accept-Language")
 		if r.Method == http.MethodHead {
 			return
