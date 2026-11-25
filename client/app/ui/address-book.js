@@ -437,6 +437,7 @@ $("login-form").addEventListener("submit", async (e) => {
     $("login-password").value = "";
     $("login-otp").value = "";
     $("login-otp").classList.add("hidden");
+    $("login-form").hidePasswords?.();
   } catch (err) {
     if (String(err) === "@server.otp_required") {
       // Password right: the code of the authenticator app is needed.
