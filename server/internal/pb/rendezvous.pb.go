@@ -738,7 +738,11 @@ type Register struct {
 	ApiOnly bool `protobuf:"varint,6,opt,name=api_only,json=apiOnly,proto3" json:"api_only,omitempty"`
 	// The alias the device wants (see SetAlias); absent (older agents): the one
 	// the server has stays.
-	Alias         *string `protobuf:"bytes,7,opt,name=alias,proto3,oneof" json:"alias,omitempty"`
+	Alias *string `protobuf:"bytes,7,opt,name=alias,proto3,oneof" json:"alias,omitempty"`
+	// Random bytes drawn once per process: a server sees that an agent came back as
+	// a new process, so the sessions of the old one ended without their report
+	// (the session log closes them with an estimated end). Absent: older device.
+	Instance      []byte `protobuf:"bytes,8,opt,name=instance,proto3" json:"instance,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -820,6 +824,13 @@ func (x *Register) GetAlias() string {
 		return *x.Alias
 	}
 	return ""
+}
+
+func (x *Register) GetInstance() []byte {
+	if x != nil {
+		return x.Instance
+	}
+	return nil
 }
 
 // The device proves it holds the private key by signing "nuvira-register-v1"
@@ -5857,7 +5868,7 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\tfiles_out\x18\x06 \x01(\rR\bfilesOut\x12\x19\n" +
 	"\bbytes_in\x18\a \x01(\x04R\abytesIn\x12\x1b\n" +
 	"\tbytes_out\x18\b \x01(\x04R\bbytesOut\x12\x14\n" +
-	"\x05error\x18\t \x01(\tR\x05error\"\xe6\x01\n" +
+	"\x05error\x18\t \x01(\tR\x05error\"\x82\x02\n" +
 	"\bRegister\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\fR\tpublicKey\x12\x1f\n" +
@@ -5868,7 +5879,8 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"appVersion\x12)\n" +
 	"\x10protocol_version\x18\x05 \x01(\rR\x0fprotocolVersion\x12\x19\n" +
 	"\bapi_only\x18\x06 \x01(\bR\aapiOnly\x12\x19\n" +
-	"\x05alias\x18\a \x01(\tH\x00R\x05alias\x88\x01\x01B\b\n" +
+	"\x05alias\x18\a \x01(\tH\x00R\x05alias\x88\x01\x01\x12\x1a\n" +
+	"\binstance\x18\b \x01(\fR\binstanceB\b\n" +
 	"\x06_alias\"!\n" +
 	"\tChallenge\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\fR\x05nonce\"%\n" +

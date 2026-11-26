@@ -179,6 +179,17 @@ pub struct DeviceInfo<'a> {
     pub alias: Option<String>,
 }
 
+/// Random bytes of this process, sent in every registration (`Register.instance`):
+/// the server tells a reconnection of the same process from a new one.
+pub fn instance() -> &'static [u8; 16] {
+    static INSTANCE: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
+    INSTANCE.get_or_init(|| {
+        let mut bytes = [0u8; 16];
+        ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).expect("random generator");
+        bytes
+    })
+}
+
 /// Connects to nuvira-server and registers the device. With `expected` the server
 /// certificate must have that fingerprint; without it, any fingerprint is accepted
 /// and returned in `server_fingerprint` (to be remembered: see [`known_server`]).
@@ -234,6 +245,7 @@ pub async fn connect(
         protocol_version: PROTOCOL_VERSION,
         api_only: !device.reachable,
         alias: device.alias.clone(),
+        instance: instance().to_vec(),
     }))
     .await?;
 

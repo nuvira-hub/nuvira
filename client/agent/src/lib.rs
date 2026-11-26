@@ -535,6 +535,7 @@ pub async fn serve_via_server(
         last_code_step: AtomicU64::new(0),
         wrong_codes: Mutex::new(Vec::new()),
         guesses: Mutex::new(Default::default()),
+        reports: Default::default(),
         features: Mutex::new(Vec::new()),
         unattended: opts.unattended,
         restarting: Mutex::new(None),
@@ -741,6 +742,25 @@ struct SessionContext {
     wrong_codes: Mutex<Vec<Instant>>,
     /// Wrong passwords, by viewer and in all ([`guesses`]).
     guesses: Mutex<guesses::Guesses>,
+    /// End-of-session reports not given to the server yet ([`Reports`]).
+    reports: Reports,
+}
+
+/// The end-of-session reports waiting for the connection to the server. They
+/// outlive it: a session goes on while the server is unreachable (a network cut,
+/// the server restarted), and its report is sent once the agent is registered
+/// again; the server takes it for 48 hours.
+struct Reports {
+    tx: mpsc::UnboundedSender<nuvira_proto::v1::SessionReport>,
+    /// Taken by the one connection to the server in use.
+    rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<nuvira_proto::v1::SessionReport>>,
+}
+
+impl Default for Reports {
+    fn default() -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        Reports { tx, rx: tokio::sync::Mutex::new(rx) }
+    }
 }
 
 impl SessionContext {
@@ -882,7 +902,9 @@ async fn signal_loop(
     let _ = ctx.events.send(AgentEvent::Alias { alias: signal.alias.clone(), error: signal.alias_error.clone() });
 
     let mut accepted: HashMap<String, Request> = HashMap::new();
-    let (report_tx, mut reports) = mpsc::unbounded_channel::<nuvira_proto::v1::SessionReport>();
+    // Reports of sessions that ended while the server was unreachable go first.
+    let mut reports = ctx.reports.rx.lock().await;
+    let report_tx = ctx.reports.tx.clone();
     // Light RMM: the inventory goes only to a server that asks for it.
     let send_inventory = signal.features.iter().any(|f| f == "pro.inventory");
     *ctx.features.lock().expect("features") = signal.features.clone();
@@ -1220,7 +1242,17 @@ async fn signal_loop(
             },
         };
         if let Some(reply) = reply {
-            signal.tx.send(reply).await?;
+            let report = match &reply {
+                client_message::Msg::SessionReport(r) => Some(r.clone()),
+                _ => None,
+            };
+            if let Err(e) = signal.tx.send(reply).await {
+                // Kept for the next connection.
+                if let Some(report) = report {
+                    let _ = ctx.reports.tx.send(report);
+                }
+                return Err(e.into());
+            }
         }
     }
 }
@@ -4177,6 +4209,7 @@ mod gate_characterisation {
             last_code_step: AtomicU64::new(0),
             wrong_codes: Mutex::new(Vec::new()),
         guesses: Mutex::new(Default::default()),
+        reports: Default::default(),
             features: Mutex::new(Vec::new()),
             unattended: permanent,
             restarting: Mutex::new(None),
