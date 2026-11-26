@@ -174,29 +174,33 @@ function renderEntries() {
   for (const book of books) {
     const entries = book.entries.filter((e) => matches(e, query));
     if (query && entries.length === 0) continue;
-    const label = book.local
-      ? bookName(book)
-      : book.personal
-        ? t("address_book.personal", { name: bookName(book) })
-        : t("address_book.shared", { name: book.name });
-    children.push(bookHead(book, `${label} (${book.entries.length})`));
-    if (entries.length === 0) children.push(el("p", "empty", t("address_book.empty_book")));
+    // Only the name in plain text; the kind of book and the number of entries
+    // in italics, as in the web console (they read as part of the name).
+    const note = book.local ? "" : t(book.personal ? "address_book.personal_note" : "address_book.shared_note");
+    // Each book in its own card.
+    const card = el("div", "book-card");
+    card.append(bookHead(book, bookName(book), `${note ? `${note} ` : ""}(${book.entries.length})`));
+    if (entries.length === 0) card.append(el("p", "empty", t("address_book.empty_book")));
     // The server sends them sorted by group: a heading where the group changes.
     let group = null;
     for (const entry of entries) {
-      if (entry.group && entry.group !== group) children.push(el("p", "group-title", entry.group));
+      if (entry.group && entry.group !== group) card.append(el("p", "group-title", entry.group));
       group = entry.group;
-      children.push(entryRow(entry));
+      card.append(entryRow(entry));
     }
+    children.push(card);
   }
   if (books.length && children.length === 0) children.push(el("p", "empty", t("address_book.not_found")));
   $("address-book-list").replaceChildren(...children);
 }
 
-// The book's name with Import and Export (CSV, docs/17-address-book.md).
-function bookHead(book, label) {
+// The book's name, its kind and count, with Import and Export (CSV,
+// docs/17-address-book.md).
+function bookHead(book, name, note) {
   const head = el("div", "book-head");
-  head.append(el("p", "book-title", label));
+  const title = el("p", "book-title", name);
+  title.append(" ", el("span", "book-note", note));
+  head.append(title);
   if (canEditBook(book)) {
     const imp = el("button", "link", t("book_csv.import"));
     imp.title = t("book_csv.import_hint");
