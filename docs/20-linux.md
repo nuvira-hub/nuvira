@@ -219,6 +219,22 @@ Kubuntu 26.04 (Plasma 6.6, `ksecretd`), automatic sign-in switched off, signed i
 - Result, with the package of the branch: the app started after sign-in opened the wallet with nothing on screen, `app.key` went from `NVK1F` to `NVK1S` at once, same ID (585 296 961).
 - Wallet locked by hand (`Lock` of the Secret Service: KWallet then forgets the sign-in password): the viewer showed KWallet's password window once; with it cancelled, the viewer stopped after about 20 s with "the system keyring … is locked: open it, then connect again" (translated), instead of waiting without end.
 
+### GNOME Keyring without automatic sign-in (2026-11-26)
+
+MSI-UBUNTU (a real PC, Ubuntu 26.10, GNOME on Wayland), automatic sign-in switched off for the test, password typed at GDM (ydotool), the program of branch `refactor/light`, each case with its own data folder.
+
+- **With automatic sign-in** (as the PC normally runs): the `login` keyring stays locked after sign-in, so every key there was `NVK1F` (file permissions).
+- **Signed in with the password**: the keyring is open at once (`pam_gnome_keyring`). A new agent key is written as `NVK1S` (one item "NuviraHub device keys" in `login`).
+- **Migration**: an `NVK1F` key copied from the automatic sign-in setup moved to `NVK1S` at the first start, and the device kept its ID (477 384 789) on the next start too.
+- **New key with the keyring locked**: written as `NVK1F`, with no window (as with automatic sign-in).
+- **Viewer, `NVK1S` key, keyring locked by hand**: it stopped after about 20 s with the translated message ("il portachiavi del sistema (KWallet, GNOME Keyring) è chiuso: aprilo, poi collegati di nuovo"). The key stayed `NVK1S`.
+- **Agent, `NVK1S` key, keyring locked by hand**: it waits ("waiting for the system to open it"), as meant for a keyring that opens after the agent at start-up.
+  - It asks GNOME's password window once. Traced on the bus: `BeginPrompting`, `PromptReady`, `PerformPrompt`.
+  - Every 5 s it asks quietly and dismisses again.
+  - **Open**: in two tries, the password typed into that window did not unlock the keyring (no answer from the prompter). The same typing into a window asked by another program, with the agent not running, unlocked it.
+  - Not understood yet: the quiet requests every 5 s may cancel the shown window, or the window may not get the keyboard. A screenshot was not possible here (GNOME asks for permission; kmsgrab cannot read this Haswell's tiled buffer).
+  - Matters for a PC whose keys were written with the keyring open and that later signs in automatically: the agent would wait at every start until the keyring is opened another way (for example with Passwords and Keys).
+
 ## To do
 
 - **GNOME's lock screen at once:** only by publishing the extension on extensions.gnome.org (see "Locked screen"); the app says when a sign-out and in is needed.
