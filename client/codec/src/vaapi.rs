@@ -2515,10 +2515,13 @@ mod tests {
         let runs: u32 =
             std::env::var("NUVIRA_TEST_PROBE_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
         let exe = std::env::current_exe().unwrap();
+        // This test's name as libtest knows it: its path without the crate's name.
+        let path = concat!(module_path!(), "::probe_with_busy_threads");
+        let name = path.split_once("::").map_or(path, |(_, name)| name);
         let started = std::time::Instant::now();
         for run in 0..runs {
             let out = std::process::Command::new(&exe)
-                .args(["vaapi::tests::probe_with_busy_threads", "--exact", "--nocapture", "--test-threads=1"])
+                .args([name, "--exact", "--nocapture", "--test-threads=1"])
                 .env("NUVIRA_TEST_PROBE_CHILD", "1")
                 .output()
                 .unwrap();
