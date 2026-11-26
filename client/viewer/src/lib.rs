@@ -57,6 +57,21 @@ struct Pointer {
     screen: (u32, u32),
     local: Option<(f32, f32)>,
 }
+
+/// The pointer `s` drawn with its hot spot at (`x`, `y`) on a remote screen of
+/// `sw` x `sh` pixels: its rectangle as fractions of the image.
+fn cursor_overlay(s: &render::CursorShape, x: i32, y: i32, sw: f32, sh: f32) -> render::CursorOverlay {
+    render::CursorOverlay {
+        shape: s.clone(),
+        rect: [
+            (x - s.hot_x as i32) as f32 / sw,
+            (y - s.hot_y as i32) as f32 / sh,
+            s.width as f32 / sw,
+            s.height as f32 / sh,
+        ],
+    }
+}
+
 use crate::report::Report;
 
 /// In place of a password, this prefix carries the ticket of a support request
@@ -787,15 +802,7 @@ impl App {
         let (x, y, visible, serial) = p.position?;
         let s = p.shape.as_ref().filter(|s| s.serial == serial && visible)?;
         let (sw, sh) = (p.screen.0.max(1) as f32, p.screen.1.max(1) as f32);
-        Some(render::CursorOverlay {
-            shape: s.clone(),
-            rect: [
-                (x - s.hot_x as i32) as f32 / sw,
-                (y - s.hot_y as i32) as f32 / sh,
-                s.width as f32 / sw,
-                s.height as f32 / sh,
-            ],
-        })
+        Some(cursor_overlay(s, x, y, sw, sh))
     }
 
     /// The remote pointer: this computer's pointer takes its shape while this
@@ -815,15 +822,7 @@ impl App {
         }
         // Drawn unless it is where this mouse put it (within 3 pixels).
         let here = p.local.is_some_and(|(lx, ly)| (lx * sw - x as f32).abs() <= 3.0 && (ly * sh - y as f32).abs() <= 3.0);
-        let overlay = shape.filter(|_| !(controlling && here)).map(|s| render::CursorOverlay {
-            shape: s.clone(),
-            rect: [
-                (x - s.hot_x as i32) as f32 / sw,
-                (y - s.hot_y as i32) as f32 / sh,
-                s.width as f32 / sw,
-                s.height as f32 / sh,
-            ],
-        });
+        let overlay = shape.filter(|_| !(controlling && here)).map(|s| cursor_overlay(s, x, y, sw, sh));
         if r.set_cursor(overlay) {
             window.request_redraw();
         }
