@@ -7,6 +7,7 @@
 //! collide with the server's.
 
 use nuvira_i18n::t;
+use nuvira_secret::{hex, unhex};
 use serde::{Deserialize, Serialize};
 
 use crate::address_book::{BookUi, EntryUi};
@@ -324,16 +325,6 @@ pub(crate) fn unprotect(stored: &str) -> String {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn unhex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..text.len()).step_by(2).map(|i| u8::from_str_radix(text.get(i..i + 2)?, 16).ok()).collect()
-}
 
 #[cfg(test)]
 mod tests {

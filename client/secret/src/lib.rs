@@ -81,11 +81,23 @@ pub fn is_valid_hash(text: &str) -> bool {
     parse(text).is_some()
 }
 
-fn hex(bytes: &[u8]) -> String {
+/// Random 8-character password that is easy to dictate (no 0/O, 1/l/I): the
+/// temporary password of the agent, the service's and the app's tags.
+pub fn random_password() -> String {
+    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+    let mut bytes = [0u8; 8];
+    // Operating system random generator (through ring).
+    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).expect("random generator");
+    bytes.iter().map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char).collect()
+}
+
+/// Lower-case hexadecimal of `bytes`.
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn unhex(text: &str) -> Option<Vec<u8>> {
+/// The bytes of a hexadecimal text (`None` if it is not one).
+pub fn unhex(text: &str) -> Option<Vec<u8>> {
     if !text.len().is_multiple_of(2) {
         return None;
     }
@@ -184,6 +196,18 @@ fn base32_decode(text: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_helpers() {
+        let p = random_password();
+        assert_eq!(p.len(), 8);
+        assert!(p.chars().all(|c| "abcdefghijkmnpqrstuvwxyz23456789".contains(c)), "{p}");
+        assert_ne!(random_password(), random_password());
+        assert_eq!(hex(&[0x00, 0x0f, 0xab]), "000fab");
+        assert_eq!(unhex("000fab"), Some(vec![0x00, 0x0f, 0xab]));
+        assert_eq!(unhex("0"), None);
+        assert_eq!(unhex("zz"), None);
+    }
 
     #[test]
     fn totp() {

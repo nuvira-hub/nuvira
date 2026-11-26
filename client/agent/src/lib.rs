@@ -416,13 +416,7 @@ impl Permissions {
 }
 
 /// Random 8-character password that is easy to dictate (no 0/O, 1/l/I).
-pub fn random_password() -> String {
-    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
-    let mut bytes = [0u8; 8];
-    // Operating system random generator (through ring).
-    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).expect("random generator");
-    bytes.iter().map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char).collect()
-}
+pub use nuvira_secret::random_password;
 
 /// Constant-time comparison (does not reveal how many leading characters are right).
 fn same_secret(a: &str, b: &str) -> bool {
