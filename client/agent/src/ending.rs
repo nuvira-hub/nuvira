@@ -102,7 +102,11 @@ pub(crate) const ENDED_AT_COMPUTER: &str = "@agent.ended_at_computer";
 #[cfg(test)]
 mod video_end_tests {
     use super::*;
-    use crate::{Connection, Duration, FramedSend, Instant, VideoFrame, anyhow};
+    use anyhow::anyhow;
+    use nuvira_proto::v1::VideoFrame;
+    use nuvira_transport::FramedSend;
+
+    use crate::{Duration, Instant};
 
     /// The agent's and the viewer's sides of a loopback session, and the agent's
     /// video stream as each side holds it.

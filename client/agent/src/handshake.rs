@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::HANDSHAKE_READ;
 #[cfg(doc)]
-use crate::{run_session, shared};
+use crate::{connected::run_session, shared};
 
 /// Characters of the viewer's device name, system and version written to the log.
 const LOGGED_NAME_CHARS: usize = 64;

@@ -15,8 +15,8 @@ use tracing::{info, warn};
 use crate::ending::{closed_normally, end_reason};
 use crate::policy::{lock_after, set_policy};
 use crate::{
-    AgentCommand, AgentEvent, Gate, MAX_PENDING_SESSIONS, Request, ServerOptions, SessionContext, access, inventory,
-    normal_end, random_password, reopen, session, shared, stats, switches, watched,
+    AgentCommand, AgentEvent, Gate, MAX_PENDING_SESSIONS, Request, ServerOptions, SessionContext, access,
+    inventory, normal_end, random_password, reopen, session, shared, stats, switches, watched,
 };
 
 /// Ticket of a support request: 128 random bits in hex.

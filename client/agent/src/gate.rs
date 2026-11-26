@@ -12,8 +12,8 @@ use tracing::{info, warn};
 
 use crate::{
     AgentEvent, CODE_MAX_WRONG, CODE_REQUIRED, CODE_WINDOW, CONFIRM_TIMEOUT, ENDED_AT_COMPUTER, NOT_ALLOWED,
-    RESTART_GIVEN_UP, Request, SessionContext, WRONG_PASSWORD, access, control, guesses, merge_limits, same_secret,
-    shared, stats, switches,
+    RESTART_GIVEN_UP, Request, SessionContext, WRONG_PASSWORD, access, control, guesses, merge_limits,
+    same_secret, shared, stats, switches,
 };
 
 /// Checks the viewer's `Auth`. When the computer also wants a two-factor code and
@@ -357,9 +357,11 @@ impl Gate<'_> {
 #[cfg(test)]
 mod gate_characterisation {
     use super::*;
+    use anyhow::anyhow;
+
     use crate::ending::end_reason;
     use crate::{
-        AgentConfig, Arc, AtomicU32, AtomicU64, EncoderPlan, HashMap, Mutex, Notify, anyhow, close_reason, local_hello,
+        AgentConfig, Arc, AtomicU32, AtomicU64, EncoderPlan, HashMap, Mutex, Notify, close_reason, local_hello,
         mpsc, reopen, session,
     };
     use nuvira_proto::v1::Policy;
