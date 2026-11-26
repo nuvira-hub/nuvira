@@ -83,7 +83,9 @@ func (s *Server) agentGone(agentID string, now time.Time) {
 // agentBack runs when an agent registers again (s.mu held). The same process
 // still has its sessions, and sends their reports when they end. A new process
 // means the old one stopped (closed, crashed, the PC restarted) and its sessions
-// with it: they end now, estimated at the time the old process went away. With
+// with it: they end now, estimated at the time the old process went away, or now
+// if the server had not noticed that yet (the old connection had not timed out):
+// an upper bound. With
 // an older agent (no instance) nothing is known: the report window decides.
 func (s *Server) agentBack(c *client, now time.Time) []ext.SessionEvent {
 	var ended []ext.SessionEvent
@@ -120,6 +122,7 @@ func (s *Server) forgetRouted(now time.Time) {
 	}
 	s.mu.Unlock()
 	for _, ev := range ended {
+		s.log.Info("session ended without report: report window passed", "session", ev.ID, "agent_away_since", ev.End)
 		s.event(ev)
 	}
 }

@@ -20,6 +20,12 @@ With the Pro session log (feature `pro.session_log`) the web console has a "Repo
 - **Technician**: the account signed in to the app that opened the session. The viewer presents the app's sign-in token when it connects (`Connect.account_token`); the server only resolves it to the account name and never stores it.
 - **Note**: after a session the app asks the signed-in technician what was done; the note goes to the session log (`SessionNote`, the account's latest session with that computer within a day) and into the report.
 - **Billing rules** (console): rounding up to a step (default 15 minutes), a minimum per session (default 15 minutes), the currency and an hourly rate per customer.
+- **Time of a session**: the agent's end-of-session report (`SessionReport`). The agent keeps it until it can give it to the server: a session that goes on while the server is unreachable (a network cut, the server restarted) is reported once the agent is registered again, and a report for a session the server no longer had in memory (it restarted) is still taken for a session of that agent with no report yet. When the report cannot come, the end is estimated and the session shows "held, end estimated" in the console (`estimated` in the CSV and in the REST API, `~` before the time):
+  - the agent came back as a new process (`Register.instance` changed: it was closed, it crashed or the computer restarted): the session ended when the old process left the server (or, if the server had not noticed that yet, when the new process registered: late by the time the agent took to come back);
+  - no report 48 hours after the session started: the same estimate if the agent left the server, otherwise no end and no time (not in the report);
+  - sessions routed before a restart of the server and never reported: closed after 49 hours with no end and no time.
+
+  A report that comes after an estimate replaces it.
 
 Tested on 2026-11-06 with the Pro test server: support session from the queue, note, report with technician, time, minutes to invoice, CSV and print.
 

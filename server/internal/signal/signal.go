@@ -442,6 +442,7 @@ func (s *Server) setOnline(c *client) {
 	ended := s.agentBack(c, time.Now())
 	s.mu.Unlock()
 	for _, ev := range ended {
+		s.log.Info("session ended without report: agent back as a new process", "session", ev.ID, "estimated_end", ev.End.Format(time.RFC3339))
 		s.event(ev)
 	}
 	// A support request of an earlier connection is put aside: the agent asks
