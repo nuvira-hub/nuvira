@@ -357,9 +357,10 @@ impl Gate<'_> {
 #[cfg(test)]
 mod gate_characterisation {
     use super::*;
+    use crate::ending::end_reason;
     use crate::{
-        AgentConfig, Arc, AtomicU32, AtomicU64, EncoderPlan, HashMap, Mutex, Notify, anyhow, close_reason, end_reason,
-        local_hello, mpsc, reopen, session,
+        AgentConfig, Arc, AtomicU32, AtomicU64, EncoderPlan, HashMap, Mutex, Notify, anyhow, close_reason, local_hello,
+        mpsc, reopen, session,
     };
     use nuvira_proto::v1::Policy;
     use std::sync::OnceLock;
