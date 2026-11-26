@@ -118,8 +118,6 @@ pub(super) async fn viewer_gone(input_rx: &mut mpsc::UnboundedReceiver<InputEven
     while input_rx.recv().await.is_some() {}
 }
 
-/// Closes the connection and gives the close message time to leave: without it the
-/// agent would notice only at the timeout and stay "busy" in the meantime.
 /// Why the agent closed the connection, when it says it ("@key", translated):
 /// e.g. the screen of a Linux computer is locked.
 pub(super) async fn agent_reason(conn: &nuvira_transport::Connection) -> Option<String> {
@@ -129,6 +127,8 @@ pub(super) async fn agent_reason(conn: &nuvira_transport::Connection) -> Option<
     reason.starts_with('@').then(|| nuvira_i18n::message(reason))
 }
 
+/// Closes the connection and gives the close message time to leave: without it the
+/// agent would notice only at the timeout and stay "busy" in the meantime.
 pub(super) async fn close(conn: &nuvira_transport::Connection) {
     conn.close(0u32.into(), b"end of session");
     let _ = tokio::time::timeout(Duration::from_millis(500), conn.closed()).await;
