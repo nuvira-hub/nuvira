@@ -238,7 +238,6 @@ pub(crate) fn on_agent_event(app: &AppHandle, event: AgentEvent) {
     }
 }
 
-/// Server as shown in the settings: empty for the public one.
 #[cfg(any(windows, unix))]
 /// The app's settings take the server of the service's agent: the field shows that
 /// one, so it is the one a later installation must use. Without it, unattended
@@ -260,6 +259,7 @@ fn keep_service_server(server: &str) {
     }
 }
 
+/// Server as shown in the settings: empty for the public one.
 fn shown_server(server: &str) -> String {
     if server.trim().eq_ignore_ascii_case(nuvira_transport::signal::PUBLIC_SERVER) {
         String::new()

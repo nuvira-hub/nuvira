@@ -87,11 +87,6 @@ impl Drop for Gate<'_> {
 }
 
 impl Gate<'_> {
-    /// From here this viewer's session is the one in progress (not for a guest):
-    /// the computer is busy until it ends. Taken once the viewer's credentials are
-    /// right, before the person at the PC is asked, so that they are asked about
-    /// one viewer at a time. `Err` when another viewer authenticated first while
-    /// both were connecting.
     /// A viewer reopening by itself (`Hello.reopen`, the web page back from the
     /// background) a session that ended normally here (the person at the PC ended
     /// it while the page was suspended or stopped and never heard of it): refused,
@@ -106,6 +101,11 @@ impl Gate<'_> {
         Ok(())
     }
 
+    /// From here this viewer's session is the one in progress (not for a guest):
+    /// the computer is busy until it ends. Taken once the viewer's credentials are
+    /// right, before the person at the PC is asked, so that they are asked about
+    /// one viewer at a time. `Err` when another viewer authenticated first while
+    /// both were connecting.
     fn claim(&self) -> Result<(), String> {
         if self.request.join || self.claimed.load(Ordering::Relaxed) {
             return Ok(());

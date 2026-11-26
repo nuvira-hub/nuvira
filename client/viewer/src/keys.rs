@@ -3,9 +3,9 @@
 
 use std::time::{Duration, Instant};
 
-/// `--type-keys`: the W3C code of a character on a US layout, and whether it needs Shift.
-/// A test character's key and the modifier held with it (Shift for capitals,
-/// Ctrl for the control characters of Ctrl+A, C and V).
+/// `--type-keys`: the W3C code of a test character's key on a US layout and the
+/// modifier held with it (Shift for capitals, Ctrl for the control characters of
+/// Ctrl+A, C and V).
 pub(crate) fn test_key_code(c: char) -> Option<(String, Option<&'static str>)> {
     Some(match c {
         'a'..='z' => (format!("Key{}", c.to_ascii_uppercase()), None),

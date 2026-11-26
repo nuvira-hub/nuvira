@@ -42,6 +42,7 @@ use winit::window::{Window, WindowId};
 use crate::keys::AltGrFix;
 use crate::net::{FrameSlot, NetEvent};
 use crate::render::Renderer;
+use crate::report::Report;
 
 pub use cli::run;
 
@@ -71,8 +72,6 @@ fn cursor_overlay(s: &render::CursorShape, x: i32, y: i32, sw: f32, sh: f32) -> 
         ],
     }
 }
-
-use crate::report::Report;
 
 /// In place of a password, this prefix carries the ticket of a support request
 /// (support queue): the viewer sends it as `Auth.support_ticket`.
