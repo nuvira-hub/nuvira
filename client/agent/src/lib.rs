@@ -32,6 +32,7 @@ mod shared;
 mod switches;
 mod terminal;
 mod tunnel;
+mod video;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -44,8 +45,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use nuvira_capture::{Capturer, SyntheticCapturer};
 use nuvira_codec::{EncoderPlan, EncoderSettings};
 use nuvira_proto::v1::{
-    Auth, AuthResult, Codec, ControlMessage, DisplayInfo, Displays, Hello, InputEvent, Pong, Quality, VideoFormat,
-    VideoFrame, control_message::Msg,
+    Auth, AuthResult, ControlMessage, Hello, InputEvent, Pong, VideoFrame, control_message::Msg,
 };
 use nuvira_transport::signal::TransportMode;
 use nuvira_transport::{Connection, Fingerprint, FramedRecv, FramedSend};
@@ -54,7 +54,10 @@ use tracing::{info, warn};
 
 use ending::{ENDED_AT_COMPUTER, close_reason, closed_normally, end_reason, normal_end, video_stopped};
 use handshake::{control_channel, local_hello, read_auth, read_hello, watched};
-use crate::pipeline::{Controls, Pipeline};
+use video::{
+    NEXT_SESSION, RestoreScreens, RestoreWallpaper, VideoSource, WALLPAPER_STATE, displays_message, quality_limits,
+    recover_screens, reopen, screen_rect, video_format,
+};
 
 /// Minimum bitrate of the adaptive control.
 const MIN_BITRATE: u32 = 500_000;
@@ -3389,100 +3392,6 @@ async fn accept_streams(
     std::future::pending().await
 }
 
-/// Capture and encoding of a screen, restartable on another one during the session.
-struct VideoSource {
-    config: AgentConfig,
-    /// Copy of the sender: keeps the video channel open while the screen changes.
-    frames: mpsc::Sender<VideoFrame>,
-    keyframe: Arc<AtomicBool>,
-    bitrate: Arc<AtomicU32>,
-    fps: Arc<AtomicU32>,
-    view: Arc<AtomicU64>,
-    stats: Option<Arc<session_stats::AgentStats>>,
-}
-
-impl VideoSource {
-    async fn start(&self, display: Option<usize>) -> Result<(nuvira_capture::Display, Pipeline)> {
-        let mut cap_config = self.config.clone();
-        cap_config.display = display;
-        // The encoder starts from the current bitrate of the adaptive control.
-        let settings = EncoderSettings {
-            bitrate_bps: self.bitrate.load(Ordering::Relaxed),
-            max_fps: self.fps.load(Ordering::Relaxed),
-            ..Default::default()
-        };
-        let plan = self.config.plan;
-        // A new stream must start with a keyframe.
-        self.keyframe.store(true, Ordering::Relaxed);
-        let (frames, keyframe, bitrate, fps, view, stats) = (
-            self.frames.clone(),
-            self.keyframe.clone(),
-            self.bitrate.clone(),
-            self.fps.clone(),
-            self.view.clone(),
-            self.stats.clone(),
-        );
-        tokio::task::spawn_blocking(move || {
-            Pipeline::start(
-                move || cap_config.open_capturer(),
-                move |gpu| nuvira_codec::create_encoder(plan, settings, gpu),
-                plan == EncoderPlan::HardwareGpu,
-                frames,
-                Controls { max_fps: fps, keyframe, bitrate, view, stats },
-            )
-        })
-        .await?
-        .context("starting capture and encoding")
-    }
-}
-
-fn video_format(display: &nuvira_capture::Display) -> ControlMessage {
-    control(Msg::VideoFormat(VideoFormat {
-        codec: Codec::H264 as i32,
-        width: display.width,
-        height: display.height,
-    }))
-}
-
-/// List of screens for the viewer (none with the tests' synthetic image).
-fn displays_message(config: &AgentConfig, current: &nuvira_capture::Display) -> Option<ControlMessage> {
-    if config.synthetic.is_some() {
-        return None;
-    }
-    let list = nuvira_capture::displays().ok()?;
-    let all_available = list.len() > 1;
-    let displays = list
-        .into_iter()
-        .map(|d| DisplayInfo {
-            index: d.index as u32,
-            name: d.name,
-            width: d.width,
-            height: d.height,
-            primary: d.primary,
-        })
-        .collect();
-    Some(control(Msg::Displays(Displays { displays, current: current.index as u32, all_available })))
-}
-
-fn screen_rect(display: &nuvira_capture::Display) -> nuvira_input::ScreenRect {
-    nuvira_input::ScreenRect {
-        left: display.left,
-        top: display.top,
-        width: display.width,
-        height: display.height,
-    }
-}
-
-/// Bitrate cap (bit/s) and fps for the quality chosen by the viewer.
-fn quality_limits(config: &AgentConfig, quality: Quality) -> (u32, u32) {
-    let (bps, fps) = (config.bitrate_kbps * 1000, config.fps);
-    match quality {
-        Quality::Sharp => (bps * 2, fps.min(30)),
-        Quality::Fast => ((bps / 2).max(MIN_BITRATE), fps),
-        Quality::Balanced | Quality::Unspecified => (bps, fps),
-    }
-}
-
 /// The keys of a Clipboard.paste, pressed and released in order.
 fn paste_keys(paste: nuvira_proto::v1::Paste) -> Vec<InputEvent> {
     use nuvira_proto::v1::Paste;
@@ -3559,23 +3468,6 @@ fn permissions(offered: u8, off: u8) -> nuvira_proto::v1::Permissions {
     }
 }
 
-/// Sessions, told apart by the screens they change.
-static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
-
-/// Puts back the screens a session changed, however it ends.
-struct RestoreScreens(u64);
-
-impl Drop for RestoreScreens {
-    fn drop(&mut self) {
-        nuvira_capture::resolution::restore(self.0, None);
-    }
-}
-
-fn recover_screens(dir: &std::path::Path) {
-    nuvira_capture::resolution::recover(&dir.join("resolution.txt"));
-    nuvira_capture::wallpaper::recover(&dir.join(WALLPAPER_STATE));
-}
-
 /// The alias the device keeps (next to the device key), sent at every registration.
 const ALIAS_FILE: &str = "alias.txt";
 
@@ -3596,43 +3488,6 @@ fn keep_alias(dir: &std::path::Path, alias: &str, error: &str) {
             warn!("alias not saved: {e}");
         }
     }
-}
-
-/// What the wallpaper was, while a session keeps it hidden (`SetWallpaper`).
-const WALLPAPER_STATE: &str = "wallpaper.txt";
-
-/// Puts the wallpaper back at the end of the session, however it ends.
-struct RestoreWallpaper(Option<PathBuf>);
-
-impl Drop for RestoreWallpaper {
-    fn drop(&mut self) {
-        if let Some(state) = &self.0 {
-            nuvira_capture::wallpaper::restore(state);
-        }
-    }
-}
-
-/// Stops the capture and opens screen `index` (`fallback` if it cannot be opened):
-/// after a change of screen or of its resolution.
-async fn reopen(
-    source: &VideoSource,
-    pipeline: &std::sync::Mutex<Option<Pipeline>>,
-    index: usize,
-    fallback: usize,
-) -> Result<nuvira_capture::Display> {
-    // First the current capture is stopped, then the new one is opened.
-    let old = pipeline.lock().expect("pipeline").take();
-    let _ = tokio::task::spawn_blocking(move || drop(old)).await;
-    let (display, started) = match source.start(Some(index)).await {
-        Ok(started) => started,
-        Err(e) if index != fallback => {
-            warn!("screen {index} not available: {e:#}; staying on the previous one");
-            source.start(Some(fallback)).await?
-        }
-        Err(e) => return Err(e),
-    };
-    *pipeline.lock().expect("pipeline") = Some(started);
-    Ok(display)
 }
 
 /// At the end of a session its switches are gone: the app's commands find nothing.
