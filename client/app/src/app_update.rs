@@ -56,7 +56,7 @@ pub(crate) fn started_as() -> PathBuf {
 /// service or root's timer does it, or when this user cannot replace it.
 #[cfg(unix)]
 fn app_updates() -> Option<nuvira_update::unix::Install> {
-    let installed = nuvira_service::service_state().is_ok_and(|s| s != nuvira_service::ServiceState::NotInstalled);
+    let installed = crate::service_installed();
     let install = nuvira_update::unix::this_install(&started_as());
     (!installed && install.channel().is_some()).then_some(install)
 }
