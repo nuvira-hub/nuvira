@@ -763,9 +763,20 @@ mod sys {
             // dismissed at once, and GNOME Keyring aborts (assertion `!self->current` in
             // gkd-secret-unlock.c, a known upstream bug) when an unlock is dismissed while
             // the window of another one is on screen: the person's password then goes
-            // nowhere. Asking nothing is the same answer for it: not open.
+            // nowhere. So for them only whether everything is open already.
             if !window && !kwallet(conn).await {
-                return Ok(false);
+                for object in &objects {
+                    // A collection (…/collection/NAME) or an item of one (one level deeper).
+                    let interface = match object.as_str().matches('/').count() {
+                        5 => "org.freedesktop.Secret.Collection",
+                        _ => "org.freedesktop.Secret.Item",
+                    };
+                    let object = proxy(conn, object.as_str(), interface).await?;
+                    if object.get_property::<bool>("Locked").await.map_err(later)? {
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
             }
             let service = proxy(conn, PATH, SERVICE).await?;
             let (_, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) =
