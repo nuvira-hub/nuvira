@@ -27,6 +27,8 @@ With the Pro session log (feature `pro.session_log`) the web console has a "Repo
 
   A report that comes after an estimate replaces it.
 
+  Tried 2026-11-26 with the Pro test server, the viewer on Windows and the agent on Windows (NUC) and on Linux (MSI-UBUNTU): the server restarted during a session; the signalling cut for 60 s while the session ended (the 0.99.2 agent left it "accepted"); the agent killed and started again after 5 s and after 45 s. macOS not tried (the same code).
+
 Tested on 2026-11-06 with the Pro test server: support session from the queue, note, report with technician, time, minutes to invoice, CSV and print.
 
 Tested on 2026-11-16 (Pro test server on the Mac mini, the Mac's app as the customer, PC-LABORATORIO's app as the technician):
