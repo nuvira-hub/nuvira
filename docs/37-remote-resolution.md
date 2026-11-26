@@ -54,4 +54,6 @@ macOS, 2026-11-10 (Mac mini M2 Pro, macOS 27.2.1): it did not work before three 
 
 Tried on a laptop panel 2026-11-26 (Lenovo i7-8550U, Ubuntu 26.10 live, GNOME on Wayland, Mutter direct session): the built-in eDP-1 panel offers 1366x768 (native) plus 1280x720, 1024x768 and 800x600. A 1280x720 viewer area took it to 1280x720, the capture opened a new Mutter session at that size, and 1366x768 came back at the end of the session.
 
-Not tried yet: a Windows PC with two monitors, an NVIDIA or AMD driver on Windows, a laptop panel on Windows.
+The same panel under Windows 11 (same day): 1366x768 to 1280x720 for a 1280x720 viewer area (Media Foundation encoder at the new size), 1366x768 back at the end of the session.
+
+Not tried yet: a Windows PC with two monitors, an NVIDIA or AMD driver on Windows.
