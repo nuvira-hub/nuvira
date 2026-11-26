@@ -231,9 +231,12 @@ MSI-UBUNTU (a real PC, Ubuntu 26.10, GNOME on Wayland), automatic sign-in switch
 - **Agent, `NVK1S` key, keyring locked by hand**: it waits ("waiting for the system to open it"), as meant for a keyring that opens after the agent at start-up.
   - It asks GNOME's password window once. Traced on the bus: `BeginPrompting`, `PromptReady`, `PerformPrompt`.
   - Every 5 s it asks quietly and dismisses again.
-  - **Open**: in two tries, the password typed into that window did not unlock the keyring (no answer from the prompter). The same typing into a window asked by another program, with the agent not running, unlocked it.
-  - Not understood yet: the quiet requests every 5 s may cancel the shown window, or the window may not get the keyboard. A screenshot was not possible here (GNOME asks for permission; kmsgrab cannot read this Haswell's tiled buffer).
-  - Matters for a PC whose keys were written with the keyring open and that later signs in automatically: the agent would wait at every start until the keyring is opened another way (for example with Passwords and Keys).
+  - **Found and fixed the same day**: GNOME Keyring itself aborted (`gkd-secret-unlock.c: perform_next_unlock: assertion failed: (!self->current)`, `code=dumped`, 12 restarts that day). That is a known upstream bug, reported on Ubuntu, Arch and Fedora and never fixed upstream ([GNOME gnome-keyring#64](https://gitlab.gnome.org/GNOME/gnome-keyring/-/issues/64)).
+    - It aborts when an unlock request is dismissed while another one's window is on screen. The agent's quiet tries every 5 s did exactly that, so the window went away with the daemon and the typed password was lost.
+    - Reproduced without NuviraHub: one script showing the window, another asking quietly and dismissing.
+    - Fix (nuvira `refactor/light` 8a497e1, 861cadb): the quiet try asks the system only with KWallet. With other services it only reads whether the items are unlocked (`Locked`), and creates no request.
+    - After the fix: the agent waited, the password typed into its window 15 s later (three of the old tries) opened the keyring; the agent went on ("opened", registered, same ID) with 0 daemon aborts.
+    - The viewer with the keyring locked still stops after 20 s with the message.
 
 ## To do
 
