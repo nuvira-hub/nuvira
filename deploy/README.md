@@ -103,12 +103,12 @@ The router forwards ports only for IPv4 (NAT); over IPv6 the server's address is
 TrueNAS SCALE 24.10 and later run apps on Docker, so the server installs from a compose file:
 
 1. Create a dataset for the data, e.g. `POOL/apps/nuvira-server`, and give it to the `apps` user (568): Datasets → the dataset → Permissions → Edit, User and Group `apps`, apply recursively.
-2. Apps → Discover Apps → ⋮ → **Install via YAML**, name `nuvira-server`, paste [truenas/nuvira-server.yaml](truenas/nuvira-server.yaml) with your pool's name in the volume path.
+2. Apps: the first time, choose the pool for the apps (Apps → Configuration → Choose Pool). Then Apps → Discover Apps → ⋮ → **Install via YAML**, name `nuvira-server`, paste [truenas/nuvira-server.yaml](truenas/nuvira-server.yaml) with your pool's name in the volume path.
 3. Check the app's log: `nuvira-server started` with the certificate fingerprint. Forward UDP and TCP 21116 on the router to the NAS.
 
 Port 21116 must be free on the NAS (another remote desktop server, RustDesk's, uses 21115–21119). For NuviraHub Pro change the image to `ghcr.io/nuvira-hub/nuvira-server-pro:latest` and add its variables. Back up the dataset (`cert.pem`/`key.pem` above all).
 
-Tried: the image as user 568 with a folder owned by 568 (podman on the Ubuntu VM, 2026-11-27: started, certificate and database written, status page answering). Not tried on a real TrueNAS SCALE.
+Tried 2026-11-27 on TrueNAS 25.10.8 (VM with 8 GB, TrueNAS's minimum): pool and dataset as above, `apps` owner, Apps on the pool, this YAML installed as it is (pool name filled in): the app running, `cert.pem`, `key.pem` and the database in the dataset owned by 568, the status page answering; a session of the 0.99.3 agent and viewer through it over UDP (direct, 30 fps) and forced onto the WebSocket (through the relay, 30 fps); after stopping and starting the app the same `key.pem` (the server keeps its identity).
 
 ## Proxmox VE
 
@@ -120,7 +120,7 @@ The server is a container image: on Proxmox run it in a Debian LXC with Docker, 
 
 The data stays in the Docker volume inside the container: Proxmox's backup of the container (vzdump) includes it.
 
-Not tried on a real Proxmox VE.
+Tried 2026-11-27 on Proxmox VE 9.3 (VM): Debian 13 container from the standard template, unprivileged with nesting, 1 core, 512 MB, 4 GB of disk; `apt install docker.io docker-compose` (Docker 26.1, Compose 2.26) and the compose file above: server running, status page answering; a session of the 0.99.3 agent and viewer through it over UDP (direct, 30 fps) and forced onto the WebSocket (through the relay, 30 fps); a snapshot backup of the container (vzdump, 490 MB) holds `cert.pem`, `key.pem` and `nuvira.db` of the Docker volume.
 
 ## Router
 
