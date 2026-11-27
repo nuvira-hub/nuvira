@@ -77,7 +77,7 @@ func TestHandler(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("/nuvira", http.NotFoundHandler()) // the WebSocket route, as in the server
 	mux.Handle("/console/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "console") }))
-	mux.Handle(Pattern, Handler("1.2.3", 21116, false, ""))
+	mux.Handle(Pattern, Handler("1.2.3", 21116, nil, ""))
 
 	res, body := serve(t, mux, "GET", "/", "nas.local:21116", "it-IT,it")
 	if res.StatusCode != 200 || !strings.Contains(res.Header.Get("Content-Type"), "text/html") {
@@ -125,20 +125,34 @@ func TestHandler(t *testing.T) {
 		t.Errorf("POST: status %d, want 405", res.StatusCode)
 	}
 
+	// Pro: the button and the link follow the console's licence at every request.
+	licensed := true
 	pro := http.NewServeMux()
-	pro.Handle(Pattern, Handler("1.2.3", 21200, true, ""))
+	pro.Handle(Pattern, Handler("1.2.3", 21200, func() bool { return licensed }, ""))
 	_, body = serve(t, pro, "GET", "/", "192.168.1.5:21116", "de")
-	for _, want := range []string{`href="/console/"`, "Webkonsole", "<code>192.168.1.5:21200</code>", "Port 21200 UDP"} {
+	for _, want := range []string{`<a class="button" href="/console/">Webkonsole öffnen</a>`, `<a href="/console/">Webkonsole</a>`,
+		"<code>192.168.1.5:21200</code>", "Port 21200 UDP"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("pro page without %q", want)
+			t.Errorf("licensed pro page without %q", want)
 		}
+	}
+	for lang, label := range map[string]string{"en": "Open the web console", "it": "Apri la console web",
+		"fr": "Ouvrir la console web", "es": "Abrir la consola web"} {
+		if _, body := serve(t, pro, "GET", "/", "nas", lang); !strings.Contains(body, label) {
+			t.Errorf("%s: no %q", lang, label)
+		}
+	}
+	licensed = false // licence expired or removed: no button, no link, without a restart
+	_, body = serve(t, pro, "GET", "/", "192.168.1.5:21116", "de")
+	if strings.Contains(body, "/console/") {
+		t.Error("unlicensed pro page links the console")
 	}
 }
 
 // With NUVIRA_PUBLIC_URL the page also shows the address from outside, once.
 func TestHandlerPublic(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle(Pattern, Handler("1.2.3", 21116, true, PublicHost("https://Nuvira.Example.net/")))
+	mux.Handle(Pattern, Handler("1.2.3", 21116, func() bool { return true }, PublicHost("https://Nuvira.Example.net/")))
 	_, body := serve(t, mux, "GET", "/", "192.168.178.12:21116", "it")
 	for _, want := range []string{"<code>192.168.178.12</code>", "Inoltra la porta 21116 UDP", "Da fuori della tua rete, inserisci nell&#39;app questo indirizzo:", "<code>nuvira.example.net</code>"} {
 		if !strings.Contains(body, want) {
@@ -155,7 +169,7 @@ func TestHandlerPublic(t *testing.T) {
 	}
 	// Another UDP port: in both addresses and in the port to forward.
 	other := http.NewServeMux()
-	other.Handle(Pattern, Handler("1.2.3", 21216, false, "nuvira.example.net"))
+	other.Handle(Pattern, Handler("1.2.3", 21216, nil, "nuvira.example.net"))
 	_, body = serve(t, other, "GET", "/", "nas.local", "en")
 	for _, want := range []string{"<code>nas.local:21216</code>", "<code>nuvira.example.net:21216</code>", "Forward port 21216 UDP"} {
 		if !strings.Contains(body, want) {

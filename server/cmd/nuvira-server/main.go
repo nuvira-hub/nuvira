@@ -42,6 +42,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -172,7 +173,7 @@ func run() error {
 		mux := http.NewServeMux()
 		mux.Handle("/nuvira", conn.WebSockets())
 		mux.Handle(updates.Prefix, updates.Handler(filepath.Join(dataDir, "updates")))
-		mux.Handle(statuspage.Pattern, statuspage.Handler(version, udp.LocalAddr().(*net.UDPAddr).Port, edition != "open",
+		mux.Handle(statuspage.Pattern, statuspage.Handler(version, udp.LocalAddr().(*net.UDPAddr).Port, consoleOpen(modules),
 			statuspage.PublicHost(os.Getenv("NUVIRA_PUBLIC_URL"))))
 		for _, m := range modules {
 			m.Routes(mux)
@@ -242,6 +243,20 @@ func rateLimitMode(value string, log *slog.Logger) limits.Mode {
 }
 
 // Commands of the open server: blocks against abuse (see package signal).
+// consoleOpen says whether a module announces the web console, which NuviraHub
+// Pro's console does only with a valid licence: the status page asks at every
+// request, so its button follows a licence added, renewed or expired.
+func consoleOpen(modules []ext.Module) func() bool {
+	return func() bool {
+		for _, m := range modules {
+			if slices.Contains(m.Features(), "pro.web_console") {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 var baseCommands = []ext.Command{
 	{Name: "block", Usage: "ID|IP|NETWORK [note]   blocks a device, an address or a network (CIDR)", Run: blockCommand},
 	{Name: "unblock", Usage: "ID|IP|NETWORK          removes a block", Run: unblockCommand},

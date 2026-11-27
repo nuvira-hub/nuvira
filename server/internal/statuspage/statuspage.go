@@ -23,6 +23,9 @@ const Pattern = "GET /{$}"
 type texts struct {
 	Title, Running, Version, ConnectTitle, Install, Download, Enter, Settings, PortNote string
 	OutsideTitle, Outside, BackupTitle, Backup, Console, Guide, Privacy                 string
+	// OpenConsole is the button to the web console, shown only while the server
+	// announces it (NuviraHub Pro with a valid licence).
+	OpenConsole string
 	// With the server's public address known (NUVIRA_PUBLIC_URL): Forward is the
 	// port to forward, then OutsideAddr introduces that address, or OutsideSame
 	// says the address above works from outside too.
@@ -41,7 +44,7 @@ var all = map[string]texts{
 		Outside:      "Forward port 21116 UDP from your router to this machine (and TCP too, for networks that block UDP), then enter your public address or domain name in the app.",
 		BackupTitle:  "Keep a backup",
 		Backup:       "Back up the server's data folder: it holds the server's identity. The apps remember it and refuse a server with a different one.",
-		Console:      "Web console", Guide: "Guide",
+		Console:      "Web console", Guide: "Guide", OpenConsole: "Open the web console",
 		Privacy:     "This page shows no data about your devices or sessions.",
 		Forward:     "Forward port 21116 UDP from your router to this machine (and TCP too, for networks that block UDP).",
 		OutsideAddr: "From outside your network, enter this address in the app:",
@@ -55,7 +58,7 @@ var all = map[string]texts{
 		Outside:      "Inoltra la porta 21116 UDP dal router a questo computer (e anche TCP, per le reti che bloccano UDP), poi inserisci nell'app il tuo indirizzo pubblico o il tuo nome di dominio.",
 		BackupTitle:  "Tieni una copia di sicurezza",
 		Backup:       "Fai il backup della cartella dei dati del server: contiene l'identità del server. Le app la ricordano e rifiutano un server con un'identità diversa.",
-		Console:      "Console web", Guide: "Guida",
+		Console:      "Console web", Guide: "Guida", OpenConsole: "Apri la console web",
 		Privacy:     "Questa pagina non mostra dati sui tuoi dispositivi né sulle sessioni.",
 		Forward:     "Inoltra la porta 21116 UDP dal router a questo computer (e anche TCP, per le reti che bloccano UDP).",
 		OutsideAddr: "Da fuori della tua rete, inserisci nell'app questo indirizzo:",
@@ -69,7 +72,7 @@ var all = map[string]texts{
 		Outside:      "Redirige le port 21116 UDP de ton routeur vers cette machine (et aussi TCP, pour les réseaux qui bloquent UDP), puis saisis dans l'app ton adresse publique ou ton nom de domaine.",
 		BackupTitle:  "Garde une sauvegarde",
 		Backup:       "Sauvegarde le dossier de données du serveur : il contient l'identité du serveur. Les apps la retiennent et refusent un serveur avec une autre identité.",
-		Console:      "Console web", Guide: "Guide",
+		Console:      "Console web", Guide: "Guide", OpenConsole: "Ouvrir la console web",
 		Privacy:     "Cette page ne montre aucune donnée sur tes appareils ni sur les sessions.",
 		Forward:     "Redirige le port 21116 UDP de ton routeur vers cette machine (et aussi TCP, pour les réseaux qui bloquent UDP).",
 		OutsideAddr: "Depuis l'extérieur de ton réseau, saisis cette adresse dans l'app :",
@@ -83,7 +86,7 @@ var all = map[string]texts{
 		Outside:      "Leite Port 21116 UDP im Router an diesen Rechner weiter (und auch TCP, für Netze, die UDP sperren), dann gib in der App deine öffentliche Adresse oder deinen Domainnamen ein.",
 		BackupTitle:  "Mach eine Sicherung",
 		Backup:       "Sichere den Datenordner des Servers: Er enthält die Identität des Servers. Die Apps merken sie sich und lehnen einen Server mit einer anderen ab.",
-		Console:      "Webkonsole", Guide: "Anleitung",
+		Console:      "Webkonsole", Guide: "Anleitung", OpenConsole: "Webkonsole öffnen",
 		Privacy:     "Diese Seite zeigt keine Daten über deine Geräte oder Sitzungen.",
 		Forward:     "Leite Port 21116 UDP im Router an diesen Rechner weiter (und auch TCP, für Netze, die UDP sperren).",
 		OutsideAddr: "Von außerhalb deines Netzes gib in der App diese Adresse ein:",
@@ -97,7 +100,7 @@ var all = map[string]texts{
 		Outside:      "Redirige el puerto 21116 UDP del router a esta máquina (y también TCP, para las redes que bloquean UDP), luego introduce en la app tu dirección pública o tu nombre de dominio.",
 		BackupTitle:  "Guarda una copia de seguridad",
 		Backup:       "Haz una copia de la carpeta de datos del servidor: contiene la identidad del servidor. Las apps la recuerdan y rechazan un servidor con otra distinta.",
-		Console:      "Consola web", Guide: "Guía",
+		Console:      "Consola web", Guide: "Guía", OpenConsole: "Abrir la consola web",
 		Privacy:     "Esta página no muestra datos de tus dispositivos ni de las sesiones.",
 		Forward:     "Redirige el puerto 21116 UDP del router a esta máquina (y también TCP, para las redes que bloquean UDP).",
 		OutsideAddr: "Desde fuera de tu red, introduce en la app esta dirección:",
@@ -117,22 +120,27 @@ main{max-width:640px;margin:0 auto;padding:32px 16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-bottom:16px}
 h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.1rem;margin:0 0 8px}p{margin:0 0 8px}p:last-child{margin-bottom:0}
 .ok{color:#1f9d55;font-weight:600}.muted{color:var(--muted);font-size:.9rem}a{color:var(--accent)}
+.button{display:inline-block;margin-top:8px;padding:8px 16px;border-radius:8px;background:var(--accent);color:var(--card);font-weight:600;text-decoration:none}
+.button:hover,.button:focus-visible{filter:brightness(1.1)}
 code{display:inline-block;font:1.05rem ui-monospace,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;user-select:all}
 </style></head><body><main>
-<div class="card"><h1>{{.T.Title}}</h1><p class="ok">● {{.T.Running}}</p><p class="muted">{{.T.Version}} {{.Version}}</p></div>
+<div class="card"><h1>{{.T.Title}}</h1><p class="ok">● {{.T.Running}}</p><p class="muted">{{.T.Version}} {{.Version}}</p>{{if .Console}}<p><a class="button" href="/console/">{{.T.OpenConsole}}</a></p>{{end}}</div>
 <div class="card"><h2>{{.T.ConnectTitle}}</h2>
 <p>{{.T.Install}} <a href="https://nuvirahub.dev/{{.Lang}}/download/" rel="noopener">{{.T.Download}}</a>.</p>
 <p>{{.T.Enter}} <strong>{{.T.Settings}}</strong> {{.T.PortNote}}</p><p><code>{{.Address}}</code></p></div>
 <div class="card"><h2>{{.T.OutsideTitle}}</h2>{{if not .Public}}<p>{{.T.Outside}}</p>{{else if .Same}}<p>{{.T.Forward}} {{.T.OutsideSame}}</p>{{else}}<p>{{.T.Forward}} {{.T.OutsideAddr}}</p><p><code>{{.Public}}</code></p>{{end}}</div>
 <div class="card"><h2>{{.T.BackupTitle}}</h2><p>{{.T.Backup}}</p></div>
-<p class="muted">{{if .Pro}}<a href="/console/">{{.T.Console}}</a> · {{end}}<a href="https://nuvirahub.dev/{{.Lang}}/guide/" rel="noopener">{{.T.Guide}}</a> · {{.T.Privacy}}</p>
+<p class="muted">{{if .Console}}<a href="/console/">{{.T.Console}}</a> · {{end}}<a href="https://nuvirahub.dev/{{.Lang}}/guide/" rel="noopener">{{.T.Guide}}</a> · {{.T.Privacy}}</p>
 </main></body></html>
 `))
 
 // Handler serves the page. udpPort is the server's UDP port (the one the apps
-// need); pro adds the link to the web console; publicHost is the server's host
-// name from outside (from NUVIRA_PUBLIC_URL, see PublicHost), or empty.
-func Handler(version string, udpPort int, pro bool, publicHost string) http.Handler {
+// need); console, asked at every request (nil: never), says whether the web
+// console is there to open (NuviraHub Pro with a valid licence: the licence can
+// change while the server runs), which adds the button and the link to it;
+// publicHost is the server's host name from outside (from NUVIRA_PUBLIC_URL, see
+// PublicHost), or empty.
+func Handler(version string, udpPort int, console func() bool, publicHost string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lang := Lang(r.Header.Get("Accept-Language"))
 		h := w.Header()
@@ -158,9 +166,9 @@ func Handler(version string, udpPort int, pro bool, publicHost string) http.Hand
 		address := Address(r.Host, udpPort)
 		_ = page.Execute(w, struct {
 			Lang, Version, Address, Public string
-			Pro, Same                      bool
+			Console, Same                  bool
 			T                              texts
-		}{lang, version, address, public, pro, strings.EqualFold(public, address), t})
+		}{lang, version, address, public, console != nil && console(), strings.EqualFold(public, address), t})
 	})
 }
 
