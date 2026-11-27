@@ -24,7 +24,7 @@ DATE="$(gh release view "v$VERSION" -R "$REPO" --json publishedAt --jq '.publish
 
 DIR="$OUT/manifests/n/NuviraHub/NuviraHub/$VERSION"
 mkdir -p "$DIR"
-SCHEMA="1.10.0"
+SCHEMA="1.28.0"
 HEADER="# Created with tools/winget-manifests.sh of $REPO"
 
 cat > "$DIR/$ID.yaml" <<EOF
