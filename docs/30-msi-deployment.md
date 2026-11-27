@@ -80,4 +80,6 @@ A test domain `nuvira.test` on two evaluation VMs: a domain controller with Wind
 
 Seen on the way: the editor shows the package's Publisher empty (the package has `Manufacturer`): cosmetic, not looked into. The software installation runs only at startup; a `gpupdate /force` while it is pending asks "OK to restart? (Y/N)".
 
-Not tried: Intune; a GPO with the signed package of a release (the fix is not released yet: to do with the first package that has it); "Uninstall the existing package, then install" as the upgrade choice; Windows 10 and Windows Server as GPO clients; a PC that is off when the package is removed.
+- **The released 0.99.3 package** (signed, from the release build, same bytes as the GitHub file), added to the same GPO as an upgrade of the 0.99.2 test package ("upgrade over"). This time the NAS had no 0.99.3 update yet, so the service could not update itself first: at the next restart 202/303/301/302, and the package replaced the program, `nuvira.exe` 0.99.2 → 0.99.3 (same hash as the release, signature valid), ProductCode of 0.99.3, one entry "NuviraHub 0.99.3", the same ID; the policy's password opened a session from the web client.
+
+Not tried: Intune; "Uninstall the existing package, then install" as the upgrade choice; Windows 10 and Windows Server as GPO clients; a PC that is off when the package is removed.
