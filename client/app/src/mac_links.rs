@@ -11,6 +11,14 @@
 //!
 //! For the same reason, opening NuviraHub (Dock, Finder, `open -a`) while the agent
 //! runs reaches the agent as a "reopen" event: it starts the app too.
+//!
+//! And "quit NuviraHub" reaches it as well: macOS's "Quit & Reopen" after a
+//! permission is granted (Screen Recording), `osascript … to quit`. NSApplication
+//! would end the process with 0, which the LaunchAgents of the whole-Mac
+//! installation and of the sign-in screen take as "nothing to do here" (`KeepAlive`
+//! → `SuccessfulExit` false): the Mac stayed unreachable until the next sign-in.
+//! The agent ends with the code of a restart instead, and launchd starts it again,
+//! with the new permission.
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, NSObject};
@@ -50,6 +58,14 @@ define_class!(
             tracing::info!("NuviraHub opened while only the agent runs: starting the app");
             start_app(None);
             Bool::NO
+        }
+
+        /// "Quit" (the 'quit' Apple event NSApplication turns into `terminate:`):
+        /// the agent ends so that launchd starts it again (see the module notes).
+        #[unsafe(method(applicationShouldTerminate:))]
+        fn should_terminate(&self, _app: &AnyObject) -> usize {
+            tracing::info!("asked to quit (macOS after a permission change, or a quit event): the agent starts again");
+            std::process::exit(nuvira_update::unix::RESTART_EXIT)
         }
     }
 );
