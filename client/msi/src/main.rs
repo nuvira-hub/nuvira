@@ -163,6 +163,14 @@ const SCHEMA: &[(&str, &str, &str)] = &[
         "`Action`",
     ),
     ("InstallUISequence", "`Action` CHAR(72) NOT NULL, `Condition` CHAR(255), `Sequence` SHORT", "`Action`"),
+    // Group Policy assigns a package by advertising it first (the script made from this
+    // sequence when the package is added to the policy): without it the assignment fails
+    // with 1603 and the PC never installs it. msiexec /i, Intune and RMM tools do not use it.
+    (
+        "AdvtExecuteSequence",
+        "`Action` CHAR(72) NOT NULL, `Condition` CHAR(255), `Sequence` SHORT",
+        "`Action`",
+    ),
 ];
 
 /// Names of the columns of `table`, from [`SCHEMA`].
@@ -314,6 +322,19 @@ fn build(out: &Path, program: &Path, version: &str, product_code: &str, package_
         ("ExecuteAction", None, 1300),
     ] {
         db.insert("InstallUISequence", &[S(action), condition.map(S).unwrap_or(N), I(n)])?;
+    }
+    // Advertising registers the product and its feature, nothing else: no shortcuts,
+    // classes or files to publish.
+    for (action, n) in [
+        ("CostInitialize", 800),
+        ("CostFinalize", 1000),
+        ("InstallValidate", 1400),
+        ("InstallInitialize", 1500),
+        ("PublishFeatures", 6300),
+        ("PublishProduct", 6400),
+        ("InstallFinalize", 6600),
+    ] {
+        db.insert("AdvtExecuteSequence", &[S(action), N, I(n)])?;
     }
 
     let comments = format!("NuviraHub {version}: unattended access, for deployment tools.");
