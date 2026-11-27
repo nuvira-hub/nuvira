@@ -59,6 +59,25 @@ Other protections, always active: devices **registered and never seen again** ar
 
 See [docker-compose.yml](docker-compose.yml).
 
+## Behind a reverse proxy (HTTPS)
+
+A reverse proxy in front of TCP 21116 gives the server a name with HTTPS on port 443: the status page, the WebSocket tunnel `/nuvira` for networks that block UDP (as `wss://name/nuvira`, which passes corporate proxies and firewalls), the update files and, with NuviraHub Pro, the web console (`/console/`, sign-in from the Internet only over HTTPS), the web client (`/web/`), the invitation links (`/i/`) and the REST API (`/api/v1`). Everything goes to the same port, so one rule for the whole host is enough.
+
+**UDP 21116 does not go through the proxy** (QUIC is not HTTP): forward it from the router to the server as always. The apps keep using UDP first and the tunnel only when UDP is blocked.
+
+Ready configurations, with the name `nuvira.example.com` to replace:
+
+- [proxy/Caddyfile](proxy/Caddyfile): Caddy, certificate from Let's Encrypt by itself;
+- [proxy/nginx.conf](proxy/nginx.conf): nginx with certbot's certificate; the WebSocket headers and the 1-hour timeouts are needed (the default 60 s cuts a quiet session);
+- [proxy/traefik-dynamic.yml](proxy/traefik-dynamic.yml): Traefik v3, file provider, with your certificate resolver;
+- Nginx Proxy Manager: a Proxy Host to `nuvira-server` port 21116, scheme http, **Websockets Support** on, SSL certificate from Let's Encrypt with Force SSL.
+
+The names in the files (`nuvira-server:21116`) work with the proxy on the same Docker network as the server; with the proxy on the host use `127.0.0.1:21116`. The proxy has to send `X-Forwarded-For` (all four do): from a local address the server takes the client's address from its last entry, for the limits per address and the Pro console's allowed addresses. With NuviraHub Pro set `NUVIRA_PUBLIC_URL=https://nuvira.example.com`.
+
+The apps use the tunnel through the proxy when told its address: unattended access `nuvira service install --server nuvira.example.com --server-ws wss://nuvira.example.com/nuvira`; for a single viewer or agent `--server-ws` on the command line. Without it the apps fall back to `ws://name:21116/nuvira`, the TCP port forwarded directly. Over `wss://` the apps accept only a certificate of a public authority (the web roots built in), as Let's Encrypt's: a self-signed certificate or a private CA is refused (`invalid peer certificate`).
+
+Tried 2026-11-27 on the Ubuntu VM with podman, server 0.99.3 behind Caddy 2, nginx (stable) and Traefik v3, each on its own port, over HTTP and HTTPS (Caddy's internal CA, a self-signed certificate): status page 200 and WebSocket upgrade 101 through all six; a session of the 0.99.3 agent (synthetic image) and viewer, both forced onto the tunnel, through each proxy: 15 s at 30 fps, median latency 13–14 ms, no freezes, through the relay; the address of a client container reached the server through each proxy's `X-Forwarded-For`; over `wss://` with the self-signed certificate the app refused the connection, as it must. The configurations above, with the test certificates in certbot's paths: `nginx -t` and `caddy validate` pass, Traefik loads the router and answers. Nginx Proxy Manager with Let's Encrypt in front of the Pro server on the NAS (console, web client, WebSocket): docs/28-web-client.md. Not tried: these files with a real Let's Encrypt certificate (a name reachable from the Internet is needed).
+
 ## IPv6
 
 The server and its relay work over IPv4 and IPv6 alike, and the devices use both: with a name that has both an A and an AAAA record, each device also announces itself to the relay on its second family (server 0.21 or later), so the other side learns its public addresses of both and tries them all. Over IPv6 there is no NAT, and the direct path succeeds much more often (mobile networks and CGNAT, which over IPv4 end up on the relay).
@@ -78,6 +97,30 @@ The router forwards ports only for IPv4 (NAT); over IPv6 the server's address is
 2. Docker → Add Container → Template: `nuvira-server`. Check the appdata path, Apply.
 3. The template adds `--user 99:100` (Extra Parameters) so the container can write to appdata, which belongs to `nobody:users`.
 4. Check the log: `nuvira-server started` with the certificate fingerprint.
+
+## TrueNAS SCALE
+
+TrueNAS SCALE 24.10 and later run apps on Docker, so the server installs from a compose file:
+
+1. Create a dataset for the data, e.g. `POOL/apps/nuvira-server`, and give it to the `apps` user (568): Datasets → the dataset → Permissions → Edit, User and Group `apps`, apply recursively.
+2. Apps → Discover Apps → ⋮ → **Install via YAML**, name `nuvira-server`, paste [truenas/nuvira-server.yaml](truenas/nuvira-server.yaml) with your pool's name in the volume path.
+3. Check the app's log: `nuvira-server started` with the certificate fingerprint. Forward UDP and TCP 21116 on the router to the NAS.
+
+Port 21116 must be free on the NAS (another remote desktop server, RustDesk's, uses 21115–21119). For NuviraHub Pro change the image to `ghcr.io/nuvira-hub/nuvira-server-pro:latest` and add its variables. Back up the dataset (`cert.pem`/`key.pem` above all).
+
+Tried: the image as user 568 with a folder owned by 568 (podman on the Ubuntu VM, 2026-11-27: started, certificate and database written, status page answering). Not tried on a real TrueNAS SCALE.
+
+## Proxmox VE
+
+The server is a container image: on Proxmox run it in a Debian LXC with Docker, or in any VM with Docker.
+
+1. Create an unprivileged Debian 12 or 13 container with **nesting** on (Options → Features → Nesting; Docker needs it), 1 core, 512 MB of memory and 4 GB of disk are plenty; give it a fixed address.
+2. In the container: `apt install docker.io docker-compose` (or Docker's own repository), then [docker-compose.yml](docker-compose.yml) with `docker compose up -d`.
+3. Forward UDP and TCP 21116 on the router to the container's address.
+
+The data stays in the Docker volume inside the container: Proxmox's backup of the container (vzdump) includes it.
+
+Not tried on a real Proxmox VE.
 
 ## Router
 

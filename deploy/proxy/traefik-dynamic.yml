@@ -1,0 +1,23 @@
+# Traefik (v3) in front of nuvira-server (TCP 21116), file provider: status page,
+# WebSocket /nuvira, update files and, with NuviraHub Pro, web console, web
+# client, invitations and REST API. Traefik passes WebSocket upgrades and
+# X-Forwarded-For by itself. UDP 21116 does not go through here: forward it to
+# the server directly.
+#
+# In Traefik's static configuration: an entry point "websecure" on :443 and a
+# certificate resolver "letsencrypt" (see Traefik's documentation), and this
+# file under providers.file. nuvira-server is the container's name on the same
+# Docker network as Traefik.
+http:
+  routers:
+    nuvira:
+      rule: "Host(`nuvira.example.com`)"
+      entryPoints: [websecure]
+      service: nuvira
+      tls:
+        certResolver: letsencrypt
+  services:
+    nuvira:
+      loadBalancer:
+        servers:
+          - url: "http://nuvira-server:21116"

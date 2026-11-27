@@ -1,0 +1,20 @@
+# nuvira-server on TrueNAS SCALE 24.10 or later (apps run on Docker):
+# Apps → Discover Apps → ⋮ → Install via YAML, name "nuvira-server", paste this.
+#
+# Before: a dataset for the data, e.g. POOL/apps/nuvira-server, owned by the
+# "apps" user (568) — Datasets → the dataset → Permissions → Edit, User and Group
+# "apps", Apply recursively. Replace POOL with your pool's name below.
+# For NuviraHub Pro: image ghcr.io/nuvira-hub/nuvira-server-pro:latest and the
+# variables NUVIRA_LICENSE_KEY, NUVIRA_ADMIN_USER (see deploy/README.md).
+services:
+  nuvira-server:
+    image: ghcr.io/nuvira-hub/nuvira-server:latest
+    restart: unless-stopped
+    user: "568:568"
+    ports:
+      - "21116:21116/udp"
+      - "21116:21116/tcp"
+    environment:
+      NUVIRA_LOG: info
+    volumes:
+      - /mnt/POOL/apps/nuvira-server:/data
