@@ -12,6 +12,8 @@
 
 mod access_ui;
 mod address_book;
+mod agent_link;
+mod app_update;
 mod book_csv;
 mod branding;
 mod invite;
@@ -20,12 +22,14 @@ mod mac_links;
 #[cfg(target_os = "linux")]
 mod linux_links;
 mod local_book;
+mod outgoing;
+mod settings;
+mod settings_ui;
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use nuvira_agent::{AgentCommand, AgentConfig, AgentEvent, ServerOptions};
+use nuvira_agent::{AgentCommand, AgentConfig, ServerOptions};
 use nuvira_codec::{EncoderChoice, EncoderPlan};
 use nuvira_i18n::{t, tf};
 use serde::{Deserialize, Serialize};
@@ -33,6 +37,16 @@ use tauri::{AppHandle, Emitter, Manager, State, UserAttentionType};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
+
+#[cfg(any(windows, unix))]
+use agent_link::start_service_link;
+use agent_link::{on_agent_event, send_permissions};
+use app_update::{start_update_checks, started_as, wait_for_predecessor};
+use outgoing::launch_viewer;
+use settings::{
+    apply_branding, apply_file_config, apply_policy, file_invite, load_settings, policy_server, record_dir, save_settings,
+};
+use settings_ui::print_choice;
 
 const SOURCE_URL: &str = "https://github.com/nuvira-hub/nuvira";
 /// Terms of use of the public server, in the interface language: `{lang}` is replaced.
@@ -300,93 +314,6 @@ struct Settings {
     record_dir: Option<String>,
 }
 
-/// Server written in the program's file name, e.g. `nuvira-host=nuvira.example.com.exe`
-/// or `nuvira-host=example.com,port=21117,key=<fingerprint>.exe`: whoever hosts a
-/// server hands out the same program, renamed, and it connects there with no setup.
-/// Windows does not allow `:` in file names, hence `port=`. A copy saved twice by a
-/// browser (`... (1).exe`) still works.
-#[derive(Debug, Default, PartialEq)]
-struct FileConfig {
-    server: Option<String>,
-    server_key: Option<String>,
-    /// An invitation's code (`invite=`, the program downloaded from its page).
-    invite: Option<String>,
-}
-
-fn file_config(file_name: &str) -> FileConfig {
-    let stem = file_name.strip_suffix(".exe").or_else(|| file_name.strip_suffix(".EXE")).unwrap_or(file_name);
-    // " (1)" added by browsers to a repeated download.
-    let stem = match stem.rsplit_once(" (") {
-        Some((head, tail))
-            if tail.strip_suffix(')').is_some_and(|n| n.chars().all(|c| c.is_ascii_digit())) =>
-        {
-            head
-        }
-        _ => stem,
-    };
-    let Some((_, options)) = stem.split_once('-') else { return FileConfig::default() };
-    let (mut host, mut port, mut key, mut invite) = (None, None, None, None);
-    for option in options.split(',') {
-        match option.trim().split_once('=') {
-            Some(("host", v)) if !v.is_empty() => host = Some(v.to_string()),
-            Some(("port", v)) if v.parse::<u16>().is_ok() => port = Some(v.to_string()),
-            Some(("key", v)) if nuvira_transport::parse_fingerprint(v).is_ok() => key = Some(v.to_string()),
-            Some(("invite", v)) if invite::valid_code(&invite::normalize(v)) => invite = Some(invite::normalize(v)),
-            _ => {}
-        }
-    }
-    let Some(host) = host else { return FileConfig::default() };
-    FileConfig {
-        server: Some(match port {
-            Some(port) => format!("{host}:{port}"),
-            None => host,
-        }),
-        server_key: key,
-        invite,
-    }
-}
-
-/// Server and language of a customised program (they win over the file name).
-fn apply_branding(settings: &mut Settings) {
-    let Some(b) = branding::get() else { return };
-    let mut changed = false;
-    if !b.server.is_empty() && settings.server != b.server {
-        info!("server from the customisation: {}", b.server);
-        settings.token = None;
-        settings.server = b.server.clone();
-        settings.server_key = (!b.server_key.is_empty()).then(|| b.server_key.clone());
-        changed = true;
-    }
-    if !b.language.is_empty()
-        && (b.lock_language || settings.language.is_none())
-        && settings.language.as_deref() != Some(&b.language)
-    {
-        settings.language = Some(b.language.clone());
-        changed = true;
-    }
-    if changed && let Err(e) = save_settings(settings) {
-        tracing::warn!("settings not saved: {e:#}");
-    }
-}
-
-/// Server set by the organisation's policies (Group Policy, Intune; on Linux
-/// /etc/nuvira/policy.json or the installation for the whole computer), with its
-/// fingerprint.
-fn policy_server() -> Option<(String, Option<String>)> {
-    #[cfg(any(windows, unix))]
-    {
-        let policy = nuvira_service::policy::read();
-        if let Some(server) = policy.server {
-            return Some((server, policy.server_key));
-        }
-    }
-    #[cfg(unix)]
-    if let Some(state) = nuvira_service::managed::state() {
-        return Some((state.server, state.server_key));
-    }
-    None
-}
-
 /// Installed for the whole computer by the organisation (Linux, macOS).
 /// The permanent password comes from the organisation's policies.
 fn password_managed() -> bool {
@@ -408,24 +335,6 @@ fn service_managed() -> bool {
     false
 }
 
-/// The organisation's policies win over the settings and the customisation: the
-/// service applies them too (see nuvira_service::policy).
-fn apply_policy(settings: &mut Settings) {
-    let Some((server, key)) = policy_server() else { return };
-    if settings.server.eq_ignore_ascii_case(&server) && (key.is_none() || settings.server_key == key) {
-        return;
-    }
-    info!("server from the organisation's policies: {server}");
-    if !settings.server.eq_ignore_ascii_case(&server) {
-        settings.token = None;
-    }
-    settings.server = server;
-    settings.server_key = key;
-    if let Err(e) = save_settings(settings) {
-        tracing::warn!("settings not saved: {e:#}");
-    }
-}
-
 /// The customisation for the interface (null for the standard program).
 #[tauri::command]
 fn get_branding() -> Option<branding::Branding> {
@@ -442,42 +351,8 @@ fn open_support(app: AppHandle) -> Result<(), String> {
     app.opener().open_url(&url, None::<&str>).map_err(|e| e.to_string())
 }
 
-/// Applies the server in the file name, if any, to the saved settings.
-fn apply_file_config(settings: &mut Settings) {
-    let name =
-        std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
-    let FileConfig { server: Some(server), server_key, .. } = file_config(&name.unwrap_or_default()) else {
-        return;
-    };
-    if settings.server == server && settings.server_key == server_key {
-        return;
-    }
-    info!("server from the file name: {server}");
-    if settings.server != server {
-        // The address book sign-in applies to the server it was made on.
-        settings.token = None;
-    }
-    settings.server = server;
-    settings.server_key = server_key;
-    if let Err(e) = save_settings(settings) {
-        tracing::warn!("settings not saved: {e:#}");
-    }
-}
-
 fn is_zero(n: &u32) -> bool {
     *n == 0
-}
-
-fn settings_path() -> PathBuf {
-    nuvira_transport::identity::data_dir().join("app.json")
-}
-
-fn load_settings() -> Settings {
-    load_settings_from(&settings_path())
-}
-
-fn save_settings(settings: &Settings) -> anyhow::Result<()> {
-    save_settings_to(&settings_path(), settings)
 }
 
 impl Settings {
@@ -494,99 +369,6 @@ impl Settings {
             ..Self::default()
         }
     }
-}
-
-/// The settings in `path`; none yet: the defaults. A file that cannot be read
-/// (cut short by a crash in an older version, edited by hand) is kept aside as
-/// `app.json.bad`, said in the log, and replaced with
-/// [`Settings::after_a_bad_file`].
-fn load_settings_from(path: &std::path::Path) -> Settings {
-    let problem = match std::fs::read_to_string(path) {
-        // Editors such as Notepad (and PowerShell 5) may add a UTF-8 byte order mark.
-        Ok(text) => match serde_json::from_str::<Settings>(text.trim_start_matches('\u{feff}')) {
-            Ok(mut settings) => {
-                settings.token =
-                    settings.token_protected.as_deref().map(local_book::unprotect).filter(|t| !t.is_empty());
-                if settings.token_protected.is_some() && settings.token.is_none() {
-                    // Another user's or computer's, or the key store locked:
-                    // signed out, as after a sign-out.
-                    warn!("the saved address book sign-in cannot be read here: sign in again");
-                }
-                if let Some(plain) = settings.plain_token.take() {
-                    // Saved by an earlier version: from now on protected.
-                    settings.token = Some(plain);
-                    match save_settings_to(path, &settings) {
-                        Ok(()) => info!("address book sign-in in {} now protected", path.display()),
-                        Err(e) => warn!("settings not saved: {e:#}"),
-                    }
-                }
-                return settings;
-            }
-            Err(e) => e.to_string(),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
-        Err(e) => e.to_string(),
-    };
-    let settings = Settings::after_a_bad_file();
-    let aside = path.with_extension("json.bad");
-    match std::fs::rename(path, &aside) {
-        Ok(()) => {
-            tracing::error!(
-                "{} could not be read ({problem}): kept as {}; the permissions of this PC are off until chosen again",
-                path.display(),
-                aside.display()
-            );
-            if let Err(e) = save_settings_to(path, &settings) {
-                warn!("settings not saved: {e:#}");
-            }
-        }
-        Err(e) => tracing::error!(
-            "{} could not be read ({problem}) nor kept aside ({e}): the permissions of this PC are off",
-            path.display()
-        ),
-    }
-    settings
-}
-
-/// Written aside and renamed: a crash halfway leaves the previous file whole.
-/// The sign-in token only protected; on Linux and macOS the file is the
-/// person's alone (0600).
-fn save_settings_to(path: &std::path::Path, settings: &Settings) -> anyhow::Result<()> {
-    let mut stored = settings.clone();
-    stored.plain_token = None;
-    stored.token_protected = match &settings.token {
-        // The same token as loaded: its protected text as it is.
-        Some(token)
-            if settings.token_protected.as_deref().map(local_book::unprotect).as_deref() == Some(token) =>
-        {
-            settings.token_protected.clone()
-        }
-        Some(token) => match local_book::protect(token) {
-            Ok(protected) => Some(protected),
-            Err(e) => {
-                warn!("address book sign-in not saved (it cannot be protected here: {e})");
-                None
-            }
-        },
-        None => None,
-    };
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let part = path.with_extension("json.part");
-    let text = serde_json::to_string_pretty(&stored)?;
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let _ = std::fs::remove_file(&part);
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&part)?;
-        file.write_all(text.as_bytes())?;
-    }
-    #[cfg(not(unix))]
-    std::fs::write(&part, text)?;
-    std::fs::rename(&part, path)?;
-    Ok(())
 }
 
 struct NuviraApp {
@@ -616,10 +398,6 @@ impl NuviraApp {
             let _ = tx.send(command);
         }
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 /// Brings the window to the front (incoming connection request).
@@ -731,225 +509,6 @@ fn start_agent_with(app: &AppHandle, ask: bool) {
     *state.agent.lock().expect("agent") = Some(handle);
 }
 
-/// The NuviraHub service is installed: no agent in the app, the service's one is
-/// shown. If its agent does not answer (start-up, user switch) it is retried.
-#[cfg(any(windows, unix))]
-fn start_service_link(app: &AppHandle) {
-    use nuvira_agent::ipc::ToApp;
-
-    let state = app.state::<NuviraApp>();
-    state.update(app, |ui| {
-        ui.service = true;
-        ui.status = "connecting".into();
-        ui.device_id = None;
-    });
-    let app = app.clone();
-    let handle = tauri::async_runtime::spawn(async move {
-        let state = app.state::<NuviraApp>();
-        let mut last_error: Option<String> = None;
-        loop {
-            match nuvira_agent::ipc::connect() {
-                Ok((mut messages, commands)) => {
-                    info!("connected to the service's agent");
-                    last_error = None;
-                    send_permissions(&commands);
-                    *state.commands.lock().expect("commands") = Some(commands);
-                    state.update(&app, |ui| {
-                        ui.error = None;
-                        ui.service_stopped = false;
-                        ui.service_old = None;
-                    });
-                    while let Some(msg) = messages.recv().await {
-                        match msg {
-                            // With the service the server in the settings is the service's
-                            // (empty = public), also for outgoing connections.
-                            ToApp::Info { server, version, update_blocked, update_stale } => {
-                                *state.service_server.lock().expect("service server") = Some(server.clone());
-                                keep_service_server(&server);
-                                state.update(&app, |ui| {
-                                    ui.server = shown_server(&server);
-                                    ui.installed = nuvira_update::newer(&version, nuvira_update::CURRENT)
-                                        .then_some(version);
-                                    ui.update_blocked = update_blocked;
-                                    ui.update_stale = update_stale;
-                                })
-                            }
-                            ToApp::Event { event } => on_agent_event(&app, event),
-                        }
-                    }
-                    *state.commands.lock().expect("commands") = None;
-                    warn!("link with the service's agent lost");
-                    state.update(&app, |ui| {
-                        ui.status = "connecting".into();
-                        ui.incoming = None;
-                        ui.session = None;
-                        ui.error = Some("@status.service_lost".into());
-                    });
-                }
-                Err(e) => {
-                    // Every 2 s while the service starts: logged once per different reason.
-                    let reason = format!("{e:#}");
-                    if last_error.as_ref() != Some(&reason) {
-                        warn!("service agent not reachable: {reason}");
-                        last_error = Some(reason);
-                    }
-                    // Stopped (not starting): it will not answer by itself, the
-                    // interface offers to start it again.
-                    let stopped = nuvira_service::service_state()
-                        .is_ok_and(|s| s == nuvira_service::ServiceState::Stopped);
-                    let old = if stopped {
-                        nuvira_service::installed_version()
-                            .filter(|v| nuvira_update::newer(nuvira_update::CURRENT, v))
-                    } else {
-                        None
-                    };
-                    state.update(&app, |ui| {
-                        ui.status = if stopped { "offline" } else { "connecting" }.into();
-                        ui.error = Some(
-                            if stopped { "@status.service_stopped" } else { "@status.service_waiting" }
-                                .into(),
-                        );
-                        ui.service_stopped = stopped;
-                        ui.service_old = old;
-                    });
-                }
-            }
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        }
-    });
-    *state.agent.lock().expect("agent") = Some(handle);
-}
-
-fn on_agent_event(app: &AppHandle, event: AgentEvent) {
-    let state = app.state::<NuviraApp>();
-    match event {
-        AgentEvent::Connecting => state.update(app, |ui| ui.status = "connecting".into()),
-        AgentEvent::Alias { alias, error } => state.update(app, |ui| {
-            ui.alias = alias;
-            ui.alias_error = error;
-        }),
-        AgentEvent::Online { device_id, websocket } => {
-            state.update(app, |ui| {
-                ui.status = "online".into();
-                ui.device_id = Some(device_id);
-                ui.websocket = websocket;
-                ui.error = None;
-            });
-            invite::try_send(app);
-        }
-        AgentEvent::Offline { reason } => state.update(app, |ui| {
-            ui.status = "offline".into();
-            ui.error = Some(reason);
-        }),
-        AgentEvent::Password { password } => state.update(app, |ui| ui.password = password),
-        AgentEvent::Incoming { session_id, viewer_id, viewer_name, support } => {
-            state.update(app, |ui| {
-                ui.incoming = Some(IncomingUi {
-                    session_id,
-                    viewer_id,
-                    viewer_name,
-                    support,
-                    deadline_ms: now_ms() + nuvira_agent::CONFIRM_TIMEOUT.as_millis() as u64,
-                })
-            });
-            bring_to_front(app);
-        }
-        AgentEvent::Support { position, taken_by, closed, error, invited_by } => state.update(app, |ui| {
-            let taken = !taken_by.is_empty();
-            ui.support = (!closed).then_some(SupportUi { position, taken_by, invited_by });
-            if !error.is_empty() {
-                ui.support_error = Some(error);
-            } else if closed || taken {
-                // Taken (or ended): the invitation did its part.
-                ui.invite = None;
-            }
-        }),
-        AgentEvent::IncomingClosed { session_id } => state.update(app, |ui| {
-            if ui.incoming.as_ref().is_some_and(|i| i.session_id == session_id) {
-                ui.incoming = None;
-            }
-        }),
-        AgentEvent::SessionStarted { viewer_id, viewer_name, direct, terminal } => state.update(app, |ui| {
-            ui.session = Some(SessionUi {
-                viewer_id,
-                viewer_name,
-                direct,
-                terminal,
-                recording: false,
-                microphone: false,
-                microphone_muted: false,
-                offered: Vec::new(),
-                off: Vec::new(),
-                guests: Vec::new(),
-            });
-            ui.chat.clear();
-        }),
-        AgentEvent::FileReceived { name, path } => {
-            info!("file received: {path}");
-            let text = tf("chat.file_received", &[("name", &name)]);
-            state.update(app, |ui| ui.chat.push(ChatLine { mine: false, system: true, text }));
-            bring_to_front(app);
-        }
-        AgentEvent::Chat { text } => {
-            state.update(app, |ui| ui.chat.push(ChatLine { mine: false, system: false, text }));
-            bring_to_front(app);
-        }
-        AgentEvent::Microphone { on } => {
-            info!(on, "technician's microphone played here");
-            state.update(app, |ui| {
-                if let Some(session) = ui.session.as_mut() {
-                    session.microphone = on;
-                    if on {
-                        session.microphone_muted = false;
-                    }
-                }
-            });
-        }
-        AgentEvent::Recording { on } => {
-            info!(on, "session recorded by the controlling side");
-            state.update(app, |ui| {
-                if let Some(session) = ui.session.as_mut() {
-                    session.recording = on;
-                }
-            });
-            // The person at the PC must see it.
-            if on {
-                bring_to_front(app);
-            }
-        }
-        AgentEvent::Permissions { offered, off } => state.update(app, |ui| {
-            if let Some(session) = ui.session.as_mut() {
-                session.offered = offered;
-                session.off = off;
-            }
-        }),
-        AgentEvent::Guests { names } => {
-            let joined = state.ui.lock().expect("state").session.as_ref().is_some_and(|s| names.len() > s.guests.len());
-            state.update(app, |ui| {
-                if let Some(session) = ui.session.as_mut() {
-                    session.guests = names;
-                }
-            });
-            // The person at the PC must see who else is watching.
-            if joined {
-                bring_to_front(app);
-            }
-        }
-        AgentEvent::Access { view } => state.update(app, |ui| ui.access = Some(view)),
-        AgentEvent::Rules { recording_required, lock_required, idle_minutes } => state.update(app, |ui| {
-            ui.recording_required = recording_required;
-            ui.lock_required = lock_required;
-            ui.idle_required = idle_minutes;
-        }),
-        AgentEvent::SessionEnded { error } => state.update(app, |ui| {
-            ui.session = None;
-            if let Some(e) = error {
-                info!("session ended: {e}");
-            }
-        }),
-    }
-}
-
 #[tauri::command]
 fn get_state(state: State<NuviraApp>) -> UiState {
     let mut ui = state.ui.lock().expect("state");
@@ -979,77 +538,6 @@ fn gnome_sign_in_again() -> bool {
 #[cfg(not(target_os = "linux"))]
 fn gnome_sign_in_again() -> bool {
     false
-}
-
-/// Where the session window prints the documents of remote computers (`print.json`).
-fn print_choice_path() -> PathBuf {
-    nuvira_transport::identity::data_dir().join("print.json")
-}
-
-fn print_choice() -> Option<serde_json::Value> {
-    serde_json::from_str(&std::fs::read_to_string(print_choice_path()).ok()?).ok()
-}
-
-/// The session window asks again where to print the documents of remote computers.
-#[tauri::command]
-fn print_ask_again(app: AppHandle, state: State<NuviraApp>) -> Result<(), String> {
-    let mut choice = print_choice().unwrap_or_else(|| serde_json::json!({}));
-    choice["automatic"] = false.into();
-    std::fs::write(print_choice_path(), choice.to_string()).map_err(|e| e.to_string())?;
-    state.update(&app, |ui| ui.print_auto = None);
-    Ok(())
-}
-
-/// How the key behind this computer's ID is kept, for the About page: "dpapi",
-/// "keychain", "secret-service", "systemd-creds", "file", or empty if unknown
-/// (a copy handed over by the organisation's installation).
-#[tauri::command]
-fn key_protection() -> String {
-    #[cfg(windows)]
-    let path = if nuvira_agent::ipc::service_installed() {
-        nuvira_service::service_identity_path()
-    } else {
-        nuvira_transport::identity::data_dir().join("device.key")
-    };
-    #[cfg(not(windows))]
-    let path = nuvira_transport::identity::data_dir().join("device.key");
-    match nuvira_transport::keystore::protection_of(&path) {
-        // The service's key on Windows, unreadable here, is always DPAPI's.
-        #[cfg(windows)]
-        None if nuvira_agent::ipc::service_installed() => "dpapi".into(),
-        Some(p) if p != nuvira_transport::keystore::Protection::Handed => p.name().into(),
-        _ => String::new(),
-    }
-}
-
-/// Server as shown in the settings: empty for the public one.
-#[cfg(any(windows, unix))]
-/// The app's settings take the server of the service's agent: the field shows that
-/// one, so it is the one a later installation must use. Without it, unattended
-/// access installed with another server (`service install --server`, the MSI, an
-/// older app) moved to the app's own server, often the public one, with a new ID,
-/// when the person removed it and installed it again from the app.
-fn keep_service_server(server: &str) {
-    let shown = shown_server(server);
-    let mut settings = load_settings();
-    if settings.server.trim().eq_ignore_ascii_case(&shown) {
-        return;
-    }
-    info!(server = %shown, "the service's server kept in the app's settings");
-    settings.server = shown;
-    // The fingerprint went with the old server: the new one is checked on first use.
-    settings.server_key = None;
-    if let Err(e) = save_settings(&settings) {
-        warn!("settings not saved: {e:#}");
-    }
-}
-
-fn shown_server(server: &str) -> String {
-    if server.trim().eq_ignore_ascii_case(nuvira_transport::signal::PUBLIC_SERVER) {
-        String::new()
-    } else {
-        server.trim().to_string()
-    }
 }
 
 /// Saves the server. With the service installed it is the service's server: the
@@ -1164,89 +652,6 @@ fn remember_signin_server(server: &str) {
     }
 }
 
-/// Generated by the agent (the app's or the service's), which answers with the Password event.
-#[tauri::command]
-fn new_password(state: State<NuviraApp>) {
-    state.send(AgentCommand::NewPassword);
-}
-
-/// The agent (the app's or the service's) keeps the choice also while the app is closed.
-#[tauri::command]
-fn set_privacy_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
-    let mut settings = load_settings();
-    settings.no_privacy = !allowed;
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    state.send(AgentCommand::AllowPrivacy { allow: allowed });
-    state.update(&app, |ui| ui.privacy_allowed = allowed);
-    Ok(())
-}
-
-/// Like [`set_privacy_allowed`], for the remote terminal.
-#[tauri::command]
-fn set_terminal_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
-    let mut settings = load_settings();
-    settings.no_terminal = !allowed;
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    state.send(AgentCommand::AllowTerminal { allow: allowed });
-    state.update(&app, |ui| ui.terminal_allowed = allowed);
-    Ok(())
-}
-
-/// Like [`set_privacy_allowed`], for the TCP tunnels.
-#[tauri::command]
-fn set_tunnel_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
-    let mut settings = load_settings();
-    settings.no_tunnel = !allowed;
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    state.send(AgentCommand::AllowTunnel { allow: allowed });
-    state.update(&app, |ui| ui.tunnel_allowed = allowed);
-    Ok(())
-}
-
-/// Like [`set_privacy_allowed`], for remote printing.
-#[tauri::command]
-fn set_print_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
-    let mut settings = load_settings();
-    settings.no_print = !allowed;
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    state.send(AgentCommand::AllowPrint { allow: allowed });
-    state.update(&app, |ui| ui.print_allowed = allowed);
-    Ok(())
-}
-
-/// Like [`set_privacy_allowed`], for the recordings of the sessions.
-#[tauri::command]
-fn set_recording_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {
-    let mut settings = load_settings();
-    settings.no_recording = !allowed;
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    state.send(AgentCommand::AllowRecording { allow: allowed });
-    state.update(&app, |ui| ui.recording_allowed = allowed);
-    Ok(())
-}
-
-/// This PC locked when a session ends, or not (kept like [`set_privacy_allowed`]).
-#[tauri::command]
-fn set_lock_on_end(app: AppHandle, state: State<NuviraApp>, on: bool) -> Result<(), String> {
-    let mut settings = load_settings();
-    settings.lock_on_end = on;
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    state.send(AgentCommand::LockOnEnd { on });
-    state.update(&app, |ui| ui.lock_on_end = on);
-    Ok(())
-}
-
-/// Sessions towards this PC end after `minutes` without activity (0: never).
-#[tauri::command]
-fn set_idle_minutes(app: AppHandle, state: State<NuviraApp>, minutes: u32) -> Result<(), String> {
-    let mut settings = load_settings();
-    settings.idle_minutes = minutes;
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    state.send(AgentCommand::IdleMinutes { minutes });
-    state.update(&app, |ui| ui.idle_minutes = minutes);
-    Ok(())
-}
-
 /// The person at this PC mutes the technician's microphone, or not (this session).
 #[tauri::command]
 fn mute_microphone(app: AppHandle, state: State<NuviraApp>, muted: bool) {
@@ -1256,79 +661,6 @@ fn mute_microphone(app: AppHandle, state: State<NuviraApp>, muted: bool) {
             session.microphone_muted = muted;
         }
     });
-}
-
-/// A readable name for this computer on its server, instead of the ID ("" none);
-/// the server's answer comes back as `AgentEvent::Alias`.
-#[tauri::command]
-fn set_alias(state: State<NuviraApp>, alias: String) {
-    state.send(AgentCommand::SetAlias { alias });
-}
-
-/// Folder where the session window saves the recordings.
-fn record_dir(settings: &Settings) -> PathBuf {
-    settings.record_dir.as_ref().map(PathBuf::from).unwrap_or_else(nuvira_viewer::default_recording_dir)
-}
-
-/// Sessions towards other computers recorded from the start, or not.
-#[tauri::command]
-fn set_record_sessions(app: AppHandle, state: State<NuviraApp>, on: bool) -> Result<(), String> {
-    let mut settings = load_settings();
-    settings.record_sessions = on;
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    state.update(&app, |ui| ui.record_sessions = on);
-    Ok(())
-}
-
-/// Sessions towards other computers hide their wallpaper, or not.
-#[tauri::command]
-fn set_hide_wallpaper(app: AppHandle, state: State<NuviraApp>, on: bool) -> Result<(), String> {
-    let mut settings = load_settings();
-    settings.hide_wallpaper = on;
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    state.update(&app, |ui| ui.hide_wallpaper = on);
-    Ok(())
-}
-
-/// Lets the technician pick another folder for the recordings.
-#[tauri::command]
-async fn choose_record_dir(app: AppHandle) -> Result<(), String> {
-    let current = record_dir(&load_settings());
-    let picked = tauri::async_runtime::spawn_blocking(move || {
-        rfd::FileDialog::new().set_title(t("settings.record_dir_pick")).set_directory(&current).pick_folder()
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-    let Some(dir) = picked else { return Ok(()) };
-    let mut settings = load_settings();
-    settings.record_dir = Some(dir.display().to_string());
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    let state = app.state::<NuviraApp>();
-    state.update(&app, |ui| ui.record_dir = dir.display().to_string());
-    Ok(())
-}
-
-/// Opens the folder of the recordings in the file manager.
-#[tauri::command]
-fn open_record_dir(app: AppHandle) -> Result<(), String> {
-    let dir = record_dir(&load_settings());
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    app.opener().open_path(dir.display().to_string(), None::<&str>).map_err(|e| e.to_string())
-}
-
-/// What the person at this PC allows, for the agent (the app's or the service's).
-fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
-    let settings = load_settings();
-    let _ = commands.send(AgentCommand::AllowPrivacy { allow: !settings.no_privacy });
-    let _ = commands.send(AgentCommand::AllowTerminal { allow: !settings.no_terminal });
-    let _ = commands.send(AgentCommand::AllowTunnel { allow: !settings.no_tunnel });
-    let _ = commands.send(AgentCommand::AllowPrint { allow: !settings.no_print });
-    let _ = commands.send(AgentCommand::AllowRecording { allow: !settings.no_recording });
-    let _ = commands.send(AgentCommand::LockOnEnd { on: settings.lock_on_end });
-    let _ = commands.send(AgentCommand::IdleMinutes { minutes: settings.idle_minutes });
-    // The rules of unattended access as they are now (the agent's first report may
-    // be older than the last change).
-    let _ = commands.send(AgentCommand::GetAccess);
 }
 
 #[tauri::command]
@@ -1356,34 +688,6 @@ fn end_session(state: State<NuviraApp>) {
 fn switch_permission(state: State<NuviraApp>, name: String, on: bool) {
     info!(name, on, "switched from the strip");
     state.send(AgentCommand::Switch { name, on });
-}
-
-/// Opens the session window towards another device (`nuvira-viewer` process).
-#[tauri::command]
-fn connect(
-    app: AppHandle,
-    state: State<NuviraApp>,
-    device_id: String,
-    password: String,
-    terminal: Option<bool>,
-) -> Result<(), String> {
-    launch_viewer(&app, &state, device_id, password, terminal.unwrap_or_default())
-}
-
-/// Connection from the address book, with the password saved in the entry.
-#[tauri::command]
-fn connect_entry(app: AppHandle, state: State<NuviraApp>, id: i64, terminal: Option<bool>) -> Result<(), String> {
-    let entry = state
-        .ui
-        .lock()
-        .expect("state")
-        .books
-        .iter()
-        .flat_map(|b| &b.entries)
-        .find(|e| e.id == id)
-        .cloned()
-        .ok_or_else(|| t("err.entry_not_found"))?;
-    launch_viewer(&app, &state, entry.device_id, entry.password, terminal.unwrap_or_default())
 }
 
 /// Asks the server's team for support (support queue, NuviraHub Pro).
@@ -1424,171 +728,6 @@ fn cancel_support(app: AppHandle, state: State<NuviraApp>) {
         let _ = commands.send(AgentCommand::CancelSupport);
     }
     state.update(&app, |ui| ui.support = None);
-}
-
-pub(crate) fn launch_viewer(
-    app: &AppHandle,
-    state: &NuviraApp,
-    device_id: String,
-    password: String,
-    terminal: bool,
-) -> Result<(), String> {
-    // An ID, or a computer's alias on the server (docs/46-aliases.md).
-    let device_id = nuvira_transport::signal::target(&device_id);
-    if !nuvira_transport::signal::valid_target(&device_id) {
-        return Err(t("err.id_digits"));
-    }
-    let server =
-        nuvira_transport::signal::server_or_public(&state.ui.lock().expect("state").server).to_string();
-    // The viewer is in this same program (`nuvira viewer ...`).
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    // The password goes in the process environment, not on the command line
-    // (which other programs on the same PC can read).
-    let mut command = std::process::Command::new(&exe);
-    command.args(["viewer", "--server", &server, &device_id]);
-    // A session that ends by itself says why in the viewer, before it closes.
-    command.arg("--error-dialog");
-    // A shell of the remote computer, without its desktop.
-    if terminal {
-        command.arg("--terminal");
-    }
-    if let Some(key) = load_settings().server_key {
-        command.args(["--server-key", &key]);
-    }
-    // Signed in to the address book: the session log records the account, and at
-    // the end the technician may write what they did.
-    let settings = load_settings();
-    if let Some(token) = &settings.token {
-        command.env("NUVIRA_ACCOUNT_TOKEN", token);
-    }
-    // Recordings: from the start when the technician asked for it, and where.
-    if !terminal {
-        if settings.record_sessions {
-            command.arg("--record");
-        }
-        if settings.hide_wallpaper {
-            command.arg("--hide-wallpaper");
-        }
-        command.arg("--record-dir").arg(record_dir(&settings));
-    }
-    let ask_note = settings.token.is_some()
-        && state.ui.lock().expect("state").features.iter().any(|f| f == "pro.session_log");
-    let mut child = command
-        .env("NUVIRA_PASSWORD", &password)
-        // The session window uses the app's language.
-        .env("NUVIRA_LANG", nuvira_i18n::lang())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("starting the viewer: {e}"))?;
-    info!("session towards {device_id} started");
-    state.update(app, |ui| ui.viewer_message = None);
-
-    // The viewer reports on its standard output: session started (time for the
-    // address book's automatic add) and, at the end, why it closed.
-    let closed_reason = std::sync::Arc::new(Mutex::new(None::<String>));
-    let connected_name = std::sync::Arc::new(Mutex::new(None::<String>));
-    let note_device = device_id.clone();
-    let reader = child.stdout.take().map(|stdout| {
-        let (app, closed_reason, connected_name) = (app.clone(), closed_reason.clone(), connected_name.clone());
-        std::thread::spawn(move || {
-            use std::io::BufRead;
-            for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
-                if line == "@pending" {
-                    app.state::<NuviraApp>()
-                        .update(&app, |ui| ui.viewer_message = Some("@app.waiting_confirmation".into()));
-                } else if let Some(name) = line.strip_prefix("@connected\t") {
-                    app.state::<NuviraApp>().update(&app, |ui| ui.viewer_message = None);
-                    *connected_name.lock().expect("name") = Some(name.to_string());
-                    address_book::auto_add(&app, device_id.clone(), name.to_string(), password.clone());
-                } else if let Some(reason) = line.strip_prefix("@closed\t") {
-                    // Already translated by the viewer.
-                    *closed_reason.lock().expect("reason") = Some(reason.to_string());
-                }
-            }
-        })
-    });
-    let app = app.clone();
-
-    // When the viewer exits with an error, the reason reaches the interface.
-    std::thread::spawn(move || {
-        let mut stderr = String::new();
-        if let Some(mut err) = child.stderr.take() {
-            let _ = std::io::Read::read_to_string(&mut err, &mut stderr);
-        }
-        let status = child.wait();
-        if let Some(reader) = reader {
-            let _ = reader.join();
-        }
-        let failed = !matches!(status, Ok(s) if s.success());
-        let reason = closed_reason.lock().expect("reason").take();
-        let message = match (failed, reason) {
-            (_, Some(r)) => Some(r),
-            (true, None) => {
-                info!("viewer error output: {}", stderr.trim());
-                Some(t("err.session_error"))
-            }
-            _ => None,
-        };
-        let name = connected_name.lock().expect("name").take();
-        let state = app.state::<NuviraApp>();
-        state.update(&app, |ui| {
-            ui.viewer_message = message;
-            // A session was held: what was done goes in the session log (reports).
-            if let Some(name) = name.filter(|_| ask_note) {
-                ui.note_request = Some(NoteRequestUi { device_id: note_device, name });
-            }
-        });
-    });
-    Ok(())
-}
-
-/// The technician's note on the session just ended (NuviraHub Pro session log);
-/// an empty note only closes the question.
-#[tauri::command]
-async fn session_note(app: AppHandle, device_id: String, note: String) -> Result<(), String> {
-    if !note.trim().is_empty() {
-        // On error the question stays open, with the note still written.
-        address_book::session_note(&app, device_id, note).await?;
-    }
-    app.state::<NuviraApp>().update(&app, |ui| ui.note_request = None);
-    Ok(())
-}
-
-/// Strings for the interface in the current language.
-#[derive(Serialize)]
-struct I18nUi {
-    lang: &'static str,
-    /// "auto" or the chosen code.
-    preference: String,
-    languages: Vec<(&'static str, &'static str)>,
-    strings: serde_json::Value,
-}
-
-fn i18n_ui() -> I18nUi {
-    I18nUi {
-        lang: nuvira_i18n::lang(),
-        preference: load_settings().language.unwrap_or_else(|| "auto".into()),
-        languages: nuvira_i18n::LANGUAGES.to_vec(),
-        strings: serde_json::from_str(&nuvira_i18n::json()).unwrap_or_default(),
-    }
-}
-
-#[tauri::command]
-fn i18n() -> I18nUi {
-    i18n_ui()
-}
-
-#[tauri::command]
-fn set_language(language: String) -> Result<I18nUi, String> {
-    if branding::get().is_some_and(|b| b.lock_language) {
-        return Err(t("err.locked"));
-    }
-    let mut settings = load_settings();
-    settings.language = (language != "auto").then_some(language);
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    nuvira_i18n::init(settings.language.as_deref());
-    Ok(i18n_ui())
 }
 
 #[tauri::command]
@@ -1774,32 +913,44 @@ fn main() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        // The window comes back with the size, position and maximized state it
+        // had when the app last closed (a position off every connected screen is
+        // not restored). Not its visibility: how the app starts decides that.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             get_state,
-            key_protection,
+            settings_ui::key_protection,
             set_server,
-            new_password,
-            set_privacy_allowed,
-            set_recording_allowed,
-            set_lock_on_end,
-            set_idle_minutes,
+            settings_ui::new_password,
+            settings_ui::set_privacy_allowed,
+            settings_ui::set_recording_allowed,
+            settings_ui::set_lock_on_end,
+            settings_ui::set_idle_minutes,
             mute_microphone,
-            set_alias,
+            settings_ui::set_alias,
             access_ui::access_totp_new,
             access_ui::access_totp_check,
             access_ui::access_save,
-            set_record_sessions,
-            set_hide_wallpaper,
-            choose_record_dir,
-            open_record_dir,
-            set_terminal_allowed,
-            set_tunnel_allowed,
-            set_print_allowed,
-            print_ask_again,
+            settings_ui::set_record_sessions,
+            settings_ui::set_hide_wallpaper,
+            settings_ui::choose_record_dir,
+            settings_ui::open_record_dir,
+            settings_ui::set_terminal_allowed,
+            settings_ui::set_tunnel_allowed,
+            settings_ui::set_print_allowed,
+            settings_ui::print_ask_again,
             respond,
             send_chat,
-            connect_entry,
+            outgoing::connect_entry,
             install_service,
             repair_service,
             request_support,
@@ -1810,14 +961,14 @@ fn main() {
             address_book::invite_create,
             address_book::invites_list,
             address_book::invite_delete,
-            session_note,
+            outgoing::session_note,
             address_book::support_queue,
             address_book::device_inventory,
             address_book::wake_device,
             address_book::support_take,
             uninstall_service,
-            apply_update,
-            restart_app,
+            app_update::apply_update,
+            app_update::restart_app,
             address_book::address_book_login,
             address_book::address_book_logout,
             address_book::address_book_refresh,
@@ -1842,13 +993,13 @@ fn main() {
             address_book::address_book_save_anonymous_limits,
             end_session,
             switch_permission,
-            connect,
+            outgoing::connect,
             open_source,
             open_terms,
             get_branding,
             open_support,
-            i18n,
-            set_language
+            settings_ui::i18n,
+            settings_ui::set_language
         ])
         .setup(move |app| {
             if let Some(b) = branding::get().filter(|b| !b.name.is_empty())
@@ -1901,41 +1052,6 @@ fn start_links(app: &AppHandle, file_invite: Option<(String, String)>) {
     if let Some((code, server)) = file_invite {
         invite::receive(app, code, server);
     }
-}
-
-/// The invitation's code and server in a program's file name (`invite=`).
-fn file_invite(exe: &str) -> Option<(String, String)> {
-    let name = std::path::Path::new(exe).file_name()?.to_string_lossy().into_owned();
-    let config = file_config(&name);
-    Some((config.invite?, config.server.unwrap_or_default()))
-}
-
-/// Set by a start of this program that replaces the running one (restart, update):
-/// the new one waits for it to end, or it would hand over to it and close (one app
-/// at a time).
-const WAIT_PID: &str = "NUVIRA_WAIT_PID";
-
-fn wait_for_predecessor() {
-    let Some(pid) = std::env::var(WAIT_PID).ok().and_then(|p| p.parse::<u32>().ok()) else { return };
-    // SAFETY: at the start of main, before other threads read the environment.
-    unsafe { std::env::remove_var(WAIT_PID) };
-    let started = std::time::Instant::now();
-    #[cfg(windows)]
-    {
-        use windows::Win32::Foundation::CloseHandle;
-        use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
-        if let Ok(process) = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
-            unsafe {
-                WaitForSingleObject(process, 15_000);
-                let _ = CloseHandle(process);
-            }
-        }
-    }
-    #[cfg(unix)]
-    while started.elapsed() < Duration::from_secs(15) && unsafe { libc::kill(pid as i32, 0) } == 0 {
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    info!(pid, waited_ms = started.elapsed().as_millis() as u64, "previous app ended");
 }
 
 /// The app has no console of its own: from a command prompt its output must go to
@@ -2220,162 +1336,6 @@ fn run_service_command(mut params: String) -> Result<serde_json::Value, String> 
     Ok(report)
 }
 
-/// The app's own copy before the last update (see `apply_update`).
-#[cfg(not(unix))]
-fn previous_copy() -> Option<PathBuf> {
-    std::env::current_exe().ok().map(|exe| exe.with_extension("old.exe"))
-}
-
-/// This program's path at start-up: on Linux `current_exe` follows the file, so
-/// after an update it would name the old copy put aside.
-fn started_as() -> PathBuf {
-    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    PATH.get_or_init(|| std::env::current_exe().unwrap_or_default()).clone()
-}
-
-/// How this copy is updated by the app (Linux and macOS): `None` when the user
-/// service or root's timer does it, or when this user cannot replace it.
-#[cfg(unix)]
-fn app_updates() -> Option<nuvira_update::unix::Install> {
-    let installed = nuvira_service::service_state().is_ok_and(|s| s != nuvira_service::ServiceState::NotInstalled);
-    let install = nuvira_update::unix::this_install(&started_as());
-    (!installed && install.channel().is_some()).then_some(install)
-}
-
-/// Without the service (which updates an installed NuviraHub by itself) the app asks
-/// its server for a newer version at start-up and every 6 hours, and offers it.
-fn start_update_checks(app: &AppHandle) {
-    if nuvira_update::platform() == "unsupported" {
-        return;
-    }
-    started_as();
-    #[cfg(not(unix))]
-    if let Some(old) = previous_copy() {
-        let _ = std::fs::remove_file(old);
-    }
-    #[cfg(unix)]
-    if let Some(install) = app_updates() {
-        nuvira_update::unix::clean(&install);
-    }
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            #[cfg(windows)]
-            let installed = nuvira_agent::ipc::service_installed();
-            #[cfg(unix)]
-            let installed = app_updates().is_none();
-            #[cfg(not(any(windows, unix)))]
-            let installed = false;
-            let settings = load_settings();
-            if !installed {
-                let server = nuvira_transport::signal::server_or_public(&settings.server);
-                let base = nuvira_update::update_base(server, None);
-                match nuvira_update::check_offer(
-                    &base,
-                    &nuvira_update::PUBLIC_KEYS,
-                    nuvira_update::platform(),
-                )
-                .await
-                {
-                    Ok((found, stale)) => {
-                        let version = found.map(|m| m.version);
-                        app.state::<NuviraApp>().update(&app, |ui| {
-                            ui.update = version;
-                            ui.update_stale = stale;
-                        });
-                    }
-                    Err(e) => tracing::debug!("update check: {e:#}"),
-                }
-            }
-            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
-        }
-    });
-}
-
-/// Downloads the newer version, checks it (signature, size, SHA-256) and replaces
-/// this program, keeping its file name (which may carry the server), then starts it.
-/// A running program cannot be overwritten but can be renamed: the old copy is
-/// moved aside and deleted at the next start.
-#[tauri::command]
-async fn apply_update(app: AppHandle) -> Result<(), String> {
-    let settings = load_settings();
-    let server = nuvira_transport::signal::server_or_public(&settings.server);
-    let base = nuvira_update::update_base(server, None);
-    let error = |e: anyhow::Error| tf("update.failed", &[("e", &format!("{e:#}"))]);
-    let manifest = nuvira_update::check(&base, &nuvira_update::PUBLIC_KEYS)
-        .await
-        .map_err(error)?
-        .ok_or_else(|| t("update.none"))?;
-    // Linux and macOS: in this user's data folder, not the shared /tmp of Linux,
-    // where another user can take the names first (APP-9).
-    #[cfg(unix)]
-    let folder = nuvira_transport::identity::data_dir().join("update");
-    #[cfg(not(unix))]
-    let folder = std::env::temp_dir();
-    std::fs::create_dir_all(&folder).map_err(|e| error(e.into()))?;
-    let download =
-        folder.join(format!("nuvira-{}{}", manifest.version, nuvira_update::extension(&manifest.platform)));
-    nuvira_update::download(&base, &manifest, &download).await.map_err(error)?;
-
-    // Linux: the program; macOS: the whole app.
-    #[cfg(unix)]
-    {
-        let install = app_updates().ok_or_else(|| t("update.none"))?;
-        let applied = tauri::async_runtime::spawn_blocking({
-            let download = download.clone();
-            move || nuvira_update::unix::apply(&install, &download)
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-        let _ = std::fs::remove_file(&download);
-        applied.map_err(error)?;
-        info!("updated to {}: restarting", manifest.version);
-        std::process::Command::new(started_as())
-            .env(WAIT_PID, std::process::id().to_string())
-            .spawn()
-            .map_err(|e| error(e.into()))?;
-        app.exit(0);
-        Ok(())
-    }
-
-    #[cfg(not(unix))]
-    {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let aside = previous_copy().ok_or("program path")?;
-        let _ = std::fs::remove_file(&aside);
-        std::fs::rename(&exe, &aside).map_err(|e| error(e.into()))?;
-        if let Err(e) = std::fs::copy(&download, &exe) {
-            let _ = std::fs::rename(&aside, &exe);
-            return Err(error(e.into()));
-        }
-        let _ = std::fs::remove_file(&download);
-        info!("updated to {}: restarting", manifest.version);
-        std::process::Command::new(&exe)
-            .env(WAIT_PID, std::process::id().to_string())
-            .spawn()
-            .map_err(|e| error(e.into()))?;
-        app.exit(0);
-        Ok(())
-    }
-}
-
-/// Starts the program installed by the service (updated while this app was open)
-/// in place of this one.
-#[tauri::command]
-fn restart_app(app: AppHandle) -> Result<(), String> {
-    #[cfg(windows)]
-    let program = nuvira_service::installed_program();
-    #[cfg(not(windows))]
-    let program = started_as();
-    info!("restarting with the installed program {}", program.display());
-    std::process::Command::new(&program)
-        .env(WAIT_PID, std::process::id().to_string())
-        .spawn()
-        .map_err(|e| tf("update.failed", &[("e", &e.to_string())]))?;
-    app.exit(0);
-    Ok(())
-}
-
 /// macOS: the kind of keyboard the organisation set for the whole Mac (the
 /// `Keyboard` key of the managed preferences, module `policy`) wins over
 /// `NUVIRA_MAC_KEYBOARD`, for every agent: the app's own, the person's
@@ -2408,119 +1368,5 @@ fn run_subcommand(sub: &str, rest: &[std::ffi::OsString]) -> i32 {
             eprintln!("error: {e:#}");
             1
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const KEY: &str = "eb4a40cdaac1e2d3948c053723f7a42f9aa6bcbcc7520f228cea427a15070fe3";
-
-    fn test_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("nuvira-app-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    /// APP-10: settings written whole or not at all; a file cut short is kept
-    /// aside and the permissions of the PC stay off, not on.
-    #[test]
-    fn bad_settings_file_kept_aside() {
-        let dir = test_dir("settings");
-        let path = dir.join("app.json");
-        // None yet: the defaults.
-        let fresh = load_settings_from(&path);
-        assert!(!fresh.no_terminal && fresh.server.is_empty());
-
-        let saved = Settings { server: "nuvira.example.com".into(), no_print: true, ..Settings::default() };
-        save_settings_to(&path, &saved).unwrap();
-        assert!(!path.with_extension("json.part").exists(), "renamed into place");
-        let loaded = load_settings_from(&path);
-        assert_eq!(loaded.server, "nuvira.example.com");
-        assert!(loaded.no_print && !loaded.no_terminal);
-
-        // Cut short, as by a crash in the middle of a write in place.
-        let text = std::fs::read_to_string(&path).unwrap();
-        std::fs::write(&path, &text[..text.len() / 2]).unwrap();
-        let loaded = load_settings_from(&path);
-        assert!(
-            loaded.no_privacy
-                && loaded.no_terminal
-                && loaded.no_tunnel
-                && loaded.no_print
-                && loaded.no_recording
-        );
-        assert_eq!(
-            std::fs::read_to_string(path.with_extension("json.bad")).unwrap(),
-            &text[..text.len() / 2]
-        );
-        // Saved at once: the next start does not fall back to the open defaults.
-        let again = load_settings_from(&path);
-        assert!(again.no_terminal && again.no_recording);
-        // Not text at all.
-        std::fs::write(&path, [0xffu8, 0xfe, 0x00]).unwrap();
-        assert!(load_settings_from(&path).no_tunnel);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// APP-6: the sign-in token is saved protected; a plain one of an older
-    /// version is read once and saved protected.
-    #[test]
-    fn token_saved_protected() {
-        let dir = test_dir("token");
-        let path = dir.join("app.json");
-        let token = "0123456789abcdef-token";
-        std::fs::write(&path, format!(r#"{{"server": "nuvira.example.com", "token": "{token}"}}"#)).unwrap();
-        let loaded = load_settings_from(&path);
-        assert_eq!(loaded.token.as_deref(), Some(token));
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(!text.contains(token) && !text.contains("\"token\""), "{text}");
-        assert!(text.contains("\"token_protected\""), "{text}");
-        assert_eq!(load_settings_from(&path).token.as_deref(), Some(token));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-        }
-
-        // A new sign-in, then a sign-out.
-        let mut settings = load_settings_from(&path);
-        settings.token = Some("another".into());
-        save_settings_to(&path, &settings).unwrap();
-        assert_eq!(load_settings_from(&path).token.as_deref(), Some("another"));
-        settings.token = None;
-        save_settings_to(&path, &settings).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(!text.contains("token"), "{text}");
-        assert_eq!(load_settings_from(&path).token, None);
-
-        // Protected for someone else (or garbage): signed out, nothing else lost.
-        std::fs::write(&path, r#"{"server": "s", "no_print": true, "token_protected": "dpapi:00"}"#).unwrap();
-        let loaded = load_settings_from(&path);
-        assert_eq!(loaded.token, None);
-        assert!(loaded.no_print && loaded.server == "s");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn server_from_the_file_name() {
-        let server = |name: &str| file_config(name).server;
-        assert_eq!(server("nuvira.exe"), None);
-        assert_eq!(server("nuvira-host=alexbn.ddns.net.exe").as_deref(), Some("alexbn.ddns.net"));
-        assert_eq!(server("Nuvira-host=10.0.0.5,port=21117.EXE").as_deref(), Some("10.0.0.5:21117"));
-        // Repeated download.
-        assert_eq!(server("nuvira-host=alexbn.ddns.net (2).exe").as_deref(), Some("alexbn.ddns.net"));
-        // A bad port or key is ignored, the rest is kept.
-        let c = file_config(&format!("nuvira-host=a.example,port=99999,key={KEY}.exe"));
-        assert_eq!((c.server.as_deref(), c.server_key.as_deref()), (Some("a.example"), Some(KEY)));
-        assert_eq!(file_config("nuvira-host=a.example,key=123.exe").server_key, None);
-        // Without host nothing applies.
-        assert_eq!(file_config(&format!("nuvira-key={KEY}.exe")), FileConfig::default());
-        // The program of an invitation's page.
-        let c = file_config(&format!("NuviraHub-host=nuvira.example.com,port=21216,key={KEY},invite=abcdefghjk (1).exe"));
-        assert_eq!((c.server.as_deref(), c.invite.as_deref()), (Some("nuvira.example.com:21216"), Some("abcdefghjk")));
-        assert_eq!(file_config("NuviraHub-host=a.example,invite=short.exe").invite, None);
     }
 }

@@ -219,6 +219,25 @@ Kubuntu 26.04 (Plasma 6.6, `ksecretd`), automatic sign-in switched off, signed i
 - Result, with the package of the branch: the app started after sign-in opened the wallet with nothing on screen, `app.key` went from `NVK1F` to `NVK1S` at once, same ID (585 296 961).
 - Wallet locked by hand (`Lock` of the Secret Service: KWallet then forgets the sign-in password): the viewer showed KWallet's password window once; with it cancelled, the viewer stopped after about 20 s with "the system keyring … is locked: open it, then connect again" (translated), instead of waiting without end.
 
+### GNOME Keyring without automatic sign-in (2026-11-26)
+
+MSI-UBUNTU (a real PC, Ubuntu 26.10, GNOME on Wayland), automatic sign-in switched off for the test, password typed at GDM (ydotool), the program of branch `refactor/light`, each case with its own data folder.
+
+- **With automatic sign-in** (as the PC normally runs): the `login` keyring stays locked after sign-in, so every key there was `NVK1F` (file permissions).
+- **Signed in with the password**: the keyring is open at once (`pam_gnome_keyring`). A new agent key is written as `NVK1S` (one item "NuviraHub device keys" in `login`).
+- **Migration**: an `NVK1F` key copied from the automatic sign-in setup moved to `NVK1S` at the first start, and the device kept its ID (477 384 789) on the next start too.
+- **New key with the keyring locked**: written as `NVK1F`, with no window (as with automatic sign-in).
+- **Viewer, `NVK1S` key, keyring locked by hand**: it stopped after about 20 s with the translated message ("il portachiavi del sistema (KWallet, GNOME Keyring) è chiuso: aprilo, poi collegati di nuovo"). The key stayed `NVK1S`.
+- **Agent, `NVK1S` key, keyring locked by hand**: it waits ("waiting for the system to open it"), as meant for a keyring that opens after the agent at start-up.
+  - It asks GNOME's password window once. Traced on the bus: `BeginPrompting`, `PromptReady`, `PerformPrompt`.
+  - Every 5 s it asks quietly and dismisses again.
+  - **Found and fixed the same day**: GNOME Keyring itself aborted (`gkd-secret-unlock.c: perform_next_unlock: assertion failed: (!self->current)`, `code=dumped`, 12 restarts that day). That is a known upstream bug, reported on Ubuntu, Arch and Fedora and never fixed upstream ([GNOME gnome-keyring#64](https://gitlab.gnome.org/GNOME/gnome-keyring/-/issues/64)).
+    - It aborts when an unlock request is dismissed while another one's window is on screen. The agent's quiet tries every 5 s did exactly that, so the window went away with the daemon and the typed password was lost.
+    - Reproduced without NuviraHub: one script showing the window, another asking quietly and dismissing.
+    - Fix (nuvira `refactor/light` 8a497e1, 861cadb): the quiet try asks the system only with KWallet. With other services it only reads whether the items are unlocked (`Locked`), and creates no request.
+    - After the fix: the agent waited, the password typed into its window 15 s later (three of the old tries) opened the keyring; the agent went on ("opened", registered, same ID) with 0 daemon aborts.
+    - The viewer with the keyring locked still stops after 20 s with the message.
+
 ## To do
 
 - **GNOME's lock screen at once:** only by publishing the extension on extensions.gnome.org (see "Locked screen"); the app says when a sign-out and in is needed.

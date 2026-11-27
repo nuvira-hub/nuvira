@@ -440,9 +440,4 @@ fn password_hash_command() -> anyhow::Result<()> {
 }
 
 /// Random 8-character password that is easy to dictate, like the agent's.
-pub fn random_password() -> String {
-    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
-    let mut bytes = [0u8; 8];
-    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).expect("random generator");
-    bytes.iter().map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char).collect()
-}
+pub use nuvira_secret::random_password;

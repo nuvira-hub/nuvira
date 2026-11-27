@@ -759,6 +759,25 @@ mod sys {
         ) -> Result<bool, ReadError> {
             use futures_util::StreamExt;
 
+            // Quietly only KWallet is asked: another service would only get an unlock
+            // dismissed at once, and GNOME Keyring aborts (assertion `!self->current` in
+            // gkd-secret-unlock.c, a known upstream bug) when an unlock is dismissed while
+            // the window of another one is on screen: the person's password then goes
+            // nowhere. So for them only whether everything is open already.
+            if !window && !kwallet(conn).await {
+                for object in &objects {
+                    // A collection (…/collection/NAME) or an item of one (one level deeper).
+                    let interface = match object.as_str().matches('/').count() {
+                        5 => "org.freedesktop.Secret.Collection",
+                        _ => "org.freedesktop.Secret.Item",
+                    };
+                    let object = proxy(conn, object.as_str(), interface).await?;
+                    if object.get_property::<bool>("Locked").await.map_err(later)? {
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
+            }
             let service = proxy(conn, PATH, SERVICE).await?;
             let (_, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) =
                 service.call("Unlock", &(objects,)).await.map_err(later)?;
@@ -766,10 +785,6 @@ mod sys {
                 return Ok(true);
             }
             let prompt = proxy(conn, prompt.as_str(), "org.freedesktop.Secret.Prompt").await?;
-            if !window && !kwallet(conn).await {
-                let _ = prompt.call::<_, _, ()>("Dismiss", &()).await;
-                return Ok(false);
-            }
             let mut completed = prompt.receive_signal("Completed").await.map_err(later)?;
             prompt.call::<_, _, ()>("Prompt", &("",)).await.map_err(later)?;
             if window {

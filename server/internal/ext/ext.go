@@ -112,6 +112,9 @@ const (
 	SessionRejected    = "rejected"    // the agent refused (Reason)
 	SessionExpired     = "expired"     // the agent did not answer in time
 	SessionEnded       = "ended"       // the agent's report at the end (Report)
+	// The agent's report will not come: it came back as a new process, or the
+	// report window passed. End is the estimated end (zero: not known).
+	SessionUnreported = "unreported"
 )
 
 // SessionEvent is a step of a session between two devices.
@@ -125,6 +128,11 @@ type SessionEvent struct {
 	AgentName  string
 	Reason     string
 	Report     *pb.SessionReport
+	// SessionEnded: the server no longer had the session (it restarted since):
+	// a module only takes the report for a session of that agent it knows of.
+	Unrouted bool
+	// SessionUnreported: when the session most likely ended.
+	End time.Time
 	// ViewerToken is the address book sign-in the viewer presented (requested
 	// only): a module with accounts tells whose it is. Never to be stored.
 	ViewerToken string

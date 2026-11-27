@@ -71,6 +71,8 @@ type client struct {
 	// Signalling protocol version of the device (Register): from 2 an agent
 	// applies the limits of each session.
 	protocol uint32
+	// Register.instance: random per process of the device (empty: older device).
+	instance []byte
 	// Longest wait for one write (Server.sendTimeout).
 	sendTimeout time.Duration
 }
@@ -316,6 +318,9 @@ func (s *Server) register(conn *quic.Conn, stream *quic.Stream, read func() (*pb
 		return nil, errors.New("missing Register or invalid key")
 	}
 	c := &client{conn: conn, stream: stream, apiOnly: reg.ApiOnly, protocol: reg.ProtocolVersion, sendTimeout: s.sendTimeout}
+	if len(reg.Instance) <= 32 {
+		c.instance = reg.Instance
+	}
 	ip, hasIP := relay.HostOf(conn.RemoteAddr())
 	if hasIP {
 		if s.blocked.address(ip) {
@@ -434,7 +439,12 @@ func (s *Server) setOnline(c *client) {
 		}()
 	}
 	s.online[c.device.ID] = c
+	ended := s.agentBack(c, time.Now())
 	s.mu.Unlock()
+	for _, ev := range ended {
+		s.log.Info("session ended without report: agent back as a new process", "session", ev.ID, "estimated_end", ev.End.Format(time.RFC3339))
+		s.event(ev)
+	}
 	// A support request of an earlier connection is put aside: the agent asks
 	// again with the same ticket if it still has it (the support queue gives it
 	// back its place), otherwise (the app restarted) it goes after a while.
@@ -448,6 +458,7 @@ func (s *Server) setOffline(c *client) {
 	gone := s.online[c.device.ID] == c
 	if gone {
 		delete(s.online, c.device.ID)
+		s.agentGone(c.device.ID, time.Now())
 	}
 	s.mu.Unlock()
 	// Outside s.mu: the database write can wait behind other queries (one pool
@@ -642,7 +653,7 @@ func (s *Server) accept(agent *client, id string) {
 	}
 	s.log.Info("session accepted", "session", id)
 	s.mu.Lock()
-	s.routed[id] = &routed{agentID: agent.device.ID, accepted: time.Now(), relayToken: token}
+	s.routed[id] = &routed{agentID: agent.device.ID, accepted: time.Now(), relayToken: token, instance: agent.instance}
 	s.mu.Unlock()
 	s.event(ext.SessionEvent{ID: id, Kind: ext.SessionAccepted, AgentID: agent.device.ID})
 }

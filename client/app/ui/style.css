@@ -103,7 +103,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 /* --- work area --- */
 
 .content { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
-main { flex: 1; overflow-y: auto; padding: 26px 32px 18px; }
+main { flex: 1; overflow-y: auto; padding: 20px 32px 12px; }
 footer {
   height: var(--footer-h); box-sizing: border-box; flex: none;
   line-height: calc(var(--footer-h) - 1px); padding: 0 32px;
@@ -190,7 +190,7 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .this-pc {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 28px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-  padding: 16px 20px;
+  padding: 14px 20px;
 }
 /* Cards one under the other (ID and password, invitation, support request) do not touch. */
 .this-pc ~ .this-pc, .this-pc ~ .support, .this-pc ~ #viewer-only { margin-top: 12px; }
@@ -201,6 +201,8 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 /* Settings: one card per zone, sub-zones divided by a line. */
 .settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 4px 20px 16px; margin-bottom: 16px; }
 .settings-card > h2:first-child { margin-top: 14px; }
+/* Administration: the account form and the hints under it do not touch. */
+#account-form { margin-bottom: 10px; }
 .settings-sub { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
 .settings-sub > h3:first-child { margin-top: 12px; }
 .uninstall-row { margin-top: 6px; }
@@ -212,9 +214,9 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .pc-notes:not(.collapsed) #pc-notes-toggle svg { transform: rotate(180deg); }
 .pc-notes.collapsed #pc-notes-body { display: none; }
 
-.hero { max-width: 440px; margin: 40px auto 0; display: flex; flex-direction: column; gap: 10px; }
+.hero { max-width: 440px; margin: 20px auto 0; display: flex; flex-direction: column; gap: 8px; }
 .hero h1 { font-size: 26px; text-align: center; }
-.hero > .hint { text-align: center; margin-bottom: 8px; }
+.hero > .hint { text-align: center; margin-bottom: 2px; }
 .combo { position: relative; }
 .hero-input {
   width: 100%; font-size: 22px; padding: 13px 16px; text-align: center;
@@ -222,6 +224,11 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 }
 .hero-password { padding: 11px 16px; text-align: center; border-radius: 12px; }
 .hero-button { padding: 12px; font-size: 16px; border-radius: 12px; }
+/* Connect and Terminal only side by side: everything fits at the default window
+   size (900 x 640), also with the Ask for support card. */
+.hero-actions { display: flex; gap: 10px; }
+.hero-actions .primary { flex: 2; }
+.hero-actions #terminal-button { flex: 1; }
 .hero .message { text-align: center; }
 .suggestions {
   position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 5;
@@ -239,13 +246,16 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .tools input { width: 260px; }
 .login { display: flex; flex-direction: column; gap: 10px; max-width: 360px; margin: 12px 0 20px; }
 #address-book-message { margin: 0 0 12px; }
-.address-book-list { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px 4px; }
+/* One card per address book, one under the other. */
+.address-book-list { display: flex; flex-direction: column; gap: 12px; }
+.book-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 6px 4px; }
 .book-title { margin: 14px 14px 4px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .book-title:first-child { margin-top: 8px; }
 .book-head { display: flex; align-items: baseline; gap: 10px; }
 .book-head .book-title { flex: 1; }
 .book-head:first-child .book-title { margin-top: 8px; }
 .book-head .link { margin-right: 14px; font-size: 12px; }
+.book-note { font-style: italic; font-weight: 400; text-transform: none; letter-spacing: 0; opacity: .8; }
 #address-book-message { white-space: pre-line; }
 .entry { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 10px; }
 .entry:hover { background: var(--hover); }
@@ -381,6 +391,13 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 .invite-made { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; }
 .invite-made input { flex: 1 1 260px; min-width: 0; }
 .invite-item { justify-content: space-between; gap: 8px; }
+/* The invitations take the page's width (a stack stops at 420 px, which broke
+   "used 0 of 1" and the buttons over two lines) and keep some room from the
+   form above. */
+#invite-list { max-width: none; margin-top: 12px; }
+.invite-item .queue-text { flex: 1; }
+.invite-item .actions { display: flex; flex: none; gap: 6px; }
+.invite-item button { white-space: nowrap; }
 .invite-item.ended { opacity: .6; }
 .for-me { color: var(--accent); font-weight: 600; }
 #nav-queue { position: relative; }

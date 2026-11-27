@@ -99,6 +99,10 @@ message Register {
   // The alias the device wants (see SetAlias); absent (older agents): the one
   // the server has stays.
   optional string alias = 7;
+  // Random bytes drawn once per process: a server sees that an agent came back as
+  // a new process, so the sessions of the old one ended without their report
+  // (the session log closes them with an estimated end). Absent: older device.
+  bytes instance = 8;
 }
 
 // The device proves it holds the private key by signing "nuvira-register-v1"
