@@ -100,3 +100,5 @@ updates/macos.json            updates/macos/nuvira-VERSION.zip
 ```
 
 `macos/nuvira-VERSION.zip` stays zipped: it is the macOS app, unpacked by the Mac when it updates. The programs of older versions can be deleted. No restart is needed: the manifest is read at every request. The files must be readable by the container's user (65532, or the one given with `--user`). Every update is signed with the NuviraHub release key and the app checks the signature before installing it, so a tampered file is refused.
+
+With NuviraHub Pro the web console does this for you: Settings → Client updates shows the latest release, downloads it from GitHub, checks every file against the release key and publishes it in `/data/updates`; the server also checks for a new release once a day.
