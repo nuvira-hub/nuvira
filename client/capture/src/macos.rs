@@ -41,7 +41,7 @@ use screencapturekit::cv::CVPixelBufferLockFlags;
 use screencapturekit::prelude::*;
 use screencapturekit::stream::ErrorHandler;
 use nuvira_pointer as cursor;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::macos_pointer;
 use crate::{Capturer, Display, Frame};
@@ -531,7 +531,19 @@ impl ScreenCaptureKitCapturer {
         let mut stream = SCStream::new_with_delegate(&filter, &config, on_error)?;
         let gpu = Arc::new(AtomicBool::new(self.gpu));
         stream.add_output_handler(Handler { images: Mutex::new(tx), gpu: gpu.clone() }, SCStreamOutputType::Screen)?;
-        stream.start_capture().map_err(|e| anyhow!("{e:?}")).context("@agent.screen_permission_mac")?;
+        if let Err(e) = stream.start_capture() {
+            // A start that timed out is still outstanding in the system: when it
+            // completes the stream runs on, 60 frames a second dropped for lack of an
+            // output ("stream output NOT found"), for as long as the process lives.
+            // Stopping it here ends it (the crate keeps it marked as capturing then).
+            if let screencapturekit::error::SCError::CaptureStartFailed(message) = &e
+                && screencapturekit::utils::completion::is_timeout_error(message)
+            {
+                warn!("ScreenCaptureKit start timed out: the stream is stopped");
+                let _ = stream.stop_capture();
+            }
+            return Err(anyhow!("{e:?}")).context("@agent.screen_permission_mac");
+        }
         info!(name = screen.name, width = screen.width, height = screen.height, "ScreenCaptureKit capture");
         self.display_id = sc_display.display_id();
         let frame = sc_display.frame();
