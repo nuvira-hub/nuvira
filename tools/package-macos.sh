@@ -82,6 +82,35 @@ cat > "$entitlements" <<EOF
 </plist>
 EOF
 
+# Network Topology Observation: since macOS 27 a program without it gets
+# 02:00:00:00:00:00 for every MAC, of its own interfaces and of the neighbours
+# (network scan, Wake-on-LAN; nuvira-pro docs/internal/48-network-scan.md).
+# A restricted entitlement: only with the Developer ID provisioning profile of the
+# app (deploy/macos, made in the Apple Developer account for this bundle ID and
+# the Developer ID Application certificate), embedded in the app. Without the
+# profile, or without a certificate (ad hoc builds), the app has no such
+# entitlement and the MACs stay unknown. An app that claims it with no profile
+# authorising it would not start at all: the checks below stop the build instead.
+profile=deploy/macos/NuviraHub.provisionprofile
+topology=com.apple.developer.networking.topology-observation
+if [ -n "$identity" ] && [ -f "$profile" ]; then
+    security cms -D -i "$profile" > "$stage/profile.plist"
+    pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$stage/profile.plist"; }
+    team=$(pb TeamIdentifier:0)
+    [ "$(pb Entitlements:com.apple.application-identifier)" = "$team.io.github.nuvira-hub.nuvira" ] \
+        || { echo "provisioning profile of another app" >&2; exit 1; }
+    [ "$(pb "Entitlements:$topology")" = "true" ] \
+        || { echo "provisioning profile without $topology" >&2; exit 1; }
+    expires=$(date -j -f "%a %b %d %T %Z %Y" "$(pb ExpirationDate)" +%s)
+    [ "$expires" -gt "$(( $(date +%s) + 30 * 86400 ))" ] \
+        || { echo "provisioning profile expires within 30 days: make a new one" >&2; exit 1; }
+    cp "$profile" "$app/Contents/embedded.provisionprofile"
+    /usr/libexec/PlistBuddy \
+        -c "Add :com.apple.application-identifier string $team.io.github.nuvira-hub.nuvira" \
+        -c "Add :com.apple.developer.team-identifier string $team" \
+        -c "Add :$topology bool true" "$entitlements"
+fi
+
 # The virtual HID keyboard that types into the lock screen (docs/33-macos.md,
 # "Locked screen"): Karabiner-DriverKit-VirtualHIDDevice, public domain, signed and
 # notarized by its author (tools/vendor); installed by `nuvira service system`.

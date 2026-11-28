@@ -417,8 +417,84 @@ mod neighbours {
         std::fs::read_to_string("/proc/net/arp").map(|t| parse_proc_arp(&t)).unwrap_or_default()
     }
 
+    /// macOS: the dump of the routing table's link-layer entries (what `arp -an`
+    /// reads): messages of `header` bytes (`rt_msghdr`), each followed by the
+    /// destination (`sockaddr_in`) and the gateway (`sockaddr_dl`, with the MAC
+    /// after the interface name), every address padded to 4 bytes.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(super) fn parse_route_dump(dump: &[u8], header: usize) -> HashMap<Ipv4Addr, String> {
+        const AF_INET: u8 = 2;
+        const AF_LINK: u8 = 18;
+        let padded = |len: usize| if len == 0 { 4 } else { (len + 3) & !3 };
+        let mut out = HashMap::new();
+        let mut at = 0;
+        while at + 2 <= dump.len() {
+            let len = u16::from_ne_bytes([dump[at], dump[at + 1]]) as usize;
+            if len == 0 || at + len > dump.len() {
+                break;
+            }
+            let msg = &dump[at..at + len];
+            at += len;
+            let Some(dst) = msg.get(header..) else { continue };
+            let (Some(&dst_len), Some(&AF_INET)) = (dst.first(), dst.get(1)) else { continue };
+            let Some(ip) = dst.get(4..8) else { continue };
+            let ip = Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]);
+            let Some(gw) = dst.get(padded(dst_len as usize)..) else { continue };
+            // sockaddr_dl: len, family, index (2), type, nlen, alen, slen, data.
+            if gw.get(1) != Some(&AF_LINK) || gw.len() < 8 {
+                continue;
+            }
+            let (nlen, alen) = (gw[5] as usize, gw[6] as usize);
+            let Some(mac) = gw.get(8 + nlen..8 + nlen + alen) else { continue };
+            if alen != 6 {
+                continue;
+            }
+            let text = mac.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":");
+            if let Some(mac) = normalize_mac(&text) {
+                out.insert(ip, mac);
+            }
+        }
+        out
+    }
+
+    /// Read in this process (sysctl), not through `arp`: on macOS 27 the real MACs
+    /// depend on the entitlements of the program asking (super::hidden_mac).
     #[cfg(target_os = "macos")]
     pub(super) fn table() -> HashMap<Ipv4Addr, String> {
+        let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, libc::AF_INET, libc::NET_RT_FLAGS, libc::RTF_LLINFO];
+        let mut dump: Vec<u8> = Vec::new();
+        for _ in 0..3 {
+            let mut size = 0usize;
+            // SAFETY: a size query (no buffer).
+            let status = unsafe {
+                libc::sysctl(mib.as_mut_ptr(), 6, std::ptr::null_mut(), &mut size, std::ptr::null_mut(), 0)
+            };
+            if status != 0 {
+                break;
+            }
+            // Room for entries added between the two calls.
+            size += size / 8 + 512;
+            dump = vec![0u8; size];
+            // SAFETY: a buffer of `size` bytes.
+            let status = unsafe {
+                libc::sysctl(
+                    mib.as_mut_ptr(),
+                    6,
+                    dump.as_mut_ptr().cast(),
+                    &mut size,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            if status == 0 {
+                dump.truncate(size);
+                return parse_route_dump(&dump, std::mem::size_of::<libc::rt_msghdr>());
+            }
+            dump.clear();
+            if std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOMEM) {
+                break;
+            }
+        }
         std::process::Command::new("/usr/sbin/arp")
             .arg("-an")
             .output()
@@ -557,6 +633,35 @@ mod tests {
         let t = neighbours::parse_arp_an(text);
         assert_eq!(t.len(), 1);
         assert_eq!(t[&Ipv4Addr::new(192, 168, 1, 1)], "3c:a6:2f:01:02:03");
+    }
+
+    #[test]
+    fn macos_route_dump() {
+        // Two messages with a 92-byte header (rt_msghdr on macOS): a neighbour
+        // with its MAC after the interface name "en0", and one without a MAC.
+        let message = |ip: [u8; 4], mac: &[u8]| {
+            let mut m = vec![0u8; 92];
+            m.extend_from_slice(&[16, 2, 0, 0]);
+            m.extend_from_slice(&ip);
+            m.extend_from_slice(&[0; 8]);
+            let mut dl = vec![0, 18, 4, 0, 6, 3, mac.len() as u8, 0];
+            dl.extend_from_slice(b"en0");
+            dl.extend_from_slice(mac);
+            dl[0] = dl.len() as u8;
+            dl.resize((dl.len() + 3) & !3, 0);
+            m.extend_from_slice(&dl);
+            let len = (m.len() as u16).to_ne_bytes();
+            m[..2].copy_from_slice(&len);
+            m
+        };
+        let mut dump = message([192, 168, 1, 1], &[0x3c, 0xa6, 0x2f, 1, 2, 3]);
+        dump.extend(message([192, 168, 1, 40], &[]));
+        dump.extend(message([192, 168, 1, 77], &[2, 0, 0, 0, 0, 0]));
+        let t = neighbours::parse_route_dump(&dump, 92);
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[&Ipv4Addr::new(192, 168, 1, 1)], "3c:a6:2f:01:02:03");
+        assert_eq!(t[&Ipv4Addr::new(192, 168, 1, 77)], "");
+        assert!(neighbours::parse_route_dump(&dump[..50], 92).is_empty());
     }
 
     /// Scans the real network of this computer: `cargo test -p nuvira-agent
