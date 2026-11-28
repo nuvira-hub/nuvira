@@ -16,6 +16,7 @@ A NuviraHub Pro server with the REST API in its licence (feature `pro.rest_api`)
 | `GET /me` | The token, its account and the parts of the API the licence allows |
 | `GET /devices`, `GET /devices/{id}` | Devices (filters `q`, `online`); a device with its inventory and health (light RMM) |
 | `POST /devices/{id}/wake` | Wake-on-LAN through another computer of the same network |
+| `POST`, `GET /devices/{id}/scan` | Network scan by that computer (administrators): start it (`{"ports": true}` to check open ports too), then read the latest result |
 | `GET`, `POST /books`; `GET`, `PATCH`, `DELETE /books/{id}` | Address books with their entries; shared books |
 | `POST /books/{id}/entries`; `GET`, `PATCH`, `DELETE /entries/{id}` | Computers in the books |
 | `GET /sessions` | Session log (filters `from`, `to`, `device`, `q`, `limit`) |

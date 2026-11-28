@@ -18,7 +18,7 @@
 | 19 | [Automatic updates](19-updates.md) | Signed versions from the own server, service and portable copies |
 | 20 | [Linux](20-linux.md) | The app controls other computers; on Wayland it can be controlled too (portal, PipeWire); .deb, .rpm and archive |
 | 21 | [Support queue and reports](21-support-queue.md) | NuviraHub Pro: the customer asks for help, the first free technician takes it; reports of the support time for billing |
-| 22 | [Inventory, health and Wake-on-LAN](22-rmm.md) | NuviraHub Pro: what each computer is, its health, and waking it through another computer of the same network |
+| 22 | [Inventory, health and Wake-on-LAN](22-rmm.md) | NuviraHub Pro: what each computer is, its health, waking it through another computer of the same network, and the devices of its network (network scan) |
 | 23 | [REST API of the Pro server](23-rest-api.md) | NuviraHub Pro: devices, address books, sessions, reports and the support queue for ticketing and management software |
 | 24 | [Privacy mode](24-privacy-mode.md) | Black screen and blocked mouse and keyboard at the controlled PC while the technician works (Windows) |
 | 25 | [Remote terminal](25-remote-terminal.md) | A command prompt of the remote computer, with or without its desktop; as the user signed in |
@@ -45,3 +45,4 @@
 | 46 | [Aliases](46-aliases.md) | A readable name for a computer on its server, typed instead of the ID (app, viewer, address books, web client) |
 | 47 | [Invitation links](47-invitations.md) | NuviraHub Pro: a link that opens or downloads NuviraHub and asks one technician for support (nuvirahub:// links) |
 | 48 | [Statistics log](48-statistics-log.md) | Optional JSON Lines file of a session (`NUVIRA_STATS`): frames, latency, bitrate, losses, QUIC, CPU and memory per interval, agent and viewer; relay counters in the server log (`NUVIRA_RELAY_STATS`) |
+| 49 | [Computers on this network](49-lan-discovery.md) | The NuviraHub computers of the same local network listed in the app (DNS-SD of each system), to connect without typing the ID; setting and Pro rule to hide a computer |

@@ -11,7 +11,7 @@ Priority legend: **M** = MVP, **1** = version 1.0, **2** = later versions.
 | Confirmation by the remote user, showing who is connecting | M |
 | Unattended access with a permanent password / device key | M |
 | P2P connection with hole punching + fallback relay | M |
-| Direct LAN connection without a server (mDNS discovery) | 1 |
+| NuviraHub computers of the local network listed in the app (DNS-SD discovery, [49](49-lan-discovery.md)); direct LAN connection without a server | 1 (list done, connection without a server later) |
 | Technician account with 2FA (TOTP), passkey/FIDO2 | 1 |
 | OIDC SSO (Google, Microsoft Entra, Authentik, Keycloak) | 2 |
 | Several technicians on the same session | 1 |
@@ -48,6 +48,7 @@ Priority legend: **M** = MVP, **1** = version 1.0, **2** = later versions.
 | Remote terminal (PowerShell/cmd, bash/zsh) — ✅ see [25](25-remote-terminal.md) | 1 |
 | Process and service management | 2 |
 | System information and hardware/software inventory | 1 |
+| Network scan: the devices of a computer's local network, with makers and open ports (Pro, [22](22-rmm.md)) | 1 (done) |
 | Event log / journal viewer | 2 |
 
 ### 4.5 Management (server console)
