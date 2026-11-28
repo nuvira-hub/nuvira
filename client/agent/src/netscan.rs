@@ -81,7 +81,7 @@ struct Network {
 
 impl Network {
     fn new(own: Ipv4Addr, configured: u8) -> Self {
-        Network { own, prefix: configured.max(MIN_PREFIX).min(30), configured }
+        Network { own, prefix: configured.clamp(MIN_PREFIX, 30), configured }
     }
 
     fn mask(&self) -> u32 {
@@ -466,7 +466,6 @@ mod neighbours {
     #[cfg(target_os = "macos")]
     pub(super) fn table() -> HashMap<Ipv4Addr, String> {
         let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, libc::AF_INET, libc::NET_RT_FLAGS, libc::RTF_LLINFO];
-        let mut dump: Vec<u8> = Vec::new();
         for _ in 0..3 {
             let mut size = 0usize;
             // SAFETY: a size query (no buffer).
@@ -478,7 +477,7 @@ mod neighbours {
             }
             // Room for entries added between the two calls.
             size += size / 8 + 512;
-            dump = vec![0u8; size];
+            let mut dump = vec![0u8; size];
             // SAFETY: a buffer of `size` bytes.
             let status = unsafe {
                 libc::sysctl(
@@ -494,7 +493,6 @@ mod neighbours {
                 dump.truncate(size);
                 return parse_route_dump(&dump, std::mem::size_of::<libc::rt_msghdr>());
             }
-            dump.clear();
             if std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOMEM) {
                 break;
             }
