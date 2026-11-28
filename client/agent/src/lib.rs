@@ -24,6 +24,7 @@ mod input;
 pub mod ipc;
 mod inventory;
 mod lan;
+mod netscan;
 mod lock;
 mod pipeline;
 mod policy;

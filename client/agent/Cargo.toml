@@ -39,6 +39,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system", "disk", "network"] }
+# Names of the devices found by the network scan (getnameinfo).
+dns-lookup = "4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -58,6 +60,9 @@ features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Printing",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_System_Console",
     "Win32_System_Environment",

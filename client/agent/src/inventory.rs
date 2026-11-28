@@ -62,6 +62,7 @@ pub fn collect() -> Inventory {
         uptime_s: System::uptime(),
         app_version: env!("CARGO_PKG_VERSION").into(),
         interfaces,
+        capabilities: vec![crate::netscan::CAPABILITY.into()],
     }
 }
 

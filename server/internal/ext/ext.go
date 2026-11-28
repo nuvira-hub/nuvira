@@ -44,6 +44,10 @@ type Host interface {
 	// SendWake asks a connected device to send Wake-on-LAN packets to these MAC
 	// addresses on its network; false if it is not connected.
 	SendWake(deviceID string, macs []string) bool
+	// SendScanNetwork asks a connected device to scan its local networks (the
+	// result comes back to the NetworkScanDesk modules); false if it is not
+	// connected.
+	SendScanNetwork(deviceID string, req *pb.ScanNetwork) bool
 }
 
 // Conn is the app connection an API request came on; the sign-in stays bound to it.
@@ -150,6 +154,12 @@ type SupportDesk interface {
 // inventories the devices send, with the address the server sees them from.
 type InventoryDesk interface {
 	Inventory(deviceID, remoteAddr string, inv *pb.Inventory)
+}
+
+// NetworkScanDesk is implemented by the network scan module (NuviraHub Pro): it
+// gets what a device found on its local networks after a SendScanNetwork.
+type NetworkScanDesk interface {
+	NetworkScan(deviceID string, scan *pb.NetworkScan)
 }
 
 // SessionObserver is implemented by modules that want the steps of the sessions

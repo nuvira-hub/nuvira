@@ -28,6 +28,8 @@ message ClientMessage {
     Inventory inventory = 9;
     // The device's alias changed (agents only).
     SetAlias set_alias = 10;
+    // Result of a ScanNetwork (NuviraHub Pro, network scan).
+    NetworkScan network_scan = 11;
   }
 }
 
@@ -47,6 +49,8 @@ message ServerMessage {
     Wake wake = 9;
     // Answer to SetAlias.
     AliasState alias_state = 10;
+    // Scan the local networks and answer with NetworkScan (NuviraHub Pro).
+    ScanNetwork scan_network = 11;
   }
 }
 
@@ -403,6 +407,9 @@ message Inventory {
   uint64 uptime_s = 10;
   string app_version = 11;
   repeated NetworkInterface interfaces = 12;
+  // What this agent can do for the server beyond the inventory, e.g.
+  // "network_scan" (ScanNetwork): older agents send none.
+  repeated string capabilities = 13;
 }
 
 message Disk {
@@ -421,6 +428,42 @@ message NetworkInterface {
 
 message Wake {
   repeated string macs = 1;
+}
+
+// Asks an agent to scan its local IPv4 networks (NuviraHub Pro, network scan).
+message ScanNetwork {
+  string request_id = 1;
+  // Also try a short list of TCP ports on every device found. Off by default:
+  // security software on the other computers may take it for an attack and block
+  // the scanning computer for a while.
+  bool ports = 2;
+}
+
+// What an agent found on its local networks, sent when the scan ends.
+message NetworkScan {
+  string request_id = 1;
+  // Unix milliseconds.
+  int64 started = 2;
+  int64 finished = 3;
+  // Networks scanned, e.g. "192.168.1.0/24".
+  repeated string networks = 4;
+  repeated ScannedHost hosts = 5;
+  // Why nothing was scanned ("@key" or text); empty when the scan ran.
+  string error = 6;
+  // The open ports were tried (ScanNetwork.ports).
+  bool ports = 7;
+}
+
+message ScannedHost {
+  string ip = 1;
+  // "aa:bb:cc:dd:ee:ff"; empty when the agent did not learn it.
+  string mac = 2;
+  // Name from the network's DNS, if any.
+  string name = 3;
+  // TCP ports found open among those tried (only with ScanNetwork.ports).
+  repeated uint32 open_ports = 4;
+  // The scanning computer itself.
+  bool self = 5;
 }
 
 message GetInventory {

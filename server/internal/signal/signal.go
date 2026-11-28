@@ -296,6 +296,16 @@ func (s *Server) handle(ctx context.Context, conn *quic.Conn) error {
 					d.Inventory(c.device.ID, conn.RemoteAddr().String(), m.Inventory)
 				}
 			}
+		case *pb.ClientMessage_NetworkScan:
+			// As the inventory: only from the device itself.
+			if c.apiOnly {
+				break
+			}
+			for _, mod := range s.modules {
+				if d, ok := mod.(ext.NetworkScanDesk); ok {
+					d.NetworkScan(c.device.ID, m.NetworkScan)
+				}
+			}
 		default:
 			// A message of a newer app (or a Register sent again): ignored, so
 			// that new kinds of messages need no new server.
@@ -510,6 +520,17 @@ func (s *Server) SendWake(deviceID string, macs []string) bool {
 		return false
 	}
 	return c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_Wake{Wake: &pb.Wake{Macs: macs}}}) == nil
+}
+
+// SendScanNetwork asks a connected device to scan its local networks.
+func (s *Server) SendScanNetwork(deviceID string, req *pb.ScanNetwork) bool {
+	s.mu.Lock()
+	c := s.online[deviceID]
+	s.mu.Unlock()
+	if c == nil {
+		return false
+	}
+	return c.send(&pb.ServerMessage{Msg: &pb.ServerMessage_ScanNetwork{ScanNetwork: req}}) == nil
 }
 
 // SendSupportStatus tells a connected device the state of its support request.

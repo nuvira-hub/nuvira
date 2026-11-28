@@ -62,6 +62,8 @@ cat > "$app/Contents/Info.plist" <<EOF
         <key>CFBundleURLSchemes</key><array><string>nuvirahub</string></array>
     </dict></array>
     <key>NSMicrophoneUsageDescription</key><string>NuviraHub sends your voice to the computer you control, while you turn on the microphone in the session.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>NuviraHub lists the computers of your network that can be controlled ("On this network"), and shows this Mac to them.</string>
+    <key>NSBonjourServices</key><array><string>_nuvira._udp</string></array>
 </dict>
 </plist>
 EOF

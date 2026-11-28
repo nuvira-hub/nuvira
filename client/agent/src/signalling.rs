@@ -108,6 +108,10 @@ pub(crate) async fn signal_loop(
     let send_inventory = signal.features.iter().any(|f| f == "pro.inventory");
     *ctx.features.lock().expect("features") = signal.features.clone();
     let mut inventory_tick = tokio::time::interval(inventory::INTERVAL);
+    // Network scans asked by the server (NuviraHub Pro): one at a time, the result
+    // sent when it ends.
+    let (scan_tx, mut scan_rx) = mpsc::channel::<nuvira_proto::v1::NetworkScan>(1);
+    let mut scanning: Option<tokio::task::JoinHandle<()>> = None;
 
     // A support request still open from the last connection (a network cut, the
     // server restarted): the server dropped it when this device went away, so it is
@@ -127,6 +131,7 @@ pub(crate) async fn signal_loop(
     loop {
         let reply = tokio::select! {
             Some(report) = reports.recv() => Some(client_message::Msg::SessionReport(report)),
+            Some(scan) = scan_rx.recv() => Some(client_message::Msg::NetworkScan(scan)),
             _ = inventory_tick.tick(), if send_inventory => {
                 match tokio::task::spawn_blocking(inventory::collect).await {
                     Ok(inv) => Some(client_message::Msg::Inventory(inv)),
@@ -138,6 +143,21 @@ pub(crate) async fn signal_loop(
                     set_policy(ctx, policy);
                     lan.update(ctx).await;
                     None
+                }
+                Some(server_message::Msg::ScanNetwork(request)) => {
+                    if scanning.as_ref().is_some_and(|s| !s.is_finished()) {
+                        Some(client_message::Msg::NetworkScan(nuvira_proto::v1::NetworkScan {
+                            request_id: request.request_id,
+                            error: "@rmm.scan_busy".into(),
+                            ..Default::default()
+                        }))
+                    } else {
+                        let tx = scan_tx.clone();
+                        scanning = Some(tokio::spawn(async move {
+                            let _ = tx.send(crate::netscan::scan(request).await).await;
+                        }));
+                        None
+                    }
                 }
                 Some(server_message::Msg::Incoming(inc)) => {
                     let mut request = Request {
