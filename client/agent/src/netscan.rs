@@ -109,10 +109,13 @@ impl Network {
 }
 
 /// The MAC macOS 27 gives instead of the real one, of this computer's interfaces
-/// and of the neighbours, to a program without the restricted entitlement
-/// `com.apple.developer.networking.topology-observation` ("a deliberate privacy
-/// hardening", Apple DTS, developer.apple.com/forums/thread/841958). The same for
-/// every device: never a way to tell them apart.
+/// and of the neighbours ("a deliberate privacy hardening", Apple DTS,
+/// developer.apple.com/forums/thread/841958). Seen on macOS 27.0 (nuvira-pro
+/// docs/internal/48-network-scan.md): only for programs that are not in an app
+/// bundle and not root, and for `arp` started by our agent; the app itself sees
+/// the real MACs without the restricted entitlement
+/// `com.apple.developer.networking.topology-observation`. The same for every
+/// device: never a way to tell them apart.
 pub(crate) fn hidden_mac(mac: &str) -> bool {
     mac.eq_ignore_ascii_case("02:00:00:00:00:00")
 }
@@ -457,8 +460,9 @@ mod neighbours {
         out
     }
 
-    /// Read in this process (sysctl), not through `arp`: on macOS 27 the real MACs
-    /// depend on the entitlements of the program asking (super::hidden_mac).
+    /// Read in this process (sysctl), not through `arp`: on macOS 27 the `arp`
+    /// started by the agent gets the placeholder MACs, the app itself the real ones
+    /// (super::hidden_mac).
     #[cfg(target_os = "macos")]
     pub(super) fn table() -> HashMap<Ipv4Addr, String> {
         let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, libc::AF_INET, libc::NET_RT_FLAGS, libc::RTF_LLINFO];
@@ -610,7 +614,7 @@ mod tests {
         // Multicast.
         assert_eq!(neighbours::normalize_mac("01:00:5e:00:00:fb"), None);
         assert_eq!(neighbours::normalize_mac("(incomplete)"), None);
-        // macOS 27 without the topology entitlement: there, MAC unknown.
+        // macOS 27's placeholder: there, MAC unknown.
         assert_eq!(neighbours::normalize_mac("2:0:0:0:0:0").as_deref(), Some(""));
     }
 
