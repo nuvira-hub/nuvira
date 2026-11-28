@@ -40,7 +40,11 @@ pub fn collect() -> Inventory {
                 .filter(|n| !n.addr.is_loopback())
                 .map(|n| format!("{}/{}", n.addr, n.prefix))
                 .collect();
-            let mac = data.mac_address().to_string();
+            let mut mac = data.mac_address().to_string();
+            // macOS 27 hides the real one (crate::netscan::hidden_mac): none known.
+            if crate::netscan::hidden_mac(&mac) {
+                mac = "00:00:00:00:00:00".into();
+            }
             (!addresses.is_empty() || mac != "00:00:00:00:00:00").then(|| NetworkInterface {
                 name: name.clone(),
                 mac,

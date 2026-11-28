@@ -108,6 +108,15 @@ impl Network {
     }
 }
 
+/// The MAC macOS 27 gives instead of the real one, of this computer's interfaces
+/// and of the neighbours, to a program without the restricted entitlement
+/// `com.apple.developer.networking.topology-observation` ("a deliberate privacy
+/// hardening", Apple DTS, developer.apple.com/forums/thread/841958). The same for
+/// every device: never a way to tell them apart.
+pub(crate) fn hidden_mac(mac: &str) -> bool {
+    mac.eq_ignore_ascii_case("02:00:00:00:00:00")
+}
+
 fn is_virtual(name: &str) -> bool {
     let name = name.to_lowercase();
     VIRTUAL
@@ -130,7 +139,8 @@ fn networks() -> (Vec<Network>, HashMap<Ipv4Addr, String>) {
             if !ip.is_private() || n.prefix == 0 || n.prefix > 30 {
                 continue;
             }
-            own_macs.insert(ip, data.mac_address().to_string());
+            let mac = data.mac_address().to_string();
+            own_macs.insert(ip, if hidden_mac(&mac) { String::new() } else { mac });
             let net = Network::new(ip, n.prefix);
             if !out.iter().any(|o| o.cidr() == net.cidr()) {
                 out.push(net);
@@ -360,7 +370,8 @@ mod neighbours {
     use std::net::Ipv4Addr;
 
     /// "a:b:c:d:e:f" or "aa-bb-…" as "aa:bb:cc:dd:ee:ff"; `None` for an empty,
-    /// broadcast or malformed one.
+    /// broadcast or malformed one; "" for the placeholder macOS 27 gives instead of
+    /// the real one ([`super::hidden_mac`]): the device is there, its MAC unknown.
     pub(super) fn normalize_mac(mac: &str) -> Option<String> {
         let parts: Vec<&str> = mac.split([':', '-']).collect();
         if parts.len() != 6 {
@@ -371,7 +382,8 @@ mod neighbours {
         if bytes.iter().all(|b| *b == 0) || bytes.iter().all(|b| *b == 0xff) || bytes[0] & 1 == 1 {
             return None;
         }
-        Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":"))
+        let mac = bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":");
+        Some(if super::hidden_mac(&mac) { String::new() } else { mac })
     }
 
     /// Linux: /proc/net/arp, flag 0x2 = complete.
@@ -522,6 +534,8 @@ mod tests {
         // Multicast.
         assert_eq!(neighbours::normalize_mac("01:00:5e:00:00:fb"), None);
         assert_eq!(neighbours::normalize_mac("(incomplete)"), None);
+        // macOS 27 without the topology entitlement: there, MAC unknown.
+        assert_eq!(neighbours::normalize_mac("2:0:0:0:0:0").as_deref(), Some(""));
     }
 
     #[test]
