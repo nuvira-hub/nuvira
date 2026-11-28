@@ -1042,9 +1042,12 @@ type Policy struct {
 	// (keyboard, mouse, files); 0: never. Merged with others, the shortest wins.
 	IdleMinutes uint32 `protobuf:"varint,15,opt,name=idle_minutes,json=idleMinutes,proto3" json:"idle_minutes,omitempty"`
 	// The technician's microphone is never played on the computer.
-	NoMicrophone  bool `protobuf:"varint,16,opt,name=no_microphone,json=noMicrophone,proto3" json:"no_microphone,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	NoMicrophone bool `protobuf:"varint,16,opt,name=no_microphone,json=noMicrophone,proto3" json:"no_microphone,omitempty"`
+	// The computer is not announced on its local network (the app's "On this
+	// network" list): a rule of the computer, not of a session.
+	NoLanDiscovery bool `protobuf:"varint,17,opt,name=no_lan_discovery,json=noLanDiscovery,proto3" json:"no_lan_discovery,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Policy) Reset() {
@@ -1185,6 +1188,13 @@ func (x *Policy) GetIdleMinutes() uint32 {
 func (x *Policy) GetNoMicrophone() bool {
 	if x != nil {
 		return x.NoMicrophone
+	}
+	return false
+}
+
+func (x *Policy) GetNoLanDiscovery() bool {
+	if x != nil {
+		return x.NoLanDiscovery
 	}
 	return false
 }
@@ -5893,7 +5903,7 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\bfeatures\x18\x03 \x03(\tR\bfeatures\x12\x14\n" +
 	"\x05alias\x18\x04 \x01(\tR\x05alias\x12\x1f\n" +
 	"\valias_error\x18\x05 \x01(\tR\n" +
-	"aliasError\"\x89\x04\n" +
+	"aliasError\"\xb3\x04\n" +
 	"\x06Policy\x12%\n" +
 	"\x0econfirm_always\x18\x01 \x01(\bR\rconfirmAlways\x12\x19\n" +
 	"\bno_files\x18\x02 \x01(\bR\anoFiles\x12!\n" +
@@ -5914,7 +5924,8 @@ const file_nuvira_v1_rendezvous_proto_rawDesc = "" +
 	"\bno_audio\x18\r \x01(\bR\anoAudio\x12\x1e\n" +
 	"\vlock_on_end\x18\x0e \x01(\bR\tlockOnEnd\x12!\n" +
 	"\fidle_minutes\x18\x0f \x01(\rR\vidleMinutes\x12#\n" +
-	"\rno_microphone\x18\x10 \x01(\bR\fnoMicrophone\"c\n" +
+	"\rno_microphone\x18\x10 \x01(\bR\fnoMicrophone\x12(\n" +
+	"\x10no_lan_discovery\x18\x11 \x01(\bR\x0enoLanDiscovery\"c\n" +
 	"\x06Upload\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x1d\n" +
 	"\n" +

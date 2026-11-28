@@ -93,6 +93,47 @@ pub(crate) fn set_tunnel_allowed(app: AppHandle, state: State<NuviraApp>, allowe
     Ok(())
 }
 
+/// Like [`set_privacy_allowed`], for the announcement on the local network.
+#[tauri::command]
+pub(crate) fn set_lan_visible(app: AppHandle, state: State<NuviraApp>, visible: bool) -> Result<(), String> {
+    let mut settings = load_settings();
+    settings.lan_hidden = !visible;
+    save_settings(&settings).map_err(|e| e.to_string())?;
+    state.send(AgentCommand::LanVisible { visible });
+    state.update(&app, |ui| ui.lan_visible = visible);
+    Ok(())
+}
+
+/// A computer of the "On this network" list.
+#[derive(serde::Serialize)]
+pub(crate) struct LanComputer {
+    id: String,
+    name: String,
+    os: String,
+}
+
+/// The NuviraHub computers announced on the local network that use this app's
+/// server (the others cannot be reached with their ID from here), without this PC.
+#[tauri::command]
+pub(crate) async fn lan_computers(state: State<'_, NuviraApp>) -> Result<Vec<LanComputer>, String> {
+    let settings = load_settings();
+    let fingerprint = settings
+        .server_key
+        .as_deref()
+        .and_then(|k| nuvira_transport::parse_fingerprint(k).ok())
+        .or_else(|| nuvira_transport::signal::known_server::get(&settings.server));
+    // An own server never connected to yet: its tag is unknown, every computer is listed.
+    let tag = fingerprint.map(|f| nuvira_discovery::server_tag(&f));
+    let own = state.ui.lock().expect("ui").device_id.clone();
+    let found = nuvira_discovery::scan(std::time::Duration::from_millis(1500)).await.map_err(|e| format!("{e:#}"))?;
+    Ok(found
+        .into_iter()
+        .filter(|f| own.as_deref() != Some(f.id.as_str()))
+        .filter(|f| tag.as_deref().is_none_or(|t| t == f.server))
+        .map(|f| LanComputer { id: f.id, name: f.name, os: f.os })
+        .collect())
+}
+
 /// Like [`set_privacy_allowed`], for remote printing.
 #[tauri::command]
 pub(crate) fn set_print_allowed(app: AppHandle, state: State<NuviraApp>, allowed: bool) -> Result<(), String> {

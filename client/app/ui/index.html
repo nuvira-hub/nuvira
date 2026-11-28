@@ -149,6 +149,12 @@
           </div>
           <p id="connect-message" class="message hidden"></p>
         </form>
+
+        <!-- NuviraHub computers announced on the local network (settings_ui.rs lan_computers) -->
+        <div id="lan-box" class="lan-box hidden">
+          <p class="label" data-i18n="connect.lan_title">On this network</p>
+          <div id="lan-list" class="lan-list"></div>
+        </div>
       </section>
 
       <!-- Address book -->
@@ -244,6 +250,7 @@
           <label class="check"><input id="policy-audio" type="checkbox"> <span data-i18n="admin.policy_audio">No sound of the computer</span></label>
           <label class="check"><input id="policy-mic" type="checkbox"> <span data-i18n="admin.policy_microphone">No technician's microphone</span></label>
           <label class="check"><input id="policy-lock" type="checkbox"> <span data-i18n="admin.policy_lock">Lock the computer when the session ends</span></label>
+          <label class="check"><input id="policy-lan" type="checkbox"> <span data-i18n="admin.policy_lan">Not visible on the local network</span></label>
           <label class="select-row"><span data-i18n="admin.policy_idle">End sessions without activity after (minutes, 0 never)</span> <input id="policy-idle" type="number" min="0" max="1440" step="1" value="0"></label>
           <label class="check"><input id="policy-no-record" type="checkbox"> <span data-i18n="admin.policy_no_record">No recordings by whoever connects</span></label>
           <label class="check hidden" id="policy-record-row"><input id="policy-record" type="checkbox"> <span data-i18n="admin.policy_record">Record every session (sent to the server)</span></label>
@@ -430,6 +437,9 @@
         <p class="hint" data-i18n="settings.terminal_hint">Whoever connects to this computer can open a command prompt with the rights of the user signed in, without seeing the desktop. The strip at the top says when a terminal is open.</p>
         <label class="check"><input id="tunnel-allowed" type="checkbox"> <span data-i18n="settings.tunnel_allowed">Allow tunnels to the local network</span></label>
         <p class="hint" data-i18n="settings.tunnel_hint">With a NuviraHub Pro server, whoever controls this computer can reach through it the addresses of its local network, e.g. the router's web panel or another PC's Remote Desktop. Never internet addresses.</p>
+        <label class="check"><input id="lan-visible" type="checkbox"> <span data-i18n="settings.lan_visible">Visible on this network</span></label>
+        <p id="lan-required" class="hint hidden" data-i18n="settings.lan_required">Turned off by your organisation's rules: this computer is not shown on the local network.</p>
+        <p class="hint" data-i18n="settings.lan_hint">The NuviraHub apps of the same local network show the name and ID of this computer under "On this network", to connect without typing the ID. The password is still needed.</p>
         </div>
 
         <div class="settings-card">

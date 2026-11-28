@@ -19,6 +19,7 @@ members = [
     "client/msi",
     "client/cups",
     "client/audio",
+    "client/discovery",
 ]
 
 [workspace.package]
@@ -39,6 +40,7 @@ nuvira-i18n = { path = "client/i18n" }
 nuvira-cups = { path = "client/cups" }
 nuvira-audio = { path = "client/audio" }
 nuvira-pointer = { path = "client/pointer" }
+nuvira-discovery = { path = "client/discovery" }
 
 anyhow = "1"
 bytes = "1"

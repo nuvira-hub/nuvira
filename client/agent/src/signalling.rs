@@ -95,6 +95,10 @@ pub(crate) async fn signal_loop(
     }
     keep_alias(&ctx.access_dir, &signal.alias, &signal.alias_error);
     let _ = ctx.events.send(AgentEvent::Alias { alias: signal.alias.clone(), error: signal.alias_error.clone() });
+    // Announced on the local network while registered: withdrawn when this loop
+    // ends (connection lost, other server), announced again at the next one.
+    let mut lan = crate::lan::LanPresence::new(&signal.device_id, &device_name, &signal.server_fingerprint);
+    lan.update(ctx).await;
 
     let mut accepted: HashMap<String, Request> = HashMap::new();
     // Reports of sessions that ended while the server was unreachable go first.
@@ -132,6 +136,7 @@ pub(crate) async fn signal_loop(
             msg = signal.rx.recv() => match msg? {
                 Some(server_message::Msg::Policy(policy)) => {
                     set_policy(ctx, policy);
+                    lan.update(ctx).await;
                     None
                 }
                 Some(server_message::Msg::Incoming(inc)) => {
@@ -371,6 +376,14 @@ pub(crate) async fn signal_loop(
                         info!(allow, "remote printing allowed by the person at the PC");
                         ctx.save_permissions();
                     }
+                    None
+                }
+                Some(AgentCommand::LanVisible { visible }) => {
+                    if ctx.allow_lan.swap(visible, Ordering::Relaxed) != visible {
+                        info!(visible, "announcement on the local network set by the person at the PC");
+                        ctx.save_permissions();
+                    }
+                    lan.update(ctx).await;
                     None
                 }
                 Some(AgentCommand::AllowRecording { allow }) => {

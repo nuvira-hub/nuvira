@@ -224,6 +224,12 @@ label.check input { flex: none; margin: calc((1lh - 13px) / 2) 0 0; }
 }
 .hero-password { padding: 11px 16px; text-align: center; border-radius: 12px; }
 .hero-button { padding: 12px; font-size: 16px; border-radius: 12px; }
+/* On this network: computers announced on the local network, under the connect form */
+.lan-box { max-width: 440px; margin: 14px auto 0; }
+.lan-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-height: 96px; overflow-y: auto; }
+.lan-pc { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 10px; border-radius: 10px; font-size: 13px; line-height: 1.25; max-width: 210px; text-align: left; }
+.lan-pc strong { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.lan-pc span { color: var(--muted); font-size: 12px; }
 /* Connect and Terminal only side by side: everything fits at the default window
    size (900 x 640), also with the Ask for support card. */
 .hero-actions { display: flex; gap: 10px; }

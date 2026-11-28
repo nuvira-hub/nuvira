@@ -22,6 +22,7 @@ nuvira-update = { path = "../update" }
 nuvira-viewer = { path = "../viewer" }
 nuvira-capture.workspace = true
 nuvira-codec.workspace = true
+nuvira-discovery.workspace = true
 nuvira-i18n.workspace = true
 nuvira-input.workspace = true
 nuvira-proto.workspace = true

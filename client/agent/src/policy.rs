@@ -19,6 +19,7 @@ pub(crate) fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy)
         record_always = policy.record_always,
         no_resolution = policy.no_resolution,
         no_audio = policy.no_audio,
+        no_lan_discovery = policy.no_lan_discovery,
         "rules of the server"
     );
     // The app shows the setting of the recordings locked when the rules want them.
@@ -26,6 +27,7 @@ pub(crate) fn set_policy(ctx: &SessionContext, policy: nuvira_proto::v1::Policy)
         recording_required: policy.record_always,
         lock_required: policy.lock_on_end,
         idle_minutes: policy.idle_minutes,
+        lan_off: policy.no_lan_discovery,
     });
     *ctx.policy.lock().expect("policy") = policy;
 }
@@ -49,6 +51,8 @@ pub(crate) fn merge_limits(a: nuvira_proto::v1::Policy, b: &nuvira_proto::v1::Po
         lock_on_end: a.lock_on_end || b.lock_on_end,
         idle_minutes: shorter_idle(a.idle_minutes, b.idle_minutes),
         no_microphone: a.no_microphone || b.no_microphone,
+        // A rule of the computer, not of a session: the server's stays.
+        no_lan_discovery: a.no_lan_discovery,
     }
 }
 

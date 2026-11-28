@@ -72,8 +72,9 @@ func TestMergeLimitsAndAnyLimitCoverPolicy(t *testing.T) {
 		"no_record": true, "no_resolution": true, "no_audio": true, "lock_on_end": true, "idle_minutes": true,
 		"no_microphone": true,
 	}
-	// Fields of Policy that are deliberately not session limits (none today).
-	notLimitFields := map[string]bool{}
+	// Fields of Policy that are deliberately not session limits: rules of the
+	// computer itself (no_lan_discovery: its announcement on the local network).
+	notLimitFields := map[string]bool{"no_lan_discovery": true}
 	if AnyLimit(nil) || AnyLimit(&pb.Policy{}) {
 		t.Fatal("no limits")
 	}

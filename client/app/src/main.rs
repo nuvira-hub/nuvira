@@ -168,6 +168,10 @@ struct UiState {
     print_allowed: bool,
     /// Recordings of the sessions allowed on this PC (settings).
     recording_allowed: bool,
+    /// This PC is announced on the local network (settings).
+    lan_visible: bool,
+    /// The server's rules never announce it: the setting is locked.
+    lan_off: bool,
     /// The server's rules record every session: the setting is locked.
     recording_required: bool,
     /// This PC is locked when a session ends (settings).
@@ -294,6 +298,9 @@ struct Settings {
     /// The person at this PC does not allow recordings of the sessions.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     no_recording: bool,
+    /// This PC is not announced on the local network ("On this network").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    lan_hidden: bool,
     /// This PC is locked when a session ends.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     lock_on_end: bool,
@@ -366,6 +373,7 @@ impl Settings {
             no_tunnel: true,
             no_print: true,
             no_recording: true,
+            lan_hidden: true,
             ..Self::default()
         }
     }
@@ -876,6 +884,7 @@ fn main() {
             tunnel_allowed: !settings.no_tunnel,
             print_allowed: !settings.no_print,
             recording_allowed: !settings.no_recording,
+            lan_visible: !settings.lan_hidden,
             lock_on_end: settings.lock_on_end,
             idle_minutes: settings.idle_minutes,
             record_sessions: settings.record_sessions,
@@ -946,6 +955,8 @@ fn main() {
             settings_ui::open_record_dir,
             settings_ui::set_terminal_allowed,
             settings_ui::set_tunnel_allowed,
+            settings_ui::set_lan_visible,
+            settings_ui::lan_computers,
             settings_ui::set_print_allowed,
             settings_ui::print_ask_again,
             respond,

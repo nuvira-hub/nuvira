@@ -440,6 +440,7 @@ mod gate_characterisation {
             allow_tunnel: AtomicBool::new(true),
             allow_print: AtomicBool::new(true),
             allow_recording: AtomicBool::new(true),
+            allow_lan: AtomicBool::new(true),
             lock_on_end: AtomicBool::new(false),
             lock_asked: AtomicBool::new(false),
             idle_minutes: AtomicU32::new(0),

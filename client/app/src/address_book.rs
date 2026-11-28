@@ -756,6 +756,8 @@ pub struct PolicyUi {
     pub idle_minutes: u32,
     #[serde(default)]
     pub no_microphone: bool,
+    #[serde(default)]
+    pub no_lan_discovery: bool,
 }
 
 impl From<pb::Policy> for PolicyUi {
@@ -777,6 +779,7 @@ impl From<pb::Policy> for PolicyUi {
             lock_on_end: p.lock_on_end,
             idle_minutes: p.idle_minutes,
             no_microphone: p.no_microphone,
+            no_lan_discovery: p.no_lan_discovery,
         }
     }
 }
@@ -800,6 +803,7 @@ impl From<PolicyUi> for pb::Policy {
             lock_on_end: p.lock_on_end,
             idle_minutes: p.idle_minutes,
             no_microphone: p.no_microphone,
+            no_lan_discovery: p.no_lan_discovery,
         }
     }
 }

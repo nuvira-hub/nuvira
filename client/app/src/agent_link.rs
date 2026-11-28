@@ -224,10 +224,11 @@ pub(crate) fn on_agent_event(app: &AppHandle, event: AgentEvent) {
             }
         }
         AgentEvent::Access { view } => state.update(app, |ui| ui.access = Some(view)),
-        AgentEvent::Rules { recording_required, lock_required, idle_minutes } => state.update(app, |ui| {
+        AgentEvent::Rules { recording_required, lock_required, idle_minutes, lan_off } => state.update(app, |ui| {
             ui.recording_required = recording_required;
             ui.lock_required = lock_required;
             ui.idle_required = idle_minutes;
+            ui.lan_off = lan_off;
         }),
         AgentEvent::SessionEnded { error } => state.update(app, |ui| {
             ui.session = None;
@@ -278,6 +279,7 @@ pub(crate) fn send_permissions(commands: &mpsc::UnboundedSender<AgentCommand>) {
     let _ = commands.send(AgentCommand::AllowRecording { allow: !settings.no_recording });
     let _ = commands.send(AgentCommand::LockOnEnd { on: settings.lock_on_end });
     let _ = commands.send(AgentCommand::IdleMinutes { minutes: settings.idle_minutes });
+    let _ = commands.send(AgentCommand::LanVisible { visible: !settings.lan_hidden });
     // The rules of unattended access as they are now (the agent's first report may
     // be older than the last change).
     let _ = commands.send(AgentCommand::GetAccess);

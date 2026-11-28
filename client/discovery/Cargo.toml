@@ -1,0 +1,25 @@
+[package]
+name = "nuvira-discovery"
+description = "The NuviraHub computers of the local network: announced and found with the system's DNS-SD (Windows DNS Client, Avahi, Bonjour)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_NetworkManagement_Dns"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+futures-util = "0.3"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

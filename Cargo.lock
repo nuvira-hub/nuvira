@@ -3567,6 +3567,7 @@ dependencies = [
  "nuvira-clipboard",
  "nuvira-codec",
  "nuvira-cups",
+ "nuvira-discovery",
  "nuvira-i18n",
  "nuvira-input",
  "nuvira-pointer",
@@ -3597,6 +3598,7 @@ dependencies = [
  "nuvira-agent",
  "nuvira-capture",
  "nuvira-codec",
+ "nuvira-discovery",
  "nuvira-i18n",
  "nuvira-input",
  "nuvira-proto",
@@ -3708,6 +3710,19 @@ name = "nuvira-cups"
 version = "0.99.4"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "nuvira-discovery"
+version = "0.99.4"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "libc",
+ "tokio",
+ "tracing",
+ "windows",
+ "zbus",
 ]
 
 [[package]]

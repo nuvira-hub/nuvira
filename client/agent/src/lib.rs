@@ -23,6 +23,7 @@ mod input;
 #[cfg(any(windows, unix))]
 pub mod ipc;
 mod inventory;
+mod lan;
 mod lock;
 mod pipeline;
 mod policy;
@@ -267,6 +268,9 @@ pub enum AgentEvent {
         /// Sessions end after this many minutes without activity (0: no rule).
         #[serde(default)]
         idle_minutes: u32,
+        /// The computer is never announced on the local network.
+        #[serde(default)]
+        lan_off: bool,
     },
     /// State of this device's support request (support queue, NuviraHub Pro):
     /// its place in the queue, who took it, or closed.
@@ -329,6 +333,11 @@ pub enum AgentCommand {
     AllowRecording {
         allow: bool,
     },
+    /// The person at the PC lets this computer be announced on the local network
+    /// or not ("On this network" in the apps there; kept like `AllowPrivacy`).
+    LanVisible {
+        visible: bool,
+    },
     /// The app wants the rules of unattended access again (it saved new ones).
     GetAccess,
     /// A readable name instead of the ID on the server ("" none).
@@ -377,6 +386,9 @@ struct Permissions {
     /// Sessions end after this many minutes without activity (0: never).
     #[serde(default)]
     idle_minutes: u32,
+    /// Announced on the local network ("On this network" in the apps there).
+    #[serde(default = "yes")]
+    lan: bool,
 }
 
 fn yes() -> bool {
@@ -400,6 +412,7 @@ impl Permissions {
                 recording: true,
                 lock_on_end: false,
                 idle_minutes: 0,
+                lan: true,
             })
     }
 
@@ -519,6 +532,7 @@ pub async fn serve_via_server(
         allow_tunnel: AtomicBool::new(permissions.tunnel),
         allow_print: AtomicBool::new(permissions.print),
         allow_recording: AtomicBool::new(permissions.recording),
+        allow_lan: AtomicBool::new(permissions.lan),
         lock_on_end: AtomicBool::new(permissions.lock_on_end),
         lock_asked: AtomicBool::new(false),
         idle_minutes: AtomicU32::new(permissions.idle_minutes),
@@ -608,6 +622,9 @@ struct SessionContext {
     allow_print: AtomicBool,
     /// The person at the PC allows recordings ([`AgentCommand::AllowRecording`]).
     allow_recording: AtomicBool,
+    /// The person at the PC lets the computer be announced on the local network
+    /// ([`AgentCommand::LanVisible`]).
+    allow_lan: AtomicBool,
     /// Optional modules of the server (NuviraHub Pro), from the registration.
     features: Mutex<Vec<String>>,
     /// See [`ServerOptions::unattended`].
@@ -671,6 +688,7 @@ impl SessionContext {
             recording: self.allow_recording.load(Ordering::Relaxed),
             lock_on_end: self.lock_on_end.load(Ordering::Relaxed),
             idle_minutes: self.idle_minutes.load(Ordering::Relaxed),
+            lan: self.allow_lan.load(Ordering::Relaxed),
         }
         .save();
     }

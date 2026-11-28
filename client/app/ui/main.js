@@ -129,6 +129,15 @@ $("terminal-allowed").addEventListener("change", async (e) => {
   }
 });
 
+$("lan-visible").addEventListener("change", async (e) => {
+  try {
+    await invoke("set_lan_visible", { visible: e.target.checked });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !e.target.checked;
+  }
+});
+
 $("tunnel-allowed").addEventListener("change", async (e) => {
   try {
     await invoke("set_tunnel_allowed", { allowed: e.target.checked });
@@ -239,6 +248,7 @@ function showSection(name) {
   for (const nav of document.querySelectorAll(".nav")) nav.classList.toggle("active", nav.dataset.section === name);
   // The session window may have changed the printing choice.
   if (name === "settings") invoke("get_state").then(render).catch(console.error);
+  if (name === "connect") refreshLan();
   if (name === "chat") {
     chatSeen = current?.chat.length ?? 0;
     $("chat-unread").classList.add("hidden");
@@ -316,6 +326,9 @@ function render(state) {
   $("privacy-allowed").checked = state.privacy_allowed;
   $("terminal-allowed").checked = state.terminal_allowed;
   $("tunnel-allowed").checked = state.tunnel_allowed;
+  $("lan-visible").checked = state.lan_visible && !state.lan_off;
+  $("lan-visible").disabled = state.lan_off;
+  $("lan-required").classList.toggle("hidden", !state.lan_off);
   $("print-allowed").checked = state.print_allowed;
   $("recording-allowed").checked = state.recording_allowed || state.recording_required;
   $("recording-allowed").disabled = state.recording_required;
@@ -648,6 +661,61 @@ $("change-pw-form").addEventListener("submit", async (e) => {
     $("change-pw-button").disabled = false;
   }
 });
+
+// --- On this network: the NuviraHub computers announced on the local network ---
+
+let lanBusy = false;
+
+async function refreshLan() {
+  if (lanBusy || section !== "connect" || document.hidden) return;
+  lanBusy = true;
+  try {
+    showLan(await invoke("lan_computers"));
+  } catch (err) {
+    // No DNS-SD service on this system (Avahi not running): no list.
+    console.warn("on this network:", err);
+    showLan([]);
+  } finally {
+    lanBusy = false;
+  }
+}
+
+function showLan(computers) {
+  $("lan-box").classList.toggle("hidden", computers.length === 0);
+  $("lan-list").replaceChildren(
+    ...computers.map((pc) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "lan-pc";
+      b.title = formatId(pc.id);
+      const name = document.createElement("strong");
+      name.textContent = pc.name || formatId(pc.id);
+      const id = document.createElement("span");
+      id.className = "mono";
+      id.textContent = formatId(pc.id);
+      b.append(name, id);
+      b.addEventListener("click", () => pickLan(pc));
+      return b;
+    }),
+  );
+}
+
+// Fills the ID; an entry of the address book with the same ID brings its saved password.
+function pickLan(pc) {
+  const entry = typeof allEntries === "function" ? allEntries().find((e) => e.device_id === pc.id) : null;
+  if (entry && typeof choose === "function") {
+    choose(entry);
+  } else {
+    $("remote-id").value = formatId(pc.id);
+    $("remote-password").value = "";
+    $("remote-password").placeholder = t("connect.password_placeholder");
+  }
+  $("remote-password").focus();
+}
+
+setInterval(refreshLan, 20000);
+refreshLan();
+document.addEventListener("visibilitychange", refreshLan);
 
 // Connect (desktop) or Terminal only.
 async function connectNow(terminal) {

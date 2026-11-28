@@ -166,6 +166,9 @@ message Policy {
   uint32 idle_minutes = 15;
   // The technician's microphone is never played on the computer.
   bool no_microphone = 16;
+  // The computer is not announced on its local network (the app's "On this
+  // network" list): a rule of the computer, not of a session.
+  bool no_lan_discovery = 17;
 }
 
 // ---------------------------------------------------------------------------
