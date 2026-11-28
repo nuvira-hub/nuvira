@@ -1,5 +1,5 @@
 //! Tries the announcements by hand:
-//!   cargo run -p nuvira-discovery --example lan -- announce ID NAME [SECONDS]
+//!   cargo run -p nuvira-discovery --example lan -- announce ID NAME [SECONDS] [SERVER_TAG]
 //!   cargo run -p nuvira-discovery --example lan -- scan [SECONDS]
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
                 id: args.get(1).cloned().unwrap_or_default(),
                 name: args.get(2).cloned().unwrap_or_default(),
                 os: this_os().into(),
-                server: "00000000".into(),
+                server: args.get(4).cloned().unwrap_or_else(|| "00000000".into()),
             };
             let _held = announce(&a).await?;
             println!("announced {a:?}");
@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("{} {:<30} {:<8} {}", f.id, f.name, f.os, f.server);
             }
         }
-        _ => eprintln!("usage: announce ID NAME [SECONDS] | scan [SECONDS]"),
+        _ => eprintln!("usage: announce ID NAME [SECONDS] [SERVER_TAG] | scan [SECONDS]"),
     }
     Ok(())
 }
